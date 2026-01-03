@@ -91,7 +91,8 @@ class TrainResponse(BaseModel):
 
 
 class PredictionItem(BaseModel):
-    match_id: int
+    match_id: Optional[int] = None
+    match_external_id: Optional[int] = None
     home_team: str
     away_team: str
     date: datetime
@@ -99,6 +100,8 @@ class PredictionItem(BaseModel):
     fair_odds: dict
     market_odds: Optional[dict] = None
     value_bets: Optional[list[dict]] = None
+    has_value_bet: Optional[bool] = False
+    best_value_bet: Optional[dict] = None
 
 
 class PredictionsResponse(BaseModel):
@@ -283,7 +286,8 @@ async def get_predictions(
     prediction_items = []
     for pred in predictions:
         item = PredictionItem(
-            match_id=pred["match_id"],
+            match_id=pred.get("match_id"),
+            match_external_id=pred.get("match_external_id"),
             home_team=pred["home_team"],
             away_team=pred["away_team"],
             date=pred["date"],
@@ -291,6 +295,8 @@ async def get_predictions(
             fair_odds=pred["fair_odds"],
             market_odds=pred.get("market_odds"),
             value_bets=pred.get("value_bets"),
+            has_value_bet=pred.get("has_value_bet", False),
+            best_value_bet=pred.get("best_value_bet"),
         )
         prediction_items.append(item)
 
