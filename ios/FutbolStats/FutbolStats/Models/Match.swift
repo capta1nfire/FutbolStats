@@ -115,9 +115,9 @@ struct FairOdds: Codable {
 }
 
 struct MarketOdds: Codable {
-    let home: Double
-    let draw: Double
-    let away: Double
+    let home: Double?
+    let draw: Double?
+    let away: Double?
 }
 
 struct ValueBet: Codable, Identifiable {
@@ -214,6 +214,17 @@ struct TeamWithHistory: Codable {
     let name: String
     let logo: String?
     let history: [MatchHistoryItem]
+    let position: Int?
+    let leaguePoints: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case logo
+        case history
+        case position
+        case leaguePoints = "league_points"
+    }
 }
 
 struct MatchHistoryItem: Codable, Identifiable {
@@ -356,6 +367,59 @@ struct CompetitionItem: Codable, Identifiable {
         case matchType = "match_type"
         case priority
         case matchWeight = "match_weight"
+    }
+}
+
+// MARK: - League Standings
+
+struct StandingsResponse: Codable {
+    let leagueId: Int
+    let season: Int
+    let standings: [StandingsEntry]
+
+    enum CodingKeys: String, CodingKey {
+        case leagueId = "league_id"
+        case season
+        case standings
+    }
+}
+
+struct StandingsEntry: Codable, Identifiable {
+    let position: Int
+    let teamId: Int
+    let teamName: String
+    let teamLogo: String?
+    let points: Int
+    let played: Int
+    let won: Int
+    let drawn: Int
+    let lost: Int
+    let goalsFor: Int
+    let goalsAgainst: Int
+    let goalDiff: Int
+    let form: String
+
+    var id: Int { teamId }
+
+    /// Form as array of results (W, D, L)
+    var formArray: [String] {
+        form.map { String($0) }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case position
+        case teamId = "team_id"
+        case teamName = "team_name"
+        case teamLogo = "team_logo"
+        case points
+        case played
+        case won
+        case drawn
+        case lost
+        case goalsFor = "goals_for"
+        case goalsAgainst = "goals_against"
+        case goalDiff = "goal_diff"
+        case form
     }
 }
 

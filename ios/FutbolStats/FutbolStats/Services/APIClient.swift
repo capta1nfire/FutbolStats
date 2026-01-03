@@ -184,6 +184,36 @@ actor APIClient {
         }
     }
 
+    // MARK: - League Standings
+
+    func getStandings(leagueId: Int, season: Int? = nil) async throws -> StandingsResponse {
+        var components = URLComponents(string: "\(baseURL)/standings/\(leagueId)")!
+
+        if let season = season {
+            components.queryItems = [URLQueryItem(name: "season", value: String(season))]
+        }
+
+        guard let url = components.url else {
+            throw APIError.invalidURL
+        }
+
+        let (data, response) = try await session.data(from: url)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.noData
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            throw APIError.serverError(httpResponse.statusCode)
+        }
+
+        do {
+            return try JSONDecoder().decode(StandingsResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
     // MARK: - ETL Sync
 
     func syncData(leagueIds: [Int], season: Int) async throws -> [String: Any] {

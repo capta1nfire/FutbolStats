@@ -9,10 +9,17 @@ struct TeamsView: View {
     enum TeamCategory: String, CaseIterable {
         case national = "National"
         case club = "Clubs"
+
+        var apiValue: String {
+            switch self {
+            case .national: return "national"
+            case .club: return "club"
+            }
+        }
     }
 
     var filteredTeams: [TeamItem] {
-        teams.filter { $0.teamType == selectedCategory.rawValue.lowercased() }
+        teams.filter { $0.teamType == selectedCategory.apiValue }
     }
 
     var body: some View {

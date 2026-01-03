@@ -668,3 +668,36 @@ async def get_match_details(
         },
         "prediction": prediction,
     }
+
+
+@app.get("/standings/{league_id}")
+async def get_league_standings(league_id: int, season: int = None):
+    """
+    Get full league standings/table for a given league.
+
+    Returns all teams with position, points, matches played, goals, form, etc.
+    """
+    try:
+        provider = APIFootballProvider()
+
+        # Determine season if not provided
+        if season is None:
+            current_date = datetime.now()
+            season = current_date.year if current_date.month >= 7 else current_date.year - 1
+
+        standings = await provider.get_standings(league_id, season)
+        await provider.close()
+
+        if not standings:
+            raise HTTPException(status_code=404, detail="No standings found for this league")
+
+        return {
+            "league_id": league_id,
+            "season": season,
+            "standings": standings,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching standings: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch standings")
