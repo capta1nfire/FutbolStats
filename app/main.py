@@ -580,9 +580,9 @@ async def get_match_details(
     session: AsyncSession = Depends(get_async_session),
 ):
     """
-    Get full match details including both teams' recent history.
+    Get full match details including both teams' recent history and standings.
 
-    Returns match info, prediction, and last 5 matches for each team.
+    Returns match info, prediction, standings positions, and last 5 matches for each team.
     """
     # Get match
     match = await session.get(Match, match_id)
@@ -596,6 +596,34 @@ async def get_match_details(
     # Get history for both teams
     home_history = await get_team_history(match.home_team_id, limit=5, session=session)
     away_history = await get_team_history(match.away_team_id, limit=5, session=session)
+
+    # Get standings for league (for club leagues only)
+    home_position = None
+    away_position = None
+    home_league_points = None
+    away_league_points = None
+
+    # Only fetch standings for club leagues (not national teams)
+    if home_team and home_team.team_type == "club" and match.league_id:
+        try:
+            provider = APIFootballProvider()
+            # Determine season (current year or previous if early in year)
+            current_date = match.date or datetime.now()
+            season = current_date.year if current_date.month >= 7 else current_date.year - 1
+
+            standings = await provider.get_standings(match.league_id, season)
+            await provider.close()
+
+            # Find positions for both teams
+            for standing in standings:
+                if home_team and standing.get("team_id") == home_team.external_id:
+                    home_position = standing.get("position")
+                    home_league_points = standing.get("points")
+                if away_team and standing.get("team_id") == away_team.external_id:
+                    away_position = standing.get("position")
+                    away_league_points = standing.get("points")
+        except Exception as e:
+            logger.warning(f"Could not fetch standings: {e}")
 
     # Get prediction if model is loaded and match not played
     prediction = None
@@ -627,12 +655,16 @@ async def get_match_details(
             "name": home_team.name if home_team else "Unknown",
             "logo": home_team.logo_url if home_team else None,
             "history": home_history["matches"],
+            "position": home_position,
+            "league_points": home_league_points,
         },
         "away_team": {
             "id": away_team.id if away_team else None,
             "name": away_team.name if away_team else "Unknown",
             "logo": away_team.logo_url if away_team else None,
             "history": away_history["matches"],
+            "position": away_position,
+            "league_points": away_league_points,
         },
         "prediction": prediction,
     }

@@ -297,6 +297,52 @@ class APIFootballProvider(DataProvider):
 
         return self._parse_stats(stats_data)
 
+    async def get_standings(self, league_id: int, season: int) -> list[dict]:
+        """
+        Fetch league standings/table.
+
+        Returns list of team standings with position, points, etc.
+        """
+        data = await self._rate_limited_request(
+            "standings", {"league": league_id, "season": season}
+        )
+        standings_data = data.get("response", [])
+
+        if not standings_data:
+            return []
+
+        results = []
+        for league_data in standings_data:
+            league_standings = league_data.get("league", {}).get("standings", [])
+            # Standings can be nested (for groups) - flatten
+            for group in league_standings:
+                if isinstance(group, list):
+                    for team_standing in group:
+                        results.append(self._parse_standing(team_standing))
+                else:
+                    results.append(self._parse_standing(group))
+
+        return results
+
+    def _parse_standing(self, standing: dict) -> dict:
+        """Parse a single standing entry."""
+        team = standing.get("team", {})
+        return {
+            "position": standing.get("rank"),
+            "team_id": team.get("id"),
+            "team_name": team.get("name"),
+            "team_logo": team.get("logo"),
+            "points": standing.get("points", 0),
+            "played": standing.get("all", {}).get("played", 0),
+            "won": standing.get("all", {}).get("win", 0),
+            "drawn": standing.get("all", {}).get("draw", 0),
+            "lost": standing.get("all", {}).get("lose", 0),
+            "goals_for": standing.get("all", {}).get("goals", {}).get("for", 0),
+            "goals_against": standing.get("all", {}).get("goals", {}).get("against", 0),
+            "goal_diff": standing.get("goalsDiff", 0),
+            "form": standing.get("form", ""),
+        }
+
     async def close(self) -> None:
         """Close the HTTP client."""
         await self.client.aclose()
