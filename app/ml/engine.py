@@ -244,14 +244,19 @@ class XGBoostEngine:
 
             # Add value bets if market odds available
             if row.get("odds_home") and row.get("odds_draw") and row.get("odds_away"):
+                # Convert numpy types to native Python floats for JSON serialization
+                odds_home = float(row["odds_home"])
+                odds_draw = float(row["odds_draw"])
+                odds_away = float(row["odds_away"])
+
                 pred["market_odds"] = {
-                    "home": row["odds_home"],
-                    "draw": row["odds_draw"],
-                    "away": row["odds_away"],
+                    "home": odds_home,
+                    "draw": odds_draw,
+                    "away": odds_away,
                 }
                 value_bets = self._find_value_bets(
                     probas[i],
-                    [row["odds_home"], row["odds_draw"], row["odds_away"]],
+                    [odds_home, odds_draw, odds_away],
                 )
                 pred["value_bets"] = value_bets
 
