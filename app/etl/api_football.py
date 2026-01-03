@@ -220,21 +220,43 @@ class APIFootballProvider(DataProvider):
             logo_url=team_info.get("logo"),
         )
 
+    # Priority bookmakers for reliable odds (best to worst)
+    PRIORITY_BOOKMAKERS = [
+        "Bet365",
+        "Pinnacle",
+        "1xBet",
+        "Unibet",
+        "William Hill",
+        "Betfair",
+        "Bwin",
+        "888sport",
+    ]
+
     async def get_odds(self, fixture_id: int) -> Optional[dict]:
-        """Fetch betting odds for a fixture."""
+        """
+        Fetch betting odds for a fixture.
+
+        Prioritizes major bookmakers (Bet365, Pinnacle) for reliable odds.
+        Returns odds with bookmaker source for transparency.
+        """
         data = await self._rate_limited_request("odds", {"fixture": fixture_id})
         odds_data = data.get("response", [])
 
         if not odds_data:
             return None
 
-        # Find 3Way/1X2 odds from a bookmaker
+        # Collect all available odds by bookmaker
+        all_odds = []
+
         for bookmaker_data in odds_data:
             for bookmaker in bookmaker_data.get("bookmakers", []):
+                bookmaker_name = bookmaker.get("name", "Unknown")
+
                 for bet in bookmaker.get("bets", []):
                     if bet.get("name") in ["Match Winner", "3Way Result", "1X2"]:
                         values = bet.get("values", [])
-                        odds = {}
+                        odds = {"bookmaker": bookmaker_name}
+
                         for v in values:
                             if v.get("value") == "Home":
                                 odds["odds_home"] = float(v.get("odd", 0))
@@ -243,10 +265,22 @@ class APIFootballProvider(DataProvider):
                             elif v.get("value") == "Away":
                                 odds["odds_away"] = float(v.get("odd", 0))
 
-                        if len(odds) == 3:
-                            return odds
+                        if len(odds) == 4:  # bookmaker + 3 odds
+                            all_odds.append(odds)
 
-        return None
+        if not all_odds:
+            return None
+
+        # Find best bookmaker by priority
+        for priority_book in self.PRIORITY_BOOKMAKERS:
+            for odds in all_odds:
+                if odds["bookmaker"].lower() == priority_book.lower():
+                    logger.info(f"Using odds from {priority_book} for fixture {fixture_id}")
+                    return odds
+
+        # Fallback to first available
+        logger.info(f"Using odds from {all_odds[0]['bookmaker']} for fixture {fixture_id}")
+        return all_odds[0]
 
     async def get_fixture_statistics(self, fixture_id: int) -> Optional[dict]:
         """Fetch detailed statistics for a fixture."""

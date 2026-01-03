@@ -442,6 +442,55 @@ async def model_info():
     }
 
 
+@app.post("/odds/refresh")
+async def refresh_odds(
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Refresh odds for all upcoming matches.
+
+    Fetches latest pre-match odds from API-Football for matches with status 'NS'.
+    Prioritizes Bet365, Pinnacle for reliable odds.
+    """
+    # Get all upcoming matches
+    query = select(Match).where(Match.status == "NS")
+    result = await session.execute(query)
+    matches = result.scalars().all()
+
+    if not matches:
+        return {"message": "No upcoming matches found", "updated": 0}
+
+    provider = APIFootballProvider()
+    updated_count = 0
+    errors = []
+
+    try:
+        for match in matches:
+            try:
+                odds = await provider.get_odds(match.external_id)
+                if odds:
+                    match.odds_home = odds.get("odds_home")
+                    match.odds_draw = odds.get("odds_draw")
+                    match.odds_away = odds.get("odds_away")
+                    updated_count += 1
+                    logger.info(f"Updated odds for match {match.id}: H={match.odds_home}, D={match.odds_draw}, A={match.odds_away}")
+            except Exception as e:
+                errors.append({"match_id": match.id, "error": str(e)})
+                logger.error(f"Error fetching odds for match {match.id}: {e}")
+
+        await session.commit()
+
+    finally:
+        await provider.close()
+
+    return {
+        "message": f"Odds refresh complete",
+        "total_matches": len(matches),
+        "updated": updated_count,
+        "errors": errors if errors else None,
+    }
+
+
 @app.get("/teams/{team_id}/history")
 async def get_team_history(
     team_id: int,

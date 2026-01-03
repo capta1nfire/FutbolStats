@@ -206,13 +206,13 @@ class XGBoostEngine:
 
     def predict(self, df: pd.DataFrame) -> list[dict]:
         """
-        Make predictions with probabilities and fair odds.
+        Make predictions with probabilities, fair odds, and value bet detection.
 
         Args:
             df: DataFrame with features and match info.
 
         Returns:
-            List of prediction dictionaries.
+            List of prediction dictionaries with value betting metrics.
         """
         probas = self.predict_proba(df)
 
@@ -238,6 +238,8 @@ class XGBoostEngine:
                     "draw": round(1 / draw_prob, 2) if draw_prob > 0 else None,
                     "away": round(1 / away_prob, 2) if away_prob > 0 else None,
                 },
+                "has_value_bet": False,  # Default
+                "best_value_bet": None,  # Best opportunity if exists
             }
 
             # Add value bets if market odds available
@@ -247,10 +249,19 @@ class XGBoostEngine:
                     "draw": row["odds_draw"],
                     "away": row["odds_away"],
                 }
-                pred["value_bets"] = self._find_value_bets(
+                value_bets = self._find_value_bets(
                     probas[i],
                     [row["odds_home"], row["odds_draw"], row["odds_away"]],
                 )
+                pred["value_bets"] = value_bets
+
+                # Flag if has any value bet and find best one
+                if value_bets:
+                    pred["has_value_bet"] = True
+                    # Best value bet = highest EV
+                    pred["best_value_bet"] = max(
+                        value_bets, key=lambda x: x["expected_value"]
+                    )
 
             predictions.append(pred)
 
@@ -263,10 +274,14 @@ class XGBoostEngine:
         threshold: float = 0.05,
     ) -> list[dict]:
         """
-        Find value betting opportunities.
+        Find value betting opportunities with Expected Value calculation.
 
         A value bet exists when our probability is higher than
         the implied probability from market odds by more than threshold.
+
+        EV (Expected Value) = (probability * odds) - 1
+        - Positive EV = profitable bet in the long run
+        - edge > 5% = value bet
 
         Args:
             probas: Model probabilities [home, draw, away].
@@ -274,7 +289,7 @@ class XGBoostEngine:
             threshold: Minimum edge required (default 5%).
 
         Returns:
-            List of value bet opportunities.
+            List of value bet opportunities with EV metrics.
         """
         outcomes = ["home", "draw", "away"]
         value_bets = []
@@ -286,14 +301,22 @@ class XGBoostEngine:
             implied_prob = 1 / odds
             edge = prob - implied_prob
 
+            # Calculate Expected Value: EV = (prob * odds) - 1
+            # EV > 0 means profitable, EV of 0.10 means 10% expected return
+            expected_value = (prob * odds) - 1
+
             if edge > threshold:
                 value_bets.append({
                     "outcome": outcomes[i],
                     "our_probability": round(prob, 4),
                     "implied_probability": round(implied_prob, 4),
                     "edge": round(edge, 4),
+                    "edge_percentage": round(edge * 100, 1),  # 5.2%
+                    "expected_value": round(expected_value, 4),
+                    "ev_percentage": round(expected_value * 100, 1),  # 10.5%
                     "market_odds": odds,
                     "fair_odds": round(1 / prob, 2),
+                    "is_value_bet": True,
                 })
 
         return value_bets
