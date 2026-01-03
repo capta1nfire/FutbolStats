@@ -121,6 +121,42 @@ INTERNATIONAL_FRIENDLIES = Competition(
     priority=Priority.LOW,
 )
 
+# Club Competitions - Europe Top 5 Leagues
+PREMIER_LEAGUE = Competition(
+    league_id=39,
+    name="Premier League",
+    match_type="official",
+    priority=Priority.HIGH,
+)
+
+LA_LIGA = Competition(
+    league_id=140,
+    name="La Liga",
+    match_type="official",
+    priority=Priority.HIGH,
+)
+
+SERIE_A = Competition(
+    league_id=135,
+    name="Serie A",
+    match_type="official",
+    priority=Priority.HIGH,
+)
+
+BUNDESLIGA = Competition(
+    league_id=78,
+    name="Bundesliga",
+    match_type="official",
+    priority=Priority.HIGH,
+)
+
+LIGUE_1 = Competition(
+    league_id=61,
+    name="Ligue 1",
+    match_type="official",
+    priority=Priority.HIGH,
+)
+
 # All competitions dictionary
 COMPETITIONS: dict[int, Competition] = {
     comp.league_id: comp
@@ -138,6 +174,12 @@ COMPETITIONS: dict[int, Competition] = {
         AFRICA_CUP,
         AFC_ASIAN_CUP,
         INTERNATIONAL_FRIENDLIES,
+        # Club Leagues
+        PREMIER_LEAGUE,
+        LA_LIGA,
+        SERIE_A,
+        BUNDESLIGA,
+        LIGUE_1,
     ]
 }
 

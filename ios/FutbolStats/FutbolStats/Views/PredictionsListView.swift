@@ -239,7 +239,7 @@ struct OddsComparisonRow: View {
                 .frame(width: 32, alignment: .trailing)
 
             // Show market vs fair odds comparison if available
-            if let market = marketOdds, let fair = fairOdds {
+            if let market = marketOdds, let _ = fairOdds {
                 HStack(spacing: 2) {
                     Text(String(format: "%.2f", market))
                         .font(.caption2)

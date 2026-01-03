@@ -472,10 +472,27 @@ struct OddsBox: View {
                     ourProbability: 0.45,
                     impliedProbability: 0.40,
                     edge: 0.05,
+                    edgePercentage: 5.0,
+                    expectedValue: 0.125,
+                    evPercentage: 12.5,
                     marketOdds: 2.50,
-                    fairOdds: 2.22
+                    fairOdds: 2.22,
+                    isValueBet: true
                 )
-            ]
+            ],
+            hasValueBet: true,
+            bestValueBet: ValueBet(
+                outcome: "home",
+                ourProbability: 0.45,
+                impliedProbability: 0.40,
+                edge: 0.05,
+                edgePercentage: 5.0,
+                expectedValue: 0.125,
+                evPercentage: 12.5,
+                marketOdds: 2.50,
+                fairOdds: 2.22,
+                isValueBet: true
+            )
         ))
     }
 }
