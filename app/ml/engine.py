@@ -303,6 +303,8 @@ class XGBoostEngine:
             if odds <= 0:
                 continue
 
+            # Convert numpy types to native Python floats
+            prob = float(prob)
             implied_prob = 1 / odds
             edge = prob - implied_prob
 
@@ -319,7 +321,7 @@ class XGBoostEngine:
                     "edge_percentage": round(edge * 100, 1),  # 5.2%
                     "expected_value": round(expected_value, 4),
                     "ev_percentage": round(expected_value * 100, 1),  # 10.5%
-                    "market_odds": odds,
+                    "market_odds": float(odds),
                     "fair_odds": round(1 / prob, 2),
                     "is_value_bet": True,
                 })
