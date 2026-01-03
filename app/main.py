@@ -440,3 +440,144 @@ async def model_info():
         "version": ml_engine.model_version,
         "features": ml_engine.FEATURE_COLUMNS,
     }
+
+
+@app.get("/teams/{team_id}/history")
+async def get_team_history(
+    team_id: int,
+    limit: int = 5,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Get recent match history for a team.
+
+    Returns the last N matches played by the team with results.
+    """
+    from sqlalchemy import or_
+
+    # Get team info
+    team = await session.get(Team, team_id)
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    # Get last matches where team played (home or away), only finished matches
+    query = (
+        select(Match)
+        .where(
+            or_(
+                Match.home_team_id == team_id,
+                Match.away_team_id == team_id,
+            ),
+            Match.status == "FT",  # Only finished matches
+        )
+        .order_by(Match.date.desc())
+        .limit(limit)
+    )
+
+    result = await session.execute(query)
+    matches = result.scalars().all()
+
+    history = []
+    for match in matches:
+        # Get opponent
+        if match.home_team_id == team_id:
+            opponent = await session.get(Team, match.away_team_id)
+            team_goals = match.home_goals
+            opponent_goals = match.away_goals
+            is_home = True
+        else:
+            opponent = await session.get(Team, match.home_team_id)
+            team_goals = match.away_goals
+            opponent_goals = match.home_goals
+            is_home = False
+
+        # Determine result
+        if team_goals > opponent_goals:
+            result_str = "W"
+        elif team_goals < opponent_goals:
+            result_str = "L"
+        else:
+            result_str = "D"
+
+        history.append({
+            "match_id": match.id,
+            "date": match.date.isoformat() if match.date else None,
+            "opponent": opponent.name if opponent else "Unknown",
+            "opponent_logo": opponent.logo_url if opponent else None,
+            "is_home": is_home,
+            "team_goals": team_goals,
+            "opponent_goals": opponent_goals,
+            "result": result_str,
+            "league_id": match.league_id,
+        })
+
+    return {
+        "team_id": team_id,
+        "team_name": team.name,
+        "team_logo": team.logo_url,
+        "matches": history,
+    }
+
+
+@app.get("/matches/{match_id}/details")
+async def get_match_details(
+    match_id: int,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Get full match details including both teams' recent history.
+
+    Returns match info, prediction, and last 5 matches for each team.
+    """
+    # Get match
+    match = await session.get(Match, match_id)
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    # Get teams
+    home_team = await session.get(Team, match.home_team_id)
+    away_team = await session.get(Team, match.away_team_id)
+
+    # Get history for both teams
+    home_history = await get_team_history(match.home_team_id, limit=5, session=session)
+    away_history = await get_team_history(match.away_team_id, limit=5, session=session)
+
+    # Get prediction if model is loaded and match not played
+    prediction = None
+    if ml_engine.is_loaded and match.status == "NS":
+        try:
+            feature_engineer = FeatureEngineer(session=session)
+            features = await feature_engineer.get_match_features(match)
+            features["home_team_name"] = home_team.name if home_team else "Unknown"
+            features["away_team_name"] = away_team.name if away_team else "Unknown"
+
+            import pandas as pd
+            df = pd.DataFrame([features])
+            predictions = ml_engine.predict(df)
+            prediction = predictions[0] if predictions else None
+        except Exception as e:
+            logger.error(f"Error getting prediction: {e}")
+
+    return {
+        "match": {
+            "id": match.id,
+            "date": match.date.isoformat() if match.date else None,
+            "league_id": match.league_id,
+            "status": match.status,
+            "home_goals": match.home_goals,
+            "away_goals": match.away_goals,
+        },
+        "home_team": {
+            "id": home_team.id if home_team else None,
+            "name": home_team.name if home_team else "Unknown",
+            "logo": home_team.logo_url if home_team else None,
+            "history": home_history["matches"],
+        },
+        "away_team": {
+            "id": away_team.id if away_team else None,
+            "name": away_team.name if away_team else "Unknown",
+            "logo": away_team.logo_url if away_team else None,
+            "history": away_history["matches"],
+        },
+        "prediction": prediction,
+    }
