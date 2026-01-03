@@ -89,16 +89,18 @@ class XGBoostEngine:
         X = self._prepare_features(df)
         y = df["result"].values
 
-        # Default hyperparameters
+        # Optimized hyperparameters (Optuna, 50 trials, Brier Score: 0.2054)
         params = {
             "objective": "multi:softprob",
             "num_class": 3,
-            "max_depth": 6,
-            "learning_rate": 0.1,
-            "n_estimators": 100,
-            "min_child_weight": 3,
-            "subsample": 0.8,
-            "colsample_bytree": 0.8,
+            "max_depth": 3,
+            "learning_rate": 0.0283,
+            "n_estimators": 114,
+            "min_child_weight": 7,
+            "subsample": 0.72,
+            "colsample_bytree": 0.71,
+            "reg_alpha": 2.8e-05,
+            "reg_lambda": 0.000904,
             "random_state": 42,
             "use_label_encoder": False,
             "eval_metric": "mlogloss",
