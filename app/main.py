@@ -296,6 +296,7 @@ async def train_model(
 async def get_predictions(
     league_ids: Optional[str] = None,  # comma-separated
     days: int = 7,
+    save: bool = False,  # Save predictions to database
     session: AsyncSession = Depends(get_async_session),
 ):
     """
@@ -303,6 +304,8 @@ async def get_predictions(
 
     Returns probabilities and fair odds for matches that haven't been played.
     Uses in-memory caching (5 min TTL) for faster responses.
+
+    Set save=true to persist predictions to database for later auditing.
     """
     global _predictions_cache
 
@@ -316,8 +319,8 @@ async def get_predictions(
     cache_key = f"{league_ids or 'all'}_{days}"
     now = time.time()
 
-    # Check cache (only for default requests without league filter)
-    if league_ids is None and _predictions_cache["data"] is not None:
+    # Check cache (only for default requests without league filter and not saving)
+    if league_ids is None and not save and _predictions_cache["data"] is not None:
         if now - _predictions_cache["timestamp"] < _predictions_cache["ttl"]:
             logger.info("Returning cached predictions")
             return _predictions_cache["data"]
@@ -339,6 +342,11 @@ async def get_predictions(
 
     # Make predictions
     predictions = ml_engine.predict(df)
+
+    # Save predictions to database if requested
+    if save:
+        saved_count = await _save_predictions_to_db(session, predictions, ml_engine.model_version)
+        logger.info(f"Saved {saved_count} predictions to database")
 
     # Convert to response model
     prediction_items = []
@@ -366,12 +374,54 @@ async def get_predictions(
     )
 
     # Cache the response (only for default requests)
-    if league_ids is None:
+    if league_ids is None and not save:
         _predictions_cache["data"] = response
         _predictions_cache["timestamp"] = now
         logger.info(f"Cached {len(prediction_items)} predictions")
 
     return response
+
+
+async def _save_predictions_to_db(
+    session: AsyncSession,
+    predictions: list[dict],
+    model_version: str,
+) -> int:
+    """Save predictions to database for later auditing."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    saved = 0
+    for pred in predictions:
+        match_id = pred.get("match_id")
+        if not match_id:
+            continue
+
+        probs = pred["probabilities"]
+
+        # Use upsert to avoid duplicates
+        stmt = pg_insert(Prediction).values(
+            match_id=match_id,
+            model_version=model_version,
+            home_prob=probs["home"],
+            draw_prob=probs["draw"],
+            away_prob=probs["away"],
+        ).on_conflict_do_update(
+            constraint="uq_match_model",
+            set_={
+                "home_prob": probs["home"],
+                "draw_prob": probs["draw"],
+                "away_prob": probs["away"],
+            }
+        )
+
+        try:
+            await session.execute(stmt)
+            saved += 1
+        except Exception as e:
+            logger.warning(f"Error saving prediction for match {match_id}: {e}")
+
+    await session.commit()
+    return saved
 
 
 @app.get("/predictions/match/{match_id}")

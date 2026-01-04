@@ -17,6 +17,72 @@ CURRENT_SEASON = 2025
 scheduler = AsyncIOScheduler()
 
 
+async def daily_save_predictions():
+    """
+    Daily job to save predictions for upcoming matches.
+    Runs every day at 7:00 AM UTC (before audit).
+    """
+    logger.info("Starting daily prediction save job...")
+
+    try:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from app.ml import XGBoostEngine
+        from app.models import Prediction
+
+        async with AsyncSessionLocal() as session:
+            # Load ML engine
+            engine = XGBoostEngine()
+            if not engine.load_model():
+                logger.error("Could not load ML model for prediction save")
+                return
+
+            # Get upcoming matches features
+            feature_engineer = FeatureEngineer(session=session)
+            df = await feature_engineer.get_upcoming_matches_features()
+
+            if len(df) == 0:
+                logger.info("No upcoming matches to save predictions for")
+                return
+
+            # Make predictions
+            predictions = engine.predict(df)
+
+            # Save to database
+            saved = 0
+            for pred in predictions:
+                match_id = pred.get("match_id")
+                if not match_id:
+                    continue
+
+                probs = pred["probabilities"]
+                stmt = pg_insert(Prediction).values(
+                    match_id=match_id,
+                    model_version=engine.model_version,
+                    home_prob=probs["home"],
+                    draw_prob=probs["draw"],
+                    away_prob=probs["away"],
+                ).on_conflict_do_update(
+                    constraint="uq_match_model",
+                    set_={
+                        "home_prob": probs["home"],
+                        "draw_prob": probs["draw"],
+                        "away_prob": probs["away"],
+                    }
+                )
+                try:
+                    await session.execute(stmt)
+                    saved += 1
+                except Exception as e:
+                    logger.warning(f"Error saving prediction: {e}")
+
+            await session.commit()
+            logger.info(f"Daily prediction save complete: {saved} predictions saved")
+
+    except Exception as e:
+        logger.error(f"Daily prediction save failed: {e}")
+
+
 async def daily_audit():
     """
     Daily job to audit completed matches from the last 3 days.
@@ -91,6 +157,15 @@ async def weekly_sync_and_train(ml_engine):
 
 def start_scheduler(ml_engine):
     """Start the background scheduler."""
+    # Daily prediction save: Every day at 7:00 AM UTC (before audit)
+    scheduler.add_job(
+        daily_save_predictions,
+        trigger=CronTrigger(hour=7, minute=0),
+        id="daily_save_predictions",
+        name="Daily Save Predictions",
+        replace_existing=True,
+    )
+
     # Daily audit job: Every day at 8:00 AM UTC
     scheduler.add_job(
         daily_audit,
@@ -113,6 +188,7 @@ def start_scheduler(ml_engine):
     scheduler.start()
     logger.info(
         "Scheduler started:\n"
+        "  - Daily save predictions: 7:00 AM UTC\n"
         "  - Daily audit: 8:00 AM UTC\n"
         "  - Weekly sync/audit/train: Mondays 6:00 AM UTC"
     )
