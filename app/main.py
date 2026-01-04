@@ -123,6 +123,8 @@ class PredictionItem(BaseModel):
     match_external_id: Optional[int] = None
     home_team: str
     away_team: str
+    home_team_logo: Optional[str] = None
+    away_team_logo: Optional[str] = None
     date: datetime
     probabilities: dict
     fair_odds: dict
@@ -318,6 +320,8 @@ async def get_predictions(
             match_external_id=pred.get("match_external_id"),
             home_team=pred["home_team"],
             away_team=pred["away_team"],
+            home_team_logo=pred.get("home_team_logo"),
+            away_team_logo=pred.get("away_team_logo"),
             date=pred["date"],
             probabilities=pred["probabilities"],
             fair_odds=pred["fair_odds"],

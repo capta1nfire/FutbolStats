@@ -589,13 +589,13 @@ struct MatchDetailView: View {
     }
 
     private func formRow(data: TeamFormData) -> some View {
-        HStack {
-            // Position (hide if 0/unavailable)
+        HStack(spacing: 0) {
+            // Position
             Text(data.position > 0 ? "#\(data.position)" : "-")
-                .font(.caption)
-                .fontWeight(.medium)
-                .foregroundStyle(.gray)
-                .frame(width: 24, alignment: .leading)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(.white.opacity(0.8))
+                .frame(width: 36, alignment: .leading)
 
             // Team logo
             if let logoUrl = data.logoUrl, let url = URL(string: logoUrl) {
@@ -607,19 +607,18 @@ struct MatchDetailView: View {
                     Image(systemName: "shield.fill")
                         .foregroundStyle(.gray)
                 }
-                .frame(width: 36, height: 36)
+                .frame(width: 32, height: 32)
             } else {
                 Image(systemName: "shield.fill")
                     .font(.title3)
                     .foregroundStyle(.gray)
-                    .frame(width: 36, height: 36)
+                    .frame(width: 32, height: 32)
             }
 
             Spacer()
-                .frame(width: 16)
 
             // Form pills - always show 5, pad with empty if needed
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 let formResults = Array(data.form.prefix(5))
                 ForEach(0..<5, id: \.self) { index in
                     if index < formResults.count {
@@ -642,6 +641,7 @@ struct MatchDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.gray)
             }
+            .frame(width: 56, alignment: .trailing)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
@@ -692,6 +692,8 @@ struct MatchDetailView: View {
             matchExternalId: 12345,
             homeTeam: "Real Madrid",
             awayTeam: "FC Barcelona",
+            homeTeamLogo: nil,
+            awayTeamLogo: nil,
             date: "2026-01-03T07:00:00",
             probabilities: Probabilities(home: 0.334, draw: 0.333, away: 0.333),
             fairOdds: FairOdds(home: 2.47, draw: 3.39, away: 3.33),

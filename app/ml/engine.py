@@ -229,6 +229,8 @@ class XGBoostEngine:
                 "match_external_id": int(row.get("match_external_id")) if row.get("match_external_id") else None,
                 "home_team": row.get("home_team_name", "Unknown"),
                 "away_team": row.get("away_team_name", "Unknown"),
+                "home_team_logo": row.get("home_team_logo"),
+                "away_team_logo": row.get("away_team_logo"),
                 "date": row.get("date"),
                 "probabilities": {
                     "home": round(home_prob, 4),

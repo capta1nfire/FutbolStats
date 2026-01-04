@@ -2,54 +2,64 @@ import SwiftUI
 
 struct PredictionsListView: View {
     @StateObject private var viewModel = PredictionsViewModel()
-    @State private var selectedDays = 7
 
     var body: some View {
         NavigationStack {
-            Group {
-                if viewModel.isLoading && viewModel.predictions.isEmpty {
-                    LoadingView()
-                } else if let error = viewModel.error, viewModel.predictions.isEmpty {
-                    ErrorView(message: error) {
-                        Task { await viewModel.refresh() }
+            ZStack {
+                Color.black.ignoresSafeArea()
+
+                VStack(spacing: 0) {
+                    // Date selector
+                    dateSelector
+                        .padding(.top, 8)
+
+                    // Content
+                    if viewModel.isLoading && viewModel.predictions.isEmpty {
+                        Spacer()
+                        LoadingView()
+                        Spacer()
+                    } else if let error = viewModel.error, viewModel.predictions.isEmpty {
+                        Spacer()
+                        ErrorView(message: error) {
+                            Task { await viewModel.refresh() }
+                        }
+                        Spacer()
+                    } else if viewModel.predictionsForSelectedDate.isEmpty {
+                        Spacer()
+                        noMatchesForDate
+                        Spacer()
+                    } else {
+                        predictionsList
                     }
-                } else if viewModel.predictions.isEmpty {
-                    EmptyStateView()
-                } else {
-                    predictionsList
                 }
             }
-            .navigationTitle("FutbolStats")
+            .navigationTitle("Predictions")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Picker("Days", selection: $selectedDays) {
-                            Text("3 days").tag(3)
-                            Text("7 days").tag(7)
-                            Text("14 days").tag(14)
-                            Text("30 days").tag(30)
-                        }
+                        Label("Leagues filter coming soon", systemImage: "slider.horizontal.3")
                     } label: {
-                        Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                            .foregroundStyle(.gray)
                     }
                 }
 
                 ToolbarItem(placement: .topBarLeading) {
-                    HStack {
+                    HStack(spacing: 4) {
                         Circle()
                             .fill(viewModel.modelLoaded ? .green : .red)
-                            .frame(width: 8, height: 8)
-                        Text(viewModel.modelLoaded ? "Model Ready" : "Model Offline")
-                            .font(.caption)
+                            .frame(width: 6, height: 6)
+                        Text(viewModel.modelLoaded ? "Ready" : "Offline")
+                            .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
                 }
             }
+            .toolbarBackground(Color.black, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .refreshable {
                 await viewModel.refresh()
-            }
-            .onChange(of: selectedDays) { _, newValue in
-                Task { await viewModel.loadPredictions(days: newValue) }
             }
             .task {
                 await viewModel.refresh()
@@ -57,40 +67,321 @@ struct PredictionsListView: View {
         }
     }
 
-    private var predictionsList: some View {
-        List {
-            if !viewModel.valueBetPredictions.isEmpty {
-                Section {
-                    ForEach(viewModel.valueBetPredictions) { prediction in
-                        NavigationLink(destination: MatchDetailView(prediction: prediction)) {
-                            MatchRowView(prediction: prediction, showValueBadge: true)
+    // MARK: - Date Selector
+
+    private var dateSelector: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(dateRange, id: \.self) { date in
+                        DateCell(
+                            date: date,
+                            isSelected: Calendar.current.isDate(date, inSameDayAs: viewModel.selectedDate),
+                            matchCount: viewModel.matchCount(for: date)
+                        )
+                        .id(date)
+                        .onTapGesture {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                viewModel.selectedDate = date
+                            }
                         }
                     }
-                } header: {
-                    Label("Value Bets", systemImage: "star.fill")
-                        .foregroundStyle(.yellow)
                 }
+                .padding(.horizontal, 16)
             }
-
-            Section {
-                ForEach(viewModel.upcomingPredictions) { prediction in
-                    NavigationLink(destination: MatchDetailView(prediction: prediction)) {
-                        MatchRowView(prediction: prediction, showValueBadge: false)
-                    }
-                }
-            } header: {
-                Text("Upcoming Matches")
-            }
-
-            if let lastUpdated = viewModel.lastUpdated {
-                Section {
-                    Text("Last updated: \(lastUpdated.formatted(.relative(presentation: .named)))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            .onAppear {
+                // Scroll to today
+                proxy.scrollTo(Calendar.current.startOfDay(for: Date()), anchor: .center)
             }
         }
-        .listStyle(.insetGrouped)
+        .padding(.bottom, 12)
+    }
+
+    // 2 days before + today + 7 days ahead = 10 days total
+    private var dateRange: [Date] {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        return (-2..<8).compactMap { calendar.date(byAdding: .day, value: $0, to: today) }
+    }
+
+    // MARK: - No Matches View
+
+    private var noMatchesForDate: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "calendar.badge.exclamationmark")
+                .font(.system(size: 48))
+                .foregroundStyle(.gray)
+
+            Text("No matches")
+                .font(.headline)
+                .foregroundStyle(.white)
+
+            Text(formattedSelectedDate)
+                .font(.subheadline)
+                .foregroundStyle(.gray)
+        }
+    }
+
+    private var formattedSelectedDate: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEEE, MMM d"
+        return formatter.string(from: viewModel.selectedDate)
+    }
+
+    // MARK: - Predictions List
+
+    private var predictionsList: some View {
+        ScrollView {
+            LazyVStack(spacing: 12) {
+                // Value Bets Section
+                if !viewModel.valueBetPredictionsForSelectedDate.isEmpty {
+                    sectionHeader(title: "Value Bets", icon: "star.fill", color: Color(red: 0.2, green: 1.0, blue: 0.4))
+
+                    ForEach(viewModel.valueBetPredictionsForSelectedDate) { prediction in
+                        NavigationLink(destination: MatchDetailView(prediction: prediction)) {
+                            MatchCard(prediction: prediction, showValueBadge: true)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                // All Matches Section
+                if !viewModel.regularPredictionsForSelectedDate.isEmpty {
+                    sectionHeader(title: "Matches", icon: "sportscourt", color: .gray)
+                        .padding(.top, viewModel.valueBetPredictionsForSelectedDate.isEmpty ? 0 : 8)
+
+                    ForEach(viewModel.regularPredictionsForSelectedDate) { prediction in
+                        NavigationLink(destination: MatchDetailView(prediction: prediction)) {
+                            MatchCard(prediction: prediction, showValueBadge: false)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 20)
+        }
+    }
+
+    private func sectionHeader(title: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(color)
+
+            Text(title)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(.white)
+
+            Spacer()
+        }
+        .padding(.top, 8)
+    }
+}
+
+// MARK: - Date Cell
+
+struct DateCell: View {
+    let date: Date
+    let isSelected: Bool
+    let matchCount: Int
+
+    private var isToday: Bool {
+        Calendar.current.isDateInToday(date)
+    }
+
+    private var isYesterday: Bool {
+        Calendar.current.isDateInYesterday(date)
+    }
+
+    private var isPast: Bool {
+        date < Calendar.current.startOfDay(for: Date())
+    }
+
+    private var dayName: String {
+        if isToday { return "Today" }
+        if isYesterday { return "Yest." }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE"
+        return formatter.string(from: date)
+    }
+
+    private var dayNumber: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "d"
+        return formatter.string(from: date)
+    }
+
+    private var textColor: Color {
+        if isSelected { return .white }
+        if isPast { return .gray.opacity(0.6) }
+        return .gray
+    }
+
+    private var backgroundColor: Color {
+        if isSelected { return .blue }
+        if isPast { return Color(white: 0.08) }
+        return Color(white: 0.12)
+    }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Text(dayName)
+                .font(.caption2)
+                .fontWeight(isToday ? .bold : .regular)
+                .foregroundStyle(textColor)
+
+            Text(dayNumber)
+                .font(.title3)
+                .fontWeight(.bold)
+                .foregroundStyle(textColor)
+
+            // Match count indicator
+            if matchCount > 0 {
+                Text("\(matchCount)")
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .foregroundStyle(isSelected ? .black : (isPast ? .gray.opacity(0.6) : .gray))
+                    .frame(width: 20, height: 16)
+                    .background(isSelected ? Color.white : Color.gray.opacity(isPast ? 0.2 : 0.3))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+            } else {
+                Text("-")
+                    .font(.caption2)
+                    .foregroundStyle(.gray.opacity(0.5))
+                    .frame(width: 20, height: 16)
+            }
+        }
+        .frame(width: 52, height: 72)
+        .background(backgroundColor)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+// MARK: - Match Card
+
+struct MatchCard: View {
+    let prediction: MatchPrediction
+    let showValueBadge: Bool
+
+    var body: some View {
+        VStack(spacing: 12) {
+            // Value bet banner
+            if showValueBadge, let best = prediction.bestValueBet {
+                let neonGreen = Color(red: 0.2, green: 1.0, blue: 0.4)
+                HStack {
+                    Image(systemName: "star.fill")
+                        .font(.caption2)
+                        .foregroundStyle(neonGreen)
+
+                    Text("VALUE BET")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundStyle(neonGreen)
+
+                    Spacer()
+
+                    Text("\(best.outcome.uppercased()) \(best.evDisplay)")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(neonGreen)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(neonGreen.opacity(0.15))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+
+            // Teams and odds
+            HStack {
+                // Teams with logos
+                VStack(alignment: .leading, spacing: 6) {
+                    teamRow(name: prediction.homeTeam, logoUrl: prediction.homeTeamLogo)
+                    teamRow(name: prediction.awayTeam, logoUrl: prediction.awayTeamLogo)
+                }
+
+                Spacer()
+
+                // Match time
+                if let date = prediction.matchDate {
+                    Text(formatTime(date))
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.gray)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color(white: 0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+            }
+
+            // Probabilities bar
+            HStack(spacing: 4) {
+                probabilityPill(label: "H", value: prediction.probabilities.home, odds: prediction.marketOdds?.home)
+                probabilityPill(label: "D", value: prediction.probabilities.draw, odds: prediction.marketOdds?.draw)
+                probabilityPill(label: "A", value: prediction.probabilities.away, odds: prediction.marketOdds?.away)
+            }
+        }
+        .padding(14)
+        .background(Color(white: 0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func teamRow(name: String, logoUrl: String?) -> some View {
+        HStack(spacing: 8) {
+            if let logoUrl = logoUrl, let url = URL(string: logoUrl) {
+                AsyncImage(url: url) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                } placeholder: {
+                    Circle()
+                        .fill(Color(white: 0.2))
+                }
+                .frame(width: 22, height: 22)
+            } else {
+                Circle()
+                    .fill(Color(white: 0.2))
+                    .frame(width: 22, height: 22)
+            }
+
+            Text(name)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(.white)
+                .lineLimit(1)
+        }
+    }
+
+    private func formatTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
+    }
+
+    private func probabilityPill(label: String, value: Double, odds: Double?) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .font(.caption2)
+                .fontWeight(.bold)
+                .foregroundStyle(.gray)
+
+            Text(String(format: "%.0f%%", value * 100))
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.white)
+
+            if let odds = odds {
+                Text(String(format: "%.2f", odds))
+                    .font(.caption2)
+                    .foregroundStyle(.gray)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(Color(white: 0.15))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -180,25 +471,26 @@ struct MatchRowView: View {
 
 struct ValueBetBanner: View {
     let prediction: MatchPrediction
+    private let neonGreen = Color(red: 0.2, green: 1.0, blue: 0.4)
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "dollarsign.circle.fill")
-                .foregroundStyle(.green)
+                .foregroundStyle(neonGreen)
 
             Text("VALUE BET")
                 .font(.caption2)
                 .fontWeight(.heavy)
-                .foregroundStyle(.green)
+                .foregroundStyle(neonGreen)
 
             if let best = prediction.bestValueBet {
                 Text(best.evDisplay)
                     .font(.caption)
                     .fontWeight(.bold)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.black)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(.green)
+                    .background(neonGreen)
                     .clipShape(Capsule())
             }
 
@@ -206,7 +498,7 @@ struct ValueBetBanner: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(.green.opacity(0.1))
+        .background(neonGreen.opacity(0.1))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }

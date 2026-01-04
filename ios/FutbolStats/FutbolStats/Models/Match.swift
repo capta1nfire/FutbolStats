@@ -19,6 +19,8 @@ struct MatchPrediction: Codable, Identifiable {
     let matchExternalId: Int?
     let homeTeam: String
     let awayTeam: String
+    let homeTeamLogo: String?
+    let awayTeamLogo: String?
     let date: String?
     let probabilities: Probabilities
     let fairOdds: FairOdds
@@ -78,6 +80,8 @@ struct MatchPrediction: Codable, Identifiable {
         case matchExternalId = "match_external_id"
         case homeTeam = "home_team"
         case awayTeam = "away_team"
+        case homeTeamLogo = "home_team_logo"
+        case awayTeamLogo = "away_team_logo"
         case date
         case probabilities
         case fairOdds = "fair_odds"

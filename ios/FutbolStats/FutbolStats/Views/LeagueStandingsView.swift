@@ -8,6 +8,8 @@ struct LeagueStandingsView: View {
     @State private var standings: [StandingsEntry] = []
     @State private var isLoading = true
     @State private var error: String?
+    @State private var horizontalScrollOffset: CGFloat = 0
+    @State private var initialScrollX: CGFloat?
     @Environment(\.dismiss) private var dismiss
 
     // Column widths
@@ -20,7 +22,11 @@ struct LeagueStandingsView: View {
     private let formPillSize: CGFloat = 22
 
     private var stickyWidth: CGFloat {
-        zoneWidth + positionWidth + logoWidth + teamNameWidth + 20
+        zoneWidth + positionWidth + logoWidth + teamNameWidth + 6
+    }
+
+    private var leagueLogoUrl: String {
+        "https://media.api-sports.io/football/leagues/\(leagueId).png"
     }
 
     var body: some View {
@@ -44,9 +50,29 @@ struct LeagueStandingsView: View {
                     standingsTable
                 }
             }
-            .navigationTitle("STANDINGS")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 8) {
+                        AsyncImage(url: URL(string: leagueLogoUrl)) { image in
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 20, height: 20)
+                        } placeholder: {
+                            Image(systemName: "trophy.fill")
+                                .foregroundStyle(.gray)
+                        }
+                        .frame(width: 28, height: 28)
+                        .background(Color.white)
+                        .clipShape(Circle())
+
+                        Text("STANDINGS")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                            .foregroundStyle(.white)
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         dismiss()
@@ -91,7 +117,17 @@ struct LeagueStandingsView: View {
                 }
                 .frame(width: stickyWidth)
                 .background(Color.black)
-                .shadow(color: Color.black.opacity(0.4), radius: 4, x: 4, y: 0)
+                .overlay(alignment: .trailing) {
+                    if horizontalScrollOffset > 5 {
+                        LinearGradient(
+                            colors: [Color.black.opacity(0.6), Color.clear],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(width: 8)
+                        .offset(x: 8)
+                    }
+                }
                 .zIndex(1)
 
                 // SCROLLABLE COLUMNS (Stats)
@@ -115,8 +151,52 @@ struct LeagueStandingsView: View {
                             }
                         }
                     }
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear
+                                .onAppear {
+                                    initialScrollX = geo.frame(in: .global).minX
+                                }
+                                .onChange(of: geo.frame(in: .global).minX) { _, newValue in
+                                    if let initial = initialScrollX {
+                                        horizontalScrollOffset = initial - newValue
+                                    }
+                                }
+                        }
+                    )
                 }
             }
+
+            // Legend row at the end of the table
+            zoneLegendRow
+                .padding(.top, 16)
+                .padding(.bottom, 24)
+        }
+    }
+
+    // MARK: - Zone Legend Row
+
+    private var zoneLegendRow: some View {
+        HStack(spacing: 0) {
+            legendItem(color: .blue, text: "Champions\nLeague")
+            Spacer()
+            legendItem(color: .orange, text: "Europa\nLeague")
+            Spacer()
+            legendItem(color: .red, text: "Relegation")
+        }
+        .padding(.horizontal, 24)
+    }
+
+    private func legendItem(color: Color, text: String) -> some View {
+        VStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(color)
+                .frame(width: 32, height: 4)
+
+            Text(text)
+                .font(.caption2)
+                .foregroundStyle(.gray)
+                .multilineTextAlignment(.center)
         }
     }
 
@@ -124,20 +204,15 @@ struct LeagueStandingsView: View {
 
     private var stickyHeader: some View {
         HStack(spacing: 0) {
-            Rectangle()
-                .fill(Color.clear)
-                .frame(width: zoneWidth)
-
-            Text("")
-                .frame(width: positionWidth)
+            Color.clear
+                .frame(width: zoneWidth + positionWidth)
 
             Text("Club")
                 .font(.caption)
                 .fontWeight(.semibold)
                 .foregroundStyle(.gray)
-                .frame(width: logoWidth + 8 + teamNameWidth, alignment: .leading)
+                .frame(width: logoWidth + teamNameWidth + 6, alignment: .leading)
         }
-        .padding(.leading, 5)
         .background(Color(white: 0.1))
     }
 
@@ -145,13 +220,13 @@ struct LeagueStandingsView: View {
 
     private var statsHeader: some View {
         HStack(spacing: 0) {
-            statHeader("PJ")
-            statHeader("G")
-            statHeader("E")
-            statHeader("P")
+            statHeader("MP")
+            statHeader("W")
+            statHeader("D")
+            statHeader("L")
             statHeader("GF")
-            statHeader("GC")
-            statHeader("DG")
+            statHeader("GA")
+            statHeader("GD")
             pointsHeader("Pts")
             formHeader()
         }
@@ -226,7 +301,6 @@ struct LeagueStandingsView: View {
                 .frame(width: teamNameWidth, alignment: .leading)
                 .padding(.leading, 6)
         }
-        .padding(.leading, 5)
         .background(isHighlighted ? Color.white.opacity(0.08) : Color.black)
     }
 
@@ -329,6 +403,7 @@ struct LeagueStandingsView: View {
         }
         isLoading = false
     }
+
 }
 
 // MARK: - Preview
@@ -340,4 +415,13 @@ struct LeagueStandingsView: View {
         awayTeamId: 65   // Nottingham Forest
     )
     .preferredColorScheme(.dark)
+}
+
+// MARK: - Preference Keys
+
+private struct ScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
 }

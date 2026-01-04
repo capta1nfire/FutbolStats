@@ -8,6 +8,7 @@ class PredictionsViewModel: ObservableObject {
     @Published var error: String?
     @Published var modelLoaded = false
     @Published var lastUpdated: Date?
+    @Published var selectedDate: Date = Date()
 
     private let apiClient = APIClient.shared
 
@@ -49,6 +50,26 @@ class PredictionsViewModel: ObservableObject {
 
     // MARK: - Filtered Predictions
 
+    var predictionsForSelectedDate: [MatchPrediction] {
+        let calendar = Calendar.current
+        return predictions.filter { prediction in
+            guard let matchDate = prediction.matchDate else { return false }
+            return calendar.isDate(matchDate, inSameDayAs: selectedDate)
+        }.sorted { (p1, p2) in
+            guard let d1 = p1.matchDate, let d2 = p2.matchDate else { return false }
+            return d1 < d2
+        }
+    }
+
+    var valueBetPredictionsForSelectedDate: [MatchPrediction] {
+        predictionsForSelectedDate.filter { ($0.valueBets?.count ?? 0) > 0 }
+    }
+
+    var regularPredictionsForSelectedDate: [MatchPrediction] {
+        predictionsForSelectedDate.filter { ($0.valueBets?.count ?? 0) == 0 }
+    }
+
+    // Legacy - all predictions
     var valueBetPredictions: [MatchPrediction] {
         predictions.filter { ($0.valueBets?.count ?? 0) > 0 }
     }
@@ -58,5 +79,15 @@ class PredictionsViewModel: ObservableObject {
             guard let d1 = p1.matchDate, let d2 = p2.matchDate else { return false }
             return d1 < d2
         }
+    }
+
+    // MARK: - Date Helpers
+
+    func matchCount(for date: Date) -> Int {
+        let calendar = Calendar.current
+        return predictions.filter { prediction in
+            guard let matchDate = prediction.matchDate else { return false }
+            return calendar.isDate(matchDate, inSameDayAs: date)
+        }.count
     }
 }
