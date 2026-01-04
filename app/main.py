@@ -769,3 +769,158 @@ async def get_league_standings(league_id: int, season: int = None):
     except Exception as e:
         logger.error(f"Error fetching standings: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch standings")
+
+
+# ============================================================================
+# AUDIT ENDPOINTS - Post-match analysis and model evaluation
+# ============================================================================
+
+
+class AuditResponse(BaseModel):
+    matches_audited: int
+    correct_predictions: int
+    accuracy: float
+    anomalies_detected: int
+    period_days: int
+
+
+class AuditSummaryResponse(BaseModel):
+    total_outcomes: int
+    correct_predictions: int
+    overall_accuracy: float
+    by_tier: dict
+    by_deviation_type: dict
+    recent_anomalies: list
+
+
+@app.post("/audit/run", response_model=AuditResponse)
+async def run_audit(
+    days: int = 7,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Run post-match audit for completed matches.
+
+    Analyzes predictions vs actual results for matches finished in the last N days.
+    Fetches xG, events (red cards, penalties, VAR) and classifies deviations.
+    """
+    from app.audit import create_audit_service
+
+    logger.info(f"Running audit for last {days} days...")
+
+    try:
+        audit_service = await create_audit_service(session)
+        result = await audit_service.audit_recent_matches(days=days)
+        await audit_service.close()
+
+        return AuditResponse(**result)
+
+    except Exception as e:
+        logger.error(f"Audit failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Audit failed: {str(e)}")
+
+
+@app.get("/audit/summary", response_model=AuditSummaryResponse)
+async def get_audit_summary(
+    days: Optional[int] = None,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Get summary of audit results.
+
+    Returns accuracy by confidence tier, deviation distribution, and recent anomalies.
+    """
+    from sqlalchemy import func
+
+    from app.models import PredictionOutcome, PostMatchAudit
+
+    # Base query
+    query = select(PredictionOutcome)
+
+    if days:
+        from datetime import timedelta
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        query = query.where(PredictionOutcome.audited_at >= cutoff)
+
+    result = await session.execute(query)
+    outcomes = result.scalars().all()
+
+    if not outcomes:
+        return AuditSummaryResponse(
+            total_outcomes=0,
+            correct_predictions=0,
+            overall_accuracy=0.0,
+            by_tier={},
+            by_deviation_type={},
+            recent_anomalies=[],
+        )
+
+    # Calculate metrics
+    total = len(outcomes)
+    correct = sum(1 for o in outcomes if o.prediction_correct)
+    overall_accuracy = (correct / total * 100) if total > 0 else 0
+
+    # By tier
+    tiers = {}
+    for tier in ["gold", "silver", "copper"]:
+        tier_outcomes = [o for o in outcomes if o.confidence_tier == tier]
+        tier_correct = sum(1 for o in tier_outcomes if o.prediction_correct)
+        tier_total = len(tier_outcomes)
+        tiers[tier] = {
+            "total": tier_total,
+            "correct": tier_correct,
+            "accuracy": (tier_correct / tier_total * 100) if tier_total > 0 else 0,
+        }
+
+    # Get audits for deviation breakdown
+    outcome_ids = [o.id for o in outcomes]
+    audit_result = await session.execute(
+        select(PostMatchAudit).where(PostMatchAudit.outcome_id.in_(outcome_ids))
+    )
+    audits = audit_result.scalars().all()
+
+    # By deviation type
+    deviation_types = {}
+    for dtype in ["minimal", "expected", "anomaly"]:
+        count = sum(1 for a in audits if a.deviation_type == dtype)
+        deviation_types[dtype] = count
+
+    # Recent anomalies
+    anomaly_audits = [a for a in audits if a.deviation_type == "anomaly"]
+    recent_anomalies = []
+
+    for audit in anomaly_audits[:10]:  # Last 10 anomalies
+        outcome = next((o for o in outcomes if o.id == audit.outcome_id), None)
+        if outcome:
+            # Get match info
+            match_result = await session.execute(
+                select(Match).where(Match.id == outcome.match_id)
+            )
+            match = match_result.scalar_one_or_none()
+
+            if match:
+                home_team = await session.get(Team, match.home_team_id)
+                away_team = await session.get(Team, match.away_team_id)
+
+                recent_anomalies.append({
+                    "match_id": match.id,
+                    "date": match.date.isoformat() if match.date else None,
+                    "home_team": home_team.name if home_team else "Unknown",
+                    "away_team": away_team.name if away_team else "Unknown",
+                    "score": f"{outcome.actual_home_goals}-{outcome.actual_away_goals}",
+                    "predicted": outcome.predicted_result,
+                    "actual": outcome.actual_result,
+                    "confidence": round(outcome.confidence * 100, 1),
+                    "primary_factor": audit.primary_factor,
+                    "xg_home": outcome.xg_home,
+                    "xg_away": outcome.xg_away,
+                })
+
+    return AuditSummaryResponse(
+        total_outcomes=total,
+        correct_predictions=correct,
+        overall_accuracy=round(overall_accuracy, 2),
+        by_tier=tiers,
+        by_deviation_type=deviation_types,
+        recent_anomalies=recent_anomalies,
+    )

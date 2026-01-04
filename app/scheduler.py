@@ -1,4 +1,4 @@
-"""Background scheduler for weekly sync and training jobs."""
+"""Background scheduler for weekly sync, audit, and training jobs."""
 
 import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -15,6 +15,30 @@ SYNC_LEAGUES = [39, 140, 135, 78, 61]  # EPL, La Liga, Serie A, Bundesliga, Ligu
 CURRENT_SEASON = 2025
 
 scheduler = AsyncIOScheduler()
+
+
+async def daily_audit():
+    """
+    Daily job to audit completed matches from the last 3 days.
+    Runs every day at 8:00 AM UTC.
+    """
+    logger.info("Starting daily audit job...")
+
+    try:
+        from app.audit import create_audit_service
+
+        async with AsyncSessionLocal() as session:
+            audit_service = await create_audit_service(session)
+            result = await audit_service.audit_recent_matches(days=3)
+            await audit_service.close()
+
+            logger.info(
+                f"Daily audit complete: {result['matches_audited']} matches, "
+                f"{result['accuracy']:.1f}% accuracy, {result['anomalies_detected']} anomalies"
+            )
+
+    except Exception as e:
+        logger.error(f"Daily audit failed: {e}")
 
 
 async def weekly_sync_and_train(ml_engine):
@@ -36,7 +60,20 @@ async def weekly_sync_and_train(ml_engine):
             )
             logger.info(f"Sync complete: {sync_result['total_matches_synced']} matches")
 
-            # Step 2: Retrain the model
+            # Step 2: Run audit on all unaudited matches
+            logger.info("Running post-sync audit...")
+            from app.audit import create_audit_service
+
+            audit_service = await create_audit_service(session)
+            audit_result = await audit_service.audit_recent_matches(days=7)
+            await audit_service.close()
+
+            logger.info(
+                f"Audit complete: {audit_result['matches_audited']} matches audited, "
+                f"{audit_result['accuracy']:.1f}% accuracy"
+            )
+
+            # Step 3: Retrain the model
             logger.info("Retraining ML model...")
             feature_engineer = FeatureEngineer(session=session)
             df = await feature_engineer.build_training_dataset()
@@ -54,18 +91,31 @@ async def weekly_sync_and_train(ml_engine):
 
 def start_scheduler(ml_engine):
     """Start the background scheduler."""
-    # Weekly job: Monday at 6:00 AM UTC
+    # Daily audit job: Every day at 8:00 AM UTC
+    scheduler.add_job(
+        daily_audit,
+        trigger=CronTrigger(hour=8, minute=0),
+        id="daily_audit",
+        name="Daily Post-Match Audit",
+        replace_existing=True,
+    )
+
+    # Weekly sync + audit + train job: Monday at 6:00 AM UTC
     scheduler.add_job(
         weekly_sync_and_train,
         trigger=CronTrigger(day_of_week="mon", hour=6, minute=0),
         args=[ml_engine],
         id="weekly_sync_train",
-        name="Weekly Sync and Train",
+        name="Weekly Sync, Audit and Train",
         replace_existing=True,
     )
 
     scheduler.start()
-    logger.info("Scheduler started - Weekly sync/train job scheduled for Mondays at 6:00 AM UTC")
+    logger.info(
+        "Scheduler started:\n"
+        "  - Daily audit: 8:00 AM UTC\n"
+        "  - Weekly sync/audit/train: Mondays 6:00 AM UTC"
+    )
 
 
 def stop_scheduler():
