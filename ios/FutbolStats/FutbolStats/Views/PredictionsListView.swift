@@ -318,9 +318,9 @@ struct MatchCard: View {
 
             // Probabilities bar
             HStack(spacing: 4) {
-                probabilityPill(label: "H", value: prediction.probabilities.home, odds: prediction.marketOdds?.home)
-                probabilityPill(label: "D", value: prediction.probabilities.draw, odds: prediction.marketOdds?.draw)
-                probabilityPill(label: "A", value: prediction.probabilities.away, odds: prediction.marketOdds?.away)
+                probabilityPill(label: "H", value: prediction.probabilities.home, odds: prediction.marketOdds?.home, isValueBet: isValueBet(for: "home"))
+                probabilityPill(label: "D", value: prediction.probabilities.draw, odds: prediction.marketOdds?.draw, isValueBet: isValueBet(for: "draw"))
+                probabilityPill(label: "A", value: prediction.probabilities.away, odds: prediction.marketOdds?.away, isValueBet: isValueBet(for: "away"))
             }
         }
         .padding(14)
@@ -360,28 +360,38 @@ struct MatchCard: View {
         return formatter.string(from: date)
     }
 
-    private func probabilityPill(label: String, value: Double, odds: Double?) -> some View {
+    private func isValueBet(for outcome: String) -> Bool {
+        prediction.bestValueBet?.outcome.lowercased() == outcome.lowercased()
+    }
+
+    private let neonGreen = Color(red: 0.2, green: 1.0, blue: 0.4)
+
+    private func probabilityPill(label: String, value: Double, odds: Double?, isValueBet: Bool) -> some View {
         HStack(spacing: 4) {
             Text(label)
                 .font(.caption2)
                 .fontWeight(.bold)
-                .foregroundStyle(.gray)
+                .foregroundStyle(isValueBet ? neonGreen : .gray)
 
             Text(String(format: "%.0f%%", value * 100))
                 .font(.caption)
                 .fontWeight(.semibold)
-                .foregroundStyle(.white)
+                .foregroundStyle(isValueBet ? neonGreen : .white)
 
             if let odds = odds {
                 Text(String(format: "%.2f", odds))
                     .font(.caption2)
-                    .foregroundStyle(.gray)
+                    .foregroundStyle(isValueBet ? neonGreen.opacity(0.8) : .gray)
             }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
-        .background(Color(white: 0.15))
+        .background(isValueBet ? neonGreen.opacity(0.15) : Color(white: 0.15))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isValueBet ? neonGreen.opacity(0.5) : Color.clear, lineWidth: 1)
+        )
     }
 }
 

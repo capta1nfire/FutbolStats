@@ -17,6 +17,7 @@ from app.etl.competitions import ALL_LEAGUE_IDS, COMPETITIONS
 from app.features import FeatureEngineer
 from app.ml import XGBoostEngine
 from app.models import Match, Prediction, Team
+from app.scheduler import start_scheduler, stop_scheduler
 
 # Configure logging
 logging.basicConfig(
@@ -48,10 +49,14 @@ async def lifespan(app: FastAPI):
         logger.info("No ML model found. Starting background training...")
         asyncio.create_task(_train_model_background())
 
+    # Start background scheduler for weekly sync/train
+    start_scheduler(ml_engine)
+
     yield
 
     # Shutdown
     logger.info("Shutting down...")
+    stop_scheduler()
     await close_db()
 
 
