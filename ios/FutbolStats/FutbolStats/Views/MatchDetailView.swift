@@ -576,18 +576,11 @@ struct MatchDetailView: View {
                 }
 
                 // Hint to tap for full standings
-                HStack {
-                    Spacer()
-                    Text("Ver tabla completa")
-                        .font(.caption2)
-                        .foregroundStyle(.gray)
-                    Image(systemName: "chevron.right")
-                        .font(.caption2)
-                        .foregroundStyle(.gray)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .padding(.top, 4)
+                Image(systemName: "chevron.down")
+                    .font(.caption)
+                    .foregroundStyle(.gray)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
             }
             .background(Color(white: 0.1))
             .clipShape(RoundedRectangle(cornerRadius: 16))

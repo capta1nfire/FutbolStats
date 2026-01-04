@@ -38,17 +38,38 @@ async def lifespan(app: FastAPI):
     logger.info("Starting FutbolStat MVP...")
     await init_db()
 
-    # Try to load existing model
+    # Try to load existing model, or train automatically
     if ml_engine.load_model():
         logger.info("ML model loaded successfully")
     else:
-        logger.warning("No ML model found. Train one with POST /model/train")
+        logger.info("No ML model found. Training automatically on startup...")
+        try:
+            await _train_model_on_startup()
+            logger.info(f"Model trained successfully: {ml_engine.model_version}")
+        except Exception as e:
+            logger.error(f"Failed to train model on startup: {e}")
+            logger.warning("Model not available - predictions will return 503")
 
     yield
 
     # Shutdown
     logger.info("Shutting down...")
     await close_db()
+
+
+async def _train_model_on_startup():
+    """Train the ML model during application startup."""
+    from app.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
+        feature_engineer = FeatureEngineer(session=session)
+        df = await feature_engineer.build_training_dataset()
+
+        if len(df) < 100:
+            raise ValueError(f"Insufficient training data: {len(df)} samples. Need at least 100.")
+
+        ml_engine.train(df)
+        logger.info(f"Trained model with {len(df)} samples")
 
 
 app = FastAPI(

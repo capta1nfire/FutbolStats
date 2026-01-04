@@ -11,12 +11,17 @@ struct LeagueStandingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     // Column widths
+    private let zoneWidth: CGFloat = 3
     private let positionWidth: CGFloat = 32
     private let logoWidth: CGFloat = 28
-    private let teamNameWidth: CGFloat = 120
+    private let teamNameWidth: CGFloat = 110
     private let statColumnWidth: CGFloat = 36
     private let pointsColumnWidth: CGFloat = 40
     private let formPillSize: CGFloat = 24
+
+    private var stickyWidth: CGFloat {
+        zoneWidth + positionWidth + logoWidth + teamNameWidth + 20
+    }
 
     var body: some View {
         NavigationStack {
@@ -39,7 +44,7 @@ struct LeagueStandingsView: View {
                     standingsTable
                 }
             }
-            .navigationTitle("POSICIONES")
+            .navigationTitle("STANDINGS")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -63,54 +68,64 @@ struct LeagueStandingsView: View {
 
     private var standingsTable: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 0) {
-                // Header row
-                headerRow
+            HStack(alignment: .top, spacing: 0) {
+                // STICKY COLUMNS (Position, Logo, Name)
+                VStack(spacing: 0) {
+                    // Sticky header
+                    stickyHeader
+                        .frame(height: 40)
 
-                Divider()
-                    .background(Color.gray.opacity(0.3))
+                    Divider()
+                        .background(Color.gray.opacity(0.3))
 
-                // Team rows
-                ForEach(standings) { entry in
-                    teamRow(entry: entry)
+                    // Sticky rows
+                    ForEach(standings) { entry in
+                        stickyRow(entry: entry)
+                            .frame(height: 44)
 
-                    if entry.position < standings.count {
+                        if entry.position < standings.count {
+                            Divider()
+                                .background(Color.gray.opacity(0.2))
+                        }
+                    }
+                }
+                .frame(width: stickyWidth)
+                .background(Color.black)
+
+                // SCROLLABLE COLUMNS (Stats)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        // Stats header
+                        statsHeader
+                            .frame(height: 40)
+
                         Divider()
-                            .background(Color.gray.opacity(0.2))
+                            .background(Color.gray.opacity(0.3))
+
+                        // Stats rows
+                        ForEach(standings) { entry in
+                            statsRow(entry: entry)
+                                .frame(height: 44)
+
+                            if entry.position < standings.count {
+                                Divider()
+                                    .background(Color.gray.opacity(0.2))
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    // MARK: - Header Row
-
-    private var headerRow: some View {
-        HStack(spacing: 0) {
-            // Sticky columns (position, logo, name)
-            stickyHeader
-
-            // Scrollable stats columns
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
-                    statHeader("PJ")
-                    statHeader("G")
-                    statHeader("E")
-                    statHeader("P")
-                    statHeader("GF")
-                    statHeader("GC")
-                    statHeader("DG")
-                    pointsHeader("Pts")
-                    formHeader()
-                }
-            }
-        }
-        .padding(.vertical, 10)
-        .background(Color(white: 0.1))
-    }
+    // MARK: - Sticky Header
 
     private var stickyHeader: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.clear)
+                .frame(width: zoneWidth)
+
             Text("")
                 .frame(width: positionWidth)
 
@@ -120,7 +135,25 @@ struct LeagueStandingsView: View {
                 .foregroundStyle(.gray)
                 .frame(width: logoWidth + 8 + teamNameWidth, alignment: .leading)
         }
-        .padding(.leading, 8)
+        .padding(.leading, 5)
+        .background(Color(white: 0.1))
+    }
+
+    // MARK: - Stats Header
+
+    private var statsHeader: some View {
+        HStack(spacing: 0) {
+            statHeader("PJ")
+            statHeader("G")
+            statHeader("E")
+            statHeader("P")
+            statHeader("GF")
+            statHeader("GC")
+            statHeader("DG")
+            pointsHeader("Pts")
+            formHeader()
+        }
+        .background(Color(white: 0.1))
     }
 
     private func statHeader(_ title: String) -> some View {
@@ -140,62 +173,22 @@ struct LeagueStandingsView: View {
     }
 
     private func formHeader() -> some View {
-        Text("Últimos 5")
+        Text("Last 5")
             .font(.caption)
             .fontWeight(.semibold)
             .foregroundStyle(.gray)
-            .frame(width: CGFloat(5) * (formPillSize + 4) + 8)
+            .frame(width: CGFloat(5) * (formPillSize + 4) + 16)
     }
 
-    // MARK: - Team Row
+    // MARK: - Sticky Row
 
-    private func teamRow(entry: StandingsEntry) -> some View {
+    private func stickyRow(entry: StandingsEntry) -> some View {
         let isHighlighted = entry.teamId == homeTeamId || entry.teamId == awayTeamId
 
         return HStack(spacing: 0) {
-            // Zone indicator + Sticky columns
-            HStack(spacing: 0) {
-                zoneIndicator(position: entry.position)
+            // Zone indicator
+            zoneIndicator(position: entry.position)
 
-                stickyColumns(entry: entry, isHighlighted: isHighlighted)
-            }
-
-            // Scrollable stats
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
-                    statCell(entry.played)
-                    statCell(entry.won)
-                    statCell(entry.drawn)
-                    statCell(entry.lost)
-                    statCell(entry.goalsFor)
-                    statCell(entry.goalsAgainst)
-                    goalDiffCell(entry.goalDiff)
-                    pointsCell(entry.points)
-                    formCells(entry.formArray)
-                }
-            }
-        }
-        .padding(.vertical, 10)
-        .background(isHighlighted ? Color.white.opacity(0.08) : Color.clear)
-    }
-
-    private func zoneIndicator(position: Int) -> some View {
-        let color: Color = {
-            switch position {
-            case 1...4: return .blue      // Champions League
-            case 5...6: return .orange    // Europa League
-            case 17...20: return .red     // Relegation
-            default: return .clear
-            }
-        }()
-
-        return Rectangle()
-            .fill(color)
-            .frame(width: 3)
-    }
-
-    private func stickyColumns(entry: StandingsEntry, isHighlighted: Bool) -> some View {
-        HStack(spacing: 8) {
             // Position
             Text("\(entry.position)")
                 .font(.subheadline)
@@ -228,8 +221,44 @@ struct LeagueStandingsView: View {
                 .foregroundStyle(isHighlighted ? .white : .white.opacity(0.9))
                 .lineLimit(1)
                 .frame(width: teamNameWidth, alignment: .leading)
+                .padding(.leading, 8)
         }
         .padding(.leading, 5)
+        .background(isHighlighted ? Color.white.opacity(0.08) : Color.black)
+    }
+
+    private func zoneIndicator(position: Int) -> some View {
+        let color: Color = {
+            switch position {
+            case 1...4: return .blue      // Champions League
+            case 5...6: return .orange    // Europa League
+            case 17...20: return .red     // Relegation
+            default: return .clear
+            }
+        }()
+
+        return Rectangle()
+            .fill(color)
+            .frame(width: zoneWidth)
+    }
+
+    // MARK: - Stats Row
+
+    private func statsRow(entry: StandingsEntry) -> some View {
+        let isHighlighted = entry.teamId == homeTeamId || entry.teamId == awayTeamId
+
+        return HStack(spacing: 0) {
+            statCell(entry.played)
+            statCell(entry.won)
+            statCell(entry.drawn)
+            statCell(entry.lost)
+            statCell(entry.goalsFor)
+            statCell(entry.goalsAgainst)
+            goalDiffCell(entry.goalDiff)
+            pointsCell(entry.points)
+            formCells(entry.formArray)
+        }
+        .background(isHighlighted ? Color.white.opacity(0.08) : Color.clear)
     }
 
     private func statCell(_ value: Int) -> some View {
@@ -264,7 +293,7 @@ struct LeagueStandingsView: View {
                 }
             }
         }
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 8)
     }
 
     private func formPill(result: String) -> some View {
@@ -277,30 +306,13 @@ struct LeagueStandingsView: View {
             }
         }()
 
-        let icon: String = {
-            switch result {
-            case "W": return "checkmark"
-            case "L": return "xmark"
-            case "D": return "minus"
-            default: return ""
-            }
-        }()
-
-        return ZStack {
-            Circle()
-                .fill(color.opacity(0.2))
-                .frame(width: formPillSize, height: formPillSize)
-
-            Circle()
-                .stroke(color, lineWidth: 1.5)
-                .frame(width: formPillSize, height: formPillSize)
-
-            if !icon.isEmpty {
-                Image(systemName: icon)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(color)
-            }
-        }
+        return Text(result == "-" ? "" : result)
+            .font(.caption)
+            .fontWeight(.bold)
+            .foregroundStyle(.white)
+            .frame(width: formPillSize, height: formPillSize)
+            .background(color)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     // MARK: - Load Data
