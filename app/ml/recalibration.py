@@ -124,13 +124,24 @@ class RecalibrationEngine:
             home = home_stats.get(team_id)
             away = away_stats.get(team_id)
 
-            total = (home.total if home else 0) + (away.total if away else 0)
-            correct = (home.correct if home else 0) + (away.correct if away else 0)
-            anomalies = (home.anomalies if home else 0) + (away.anomalies if away else 0)
+            # Safely get values with defaults
+            home_total = home.total if home else 0
+            away_total = away.total if away else 0
+            total = home_total + away_total
+
+            home_correct = (home.correct or 0) if home else 0
+            away_correct = (away.correct or 0) if away else 0
+            correct = home_correct + away_correct
+
+            home_anomalies = (home.anomalies or 0) if home else 0
+            away_anomalies = (away.anomalies or 0) if away else 0
+            anomalies = home_anomalies + away_anomalies
 
             # Calculate avg deviation (weighted by count)
-            home_dev = (home.avg_deviation or 0) * (home.total if home else 0)
-            away_dev = (away.avg_deviation or 0) * (away.total if away else 0)
+            home_dev_score = (home.avg_deviation or 0) if home else 0
+            away_dev_score = (away.avg_deviation or 0) if away else 0
+            home_dev = home_dev_score * home_total
+            away_dev = away_dev_score * away_total
             avg_deviation = (home_dev + away_dev) / total if total > 0 else 0
 
             # Skip teams with too few predictions
