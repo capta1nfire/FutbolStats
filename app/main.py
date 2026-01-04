@@ -34,21 +34,19 @@ ml_engine = XGBoostEngine()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
+    import asyncio
+
     # Startup
     logger.info("Starting FutbolStat MVP...")
     await init_db()
 
-    # Try to load existing model, or train automatically
+    # Try to load existing model
     if ml_engine.load_model():
         logger.info("ML model loaded successfully")
     else:
-        logger.info("No ML model found. Training automatically on startup...")
-        try:
-            await _train_model_on_startup()
-            logger.info(f"Model trained successfully: {ml_engine.model_version}")
-        except Exception as e:
-            logger.error(f"Failed to train model on startup: {e}")
-            logger.warning("Model not available - predictions will return 503")
+        # Start training in background to avoid startup timeout
+        logger.info("No ML model found. Starting background training...")
+        asyncio.create_task(_train_model_background())
 
     yield
 
@@ -57,19 +55,28 @@ async def lifespan(app: FastAPI):
     await close_db()
 
 
-async def _train_model_on_startup():
-    """Train the ML model during application startup."""
+async def _train_model_background():
+    """Train the ML model in background after startup."""
+    import asyncio
     from app.database import AsyncSessionLocal
 
-    async with AsyncSessionLocal() as session:
-        feature_engineer = FeatureEngineer(session=session)
-        df = await feature_engineer.build_training_dataset()
+    # Small delay to let server fully start
+    await asyncio.sleep(2)
 
-        if len(df) < 100:
-            raise ValueError(f"Insufficient training data: {len(df)} samples. Need at least 100.")
+    try:
+        logger.info("Background training started...")
+        async with AsyncSessionLocal() as session:
+            feature_engineer = FeatureEngineer(session=session)
+            df = await feature_engineer.build_training_dataset()
 
-        ml_engine.train(df)
-        logger.info(f"Trained model with {len(df)} samples")
+            if len(df) < 100:
+                logger.error(f"Insufficient training data: {len(df)} samples. Need at least 100.")
+                return
+
+            ml_engine.train(df)
+            logger.info(f"Background training complete: {ml_engine.model_version} with {len(df)} samples")
+    except Exception as e:
+        logger.error(f"Background training failed: {e}")
 
 
 app = FastAPI(

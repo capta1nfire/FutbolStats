@@ -12,12 +12,12 @@ struct LeagueStandingsView: View {
 
     // Column widths
     private let zoneWidth: CGFloat = 3
-    private let positionWidth: CGFloat = 32
-    private let logoWidth: CGFloat = 28
-    private let teamNameWidth: CGFloat = 110
-    private let statColumnWidth: CGFloat = 36
-    private let pointsColumnWidth: CGFloat = 40
-    private let formPillSize: CGFloat = 24
+    private let positionWidth: CGFloat = 28
+    private let logoWidth: CGFloat = 24
+    private let teamNameWidth: CGFloat = 130
+    private let statColumnWidth: CGFloat = 32
+    private let pointsColumnWidth: CGFloat = 36
+    private let formPillSize: CGFloat = 22
 
     private var stickyWidth: CGFloat {
         zoneWidth + positionWidth + logoWidth + teamNameWidth + 20
@@ -91,6 +91,8 @@ struct LeagueStandingsView: View {
                 }
                 .frame(width: stickyWidth)
                 .background(Color.black)
+                .shadow(color: Color.black.opacity(0.4), radius: 4, x: 4, y: 0)
+                .zIndex(1)
 
                 // SCROLLABLE COLUMNS (Stats)
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -161,7 +163,7 @@ struct LeagueStandingsView: View {
             .font(.caption)
             .fontWeight(.semibold)
             .foregroundStyle(.gray)
-            .frame(width: statColumnWidth)
+            .frame(width: statColumnWidth, height: 40)
     }
 
     private func pointsHeader(_ title: String) -> some View {
@@ -169,7 +171,7 @@ struct LeagueStandingsView: View {
             .font(.caption)
             .fontWeight(.bold)
             .foregroundStyle(.white)
-            .frame(width: pointsColumnWidth)
+            .frame(width: pointsColumnWidth, height: 40)
     }
 
     private func formHeader() -> some View {
@@ -177,7 +179,7 @@ struct LeagueStandingsView: View {
             .font(.caption)
             .fontWeight(.semibold)
             .foregroundStyle(.gray)
-            .frame(width: CGFloat(5) * (formPillSize + 4) + 16)
+            .frame(width: CGFloat(5) * (formPillSize + 4) + 16, height: 40)
     }
 
     // MARK: - Sticky Row
@@ -220,8 +222,9 @@ struct LeagueStandingsView: View {
                 .fontWeight(isHighlighted ? .bold : .regular)
                 .foregroundStyle(isHighlighted ? .white : .white.opacity(0.9))
                 .lineLimit(1)
+                .truncationMode(.tail)
                 .frame(width: teamNameWidth, alignment: .leading)
-                .padding(.leading, 8)
+                .padding(.leading, 6)
         }
         .padding(.leading, 5)
         .background(isHighlighted ? Color.white.opacity(0.08) : Color.black)
