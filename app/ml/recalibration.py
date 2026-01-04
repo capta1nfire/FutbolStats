@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import func, select, and_
+from sqlalchemy import func, select, and_, Integer, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -76,13 +76,10 @@ class RecalibrationEngine:
                 Match.home_team_id.label("team_id"),
                 func.count(PredictionOutcome.id).label("total"),
                 func.sum(
-                    func.cast(PredictionOutcome.prediction_correct, type_=func.INT)
+                    case((PredictionOutcome.prediction_correct == True, 1), else_=0)
                 ).label("correct"),
                 func.sum(
-                    func.case(
-                        (PostMatchAudit.deviation_type == "anomaly", 1),
-                        else_=0
-                    )
+                    case((PostMatchAudit.deviation_type == "anomaly", 1), else_=0)
                 ).label("anomalies"),
                 func.avg(PostMatchAudit.deviation_score).label("avg_deviation"),
             )
@@ -102,13 +99,10 @@ class RecalibrationEngine:
                 Match.away_team_id.label("team_id"),
                 func.count(PredictionOutcome.id).label("total"),
                 func.sum(
-                    func.cast(PredictionOutcome.prediction_correct, type_=func.INT)
+                    case((PredictionOutcome.prediction_correct == True, 1), else_=0)
                 ).label("correct"),
                 func.sum(
-                    func.case(
-                        (PostMatchAudit.deviation_type == "anomaly", 1),
-                        else_=0
-                    )
+                    case((PostMatchAudit.deviation_type == "anomaly", 1), else_=0)
                 ).label("anomalies"),
                 func.avg(PostMatchAudit.deviation_score).label("avg_deviation"),
             )
