@@ -284,3 +284,70 @@ class ModelPerformanceLog(SQLModel, table=True):
     value_bet_roi: Optional[float] = Field(default=None, description="Return on investment %")
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TeamAdjustment(SQLModel, table=True):
+    """
+    Per-team confidence adjustments based on prediction anomalies.
+    Used to calibrate predictions for teams with consistent deviations.
+    """
+
+    __tablename__ = "team_adjustments"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    team_id: int = Field(foreign_key="teams.id", unique=True, index=True)
+
+    # Confidence adjustment (1.0 = no change, 0.9 = reduce home confidence 10%)
+    confidence_multiplier: float = Field(
+        default=1.0,
+        description="Multiplier for team's win probability (0.5-2.0)"
+    )
+
+    # Metrics justifying the adjustment
+    total_predictions: int = Field(default=0)
+    correct_predictions: int = Field(default=0)
+    anomaly_count: int = Field(default=0)
+    avg_deviation_score: float = Field(default=0.0)
+
+    # Control
+    last_updated: datetime = Field(default_factory=datetime.utcnow)
+    adjustment_reason: Optional[str] = Field(
+        default=None, max_length=200, description="Why this adjustment was applied"
+    )
+
+    # Relationship
+    team: Optional[Team] = Relationship()
+
+
+class ModelSnapshot(SQLModel, table=True):
+    """
+    Model version snapshots for rollback capability.
+    Prevents deploying models worse than the baseline.
+    """
+
+    __tablename__ = "model_snapshots"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    model_version: str = Field(max_length=50, index=True)
+
+    # Model file path
+    model_path: str = Field(max_length=500, description="Path to saved model file")
+
+    # Validation metrics
+    brier_score: float = Field(description="Cross-validation Brier score")
+    cv_brier_scores: Optional[dict] = Field(
+        default=None, sa_column=Column(JSON), description="Per-fold CV scores"
+    )
+    samples_trained: int = Field(description="Number of training samples")
+
+    # Status
+    is_active: bool = Field(default=False, index=True, description="Currently deployed model")
+    is_baseline: bool = Field(
+        default=False, description="Reference model for comparison (Brier: 0.2063)"
+    )
+
+    # Metadata
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    training_config: Optional[dict] = Field(
+        default=None, sa_column=Column(JSON), description="Hyperparameters used"
+    )

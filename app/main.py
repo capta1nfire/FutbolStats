@@ -974,3 +974,189 @@ async def get_audit_summary(
         by_deviation_type=deviation_types,
         recent_anomalies=recent_anomalies,
     )
+
+
+# ============================================================================
+# RECALIBRATION ENDPOINTS - Model auto-adjustment and team confidence
+# ============================================================================
+
+
+class RecalibrationStatusResponse(BaseModel):
+    current_model_version: str
+    baseline_brier_score: float
+    current_brier_score: Optional[float]
+    last_retrain_date: Optional[str]
+    gold_accuracy_current: float
+    gold_accuracy_threshold: float
+    retrain_needed: bool
+    retrain_reason: str
+    teams_with_adjustments: int
+
+
+class TeamAdjustmentResponse(BaseModel):
+    team_id: int
+    team_name: str
+    confidence_multiplier: float
+    total_predictions: int
+    correct_predictions: int
+    anomaly_count: int
+    avg_deviation_score: float
+    last_updated: str
+    reason: Optional[str]
+
+
+class ModelSnapshotResponse(BaseModel):
+    id: int
+    model_version: str
+    model_path: str
+    brier_score: float
+    samples_trained: int
+    is_active: bool
+    is_baseline: bool
+    created_at: str
+
+
+@app.get("/recalibration/status", response_model=RecalibrationStatusResponse)
+async def get_recalibration_status(
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Get current recalibration status.
+
+    Returns model health metrics, thresholds, and whether retraining is needed.
+    """
+    from app.ml.recalibration import RecalibrationEngine
+
+    try:
+        recalibrator = RecalibrationEngine(session)
+        status = await recalibrator.get_recalibration_status()
+        return RecalibrationStatusResponse(**status)
+    except Exception as e:
+        logger.error(f"Error getting recalibration status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/recalibration/team-adjustments", response_model=list[TeamAdjustmentResponse])
+async def get_team_adjustments(
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Get all teams with confidence adjustments.
+
+    Returns teams whose predictions are being adjusted due to high anomaly rates.
+    """
+    from app.ml.recalibration import RecalibrationEngine
+
+    try:
+        recalibrator = RecalibrationEngine(session)
+        adjustments = await recalibrator.get_team_adjustments()
+        return [TeamAdjustmentResponse(**adj) for adj in adjustments]
+    except Exception as e:
+        logger.error(f"Error getting team adjustments: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/recalibration/calculate-adjustments")
+async def calculate_team_adjustments(
+    days: int = 30,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Manually trigger team adjustment calculation.
+
+    Analyzes recent prediction outcomes and updates confidence multipliers.
+    """
+    from app.ml.recalibration import RecalibrationEngine
+
+    try:
+        recalibrator = RecalibrationEngine(session)
+        result = await recalibrator.calculate_team_adjustments(days=days)
+        return result
+    except Exception as e:
+        logger.error(f"Error calculating adjustments: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/recalibration/snapshots", response_model=list[ModelSnapshotResponse])
+async def get_model_snapshots(
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Get all model snapshots.
+
+    Returns history of model versions for rollback capability.
+    """
+    from app.models import ModelSnapshot
+
+    try:
+        query = select(ModelSnapshot).order_by(ModelSnapshot.created_at.desc())
+        result = await session.execute(query)
+        snapshots = result.scalars().all()
+
+        return [
+            ModelSnapshotResponse(
+                id=s.id,
+                model_version=s.model_version,
+                model_path=s.model_path,
+                brier_score=s.brier_score,
+                samples_trained=s.samples_trained,
+                is_active=s.is_active,
+                is_baseline=s.is_baseline,
+                created_at=s.created_at.isoformat(),
+            )
+            for s in snapshots
+        ]
+    except Exception as e:
+        logger.error(f"Error getting snapshots: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/recalibration/create-baseline")
+async def create_baseline_snapshot(
+    brier_score: float = 0.2063,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Create a baseline snapshot for the current model.
+
+    This sets the reference point for model validation.
+    New models must beat this Brier score to be deployed.
+    """
+    from app.ml.recalibration import RecalibrationEngine
+    from app.config import get_settings
+    from pathlib import Path
+
+    settings = get_settings()
+
+    try:
+        recalibrator = RecalibrationEngine(session)
+
+        # Find current model file
+        model_path = Path(settings.MODEL_PATH)
+        model_files = list(model_path.glob("xgb_*.json"))
+
+        if not model_files:
+            raise HTTPException(status_code=404, detail="No model files found")
+
+        latest_model = max(model_files, key=lambda p: p.stat().st_mtime)
+
+        snapshot = await recalibrator.create_snapshot(
+            model_version=settings.MODEL_VERSION,
+            model_path=str(latest_model),
+            brier_score=brier_score,
+            cv_scores=[brier_score],  # Single value for baseline
+            samples_trained=0,  # Unknown for existing model
+            is_baseline=True,
+        )
+
+        return {
+            "message": "Baseline snapshot created",
+            "snapshot_id": snapshot.id,
+            "model_version": snapshot.model_version,
+            "brier_score": snapshot.brier_score,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating baseline: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -107,15 +107,27 @@ async def daily_audit():
         logger.error(f"Daily audit failed: {e}")
 
 
-async def weekly_sync_and_train(ml_engine):
+async def weekly_recalibration(ml_engine):
     """
-    Weekly job to sync latest results and retrain the model.
+    Weekly intelligent recalibration job.
     Runs every Monday at 6:00 AM UTC.
+
+    Steps:
+    1. Sync latest fixtures/results
+    2. Run audit on recent matches
+    3. Update team confidence adjustments
+    4. Evaluate if retraining is needed
+    5. If retraining: validate new model before deploying
     """
-    logger.info("Starting weekly sync and train job...")
+    logger.info("Starting weekly recalibration job...")
 
     try:
+        from app.audit import create_audit_service
+        from app.ml.recalibration import RecalibrationEngine
+
         async with AsyncSessionLocal() as session:
+            recalibrator = RecalibrationEngine(session)
+
             # Step 1: Sync latest fixtures/results
             logger.info(f"Syncing leagues: {SYNC_LEAGUES}")
             pipeline = await create_etl_pipeline(session)
@@ -128,8 +140,6 @@ async def weekly_sync_and_train(ml_engine):
 
             # Step 2: Run audit on all unaudited matches
             logger.info("Running post-sync audit...")
-            from app.audit import create_audit_service
-
             audit_service = await create_audit_service(session)
             audit_result = await audit_service.audit_recent_matches(days=7)
             await audit_service.close()
@@ -139,8 +149,24 @@ async def weekly_sync_and_train(ml_engine):
                 f"{audit_result['accuracy']:.1f}% accuracy"
             )
 
-            # Step 3: Retrain the model
-            logger.info("Retraining ML model...")
+            # Step 3: Update team confidence adjustments
+            logger.info("Calculating team adjustments...")
+            adj_result = await recalibrator.calculate_team_adjustments(days=30)
+            logger.info(
+                f"Team adjustments updated: {adj_result['teams_analyzed']} analyzed, "
+                f"{adj_result['adjustments_made']} adjusted"
+            )
+
+            # Step 4: Evaluate if retraining is needed
+            should_retrain, reason = await recalibrator.should_trigger_retrain(days=7)
+            logger.info(f"Retrain evaluation: {reason}")
+
+            if not should_retrain:
+                logger.info("Skipping retrain - metrics within thresholds")
+                return
+
+            # Step 5: Retrain the model
+            logger.info(f"Triggering retrain: {reason}")
             feature_engineer = FeatureEngineer(session=session)
             df = await feature_engineer.build_training_dataset()
 
@@ -148,11 +174,33 @@ async def weekly_sync_and_train(ml_engine):
                 logger.error(f"Insufficient training data: {len(df)} samples")
                 return
 
-            ml_engine.train(df)
-            logger.info(f"Training complete: {ml_engine.model_version} with {len(df)} samples")
+            train_result = ml_engine.train(df)
+            new_brier = train_result["brier_score"]
+            logger.info(f"Training complete: Brier Score = {new_brier:.4f}")
+
+            # Step 6: Validate new model against baseline
+            is_valid, validation_msg = await recalibrator.validate_new_model(new_brier)
+            logger.info(f"Validation result: {validation_msg}")
+
+            if not is_valid:
+                logger.warning(f"ROLLBACK: New model rejected - keeping previous version")
+                # Reload the previous model
+                ml_engine.load_model()
+                return
+
+            # Step 7: Create snapshot and activate new model
+            snapshot = await recalibrator.create_snapshot(
+                model_version=ml_engine.model_version,
+                model_path=train_result["model_path"],
+                brier_score=new_brier,
+                cv_scores=train_result["cv_scores"],
+                samples_trained=train_result["samples_trained"],
+                training_config=None,  # Could add hyperparams here
+            )
+            logger.info(f"New model deployed: {snapshot.model_version} (Brier: {new_brier:.4f})")
 
     except Exception as e:
-        logger.error(f"Weekly sync and train failed: {e}")
+        logger.error(f"Weekly recalibration failed: {e}")
 
 
 def start_scheduler(ml_engine):
@@ -175,13 +223,13 @@ def start_scheduler(ml_engine):
         replace_existing=True,
     )
 
-    # Weekly sync + audit + train job: Monday at 6:00 AM UTC
+    # Weekly recalibration job: Monday at 6:00 AM UTC
     scheduler.add_job(
-        weekly_sync_and_train,
+        weekly_recalibration,
         trigger=CronTrigger(day_of_week="mon", hour=6, minute=0),
         args=[ml_engine],
-        id="weekly_sync_train",
-        name="Weekly Sync, Audit and Train",
+        id="weekly_recalibration",
+        name="Weekly Recalibration",
         replace_existing=True,
     )
 
@@ -190,7 +238,7 @@ def start_scheduler(ml_engine):
         "Scheduler started:\n"
         "  - Daily save predictions: 7:00 AM UTC\n"
         "  - Daily audit: 8:00 AM UTC\n"
-        "  - Weekly sync/audit/train: Mondays 6:00 AM UTC"
+        "  - Weekly recalibration: Mondays 6:00 AM UTC"
     )
 
 

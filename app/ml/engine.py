@@ -206,12 +206,18 @@ class XGBoostEngine:
         X = self._prepare_features(df)
         return self.model.predict_proba(X)
 
-    def predict(self, df: pd.DataFrame) -> list[dict]:
+    def predict(
+        self,
+        df: pd.DataFrame,
+        team_adjustments: dict[int, float] = None,
+    ) -> list[dict]:
         """
         Make predictions with probabilities, fair odds, and value bet detection.
 
         Args:
             df: DataFrame with features and match info.
+            team_adjustments: Optional dict mapping team_id to confidence_multiplier.
+                              Used to adjust probabilities based on historical performance.
 
         Returns:
             List of prediction dictionaries with value betting metrics.
@@ -223,6 +229,27 @@ class XGBoostEngine:
             home_prob = float(probas[i][0])
             draw_prob = float(probas[i][1])
             away_prob = float(probas[i][2])
+
+            # Apply team adjustments if provided
+            adjustment_applied = False
+            if team_adjustments:
+                home_team_id = row.get("home_team_id")
+                away_team_id = row.get("away_team_id")
+
+                home_adj = team_adjustments.get(home_team_id, 1.0) if home_team_id else 1.0
+                away_adj = team_adjustments.get(away_team_id, 1.0) if away_team_id else 1.0
+
+                # Apply adjustments to win probabilities
+                if home_adj != 1.0 or away_adj != 1.0:
+                    home_prob *= home_adj
+                    away_prob *= away_adj
+
+                    # Renormalize to sum to 1.0
+                    total = home_prob + draw_prob + away_prob
+                    home_prob /= total
+                    draw_prob /= total
+                    away_prob /= total
+                    adjustment_applied = True
 
             pred = {
                 "match_id": int(row.get("match_id")) if row.get("match_id") else None,
@@ -244,6 +271,7 @@ class XGBoostEngine:
                 },
                 "has_value_bet": False,  # Default
                 "best_value_bet": None,  # Best opportunity if exists
+                "adjustment_applied": adjustment_applied,  # Team confidence adjustment
             }
 
             # Add value bets if market odds available
