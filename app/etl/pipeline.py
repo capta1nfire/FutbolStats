@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.etl.api_football import APIFootballProvider
@@ -29,7 +30,7 @@ class ETLPipeline:
         if external_id in self._teams_cache:
             return self._teams_cache[external_id]
 
-        # Check database
+        # Check database first
         result = await self.session.execute(
             select(Team).where(Team.external_id == external_id)
         )
@@ -39,7 +40,7 @@ class ETLPipeline:
             self._teams_cache[external_id] = team.id
             return team.id
 
-        # Fetch from API and create
+        # Fetch from API
         team_data = await self.provider.get_team(external_id)
         if not team_data:
             logger.warning(f"Could not fetch team {external_id}")
@@ -48,24 +49,33 @@ class ETLPipeline:
                 external_id=external_id,
                 name=f"Unknown Team {external_id}",
                 country=None,
-                team_type="national",
+                team_type="club",
                 logo_url=None,
             )
 
-        new_team = Team(
+        # Use PostgreSQL upsert to handle race conditions
+        stmt = pg_insert(Team).values(
             external_id=team_data.external_id,
             name=team_data.name,
             country=team_data.country,
             team_type=team_data.team_type,
             logo_url=team_data.logo_url,
-        )
-        self.session.add(new_team)
-        await self.session.flush()
+        ).on_conflict_do_update(
+            index_elements=["external_id"],
+            set_={
+                "name": team_data.name,
+                "country": team_data.country,
+                "logo_url": team_data.logo_url,
+            }
+        ).returning(Team.id)
 
-        self._teams_cache[external_id] = new_team.id
-        logger.info(f"Created team: {team_data.name} (ID: {new_team.id})")
+        result = await self.session.execute(stmt)
+        team_id = result.scalar_one()
 
-        return new_team.id
+        self._teams_cache[external_id] = team_id
+        logger.info(f"Upserted team: {team_data.name} (ID: {team_id})")
+
+        return team_id
 
     async def _upsert_match(self, match_data: MatchData) -> Match:
         """Create or update a match in the database."""
@@ -165,6 +175,8 @@ class ETLPipeline:
 
             except Exception as e:
                 logger.error(f"Error syncing match {match_data.external_id}: {e}")
+                # Rollback to recover from the error
+                await self.session.rollback()
                 continue
 
         await self.session.commit()
