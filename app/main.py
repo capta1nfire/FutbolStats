@@ -1,11 +1,13 @@
 """FastAPI application for FutbolStat MVP."""
 
 import logging
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +32,13 @@ settings = get_settings()
 
 # Global ML engine
 ml_engine = XGBoostEngine()
+
+# Simple in-memory cache for predictions
+_predictions_cache = {
+    "data": None,
+    "timestamp": 0,
+    "ttl": 300,  # 5 minutes cache
+}
 
 
 @asynccontextmanager
@@ -286,18 +295,32 @@ async def train_model(
 @app.get("/predictions/upcoming", response_model=PredictionsResponse)
 async def get_predictions(
     league_ids: Optional[str] = None,  # comma-separated
+    days: int = 7,
     session: AsyncSession = Depends(get_async_session),
 ):
     """
     Get predictions for upcoming matches.
 
     Returns probabilities and fair odds for matches that haven't been played.
+    Uses in-memory caching (5 min TTL) for faster responses.
     """
+    global _predictions_cache
+
     if not ml_engine.is_loaded:
         raise HTTPException(
             status_code=503,
             detail="Model not loaded. Train a model first with POST /model/train",
         )
+
+    # Cache key based on parameters
+    cache_key = f"{league_ids or 'all'}_{days}"
+    now = time.time()
+
+    # Check cache (only for default requests without league filter)
+    if league_ids is None and _predictions_cache["data"] is not None:
+        if now - _predictions_cache["timestamp"] < _predictions_cache["ttl"]:
+            logger.info("Returning cached predictions")
+            return _predictions_cache["data"]
 
     # Parse league IDs
     league_id_list = None
@@ -337,10 +360,18 @@ async def get_predictions(
         )
         prediction_items.append(item)
 
-    return PredictionsResponse(
+    response = PredictionsResponse(
         predictions=prediction_items,
         model_version=ml_engine.model_version,
     )
+
+    # Cache the response (only for default requests)
+    if league_ids is None:
+        _predictions_cache["data"] = response
+        _predictions_cache["timestamp"] = now
+        logger.info(f"Cached {len(prediction_items)} predictions")
+
+    return response
 
 
 @app.get("/predictions/match/{match_id}")

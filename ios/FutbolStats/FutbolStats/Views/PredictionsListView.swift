@@ -331,7 +331,7 @@ struct MatchCard: View {
     private func teamRow(name: String, logoUrl: String?) -> some View {
         HStack(spacing: 8) {
             if let logoUrl = logoUrl, let url = URL(string: logoUrl) {
-                AsyncImage(url: url) { image in
+                CachedAsyncImage(url: url) { image in
                     image
                         .resizable()
                         .aspectRatio(contentMode: .fit)
