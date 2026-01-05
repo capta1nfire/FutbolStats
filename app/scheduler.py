@@ -83,6 +83,34 @@ async def daily_save_predictions():
         logger.error(f"Daily prediction save failed: {e}")
 
 
+async def daily_sync_results():
+    """
+    Daily job to sync match results from API.
+    Runs every day at 6:00 AM UTC (before predictions and audit).
+
+    This ensures we have the latest results for:
+    - Yesterday's completed matches
+    - Matches that finished after the last sync
+    """
+    logger.info("Starting daily results sync job...")
+
+    try:
+        async with AsyncSessionLocal() as session:
+            pipeline = await create_etl_pipeline(session)
+            result = await pipeline.sync_multiple_leagues(
+                league_ids=SYNC_LEAGUES,
+                season=CURRENT_SEASON,
+                fetch_odds=False,  # Only sync results, not odds
+            )
+
+            logger.info(
+                f"Daily sync complete: {result['total_matches_synced']} matches synced"
+            )
+
+    except Exception as e:
+        logger.error(f"Daily sync failed: {e}")
+
+
 async def daily_audit():
     """
     Daily job to audit completed matches and update team adjustments.
@@ -289,7 +317,16 @@ def start_scheduler(ml_engine):
         logger.info("Skipping scheduler in reload subprocess")
         return
 
-    # Daily prediction save: Every day at 7:00 AM UTC (before audit)
+    # Daily results sync: Every day at 6:00 AM UTC (first job of the day)
+    scheduler.add_job(
+        daily_sync_results,
+        trigger=CronTrigger(hour=6, minute=0),
+        id="daily_sync_results",
+        name="Daily Results Sync",
+        replace_existing=True,
+    )
+
+    # Daily prediction save: Every day at 7:00 AM UTC (after sync)
     scheduler.add_job(
         daily_save_predictions,
         trigger=CronTrigger(hour=7, minute=0),
@@ -298,7 +335,7 @@ def start_scheduler(ml_engine):
         replace_existing=True,
     )
 
-    # Daily audit job: Every day at 8:00 AM UTC
+    # Daily audit job: Every day at 8:00 AM UTC (after results are synced)
     scheduler.add_job(
         daily_audit,
         trigger=CronTrigger(hour=8, minute=0),
@@ -307,10 +344,10 @@ def start_scheduler(ml_engine):
         replace_existing=True,
     )
 
-    # Weekly recalibration job: Monday at 6:00 AM UTC
+    # Weekly recalibration job: Monday at 5:00 AM UTC (before daily sync)
     scheduler.add_job(
         weekly_recalibration,
-        trigger=CronTrigger(day_of_week="mon", hour=6, minute=0),
+        trigger=CronTrigger(day_of_week="mon", hour=5, minute=0),
         args=[ml_engine],
         id="weekly_recalibration",
         name="Weekly Recalibration",
@@ -321,9 +358,10 @@ def start_scheduler(ml_engine):
     _scheduler_started = True
     logger.info(
         "Scheduler started:\n"
+        "  - Daily results sync: 6:00 AM UTC\n"
         "  - Daily save predictions: 7:00 AM UTC\n"
         "  - Daily audit: 8:00 AM UTC\n"
-        "  - Weekly recalibration: Mondays 6:00 AM UTC"
+        "  - Weekly recalibration: Mondays 5:00 AM UTC"
     )
 
 
