@@ -372,8 +372,8 @@ class XGBoostEngine:
                 "away_team_logo": row.get("away_team_logo"),
                 "date": row.get("date"),
                 "status": row.get("status"),
-                "home_goals": int(row.get("home_goals")) if row.get("home_goals") is not None else None,
-                "away_goals": int(row.get("away_goals")) if row.get("away_goals") is not None else None,
+                "home_goals": int(row.get("home_goals")) if pd.notna(row.get("home_goals")) else None,
+                "away_goals": int(row.get("away_goals")) if pd.notna(row.get("away_goals")) else None,
                 "league_id": league_id,
 
                 # Adjusted probabilities
