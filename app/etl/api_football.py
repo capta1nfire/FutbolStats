@@ -192,6 +192,52 @@ class APIFootballProvider(DataProvider):
         logger.info(f"Fetched {len(matches)} fixtures for league {league_id}")
         return matches
 
+    async def get_fixtures_by_date(
+        self,
+        date: datetime,
+        league_ids: Optional[list[int]] = None,
+    ) -> list[MatchData]:
+        """
+        Fetch ALL fixtures for a specific date globally.
+
+        Uses: GET /fixtures?date=YYYY-MM-DD (1 single API call)
+        Returns: All matches worldwide for that date.
+
+        If league_ids provided, filters results in memory (no extra API calls).
+
+        Args:
+            date: The date to fetch fixtures for.
+            league_ids: Optional list of league IDs to filter (in memory).
+
+        Returns:
+            List of MatchData for the specified date.
+        """
+        params = {"date": date.strftime("%Y-%m-%d")}
+
+        logger.info(f"Global sync: Fetching all fixtures for {date.strftime('%Y-%m-%d')}")
+        data = await self._rate_limited_request("fixtures", params)
+        fixtures = data.get("response", [])
+
+        logger.info(f"Global sync: Received {len(fixtures)} fixtures worldwide")
+
+        # Parse all fixtures
+        matches = []
+        for fixture in fixtures:
+            try:
+                league_id = fixture.get("league", {}).get("id")
+                match_data = self._parse_fixture(fixture, league_id)
+                matches.append(match_data)
+            except Exception as e:
+                logger.debug(f"Skipping fixture: {e}")
+                continue
+
+        # Filter by league_ids if specified (in memory, no extra API calls)
+        if league_ids:
+            matches = [m for m in matches if m.league_id in league_ids]
+            logger.info(f"Global sync: Filtered to {len(matches)} matches for leagues {league_ids}")
+
+        return matches
+
     async def get_fixture_by_id(self, fixture_id: int) -> Optional[MatchData]:
         """Fetch a single fixture by its ID."""
         data = await self._rate_limited_request("fixtures", {"id": fixture_id})

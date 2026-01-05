@@ -2,11 +2,15 @@
 
 import logging
 import os
+from datetime import datetime
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from app.database import AsyncSessionLocal
-from app.etl.pipeline import create_etl_pipeline
+from app.etl.pipeline import create_etl_pipeline, ETLPipeline
+from app.etl.api_football import APIFootballProvider
 from app.features.engineering import FeatureEngineer
 
 logger = logging.getLogger(__name__)
@@ -18,6 +22,61 @@ CURRENT_SEASON = 2025
 # Flag to prevent multiple scheduler instances (e.g., with --reload)
 _scheduler_started = False
 scheduler = AsyncIOScheduler()
+
+from typing import Optional
+
+# Global state for live sync tracking
+_last_live_sync: Optional[datetime] = None
+
+
+def get_last_sync_time() -> Optional[datetime]:
+    """Get the last live sync timestamp (for API endpoint)."""
+    return _last_live_sync
+
+
+async def global_sync_today() -> dict:
+    """
+    Global Sync: 1 API call for ALL fixtures worldwide for today.
+    Filters to our 5 leagues in memory and updates the DB.
+
+    Uses: GET /fixtures?date=YYYY-MM-DD (1 single API call)
+    Budget: 1 call/min × 60 min × 24 hrs = 1,440 calls/day (of 7,500 available)
+    """
+    global _last_live_sync
+
+    today = datetime.utcnow()
+
+    try:
+        async with AsyncSessionLocal() as session:
+            provider = APIFootballProvider()
+
+            # 1 SINGLE API CALL - all fixtures worldwide, filtered to our leagues
+            our_fixtures = await provider.get_fixtures_by_date(
+                date=today,
+                league_ids=SYNC_LEAGUES  # Filter in memory
+            )
+
+            # Upsert to DB
+            pipeline = ETLPipeline(provider, session)
+            synced = 0
+            for fixture in our_fixtures:
+                try:
+                    await pipeline._upsert_match(fixture)
+                    synced += 1
+                except Exception as e:
+                    logger.warning(f"Error upserting fixture: {e}")
+
+            await session.commit()
+            await provider.close()
+
+        _last_live_sync = datetime.utcnow()
+        logger.info(f"Global sync complete: {synced} matches updated")
+
+        return {"matches_synced": synced, "last_sync_at": _last_live_sync}
+
+    except Exception as e:
+        logger.error(f"Global sync failed: {e}")
+        return {"matches_synced": 0, "error": str(e)}
 
 
 async def daily_save_predictions():
@@ -354,10 +413,21 @@ def start_scheduler(ml_engine):
         replace_existing=True,
     )
 
+    # Live Global Sync: Every 60 seconds (real-time results)
+    # Uses 1 API call per minute = 1,440 calls/day (of 7,500 available)
+    scheduler.add_job(
+        global_sync_today,
+        trigger=IntervalTrigger(seconds=60),
+        id="live_global_sync",
+        name="Live Global Sync (every minute)",
+        replace_existing=True,
+    )
+
     scheduler.start()
     _scheduler_started = True
     logger.info(
         "Scheduler started:\n"
+        "  - Live global sync: Every 60 seconds\n"
         "  - Daily results sync: 6:00 AM UTC\n"
         "  - Daily save predictions: 7:00 AM UTC\n"
         "  - Daily audit: 8:00 AM UTC\n"

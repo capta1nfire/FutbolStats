@@ -21,7 +21,7 @@ from app.etl.competitions import ALL_LEAGUE_IDS, COMPETITIONS
 from app.features import FeatureEngineer
 from app.ml import XGBoostEngine
 from app.models import Match, Prediction, Team, TeamAdjustment
-from app.scheduler import start_scheduler, stop_scheduler
+from app.scheduler import start_scheduler, stop_scheduler, get_last_sync_time, SYNC_LEAGUES
 from app.security import limiter, verify_api_key
 
 # Configure logging
@@ -205,6 +205,25 @@ async def health_check(request: Request):
         status="ok",
         model_loaded=ml_engine.is_loaded,
     )
+
+
+@app.get("/sync/status")
+async def get_sync_status():
+    """
+    Get current sync status for iOS display.
+
+    Returns last sync timestamp and API budget info.
+    Used by mobile app to show data freshness.
+    """
+    last_sync = get_last_sync_time()
+    return {
+        "last_sync_at": last_sync.isoformat() if last_sync else None,
+        "sync_interval_seconds": 60,
+        "daily_api_calls": 1440,
+        "daily_budget": 7500,
+        "budget_remaining_percent": 80,
+        "leagues": SYNC_LEAGUES,
+    }
 
 
 @app.get("/")
