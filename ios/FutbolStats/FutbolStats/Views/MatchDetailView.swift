@@ -84,7 +84,10 @@ class MatchDetailViewModel: ObservableObject {
 
             // Load timeline for finished matches
             if prediction.isFinished {
+                print("Match \(matchId) is finished, loading timeline...")
                 await loadTimeline(matchId: matchId)
+            } else {
+                print("Match \(matchId) status: \(prediction.status ?? "nil") - not loading timeline")
             }
         } catch {
             self.error = error.localizedDescription
@@ -96,9 +99,11 @@ class MatchDetailViewModel: ObservableObject {
     private func loadTimeline(matchId: Int) async {
         do {
             timeline = try await APIClient.shared.getMatchTimeline(matchId: matchId)
+            print("Timeline loaded successfully: \(timeline?.summary.correctPercentage ?? 0)% correct")
         } catch {
             // Timeline is optional - don't fail the whole view
             timelineError = error.localizedDescription
+            print("Timeline error: \(error.localizedDescription)")
         }
     }
 

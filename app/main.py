@@ -1072,13 +1072,18 @@ async def get_match_timeline(
     current_home = 0
     current_away = 0
     last_minute = 0
-    total_minutes = 90  # Default, adjust if extra time
 
-    # Check if there's extra time
+    # Calculate total match duration based on goals (including added time)
+    # Default to 90, but extend if there are goals in added time
+    total_minutes = 90
     if goals:
-        max_minute = max(g.get("minute") or 0 for g in goals)
-        if max_minute > 90:
-            total_minutes = max_minute + 5  # Add buffer for display
+        # Consider both base minute and extra time (e.g., 90+3 = 93 effective)
+        max_effective = max(
+            (g.get("minute") or 0) + (g.get("extra_minute") or 0)
+            for g in goals
+        )
+        # Use the maximum between 90 and the last goal's effective minute
+        total_minutes = max(90, max_effective)
 
     for goal in goals:
         minute = goal.get("minute") or 0

@@ -33,36 +33,29 @@ struct PredictionTimelineView: View {
                 }
             }
 
-            // Timeline bar with goals
-            ZStack(alignment: .leading) {
-                // Background segments
-                GeometryReader { geo in
-                    timelineBar(width: geo.size.width)
-                }
-                .frame(height: barHeight)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+            // Timeline bar with start/end icons and goals
+            HStack(spacing: 8) {
+                // Whistle icon (start)
+                Text("📣")
+                    .font(.system(size: 14))
 
-                // Goal markers overlay
+                // Timeline bar with goals
                 GeometryReader { geo in
-                    goalMarkers(width: geo.size.width)
-                }
-                .frame(height: barHeight + 24)
-            }
-            .frame(height: barHeight + 24)
+                    ZStack(alignment: .top) {
+                        // Background bar
+                        timelineBar(width: geo.size.width)
+                            .frame(height: barHeight)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
 
-            // Minute labels
-            HStack {
-                Text("0'")
-                    .font(.caption2)
-                    .foregroundStyle(.gray)
-                Spacer()
-                Text("45'")
-                    .font(.caption2)
-                    .foregroundStyle(.gray)
-                Spacer()
-                Text("\(timeline.totalMinutes)'")
-                    .font(.caption2)
-                    .foregroundStyle(.gray)
+                        // Goal markers (balls centered on bar, minutes below)
+                        goalMarkers(width: geo.size.width)
+                    }
+                }
+                .frame(height: barHeight + 28) // Bar + space for minute labels
+
+                // Checkered flag (end)
+                Text("🏁")
+                    .font(.system(size: 14))
             }
 
             // Summary
@@ -112,12 +105,12 @@ struct PredictionTimelineView: View {
     private func goalMarkers(width: CGFloat) -> some View {
         let groupedGoals = groupNearbyGoals(timeline.goals)
 
-        return ZStack {
+        return ZStack(alignment: .top) {
             ForEach(groupedGoals) { group in
-                let position = CGFloat(group.effectiveMinute) / CGFloat(timeline.totalMinutes) * width
+                let xPosition = CGFloat(group.effectiveMinute) / CGFloat(timeline.totalMinutes) * width
 
-                VStack(spacing: 2) {
-                    // Goal icon(s)
+                VStack(spacing: 4) {
+                    // Goal icon(s) - centered on bar
                     if group.count > 1 {
                         // Grouped goals
                         HStack(spacing: 2) {
@@ -132,17 +125,18 @@ struct PredictionTimelineView: View {
                         .background(Color.black.opacity(0.7))
                         .clipShape(Capsule())
                     } else {
-                        // Single goal
+                        // Single goal - centered on bar height
                         Text("⚽")
-                            .font(.system(size: 14))
+                            .font(.system(size: 16))
+                            .frame(height: barHeight)
                     }
 
-                    // Minute label
+                    // Minute label - below the bar
                     Text(group.displayMinute)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.gray)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.7))
                 }
-                .position(x: clampPosition(position, width: width), y: barHeight / 2 + 12)
+                .position(x: clampPosition(xPosition, width: width), y: barHeight / 2 + 8)
             }
         }
     }
