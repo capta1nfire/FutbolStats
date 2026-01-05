@@ -19,6 +19,7 @@
 		A1000001233456780000009 /* CompetitionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001233456780000019 /* CompetitionsView.swift */; };
 		A100000123345678000001A /* LeagueStandingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000123345678000001B /* LeagueStandingsView.swift */; };
 		A100000123345678000001C /* NarrativeInsightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000123345678000001D /* NarrativeInsightsView.swift */; };
+		A100000123345678000001E /* PredictionTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000123345678000001F /* PredictionTimelineView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -35,6 +36,7 @@
 		A1000001233456780000019 /* CompetitionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompetitionsView.swift; sourceTree = "<group>"; };
 		A100000123345678000001B /* LeagueStandingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeagueStandingsView.swift; sourceTree = "<group>"; };
 		A100000123345678000001D /* NarrativeInsightsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NarrativeInsightsView.swift; sourceTree = "<group>"; };
+		A100000123345678000001F /* PredictionTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PredictionTimelineView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -79,6 +81,7 @@
 				A1000001233456780000019 /* CompetitionsView.swift */,
 				A100000123345678000001B /* LeagueStandingsView.swift */,
 				A100000123345678000001D /* NarrativeInsightsView.swift */,
+				A100000123345678000001F /* PredictionTimelineView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -196,6 +199,7 @@
 				71DFDAFE2F0A0F3000B3351D /* CachedAsyncImage.swift in Sources */,
 				A100000123345678000001A /* LeagueStandingsView.swift in Sources */,
 				A100000123345678000001C /* NarrativeInsightsView.swift in Sources */,
+				A100000123345678000001E /* PredictionTimelineView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -62,6 +62,8 @@ class MatchDetailViewModel: ObservableObject {
     @Published var awayTeamForm: TeamFormData?
     @Published var narrativeInsights: [NarrativeInsight] = []
     @Published var momentumAnalysis: MomentumAnalysis?
+    @Published var timeline: MatchTimelineResponse?
+    @Published var timelineError: String?
 
     init(prediction: MatchPrediction) {
         self.prediction = prediction
@@ -79,11 +81,25 @@ class MatchDetailViewModel: ObservableObject {
             matchDetails = try await APIClient.shared.getMatchDetails(matchId: matchId)
             processTeamHistory()
             generateInsights()
+
+            // Load timeline for finished matches
+            if prediction.isFinished {
+                await loadTimeline(matchId: matchId)
+            }
         } catch {
             self.error = error.localizedDescription
         }
 
         isLoading = false
+    }
+
+    private func loadTimeline(matchId: Int) async {
+        do {
+            timeline = try await APIClient.shared.getMatchTimeline(matchId: matchId)
+        } catch {
+            // Timeline is optional - don't fail the whole view
+            timelineError = error.localizedDescription
+        }
     }
 
     private func calculateEV() {
@@ -282,6 +298,12 @@ struct MatchDetailView: View {
             VStack(spacing: 24) {
                 matchHeader
                 probabilityBar
+
+                // Timeline for finished matches
+                if let timeline = viewModel.timeline {
+                    PredictionTimelineView(timeline: timeline)
+                }
+
                 oddsCards
 
                 if viewModel.homeTeamForm != nil || viewModel.awayTeamForm != nil {

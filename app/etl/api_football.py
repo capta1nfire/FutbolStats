@@ -493,6 +493,43 @@ class APIFootballProvider(DataProvider):
 
         return players
 
+    async def get_fixture_events(self, fixture_id: int) -> list[dict]:
+        """
+        Fetch match events (goals, cards, substitutions) for a fixture.
+
+        Used for the Timeline feature to show when goals were scored.
+
+        Args:
+            fixture_id: External fixture ID from API-Football.
+
+        Returns:
+            List of event dicts with type, minute, team, player info.
+        """
+        data = await self._rate_limited_request("fixtures/events", {"fixture": fixture_id})
+        events_data = data.get("response", [])
+
+        events = []
+        for event in events_data:
+            time_info = event.get("time", {})
+            team = event.get("team", {})
+            player = event.get("player", {})
+            assist = event.get("assist", {})
+
+            events.append({
+                "type": event.get("type"),  # "Goal", "Card", "subst"
+                "detail": event.get("detail"),  # "Normal Goal", "Penalty", "Own Goal", etc.
+                "minute": time_info.get("elapsed"),
+                "extra_minute": time_info.get("extra"),  # Added time (e.g., 90+3)
+                "team_id": team.get("id"),
+                "team_name": team.get("name"),
+                "player_id": player.get("id"),
+                "player_name": player.get("name"),
+                "assist_id": assist.get("id") if assist else None,
+                "assist_name": assist.get("name") if assist else None,
+            })
+
+        return events
+
     async def close(self) -> None:
         """Close the HTTP client."""
         await self.client.aclose()

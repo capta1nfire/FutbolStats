@@ -999,6 +999,216 @@ async def get_match_details(
     }
 
 
+@app.get("/matches/{match_id}/timeline")
+async def get_match_timeline(
+    match_id: int,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Get timeline data for a finished match.
+
+    Returns goal events with minutes, and compares against our prediction
+    to show when the prediction was "in line" vs "out of line" with the score.
+
+    Only available for finished matches (FT, AET, PEN) with a saved prediction.
+    """
+    # Get match
+    match = await session.get(Match, match_id)
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    # Only for finished matches
+    if match.status not in ("FT", "AET", "PEN"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Timeline only available for finished matches. Status: {match.status}"
+        )
+
+    # Get saved prediction for this match
+    result = await session.execute(
+        select(Prediction).where(Prediction.match_id == match_id).limit(1)
+    )
+    prediction = result.scalar_one_or_none()
+
+    if not prediction:
+        raise HTTPException(
+            status_code=404,
+            detail="No prediction saved for this match"
+        )
+
+    # Determine what we predicted
+    predicted_outcome = "home"
+    if prediction.away_prob > prediction.home_prob and prediction.away_prob > prediction.draw_prob:
+        predicted_outcome = "away"
+    elif prediction.draw_prob > prediction.home_prob and prediction.draw_prob > prediction.away_prob:
+        predicted_outcome = "draw"
+
+    # Get goal events from API
+    provider = APIFootballProvider()
+    try:
+        events = await provider.get_fixture_events(match.external_id)
+    finally:
+        await provider.close()
+
+    # Filter only goals
+    goals = [
+        e for e in events
+        if e.get("type") == "Goal"
+    ]
+
+    # Sort by minute
+    goals.sort(key=lambda g: (g.get("minute") or 0, g.get("extra_minute") or 0))
+
+    # Get team IDs
+    home_team = await session.get(Team, match.home_team_id)
+    away_team = await session.get(Team, match.away_team_id)
+    home_external_id = home_team.external_id if home_team else None
+    away_external_id = away_team.external_id if away_team else None
+
+    # Build timeline segments
+    # Each segment: {start_minute, end_minute, home_score, away_score, status}
+    # status: "correct" (prediction in line), "neutral" (draw when we predicted win), "wrong" (losing)
+    segments = []
+    current_home = 0
+    current_away = 0
+    last_minute = 0
+    total_minutes = 90  # Default, adjust if extra time
+
+    # Check if there's extra time
+    if goals:
+        max_minute = max(g.get("minute") or 0 for g in goals)
+        if max_minute > 90:
+            total_minutes = max_minute + 5  # Add buffer for display
+
+    for goal in goals:
+        minute = goal.get("minute") or 0
+        extra = goal.get("extra_minute") or 0
+        effective_minute = minute + (extra * 0.1)  # For sorting 90+1, 90+2, etc.
+
+        # Add segment before this goal
+        if minute > last_minute:
+            status = _calculate_segment_status(
+                current_home, current_away, predicted_outcome
+            )
+            segments.append({
+                "start_minute": last_minute,
+                "end_minute": minute,
+                "home_goals": current_home,
+                "away_goals": current_away,
+                "status": status,
+            })
+
+        # Update score
+        if goal.get("team_id") == home_external_id:
+            # Check for own goal
+            if goal.get("detail") == "Own Goal":
+                current_away += 1
+            else:
+                current_home += 1
+        elif goal.get("team_id") == away_external_id:
+            if goal.get("detail") == "Own Goal":
+                current_home += 1
+            else:
+                current_away += 1
+
+        last_minute = minute
+
+    # Add final segment
+    if last_minute < total_minutes:
+        status = _calculate_segment_status(
+            current_home, current_away, predicted_outcome
+        )
+        segments.append({
+            "start_minute": last_minute,
+            "end_minute": total_minutes,
+            "home_goals": current_home,
+            "away_goals": current_away,
+            "status": status,
+        })
+
+    # Calculate time in correct prediction
+    correct_minutes = sum(
+        (s["end_minute"] - s["start_minute"]) for s in segments if s["status"] == "correct"
+    )
+    total_match_minutes = total_minutes
+    correct_percentage = (correct_minutes / total_match_minutes) * 100 if total_match_minutes > 0 else 0
+
+    # Determine final result
+    final_result = "draw"
+    if match.home_goals > match.away_goals:
+        final_result = "home"
+    elif match.away_goals > match.home_goals:
+        final_result = "away"
+
+    return {
+        "match_id": match_id,
+        "status": match.status,
+        "final_score": {
+            "home": match.home_goals,
+            "away": match.away_goals,
+        },
+        "prediction": {
+            "outcome": predicted_outcome,
+            "home_prob": round(prediction.home_prob, 4),
+            "draw_prob": round(prediction.draw_prob, 4),
+            "away_prob": round(prediction.away_prob, 4),
+            "correct": predicted_outcome == final_result,
+        },
+        "total_minutes": total_minutes,
+        "goals": [
+            {
+                "minute": g.get("minute"),
+                "extra_minute": g.get("extra_minute"),
+                "team": "home" if g.get("team_id") == home_external_id else "away",
+                "team_name": g.get("team_name"),
+                "player": g.get("player_name"),
+                "is_own_goal": g.get("detail") == "Own Goal",
+                "is_penalty": g.get("detail") == "Penalty",
+            }
+            for g in goals
+        ],
+        "segments": segments,
+        "summary": {
+            "correct_minutes": round(correct_minutes, 1),
+            "correct_percentage": round(correct_percentage, 1),
+        },
+    }
+
+
+def _calculate_segment_status(home_score: int, away_score: int, predicted: str) -> str:
+    """
+    Calculate segment status based on current score vs prediction.
+
+    Returns:
+        "correct": Score aligns with prediction
+        "neutral": Draw when we predicted a win (gray area)
+        "wrong": Losing team is the one we predicted to win
+    """
+    if home_score == away_score:
+        # It's a draw
+        if predicted == "draw":
+            return "correct"
+        else:
+            return "neutral"  # We predicted a win but it's tied
+
+    if home_score > away_score:
+        # Home is winning
+        if predicted == "home":
+            return "correct"
+        elif predicted == "away":
+            return "wrong"
+        else:  # predicted draw
+            return "neutral"
+    else:
+        # Away is winning
+        if predicted == "away":
+            return "correct"
+        elif predicted == "home":
+            return "wrong"
+        else:  # predicted draw
+            return "neutral"
+
+
 @app.get("/standings/{league_id}")
 async def get_league_standings(league_id: int, season: int = None):
     """

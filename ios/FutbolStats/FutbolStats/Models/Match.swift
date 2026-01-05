@@ -486,6 +486,123 @@ struct StandingsEntry: Codable, Identifiable {
     }
 }
 
+// MARK: - Match Timeline
+
+struct MatchTimelineResponse: Codable {
+    let matchId: Int
+    let status: String
+    let finalScore: TimelineScore
+    let prediction: TimelinePrediction
+    let totalMinutes: Int
+    let goals: [TimelineGoal]
+    let segments: [TimelineSegment]
+    let summary: TimelineSummary
+
+    enum CodingKeys: String, CodingKey {
+        case matchId = "match_id"
+        case status
+        case finalScore = "final_score"
+        case prediction
+        case totalMinutes = "total_minutes"
+        case goals
+        case segments
+        case summary
+    }
+}
+
+struct TimelineScore: Codable {
+    let home: Int
+    let away: Int
+}
+
+struct TimelinePrediction: Codable {
+    let outcome: String  // "home", "draw", "away"
+    let homeProb: Double
+    let drawProb: Double
+    let awayProb: Double
+    let correct: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case outcome
+        case homeProb = "home_prob"
+        case drawProb = "draw_prob"
+        case awayProb = "away_prob"
+        case correct
+    }
+}
+
+struct TimelineGoal: Codable, Identifiable {
+    let minute: Int
+    let extraMinute: Int?
+    let team: String  // "home" or "away"
+    let teamName: String
+    let player: String?
+    let isOwnGoal: Bool
+    let isPenalty: Bool
+
+    var id: String {
+        "\(minute)-\(team)-\(player ?? "unknown")"
+    }
+
+    /// Display minute (e.g., "45+2" or "67")
+    var displayMinute: String {
+        if let extra = extraMinute, extra > 0 {
+            return "\(minute)+\(extra)"
+        }
+        return "\(minute)"
+    }
+
+    /// Effective minute for positioning on timeline
+    var effectiveMinute: Int {
+        minute + (extraMinute ?? 0)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case minute
+        case extraMinute = "extra_minute"
+        case team
+        case teamName = "team_name"
+        case player
+        case isOwnGoal = "is_own_goal"
+        case isPenalty = "is_penalty"
+    }
+}
+
+struct TimelineSegment: Codable, Identifiable {
+    let startMinute: Int
+    let endMinute: Int
+    let homeGoals: Int
+    let awayGoals: Int
+    let status: String  // "correct", "neutral", "wrong"
+
+    var id: String {
+        "\(startMinute)-\(endMinute)"
+    }
+
+    /// Duration of this segment in minutes
+    var duration: Int {
+        endMinute - startMinute
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case startMinute = "start_minute"
+        case endMinute = "end_minute"
+        case homeGoals = "home_goals"
+        case awayGoals = "away_goals"
+        case status
+    }
+}
+
+struct TimelineSummary: Codable {
+    let correctMinutes: Double
+    let correctPercentage: Double
+
+    enum CodingKeys: String, CodingKey {
+        case correctMinutes = "correct_minutes"
+        case correctPercentage = "correct_percentage"
+    }
+}
+
 // MARK: - Health Check
 
 struct HealthResponse: Codable {

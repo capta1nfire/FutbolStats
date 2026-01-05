@@ -252,6 +252,13 @@ actor APIClient {
         return try await performRequest(url: url)
     }
 
+    // MARK: - Match Timeline
+
+    func getMatchTimeline(matchId: Int) async throws -> MatchTimelineResponse {
+        let url = URL(string: "\(environment.baseURL)/matches/\(matchId)/timeline")!
+        return try await performRequest(url: url)
+    }
+
     // MARK: - ETL Sync (requires API key in production)
 
     func syncData(leagueIds: [Int], season: Int) async throws -> [String: Any] {
