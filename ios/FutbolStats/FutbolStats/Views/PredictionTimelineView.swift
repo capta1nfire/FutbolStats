@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// Timeline visualization showing when the prediction was correct during the match.
+/// Uses SF Symbols 5 for native iOS premium aesthetics.
 /// Green segments = prediction aligned with current score
 /// Gray segments = prediction misaligned (wrong or neutral)
 struct PredictionTimelineView: View {
@@ -33,13 +34,14 @@ struct PredictionTimelineView: View {
                 }
             }
 
-            // Timeline bar with start/end icons and goals
-            HStack(spacing: 8) {
-                // Whistle icon (start)
-                Text("📣")
-                    .font(.system(size: 14))
+            // Timeline bar with SF Symbol markers
+            HStack(alignment: .center, spacing: 6) {
+                // Start marker - Stopwatch (kickoff)
+                Image(systemName: "stopwatch.fill")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Color(.systemGray))
 
-                // Timeline bar with goals
+                // Timeline bar with goals overlay
                 GeometryReader { geo in
                     ZStack(alignment: .top) {
                         // Background bar
@@ -47,15 +49,16 @@ struct PredictionTimelineView: View {
                             .frame(height: barHeight)
                             .clipShape(RoundedRectangle(cornerRadius: 6))
 
-                        // Goal markers (balls centered on bar, minutes below)
+                        // Goal markers (soccer balls centered on bar)
                         goalMarkers(width: geo.size.width)
                     }
                 }
-                .frame(height: barHeight + 28) // Bar + space for minute labels
+                .frame(height: barHeight + 28)
 
-                // Checkered flag (end)
-                Text("🏁")
-                    .font(.system(size: 14))
+                // End marker - Checkered flag (full time)
+                Image(systemName: "flag.checkered")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.primary)
             }
 
             // Summary
@@ -100,7 +103,7 @@ struct PredictionTimelineView: View {
         }
     }
 
-    // MARK: - Goal Markers
+    // MARK: - Goal Markers (SF Symbol: soccerball.inverse)
 
     private func goalMarkers(width: CGFloat) -> some View {
         let groupedGoals = groupNearbyGoals(timeline.goals)
@@ -110,24 +113,29 @@ struct PredictionTimelineView: View {
                 let xPosition = CGFloat(group.effectiveMinute) / CGFloat(timeline.totalMinutes) * width
 
                 VStack(spacing: 4) {
-                    // Goal icon(s) - centered on bar
+                    // Goal icon(s) - SF Symbol soccer ball
                     if group.count > 1 {
-                        // Grouped goals
-                        HStack(spacing: 2) {
-                            Text("⚽")
-                                .font(.system(size: 12))
+                        // Grouped goals badge
+                        HStack(spacing: 3) {
+                            Image(systemName: "soccerball.inverse")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.white)
                             Text("×\(group.count)")
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundStyle(.white)
                         }
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 2)
-                        .background(Color.black.opacity(0.7))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.black.opacity(0.75))
                         .clipShape(Capsule())
+                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
                     } else {
-                        // Single goal - centered on bar height
-                        Text("⚽")
-                            .font(.system(size: 16))
+                        // Single goal - premium SF Symbol
+                        Image(systemName: "soccerball.inverse")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(.white)
+                            .frame(width: 14, height: 14)
+                            .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
                             .frame(height: barHeight)
                     }
 
