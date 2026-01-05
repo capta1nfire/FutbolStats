@@ -21,6 +21,11 @@ class Settings(BaseSettings):
 
     # Rate Limiting
     API_REQUESTS_PER_MINUTE: int = 30
+    RATE_LIMIT_PER_MINUTE: str = "60/minute"
+
+    # API Security
+    API_KEY: str = ""  # Optional API key for admin endpoints
+    API_KEY_HEADER: str = "X-API-Key"
 
     # Model versioning
     MODEL_VERSION: str = "v1.0.0"

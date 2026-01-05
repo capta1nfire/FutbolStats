@@ -6,9 +6,11 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +22,7 @@ from app.features import FeatureEngineer
 from app.ml import XGBoostEngine
 from app.models import Match, Prediction, Team, TeamAdjustment
 from app.scheduler import start_scheduler, stop_scheduler
+from app.security import limiter, verify_api_key
 
 # Configure logging
 logging.basicConfig(
@@ -99,6 +102,10 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# Add rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 # Request/Response Models
@@ -181,7 +188,8 @@ class PredictionsResponse(BaseModel):
 
 # Endpoints
 @app.get("/health", response_model=HealthResponse)
-async def health_check():
+@limiter.limit("120/minute")
+async def health_check(request: Request):
     """Health check endpoint."""
     return HealthResponse(
         status="ok",
@@ -190,7 +198,8 @@ async def health_check():
 
 
 @app.get("/")
-async def root():
+@limiter.limit("60/minute")
+async def root(request: Request):
     """Root endpoint with API info."""
     return {
         "name": "FutbolStat MVP",
@@ -206,19 +215,23 @@ async def root():
 
 
 @app.post("/etl/sync", response_model=ETLSyncResponse)
+@limiter.limit("10/minute")
 async def etl_sync(
-    request: ETLSyncRequest,
+    request: Request,
+    body: ETLSyncRequest,
     session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
 ):
     """
     Sync fixtures from API-Football.
 
     Fetches matches for specified leagues and season.
+    Requires API key authentication.
     """
-    logger.info(f"ETL sync request: {request}")
+    logger.info(f"ETL sync request: {body}")
 
     # Validate league IDs
-    for league_id in request.league_ids:
+    for league_id in body.league_ids:
         if league_id not in COMPETITIONS:
             raise HTTPException(
                 status_code=400,
@@ -229,9 +242,9 @@ async def etl_sync(
     try:
         pipeline = ETLPipeline(provider=provider, session=session)
         result = await pipeline.sync_multiple_leagues(
-            league_ids=request.league_ids,
-            season=request.season,
-            fetch_odds=request.fetch_odds,
+            league_ids=body.league_ids,
+            season=body.season,
+            fetch_odds=body.fetch_odds,
         )
 
         return ETLSyncResponse(
@@ -244,16 +257,20 @@ async def etl_sync(
 
 
 @app.post("/etl/sync-historical")
+@limiter.limit("5/minute")
 async def etl_sync_historical(
+    request: Request,
     start_year: int = 2018,
     end_year: Optional[int] = None,
     league_ids: Optional[list[int]] = None,
     session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
 ):
     """
     Sync historical data for multiple seasons.
 
     This is a long-running operation. Use for initial data loading.
+    Requires API key authentication.
     """
     if league_ids is None:
         league_ids = ALL_LEAGUE_IDS
@@ -272,33 +289,37 @@ async def etl_sync_historical(
 
 
 @app.post("/model/train", response_model=TrainResponse)
+@limiter.limit("5/minute")
 async def train_model(
-    request: TrainRequest = None,
+    request: Request,
+    body: TrainRequest = None,
     session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
 ):
     """
     Train the prediction model.
 
     Uses historical match data to train XGBoost model.
+    Requires API key authentication.
     """
-    request = request or TrainRequest()
+    body = body or TrainRequest()
 
     logger.info("Starting model training...")
 
     # Parse dates
     min_date = None
     max_date = None
-    if request.min_date:
-        min_date = datetime.strptime(request.min_date, "%Y-%m-%d")
-    if request.max_date:
-        max_date = datetime.strptime(request.max_date, "%Y-%m-%d")
+    if body.min_date:
+        min_date = datetime.strptime(body.min_date, "%Y-%m-%d")
+    if body.max_date:
+        max_date = datetime.strptime(body.max_date, "%Y-%m-%d")
 
     # Build training dataset
     feature_engineer = FeatureEngineer(session=session)
     df = await feature_engineer.build_training_dataset(
         min_date=min_date,
         max_date=max_date,
-        league_ids=request.league_ids,
+        league_ids=body.league_ids,
     )
 
     if len(df) < 100:
@@ -319,7 +340,9 @@ async def train_model(
 
 
 @app.get("/predictions/upcoming", response_model=PredictionsResponse)
+@limiter.limit("30/minute")
 async def get_predictions(
+    request: Request,
     league_ids: Optional[str] = None,  # comma-separated
     days: int = 7,
     save: bool = False,  # Save predictions to database
@@ -504,7 +527,7 @@ async def _save_predictions_to_db(
     model_version: str,
 ) -> int:
     """Save predictions to database for later auditing."""
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from app.db_utils import upsert
 
     saved = 0
     for pred in predictions:
@@ -514,24 +537,21 @@ async def _save_predictions_to_db(
 
         probs = pred["probabilities"]
 
-        # Use upsert to avoid duplicates
-        stmt = pg_insert(Prediction).values(
-            match_id=match_id,
-            model_version=model_version,
-            home_prob=probs["home"],
-            draw_prob=probs["draw"],
-            away_prob=probs["away"],
-        ).on_conflict_do_update(
-            constraint="uq_match_model",
-            set_={
-                "home_prob": probs["home"],
-                "draw_prob": probs["draw"],
-                "away_prob": probs["away"],
-            }
-        )
-
         try:
-            await session.execute(stmt)
+            # Use generic upsert for cross-database compatibility
+            await upsert(
+                session,
+                Prediction,
+                values={
+                    "match_id": match_id,
+                    "model_version": model_version,
+                    "home_prob": probs["home"],
+                    "draw_prob": probs["draw"],
+                    "away_prob": probs["away"],
+                },
+                conflict_columns=["match_id", "model_version"],
+                update_columns=["home_prob", "draw_prob", "away_prob"],
+            )
             saved += 1
         except Exception as e:
             logger.warning(f"Error saving prediction for match {match_id}: {e}")
@@ -616,8 +636,17 @@ async def list_matches(
     limit: int = 50,
     session: AsyncSession = Depends(get_async_session),
 ):
-    """List matches in the database."""
-    query = select(Match).order_by(Match.date.desc())
+    """List matches in the database with eager loading to avoid N+1 queries."""
+    from sqlalchemy.orm import selectinload
+
+    query = (
+        select(Match)
+        .options(
+            selectinload(Match.home_team),
+            selectinload(Match.away_team),
+        )
+        .order_by(Match.date.desc())
+    )
 
     if league_id:
         query = query.where(Match.league_id == league_id)
@@ -629,26 +658,22 @@ async def list_matches(
     result = await session.execute(query)
     matches = result.scalars().all()
 
-    # Get team names
-    match_list = []
-    for m in matches:
-        home_team = await session.get(Team, m.home_team_id)
-        away_team = await session.get(Team, m.away_team_id)
-
-        match_list.append({
+    # Build response using eager-loaded relationships
+    return [
+        {
             "id": m.id,
             "external_id": m.external_id,
             "date": m.date,
             "league_id": m.league_id,
-            "home_team": home_team.name if home_team else "Unknown",
-            "away_team": away_team.name if away_team else "Unknown",
+            "home_team": m.home_team.name if m.home_team else "Unknown",
+            "away_team": m.away_team.name if m.away_team else "Unknown",
             "home_goals": m.home_goals,
             "away_goals": m.away_goals,
             "status": m.status,
             "match_type": m.match_type,
-        })
-
-    return match_list
+        }
+        for m in matches
+    ]
 
 
 @app.get("/competitions")
@@ -741,15 +766,17 @@ async def get_team_history(
     Get recent match history for a team.
 
     Returns the last N matches played by the team with results.
+    Uses eager loading to avoid N+1 queries.
     """
     from sqlalchemy import or_
+    from sqlalchemy.orm import selectinload
 
     # Get team info
     team = await session.get(Team, team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
-    # Get last matches where team played (home or away), only finished matches
+    # Get last matches with eager loading of both teams (avoids N+1 queries)
     query = (
         select(Match)
         .where(
@@ -758,6 +785,10 @@ async def get_team_history(
                 Match.away_team_id == team_id,
             ),
             Match.status == "FT",  # Only finished matches
+        )
+        .options(
+            selectinload(Match.home_team),
+            selectinload(Match.away_team),
         )
         .order_by(Match.date.desc())
         .limit(limit)
@@ -768,14 +799,14 @@ async def get_team_history(
 
     history = []
     for match in matches:
-        # Get opponent
+        # Get opponent from eager-loaded relationship
         if match.home_team_id == team_id:
-            opponent = await session.get(Team, match.away_team_id)
+            opponent = match.away_team
             team_goals = match.home_goals
             opponent_goals = match.away_goals
             is_home = True
         else:
-            opponent = await session.get(Team, match.home_team_id)
+            opponent = match.home_team
             team_goals = match.away_goals
             opponent_goals = match.home_goals
             is_home = False

@@ -1,6 +1,7 @@
 """Background scheduler for weekly sync, audit, and training jobs."""
 
 import logging
+import os
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -14,6 +15,8 @@ logger = logging.getLogger(__name__)
 SYNC_LEAGUES = [39, 140, 135, 78, 61]  # EPL, La Liga, Serie A, Bundesliga, Ligue 1
 CURRENT_SEASON = 2025
 
+# Flag to prevent multiple scheduler instances (e.g., with --reload)
+_scheduler_started = False
 scheduler = AsyncIOScheduler()
 
 
@@ -25,8 +28,7 @@ async def daily_save_predictions():
     logger.info("Starting daily prediction save job...")
 
     try:
-        from sqlalchemy.dialects.postgresql import insert as pg_insert
-
+        from app.db_utils import upsert
         from app.ml import XGBoostEngine
         from app.models import Prediction
 
@@ -48,7 +50,7 @@ async def daily_save_predictions():
             # Make predictions
             predictions = engine.predict(df)
 
-            # Save to database
+            # Save to database using generic upsert
             saved = 0
             for pred in predictions:
                 match_id = pred.get("match_id")
@@ -56,22 +58,20 @@ async def daily_save_predictions():
                     continue
 
                 probs = pred["probabilities"]
-                stmt = pg_insert(Prediction).values(
-                    match_id=match_id,
-                    model_version=engine.model_version,
-                    home_prob=probs["home"],
-                    draw_prob=probs["draw"],
-                    away_prob=probs["away"],
-                ).on_conflict_do_update(
-                    constraint="uq_match_model",
-                    set_={
-                        "home_prob": probs["home"],
-                        "draw_prob": probs["draw"],
-                        "away_prob": probs["away"],
-                    }
-                )
                 try:
-                    await session.execute(stmt)
+                    await upsert(
+                        session,
+                        Prediction,
+                        values={
+                            "match_id": match_id,
+                            "model_version": engine.model_version,
+                            "home_prob": probs["home"],
+                            "draw_prob": probs["draw"],
+                            "away_prob": probs["away"],
+                        },
+                        conflict_columns=["match_id", "model_version"],
+                        update_columns=["home_prob", "draw_prob", "away_prob"],
+                    )
                     saved += 1
                 except Exception as e:
                     logger.warning(f"Error saving prediction: {e}")
@@ -263,7 +263,25 @@ async def weekly_recalibration(ml_engine):
 
 
 def start_scheduler(ml_engine):
-    """Start the background scheduler."""
+    """
+    Start the background scheduler.
+
+    Uses a module-level flag to prevent duplicate scheduler instances
+    when running with --reload or multiple workers.
+    """
+    global _scheduler_started
+
+    # Prevent duplicate schedulers
+    if _scheduler_started:
+        logger.warning("Scheduler already started, skipping duplicate initialization")
+        return
+
+    # Check if running in reload mode - skip scheduler in child process
+    # Uvicorn sets this env var in the reloader subprocess
+    if os.environ.get("UVICORN_RELOADED"):
+        logger.info("Skipping scheduler in reload subprocess")
+        return
+
     # Daily prediction save: Every day at 7:00 AM UTC (before audit)
     scheduler.add_job(
         daily_save_predictions,
@@ -293,6 +311,7 @@ def start_scheduler(ml_engine):
     )
 
     scheduler.start()
+    _scheduler_started = True
     logger.info(
         "Scheduler started:\n"
         "  - Daily save predictions: 7:00 AM UTC\n"
@@ -303,6 +322,8 @@ def start_scheduler(ml_engine):
 
 def stop_scheduler():
     """Stop the background scheduler."""
+    global _scheduler_started
     if scheduler.running:
         scheduler.shutdown()
+        _scheduler_started = False
         logger.info("Scheduler stopped")
