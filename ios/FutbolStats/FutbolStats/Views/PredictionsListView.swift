@@ -406,7 +406,7 @@ struct MatchCard: View {
             }
 
             // Confidence tier badge
-            if let tier = prediction.confidenceTier {
+            if prediction.confidenceTier != nil {
                 Text(prediction.tierEmoji)
                     .font(.caption)
             }
