@@ -364,18 +364,27 @@ struct MatchCard: View {
         }
     }
 
-    /// Match status badge - shows FT, LIVE, or time
+    /// Match status badge - shows FT with result indicator, LIVE, or time with tier
     private var matchStatusBadge: some View {
-        Group {
+        VStack(alignment: .trailing, spacing: 4) {
+            // Status badge
             if prediction.isFinished {
-                Text("FT")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.green)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.green.opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                HStack(spacing: 4) {
+                    // Prediction result indicator
+                    if let correct = prediction.predictionCorrect {
+                        Image(systemName: correct ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(correct ? .green : .red)
+                    }
+                    Text("FT")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.green)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.green.opacity(0.15))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
             } else if prediction.isLive {
                 Text(prediction.status ?? "LIVE")
                     .font(.caption)
@@ -394,6 +403,12 @@ struct MatchCard: View {
                     .padding(.vertical, 4)
                     .background(Color(white: 0.15))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+
+            // Confidence tier badge
+            if let tier = prediction.confidenceTier {
+                Text(prediction.tierEmoji)
+                    .font(.caption)
             }
         }
     }

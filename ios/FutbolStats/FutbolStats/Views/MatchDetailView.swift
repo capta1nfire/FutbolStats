@@ -348,14 +348,27 @@ struct MatchDetailView: View {
                         Text(score)
                             .font(.system(size: 28, weight: .bold))
                             .foregroundStyle(.white)
-                        Text("FT")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.green)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 2)
-                            .background(Color.green.opacity(0.2))
-                            .clipShape(Capsule())
+                        HStack(spacing: 6) {
+                            // Prediction result indicator
+                            if let correct = prediction.predictionCorrect {
+                                Image(systemName: correct ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(correct ? .green : .red)
+                            }
+                            Text("FT")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.green)
+                            // Tier emoji
+                            if !prediction.tierEmoji.isEmpty {
+                                Text(prediction.tierEmoji)
+                                    .font(.caption)
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(Color.green.opacity(0.2))
+                        .clipShape(Capsule())
                     } else if prediction.isLive {
                         if let score = prediction.scoreDisplay {
                             Text(score)
@@ -371,6 +384,11 @@ struct MatchDetailView: View {
                             .background(Color.red.opacity(0.2))
                             .clipShape(Capsule())
                     } else {
+                        // Tier emoji for upcoming matches
+                        if !prediction.tierEmoji.isEmpty {
+                            Text(prediction.tierEmoji)
+                                .font(.title2)
+                        }
                         Text("VS")
                             .font(.headline)
                             .fontWeight(.medium)
@@ -737,12 +755,13 @@ struct MatchDetailView: View {
             status: "FT",
             homeGoals: 2,
             awayGoals: 1,
-            probabilities: Probabilities(home: 0.334, draw: 0.333, away: 0.333),
+            probabilities: Probabilities(home: 0.45, draw: 0.30, away: 0.25),
             fairOdds: FairOdds(home: 2.47, draw: 3.39, away: 3.33),
             marketOdds: MarketOdds(home: 1.45, draw: 4.50, away: 7.00),
             valueBets: nil,
             hasValueBet: true,
-            bestValueBet: nil
+            bestValueBet: nil,
+            confidenceTier: "gold"
         ))
     }
     .preferredColorScheme(.dark)

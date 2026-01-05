@@ -31,6 +31,7 @@ struct MatchPrediction: Codable, Identifiable {
     let valueBets: [ValueBet]?
     let hasValueBet: Bool?
     let bestValueBet: ValueBet?
+    let confidenceTier: String?   // gold, silver, copper
 
     var id: Int {
         matchId ?? matchExternalId ?? UUID().hashValue
@@ -56,6 +57,40 @@ struct MatchPrediction: Codable, Identifiable {
     /// Quick check if this prediction has a value betting opportunity
     var isValueBet: Bool {
         hasValueBet ?? (valueBets?.isEmpty == false)
+    }
+
+    /// What the model predicted (home, draw, away)
+    var predictedOutcome: String {
+        if probabilities.home > probabilities.draw && probabilities.home > probabilities.away {
+            return "home"
+        } else if probabilities.away > probabilities.draw && probabilities.away > probabilities.home {
+            return "away"
+        }
+        return "draw"
+    }
+
+    /// Actual result based on final score
+    var actualOutcome: String? {
+        guard isFinished, let home = homeGoals, let away = awayGoals else { return nil }
+        if home > away { return "home" }
+        if away > home { return "away" }
+        return "draw"
+    }
+
+    /// Did the prediction match the actual result?
+    var predictionCorrect: Bool? {
+        guard let actual = actualOutcome else { return nil }
+        return predictedOutcome == actual
+    }
+
+    /// Tier emoji for display
+    var tierEmoji: String {
+        switch confidenceTier?.lowercased() {
+        case "gold": return "🥇"
+        case "silver": return "🥈"
+        case "copper": return "🥉"
+        default: return ""
+        }
     }
 
     /// Best EV percentage for display (e.g., "+12.5%")
@@ -112,6 +147,7 @@ struct MatchPrediction: Codable, Identifiable {
         case valueBets = "value_bets"
         case hasValueBet = "has_value_bet"
         case bestValueBet = "best_value_bet"
+        case confidenceTier = "confidence_tier"
     }
 }
 
