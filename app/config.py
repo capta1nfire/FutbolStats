@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # Model versioning
     MODEL_VERSION: str = "v1.0.0"
 
+    # Development settings
+    SKIP_AUTO_TRAIN: bool = False  # Skip auto-training on startup (useful during dev)
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

@@ -56,6 +56,11 @@ async def lifespan(app: FastAPI):
     # Try to load existing model
     if ml_engine.load_model():
         logger.info("ML model loaded successfully")
+    elif settings.SKIP_AUTO_TRAIN:
+        logger.warning(
+            "No ML model found, but SKIP_AUTO_TRAIN=true. "
+            "Use POST /model/train to train manually."
+        )
     else:
         # Start training in background to avoid startup timeout
         logger.info("No ML model found. Starting background training...")
@@ -75,6 +80,7 @@ async def lifespan(app: FastAPI):
 async def _train_model_background():
     """Train the ML model in background after startup."""
     import asyncio
+    from concurrent.futures import ThreadPoolExecutor
     from app.database import AsyncSessionLocal
 
     # Small delay to let server fully start
@@ -90,7 +96,11 @@ async def _train_model_background():
                 logger.error(f"Insufficient training data: {len(df)} samples. Need at least 100.")
                 return
 
-            ml_engine.train(df)
+            # Train in executor to avoid blocking the event loop
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor() as executor:
+                await loop.run_in_executor(executor, ml_engine.train, df)
+
             logger.info(f"Background training complete: {ml_engine.model_version} with {len(df)} samples")
     except Exception as e:
         logger.error(f"Background training failed: {e}")

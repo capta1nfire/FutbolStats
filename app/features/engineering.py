@@ -17,6 +17,85 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+class TeamMatchCache:
+    """
+    In-memory cache for team matches to avoid N+1 queries.
+
+    Preloads all matches for relevant teams once, then serves
+    queries from memory using binary search on dates.
+    """
+
+    def __init__(self):
+        # {team_id: [(match_date, match), ...]} sorted by date desc
+        self._cache: dict[int, list[tuple[datetime, Match]]] = {}
+        self._loaded = False
+
+    async def preload(self, session: AsyncSession, team_ids: set[int]) -> None:
+        """Preload all matches for the given teams in a single query."""
+        if not team_ids:
+            return
+
+        logger.info(f"Preloading match history for {len(team_ids)} teams...")
+
+        # Single query to get all relevant matches
+        query = (
+            select(Match)
+            .where(
+                or_(
+                    Match.home_team_id.in_(team_ids),
+                    Match.away_team_id.in_(team_ids),
+                ),
+                Match.status == "FT",
+                Match.home_goals.isnot(None),
+                Match.away_goals.isnot(None),
+            )
+            .order_by(Match.date.desc())
+        )
+
+        result = await session.execute(query)
+        all_matches = list(result.scalars().all())
+
+        # Index matches by team
+        for match in all_matches:
+            for team_id in [match.home_team_id, match.away_team_id]:
+                if team_id in team_ids:
+                    if team_id not in self._cache:
+                        self._cache[team_id] = []
+                    self._cache[team_id].append((match.date, match))
+
+        # Sort each team's matches by date descending (most recent first)
+        for team_id in self._cache:
+            self._cache[team_id].sort(key=lambda x: x[0], reverse=True)
+
+        self._loaded = True
+        logger.info(f"Preloaded {len(all_matches)} matches into cache")
+
+    def get_matches_before(
+        self,
+        team_id: int,
+        before_date: datetime,
+        limit: int = 10,
+    ) -> list[Match]:
+        """Get matches for a team before a given date from cache."""
+        if team_id not in self._cache:
+            return []
+
+        # Filter matches before the date and return up to limit
+        matches = []
+        for match_date, match in self._cache[team_id]:
+            if match_date < before_date:
+                matches.append(match)
+                if len(matches) >= limit:
+                    break
+
+        return matches
+
+    def clear(self) -> None:
+        """Clear the cache."""
+        self._cache.clear()
+        self._loaded = False
+
+
 class FeatureEngineer:
     """
     Feature engineering for football match prediction.
@@ -34,6 +113,7 @@ class FeatureEngineer:
         self.session = session
         self.rolling_window = rolling_window or settings.ROLLING_WINDOW
         self.time_decay_lambda = time_decay_lambda or settings.TIME_DECAY_LAMBDA
+        self._cache: TeamMatchCache | None = None
 
     @staticmethod
     def calculate_time_decay(days_since_match: int, lambda_decay: float = 0.01) -> float:
@@ -64,6 +144,11 @@ class FeatureEngineer:
         """Get completed matches for a team before a given date."""
         limit = limit or self.rolling_window * 2  # Get more for decay calculation
 
+        # Use cache if available (for batch operations like training)
+        if self._cache is not None:
+            return self._cache.get_matches_before(team_id, before_date, limit)
+
+        # Fallback to direct query (for single predictions)
         result = await self.session.execute(
             select(Match)
             .where(
@@ -268,10 +353,20 @@ class FeatureEngineer:
 
         logger.info(f"Building features for {len(matches)} matches...")
 
+        # Preload match history cache to avoid N+1 queries
+        # This reduces ~2000 queries to 1 query for 1000 matches
+        team_ids = set()
+        for match in matches:
+            team_ids.add(match.home_team_id)
+            team_ids.add(match.away_team_id)
+
+        self._cache = TeamMatchCache()
+        await self._cache.preload(self.session, team_ids)
+
         # Build features for each match
         rows = []
         for i, match in enumerate(matches):
-            if (i + 1) % 100 == 0:
+            if (i + 1) % 500 == 0:
                 logger.info(f"Processing match {i + 1}/{len(matches)}")
 
             try:
@@ -299,6 +394,11 @@ class FeatureEngineer:
             except Exception as e:
                 logger.error(f"Error processing match {match.id}: {e}")
                 continue
+
+        # Clear cache to free memory
+        if self._cache is not None:
+            self._cache.clear()
+            self._cache = None
 
         df = pd.DataFrame(rows)
         logger.info(f"Built dataset with {len(df)} samples and {len(df.columns)} features")
