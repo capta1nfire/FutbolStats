@@ -15,11 +15,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.database import close_db, get_async_session, init_db
+from app.database import close_db, get_async_session, init_db, AsyncSessionLocal
 from app.etl import APIFootballProvider, ETLPipeline
 from app.etl.competitions import ALL_LEAGUE_IDS, COMPETITIONS
 from app.features import FeatureEngineer
 from app.ml import XGBoostEngine
+from app.ml.persistence import load_active_model, persist_model_snapshot
 from app.models import Match, Prediction, Team, TeamAdjustment
 from app.scheduler import start_scheduler, stop_scheduler, get_last_sync_time, SYNC_LEAGUES
 from app.security import limiter, verify_api_key
@@ -53,9 +54,17 @@ async def lifespan(app: FastAPI):
     logger.info("Starting FutbolStat MVP...")
     await init_db()
 
-    # Try to load existing model
-    if ml_engine.load_model():
-        logger.info("ML model loaded successfully")
+    # Try to load model from PostgreSQL first (fast path)
+    model_loaded = False
+    async with AsyncSessionLocal() as session:
+        logger.info("Checking for model in PostgreSQL...")
+        model_loaded = await load_active_model(session, ml_engine)
+
+    if model_loaded:
+        logger.info("ML model loaded from PostgreSQL (fast startup)")
+    elif ml_engine.load_model():
+        # Fallback: try loading from local filesystem (legacy)
+        logger.info("ML model loaded from filesystem (legacy)")
     elif settings.SKIP_AUTO_TRAIN:
         logger.warning(
             "No ML model found, but SKIP_AUTO_TRAIN=true. "
@@ -78,10 +87,9 @@ async def lifespan(app: FastAPI):
 
 
 async def _train_model_background():
-    """Train the ML model in background after startup."""
+    """Train the ML model in background after startup and save to PostgreSQL."""
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
-    from app.database import AsyncSessionLocal
 
     # Small delay to let server fully start
     await asyncio.sleep(2)
@@ -99,9 +107,21 @@ async def _train_model_background():
             # Train in executor to avoid blocking the event loop
             loop = asyncio.get_event_loop()
             with ThreadPoolExecutor() as executor:
-                await loop.run_in_executor(executor, ml_engine.train, df)
+                result = await loop.run_in_executor(executor, ml_engine.train, df)
 
-            logger.info(f"Background training complete: {ml_engine.model_version} with {len(df)} samples")
+            # Save model to PostgreSQL for fast startup on future deploys
+            snapshot_id = await persist_model_snapshot(
+                session=session,
+                engine=ml_engine,
+                brier_score=result["brier_score"],
+                cv_scores=result["cv_scores"],
+                samples_trained=result["samples_trained"],
+            )
+
+            logger.info(
+                f"Background training complete: {ml_engine.model_version} with {len(df)} samples. "
+                f"Saved to DB as snapshot {snapshot_id}"
+            )
     except Exception as e:
         logger.error(f"Background training failed: {e}")
 
@@ -364,6 +384,16 @@ async def train_model(
     loop = asyncio.get_event_loop()
     with ThreadPoolExecutor() as executor:
         result = await loop.run_in_executor(executor, ml_engine.train, df)
+
+    # Save model to PostgreSQL for fast startup on future deploys
+    snapshot_id = await persist_model_snapshot(
+        session=session,
+        engine=ml_engine,
+        brier_score=result["brier_score"],
+        cv_scores=result["cv_scores"],
+        samples_trained=result["samples_trained"],
+    )
+    logger.info(f"Model saved to PostgreSQL as snapshot {snapshot_id}")
 
     return TrainResponse(
         model_version=result["model_version"],

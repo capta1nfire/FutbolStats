@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, Column, UniqueConstraint
+from sqlalchemy import JSON, Column, LargeBinary, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -359,6 +359,9 @@ class ModelSnapshot(SQLModel, table=True):
     """
     Model version snapshots for rollback capability.
     Prevents deploying models worse than the baseline.
+
+    The model_blob field stores the XGBoost model as binary data (BYTEA),
+    enabling fast loading from PostgreSQL without filesystem dependency.
     """
 
     __tablename__ = "model_snapshots"
@@ -366,8 +369,17 @@ class ModelSnapshot(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     model_version: str = Field(max_length=50, index=True)
 
-    # Model file path
-    model_path: str = Field(max_length=500, description="Path to saved model file")
+    # Model binary data (BYTEA) - stores XGBoost model via save_raw()
+    model_blob: Optional[bytes] = Field(
+        default=None,
+        sa_column=Column(LargeBinary),
+        description="XGBoost model binary (from save_raw())"
+    )
+
+    # Legacy model file path (kept for compatibility, now optional)
+    model_path: Optional[str] = Field(
+        default=None, max_length=500, description="Path to saved model file (legacy)"
+    )
 
     # Validation metrics
     brier_score: float = Field(description="Cross-validation Brier score")

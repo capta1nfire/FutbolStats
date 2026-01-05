@@ -508,3 +508,60 @@ class XGBoostEngine:
     def is_loaded(self) -> bool:
         """Check if model is loaded."""
         return self.model is not None
+
+    def save_to_bytes(self) -> bytes:
+        """
+        Export the trained model to compressed bytes for database storage.
+
+        Uses pickle + zlib for ~70% size reduction.
+        This can be stored in PostgreSQL BYTEA and loaded without disk I/O.
+
+        Returns:
+            bytes: The compressed model as binary data.
+
+        Raises:
+            ValueError: If no model is trained.
+        """
+        import pickle
+        import zlib
+
+        if self.model is None:
+            raise ValueError("No model trained to export")
+
+        raw_bytes = pickle.dumps(self.model)
+        compressed = zlib.compress(raw_bytes, level=6)
+
+        compression_ratio = (1 - len(compressed) / len(raw_bytes)) * 100
+        logger.info(
+            f"Model compressed: {len(raw_bytes)} -> {len(compressed)} bytes "
+            f"({compression_ratio:.1f}% reduction)"
+        )
+
+        return compressed
+
+    def load_from_bytes(self, blob: bytes) -> bool:
+        """
+        Load a model directly from compressed bytes (from database).
+
+        Args:
+            blob: Compressed binary model data from save_to_bytes() or database.
+
+        Returns:
+            True if model loaded successfully, False otherwise.
+        """
+        import pickle
+        import zlib
+
+        try:
+            decompressed = zlib.decompress(blob)
+            self.model = pickle.loads(decompressed)
+
+            logger.info(
+                f"Model loaded from bytes: {len(blob)} compressed -> "
+                f"{len(decompressed)} decompressed"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load model from bytes: {e}")
+            self.model = None
+            return False
