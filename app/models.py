@@ -68,6 +68,7 @@ class Match(SQLModel, table=True):
     odds_home: Optional[float] = Field(default=None, description="Bookmaker odds for home win")
     odds_draw: Optional[float] = Field(default=None, description="Bookmaker odds for draw")
     odds_away: Optional[float] = Field(default=None, description="Bookmaker odds for away win")
+    odds_recorded_at: Optional[datetime] = Field(default=None, description="When odds were last recorded")
 
     # Relationships
     home_team: Optional[Team] = Relationship(
@@ -399,3 +400,71 @@ class ModelSnapshot(SQLModel, table=True):
     training_config: Optional[dict] = Field(
         default=None, sa_column=Column(JSON), description="Hyperparameters used"
     )
+
+
+class OddsHistory(SQLModel, table=True):
+    """
+    Historical odds snapshots for tracking line movements.
+
+    Stores odds at different points in time to enable:
+    - Pre-match odds analysis (opening vs closing)
+    - Line movement detection (steam moves, sharp action)
+    - Backtesting value bets with actual closing odds
+    - Future: multi-bookmaker comparison
+    """
+
+    __tablename__ = "odds_history"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    match_id: int = Field(foreign_key="matches.id", index=True)
+    recorded_at: datetime = Field(default_factory=datetime.utcnow, description="When snapshot was taken")
+
+    # Odds values
+    odds_home: Optional[float] = Field(default=None)
+    odds_draw: Optional[float] = Field(default=None)
+    odds_away: Optional[float] = Field(default=None)
+
+    # Metadata
+    source: str = Field(default="api_football", max_length=50, description="Bookmaker source")
+    is_opening: bool = Field(default=False, description="First recorded odds for this match")
+    is_closing: bool = Field(default=False, description="Last odds before kickoff")
+
+    # Computed fields for quick analysis
+    implied_home: Optional[float] = Field(default=None, description="1/odds_home")
+    implied_draw: Optional[float] = Field(default=None, description="1/odds_draw")
+    implied_away: Optional[float] = Field(default=None, description="1/odds_away")
+    overround: Optional[float] = Field(default=None, description="Sum of implied probs (margin)")
+
+    @classmethod
+    def from_odds(
+        cls,
+        match_id: int,
+        odds_home: Optional[float],
+        odds_draw: Optional[float],
+        odds_away: Optional[float],
+        source: str = "api_football",
+        is_opening: bool = False,
+        is_closing: bool = False,
+    ) -> "OddsHistory":
+        """Create an OddsHistory entry with computed fields."""
+        implied_home = 1 / odds_home if odds_home and odds_home > 0 else None
+        implied_draw = 1 / odds_draw if odds_draw and odds_draw > 0 else None
+        implied_away = 1 / odds_away if odds_away and odds_away > 0 else None
+
+        overround = None
+        if implied_home and implied_draw and implied_away:
+            overround = implied_home + implied_draw + implied_away
+
+        return cls(
+            match_id=match_id,
+            odds_home=odds_home,
+            odds_draw=odds_draw,
+            odds_away=odds_away,
+            source=source,
+            is_opening=is_opening,
+            is_closing=is_closing,
+            implied_home=implied_home,
+            implied_draw=implied_draw,
+            implied_away=implied_away,
+            overround=overround,
+        )

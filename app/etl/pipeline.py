@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.etl.api_football import APIFootballProvider
 from app.etl.base import DataProvider, MatchData, TeamData
 from app.etl.competitions import COMPETITIONS, Competition
-from app.models import Match, Team
+from app.models import Match, OddsHistory, Team
 
 logger = logging.getLogger(__name__)
 
@@ -96,12 +96,36 @@ class ETLPipeline:
             existing_match.away_goals = match_data.away_goals
             existing_match.stats = match_data.stats
             existing_match.status = match_data.status
-            existing_match.odds_home = match_data.odds_home
-            existing_match.odds_draw = match_data.odds_draw
-            existing_match.odds_away = match_data.odds_away
+
+            # Check if odds have changed and save to history
+            odds_changed = False
+            if match_data.odds_home is not None:
+                if existing_match.odds_home != match_data.odds_home:
+                    odds_changed = True
+                existing_match.odds_home = match_data.odds_home
+            if match_data.odds_draw is not None:
+                if existing_match.odds_draw != match_data.odds_draw:
+                    odds_changed = True
+                existing_match.odds_draw = match_data.odds_draw
+            if match_data.odds_away is not None:
+                if existing_match.odds_away != match_data.odds_away:
+                    odds_changed = True
+                existing_match.odds_away = match_data.odds_away
+
+            # Save odds snapshot if odds changed
+            if odds_changed and match_data.odds_home is not None:
+                existing_match.odds_recorded_at = datetime.utcnow()
+                await self._save_odds_history(
+                    existing_match.id,
+                    match_data.odds_home,
+                    match_data.odds_draw,
+                    match_data.odds_away,
+                )
+
             return existing_match
 
         # Create new match
+        now = datetime.utcnow()
         new_match = Match(
             external_id=match_data.external_id,
             date=match_data.date,
@@ -118,9 +142,46 @@ class ETLPipeline:
             odds_home=match_data.odds_home,
             odds_draw=match_data.odds_draw,
             odds_away=match_data.odds_away,
+            odds_recorded_at=now if match_data.odds_home is not None else None,
         )
         self.session.add(new_match)
+
+        # Flush to get the ID, then save opening odds
+        if match_data.odds_home is not None:
+            await self.session.flush()
+            await self._save_odds_history(
+                new_match.id,
+                match_data.odds_home,
+                match_data.odds_draw,
+                match_data.odds_away,
+                is_opening=True,
+            )
+
         return new_match
+
+    async def _save_odds_history(
+        self,
+        match_id: int,
+        odds_home: Optional[float],
+        odds_draw: Optional[float],
+        odds_away: Optional[float],
+        is_opening: bool = False,
+        is_closing: bool = False,
+    ) -> None:
+        """Save an odds snapshot to history."""
+        if odds_home is None:
+            return
+
+        history = OddsHistory.from_odds(
+            match_id=match_id,
+            odds_home=odds_home,
+            odds_draw=odds_draw,
+            odds_away=odds_away,
+            is_opening=is_opening,
+            is_closing=is_closing,
+        )
+        self.session.add(history)
+        logger.debug(f"Saved odds history for match {match_id}: H={odds_home}, D={odds_draw}, A={odds_away}")
 
     async def sync_league(
         self,

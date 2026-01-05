@@ -21,7 +21,7 @@ from app.etl.competitions import ALL_LEAGUE_IDS, COMPETITIONS
 from app.features import FeatureEngineer
 from app.ml import XGBoostEngine
 from app.ml.persistence import load_active_model, persist_model_snapshot
-from app.models import Match, Prediction, Team, TeamAdjustment
+from app.models import Match, OddsHistory, Prediction, Team, TeamAdjustment
 from app.scheduler import start_scheduler, stop_scheduler, get_last_sync_time, SYNC_LEAGUES
 from app.security import limiter, verify_api_key
 
@@ -1212,6 +1212,85 @@ def _calculate_segment_status(home_score: int, away_score: int, predicted: str) 
             return "wrong"
         else:  # predicted draw
             return "neutral"
+
+
+@app.get("/matches/{match_id}/odds-history")
+async def get_match_odds_history(
+    match_id: int,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Get odds history for a match showing how odds changed over time.
+
+    Returns all recorded odds snapshots for the match, ordered by time.
+    Useful for:
+    - Analyzing line movements before the match
+    - Seeing opening vs closing odds
+    - Detecting sharp money movements
+    """
+    # Get match
+    match = await session.get(Match, match_id)
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    # Get team names
+    home_team = await session.get(Team, match.home_team_id)
+    away_team = await session.get(Team, match.away_team_id)
+
+    # Get odds history
+    result = await session.execute(
+        select(OddsHistory)
+        .where(OddsHistory.match_id == match_id)
+        .order_by(OddsHistory.recorded_at.asc())
+    )
+    history = result.scalars().all()
+
+    # Calculate line movement if we have opening and current odds
+    movement = None
+    if len(history) >= 2:
+        opening = history[0]
+        current = history[-1]
+        if opening.odds_home and current.odds_home:
+            movement = {
+                "home_change": round(current.odds_home - opening.odds_home, 2),
+                "draw_change": round((current.odds_draw or 0) - (opening.odds_draw or 0), 2),
+                "away_change": round((current.odds_away or 0) - (opening.odds_away or 0), 2),
+                "home_pct": round((current.odds_home - opening.odds_home) / opening.odds_home * 100, 1),
+                "draw_pct": round(((current.odds_draw or 0) - (opening.odds_draw or 0)) / (opening.odds_draw or 1) * 100, 1) if opening.odds_draw else None,
+                "away_pct": round(((current.odds_away or 0) - (opening.odds_away or 0)) / (opening.odds_away or 1) * 100, 1) if opening.odds_away else None,
+            }
+
+    return {
+        "match_id": match_id,
+        "home_team": home_team.name if home_team else "Unknown",
+        "away_team": away_team.name if away_team else "Unknown",
+        "match_date": match.date.isoformat() if match.date else None,
+        "status": match.status,
+        "current_odds": {
+            "home": match.odds_home,
+            "draw": match.odds_draw,
+            "away": match.odds_away,
+            "recorded_at": match.odds_recorded_at.isoformat() if match.odds_recorded_at else None,
+        },
+        "history": [
+            {
+                "recorded_at": h.recorded_at.isoformat(),
+                "odds_home": h.odds_home,
+                "odds_draw": h.odds_draw,
+                "odds_away": h.odds_away,
+                "implied_home": round(h.implied_home, 4) if h.implied_home else None,
+                "implied_draw": round(h.implied_draw, 4) if h.implied_draw else None,
+                "implied_away": round(h.implied_away, 4) if h.implied_away else None,
+                "overround": round(h.overround, 4) if h.overround else None,
+                "is_opening": h.is_opening,
+                "is_closing": h.is_closing,
+                "source": h.source,
+            }
+            for h in history
+        ],
+        "movement": movement,
+        "total_snapshots": len(history),
+    }
 
 
 @app.get("/standings/{league_id}")
