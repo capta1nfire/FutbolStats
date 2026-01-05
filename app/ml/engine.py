@@ -209,35 +209,104 @@ class XGBoostEngine:
     def predict(
         self,
         df: pd.DataFrame,
-        team_adjustments: dict[int, float] = None,
+        team_adjustments: dict = None,
+        context: dict = None,
     ) -> list[dict]:
         """
-        Make predictions with probabilities, fair odds, and value bet detection.
+        Make predictions with probabilities, fair odds, value bet detection,
+        and contextual intelligence insights.
 
         Args:
             df: DataFrame with features and match info.
-            team_adjustments: Optional dict mapping team_id to confidence_multiplier.
-                              Used to adjust probabilities based on historical performance.
+            team_adjustments: Optional dict with home/away split multipliers.
+                Format: {"home": {team_id: multiplier}, "away": {team_id: multiplier}}
+                Or legacy format: {team_id: multiplier} (applied to both)
+            context: Optional dict with contextual intelligence data:
+                - unstable_leagues: set of league_ids with drift detected
+                - odds_movements: dict of match_id -> movement data
+                - international_commitments: dict of team_id -> commitment info
+                - team_details: dict of team_id -> TeamAdjustment details
 
         Returns:
-            List of prediction dictionaries with value betting metrics.
+            List of prediction dictionaries with value betting metrics and insights.
         """
         probas = self.predict_proba(df)
+        context = context or {}
+
+        # Extract context data
+        unstable_leagues = context.get("unstable_leagues", set())
+        odds_movements = context.get("odds_movements", {})
+        international_commitments = context.get("international_commitments", {})
+        team_details = context.get("team_details", {})
 
         predictions = []
         for i, row in df.iterrows():
-            home_prob = float(probas[i][0])
-            draw_prob = float(probas[i][1])
-            away_prob = float(probas[i][2])
+            # Store raw probabilities before adjustments
+            raw_home_prob = float(probas[i][0])
+            raw_draw_prob = float(probas[i][1])
+            raw_away_prob = float(probas[i][2])
+
+            home_prob = raw_home_prob
+            draw_prob = raw_draw_prob
+            away_prob = raw_away_prob
+
+            # Track insights and warnings
+            insights = []
+            warnings = []
+
+            # Get team and match info
+            home_team_id = row.get("home_team_id")
+            away_team_id = row.get("away_team_id")
+            match_id = row.get("match_id")
+            league_id = row.get("league_id")
+            home_team_name = row.get("home_team_name", "Local")
+            away_team_name = row.get("away_team_name", "Visitante")
 
             # Apply team adjustments if provided
             adjustment_applied = False
-            if team_adjustments:
-                home_team_id = row.get("home_team_id")
-                away_team_id = row.get("away_team_id")
+            home_adj = 1.0
+            away_adj = 1.0
+            intl_penalty_home = None
+            intl_penalty_away = None
 
-                home_adj = team_adjustments.get(home_team_id, 1.0) if home_team_id else 1.0
-                away_adj = team_adjustments.get(away_team_id, 1.0) if away_team_id else 1.0
+            if team_adjustments:
+                # Check for new format with home/away split
+                if "home" in team_adjustments and "away" in team_adjustments:
+                    home_adjustments = team_adjustments["home"]
+                    away_adjustments = team_adjustments["away"]
+
+                    home_adj = home_adjustments.get(home_team_id, 1.0) if home_team_id else 1.0
+                    away_adj = away_adjustments.get(away_team_id, 1.0) if away_team_id else 1.0
+                else:
+                    home_adj = team_adjustments.get(home_team_id, 1.0) if home_team_id else 1.0
+                    away_adj = team_adjustments.get(away_team_id, 1.0) if away_team_id else 1.0
+
+                # Generate insights for team adjustments
+                if home_adj != 1.0:
+                    home_detail = team_details.get(home_team_id, {})
+                    anomaly_pct = home_detail.get("home_anomaly_rate", 0)
+                    if anomaly_pct > 0:
+                        insights.append(f"{home_team_name} home_mult={home_adj:.2f} (anomalias {anomaly_pct:.0%})")
+
+                if away_adj != 1.0:
+                    away_detail = team_details.get(away_team_id, {})
+                    anomaly_pct = away_detail.get("away_anomaly_rate", 0)
+                    if anomaly_pct > 0:
+                        insights.append(f"{away_team_name} away_mult={away_adj:.2f} (anomalias {anomaly_pct:.0%})")
+
+                # Check international commitments
+                if home_team_id in international_commitments:
+                    commitment = international_commitments[home_team_id]
+                    intl_penalty_home = commitment.get("penalty", 1.0)
+                    insights.append(f"{home_team_name} tiene compromiso internacional en {commitment.get('days', '?')} dias")
+                    warnings.append("INTERNATIONAL_COMMITMENT")
+
+                if away_team_id in international_commitments:
+                    commitment = international_commitments[away_team_id]
+                    intl_penalty_away = commitment.get("penalty", 1.0)
+                    insights.append(f"{away_team_name} tiene compromiso internacional en {commitment.get('days', '?')} dias")
+                    if "INTERNATIONAL_COMMITMENT" not in warnings:
+                        warnings.append("INTERNATIONAL_COMMITMENT")
 
                 # Apply adjustments to win probabilities
                 if home_adj != 1.0 or away_adj != 1.0:
@@ -251,27 +320,99 @@ class XGBoostEngine:
                     away_prob /= total
                     adjustment_applied = True
 
+            # Calculate base confidence tier
+            max_prob = max(home_prob, draw_prob, away_prob)
+            if max_prob >= 0.55:
+                confidence_tier = "gold"
+            elif max_prob >= 0.45:
+                confidence_tier = "silver"
+            else:
+                confidence_tier = "copper"
+
+            original_tier = confidence_tier
+            tier_degradations = 0
+
+            # Check league drift
+            league_drift_applied = False
+            if league_id and league_id in unstable_leagues:
+                tier_degradations += 1
+                league_drift_applied = True
+                insights.append(f"Liga {league_id} inestable - accuracy en caida")
+                warnings.append("LEAGUE_DRIFT")
+
+            # Check odds movement
+            odds_movement_data = None
+            if match_id and match_id in odds_movements:
+                movement = odds_movements[match_id]
+                if movement.get("has_movement"):
+                    tier_deg = movement.get("tier_degradation", 0)
+                    tier_degradations += tier_deg
+                    odds_movement_data = movement
+                    pct = movement.get("movement_percentage", 0)
+                    outcome = movement.get("max_movement_outcome", "?")
+                    insights.append(f"Movimiento de cuotas +{pct:.0f}% en {outcome}")
+                    warnings.append("ODDS_MOVEMENT")
+
+            # Apply tier degradations
+            if tier_degradations > 0:
+                tier_order = ["gold", "silver", "copper"]
+                try:
+                    current_idx = tier_order.index(confidence_tier)
+                    new_idx = min(current_idx + tier_degradations, len(tier_order) - 1)
+                    confidence_tier = tier_order[new_idx]
+                except ValueError:
+                    confidence_tier = "copper"
+
             pred = {
-                "match_id": int(row.get("match_id")) if row.get("match_id") else None,
+                "match_id": int(match_id) if match_id else None,
                 "match_external_id": int(row.get("match_external_id")) if row.get("match_external_id") else None,
-                "home_team": row.get("home_team_name", "Unknown"),
-                "away_team": row.get("away_team_name", "Unknown"),
+                "home_team": home_team_name,
+                "away_team": away_team_name,
                 "home_team_logo": row.get("home_team_logo"),
                 "away_team_logo": row.get("away_team_logo"),
                 "date": row.get("date"),
+                "league_id": league_id,
+
+                # Adjusted probabilities
                 "probabilities": {
                     "home": round(home_prob, 4),
                     "draw": round(draw_prob, 4),
                     "away": round(away_prob, 4),
                 },
+                # Raw model output (before adjustments)
+                "raw_probabilities": {
+                    "home": round(raw_home_prob, 4),
+                    "draw": round(raw_draw_prob, 4),
+                    "away": round(raw_away_prob, 4),
+                } if adjustment_applied else None,
+
                 "fair_odds": {
                     "home": round(1 / home_prob, 2) if home_prob > 0 else None,
                     "draw": round(1 / draw_prob, 2) if draw_prob > 0 else None,
                     "away": round(1 / away_prob, 2) if away_prob > 0 else None,
                 },
-                "has_value_bet": False,  # Default
-                "best_value_bet": None,  # Best opportunity if exists
-                "adjustment_applied": adjustment_applied,  # Team confidence adjustment
+
+                # Confidence tier with degradation tracking
+                "confidence_tier": confidence_tier,
+                "original_tier": original_tier if confidence_tier != original_tier else None,
+
+                "has_value_bet": False,
+                "best_value_bet": None,
+
+                # Detailed adjustment info
+                "adjustment_applied": adjustment_applied or tier_degradations > 0,
+                "adjustments": {
+                    "home_multiplier": round(home_adj, 4) if home_adj != 1.0 else None,
+                    "away_multiplier": round(away_adj, 4) if away_adj != 1.0 else None,
+                    "international_penalty_home": intl_penalty_home,
+                    "international_penalty_away": intl_penalty_away,
+                    "league_drift_applied": league_drift_applied,
+                    "odds_movement_degradation": tier_degradations if odds_movement_data else None,
+                } if (adjustment_applied or tier_degradations > 0) else None,
+
+                # Reasoning engine output
+                "prediction_insights": insights if insights else None,
+                "warnings": warnings if warnings else None,
             }
 
             # Add value bets if market odds available

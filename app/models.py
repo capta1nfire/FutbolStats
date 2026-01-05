@@ -288,8 +288,8 @@ class ModelPerformanceLog(SQLModel, table=True):
 
 class TeamAdjustment(SQLModel, table=True):
     """
-    Per-team confidence adjustments based on prediction anomalies.
-    Used to calibrate predictions for teams with consistent deviations.
+    Per-team confidence adjustments with contextual intelligence.
+    Supports home/away split, recovery factor, and international context.
     """
 
     __tablename__ = "team_adjustments"
@@ -297,17 +297,53 @@ class TeamAdjustment(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     team_id: int = Field(foreign_key="teams.id", unique=True, index=True)
 
-    # Confidence adjustment (1.0 = no change, 0.9 = reduce home confidence 10%)
+    # Legacy field (kept for compatibility)
     confidence_multiplier: float = Field(
         default=1.0,
-        description="Multiplier for team's win probability (0.5-2.0)"
+        description="Combined multiplier (deprecated, use home/away)"
     )
 
-    # Metrics justifying the adjustment
+    # Home/Away split multipliers
+    home_multiplier: float = Field(
+        default=1.0,
+        description="Multiplier when team plays at home (0.5-2.0)"
+    )
+    away_multiplier: float = Field(
+        default=1.0,
+        description="Multiplier when team plays away (0.5-2.0)"
+    )
+
+    # Recovery tracking (3 consecutive MINIMAL = +0.02 forgiveness)
+    consecutive_minimal_count: int = Field(
+        default=0,
+        description="Consecutive MINIMAL audits for recovery"
+    )
+    last_anomaly_date: Optional[datetime] = Field(
+        default=None,
+        description="Date of last anomaly for decay tracking"
+    )
+
+    # International context penalty
+    international_penalty: float = Field(
+        default=1.0,
+        description="Penalty for international commitments (0.8-1.0)"
+    )
+
+    # Overall metrics
     total_predictions: int = Field(default=0)
     correct_predictions: int = Field(default=0)
     anomaly_count: int = Field(default=0)
     avg_deviation_score: float = Field(default=0.0)
+
+    # Home-specific metrics
+    home_predictions: int = Field(default=0)
+    home_correct: int = Field(default=0)
+    home_anomalies: int = Field(default=0)
+
+    # Away-specific metrics
+    away_predictions: int = Field(default=0)
+    away_correct: int = Field(default=0)
+    away_anomalies: int = Field(default=0)
 
     # Control
     last_updated: datetime = Field(default_factory=datetime.utcnow)

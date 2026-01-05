@@ -5,7 +5,8 @@ This service:
 1. Fetches completed matches that have predictions
 2. Retrieves detailed stats from API-Football (xG, events, etc.)
 3. Records outcomes and classifies deviations
-4. Generates insights for model improvement
+4. Generates NARRATIVE INSIGHTS for understanding WHY predictions failed
+5. Provides learning signals for model improvement
 """
 
 import logging
@@ -89,11 +90,17 @@ class PostMatchAuditService:
         xg_away: Optional[float],
     ) -> tuple[str, float]:
         """
-        Calculate deviation type and score.
+        Calculate deviation type and score with ALGORITHMIC HUMILITY.
+
+        Philosophy:
+        - All in-game events (VAR, penalties, red cards) are legitimate football outcomes
+        - When we predict wrong, especially with high confidence, it's MODEL ERROR
+        - Only classify as 'anomaly' for truly extra-sporting events or impossible
+          statistical disparity (e.g., team with xG 0.05 beats team with xG 4.0)
 
         Returns:
             tuple: (deviation_type, deviation_score)
-            - deviation_type: 'minimal', 'expected', or 'anomaly'
+            - deviation_type: 'minimal', 'expected', or 'model_error'
             - deviation_score: 0-1 where 1 is maximum deviation
         """
         predicted_result, confidence = self._get_predicted_result(prediction)
@@ -109,26 +116,38 @@ class PostMatchAuditService:
             else:
                 return "minimal", 0.2  # Low confidence, but still correct
 
-        # Incorrect prediction - analyze why
+        # === INCORRECT PREDICTION - ALGORITHMIC HUMILITY ===
+        # When we're wrong, we admit it. No excuses.
+
         xg_result = self._get_xg_result(xg_home, xg_away)
 
         # Score based on how unlikely the actual result was
         deviation_score = 1.0 - actual_prob  # Higher score = more unexpected
 
-        # Check if xG aligned with actual result (explains the deviation)
-        if xg_result == actual_result and xg_result != predicted_result:
-            # xG predicted correctly but we didn't - expected deviation
-            return "expected", min(deviation_score, 0.6)
+        # Check for impossible statistical disparity (true anomaly)
+        # This is the ONLY case where we classify as anomaly:
+        # When xG strongly favored one team but the opposite won
+        if xg_home is not None and xg_away is not None:
+            xg_winner = xg_home if actual_result == "home" else (xg_away if actual_result == "away" else max(xg_home, xg_away))
+            xg_loser = xg_away if actual_result == "home" else (xg_home if actual_result == "away" else min(xg_home, xg_away))
 
-        # High confidence wrong prediction = anomaly
-        if confidence >= GOLD_THRESHOLD and deviation_score > 0.6:
-            return "anomaly", deviation_score
+            # Truly anomalous: winner had < 0.3 xG AND loser had > 2.5 xG
+            # This represents statistically impossible luck, not football merit
+            if actual_result != "draw" and xg_winner < 0.3 and xg_loser > 2.5:
+                return "anomaly", deviation_score
 
-        # Low confidence wrong prediction = expected
-        if confidence < SILVER_THRESHOLD:
-            return "expected", deviation_score * 0.8
+        # HIGH CONFIDENCE WRONG = MODEL ERROR (not anomaly!)
+        # The model was confident and wrong - this is OUR fault, not random variance
+        if confidence >= GOLD_THRESHOLD:
+            return "model_error", deviation_score
 
-        return "expected", deviation_score
+        # SILVER confidence wrong = still model error, but less severe
+        if confidence >= SILVER_THRESHOLD:
+            return "model_error", deviation_score * 0.9
+
+        # Low confidence wrong = expected variance (copper tier)
+        # We weren't confident, so being wrong is within expectations
+        return "expected", deviation_score * 0.8
 
     def _identify_primary_factor(
         self,
@@ -142,35 +161,64 @@ class PostMatchAuditService:
         predicted_result: str,
         actual_result: str,
     ) -> Optional[str]:
-        """Identify the primary factor explaining a deviation."""
+        """
+        Identify the primary factor for INFORMATIONAL purposes only.
+
+        ALGORITHMIC HUMILITY:
+        - This is NOT an excuse mechanism - it's contextual data
+        - VAR, penalties, red cards are LEGITIMATE football outcomes
+        - The primary factor helps understand the match context for retraining
+        - When we're wrong, the default is MODEL_ERROR (we own our mistakes)
+
+        Returns factor as informational context, not as justification.
+        """
         if predicted_result == actual_result:
             return None  # No deviation to explain
 
-        # Check disruption factors in order of impact
-        if had_red_card:
-            return "red_card"
+        # === ALGORITHMIC HUMILITY: MODEL ERROR IS THE DEFAULT ===
+        # When we predict wrong, it's our fault. Period.
+        # Events below are CONTEXT, not EXCUSES.
 
-        if had_var_decision and had_penalty:
-            return "var_penalty"
-
-        if had_penalty:
-            return "penalty"
-
-        # Check xG mismatch
+        # Check xG alignment first - this tells us if the model's logic was sound
         if xg_home is not None and xg_away is not None:
             xg_result = self._get_xg_result(xg_home, xg_away)
-            if xg_result == actual_result:
-                # xG aligned with result, we just predicted wrong
-                return "model_error"
 
-            # xG didn't match result either - finishing quality issue
+            # Calculate finishing variance
             home_diff = actual_home_goals - xg_home
             away_diff = actual_away_goals - xg_away
 
-            if abs(home_diff) > 1.5 or abs(away_diff) > 1.5:
-                return "finishing_variance"
+            if xg_result == actual_result:
+                # xG aligned with result - our model simply missed
+                # This is PURE model error, no external factors needed
+                return "model_error"
 
-        return "unknown"
+            # xG also didn't predict correctly - exceptional finishing
+            if abs(home_diff) > 1.5 or abs(away_diff) > 1.5:
+                # Someone finished WAY above or below expectation
+                # Still not an excuse - good teams finish their chances
+                return "finishing_quality"
+
+        # === INFORMATIONAL CONTEXT (not excuses) ===
+        # These events DID happen and SHOULD be recorded for analysis
+        # But they don't justify our prediction failure
+
+        # Note: We record these as context for potential feature engineering
+        # A red card IS data - it means we should factor in discipline risk
+        # A penalty IS data - it means we should factor in box presence
+
+        if had_red_card:
+            # Context: discipline played a role
+            # Learning: factor in team discipline history
+            return "context_red_card"
+
+        if had_penalty:
+            # Context: set piece/VAR situation
+            # Learning: factor in penalty area aggression
+            return "context_penalty"
+
+        # Default: pure model error
+        # We had no excuse - we simply predicted wrong
+        return "model_error"
 
     async def audit_match(self, match: Match, prediction: Prediction) -> Optional[PredictionOutcome]:
         """
@@ -292,14 +340,36 @@ class PostMatchAuditService:
             actual_result,
         )
 
-        # Secondary factors
+        # Secondary factors - INFORMATIONAL context only
+        # These are recorded for analysis, not as excuses
         secondary_factors = {}
-        if had_red_card and primary_factor != "red_card":
+        if had_red_card and "red_card" not in (primary_factor or ""):
             secondary_factors["red_card"] = True
-        if had_penalty and primary_factor != "penalty":
+        if had_penalty and "penalty" not in (primary_factor or ""):
             secondary_factors["penalty"] = True
-        if had_var_decision and primary_factor != "var_penalty":
+        if had_var_decision:
             secondary_factors["var"] = True
+
+        # === ALGORITHMIC HUMILITY: LEARNING FROM MODEL ERRORS ===
+        # We learn from model_error (our mistakes), not from "anomalies"
+        # Anomalies are truly rare statistical impossibilities
+        # Model errors are where we improve
+        should_learn = deviation_type == "model_error"
+
+        # Build adjustment notes with humility
+        if deviation_type == "model_error":
+            adjustment_notes = (
+                f"Model error: predicted {predicted_result} "
+                f"(conf: {confidence:.1%}), actual {actual_result}. "
+                f"Context: {primary_factor or 'none'}"
+            )
+        elif deviation_type == "anomaly":
+            adjustment_notes = (
+                f"Statistical anomaly: {predicted_result} vs {actual_result}. "
+                f"xG strongly contradicted result - rare variance event."
+            )
+        else:
+            adjustment_notes = None
 
         audit = PostMatchAudit(
             outcome_id=outcome.id,
@@ -311,8 +381,8 @@ class PostMatchAuditService:
             xg_prediction_aligned=xg_prediction_aligned,
             goals_vs_xg_home=(match.home_goals - xg_home) if xg_home else None,
             goals_vs_xg_away=(match.away_goals - xg_away) if xg_away else None,
-            should_adjust_model=deviation_type == "anomaly",
-            adjustment_notes=f"Anomaly: predicted {predicted_result}, actual {actual_result}" if deviation_type == "anomaly" else None,
+            should_adjust_model=should_learn,
+            adjustment_notes=adjustment_notes,
         )
 
         self.session.add(audit)
@@ -347,6 +417,447 @@ class PostMatchAuditService:
             return int(value)
         except (ValueError, TypeError):
             return None
+
+    # =========================================================================
+    # NARRATIVE REASONING ENGINE
+    # =========================================================================
+
+    # Historical big teams in La Liga (Top 10 histórico)
+    BIG_TEAMS = {
+        "Real Madrid", "Barcelona", "Atletico Madrid", "Atlético Madrid",
+        "Sevilla", "Valencia", "Villarreal", "Athletic Club", "Athletic Bilbao",
+        "Real Sociedad", "Real Betis",
+    }
+
+    def generate_narrative_insights(
+        self,
+        prediction: Prediction,
+        actual_result: str,
+        home_goals: int,
+        away_goals: int,
+        stats: dict,
+        home_team_name: str,
+        away_team_name: str,
+        home_position: Optional[int] = None,
+        away_position: Optional[int] = None,
+        home_penalties: int = 0,
+        away_penalties: int = 0,
+    ) -> dict:
+        """
+        Generate human-readable narrative insights explaining WHY the result happened.
+
+        This is the "Reasoning Engine" that provides rich context beyond simple
+        model error classification. It analyzes:
+        1. Efficiency (shots on target vs total shots)
+        2. Clinical finishing (goals vs xG)
+        3. npxG (Non-Penalty xG) - real open-play danger
+        4. Defensive solidity (goalkeeper saves, blocked shots)
+        5. Table position context (Urgency Factor)
+        6. Localía en Crisis (Big team home collapse)
+        7. Momentum analysis
+
+        Returns dict with insights list and momentum_analysis.
+        """
+        insights = []
+        home_stats = stats.get("home", {})
+        away_stats = stats.get("away", {})
+
+        # Parse key metrics
+        home_sot = self._parse_int(home_stats.get("shots_on_goal")) or 0
+        away_sot = self._parse_int(away_stats.get("shots_on_goal")) or 0
+        home_shots = self._parse_int(home_stats.get("total_shots")) or 0
+        away_shots = self._parse_int(away_stats.get("total_shots")) or 0
+        home_xg = self._parse_float(home_stats.get("expected_goals"))
+        away_xg = self._parse_float(away_stats.get("expected_goals"))
+        home_saves = self._parse_int(home_stats.get("goalkeeper_saves")) or 0
+        away_saves = self._parse_int(away_stats.get("goalkeeper_saves")) or 0
+
+        # Get predicted result
+        predicted_result, confidence = self._get_predicted_result(prediction)
+        is_correct = predicted_result == actual_result
+
+        # Determine winner name
+        if actual_result == "home":
+            winner_name = home_team_name
+            loser_name = away_team_name
+        elif actual_result == "away":
+            winner_name = away_team_name
+            loser_name = home_team_name
+        else:
+            winner_name = None
+            loser_name = None
+
+        # === EFFICIENCY ANALYSIS ===
+        # Who was more clinical with their chances?
+        if home_shots > 0 and away_shots > 0:
+            home_accuracy = home_sot / home_shots
+            away_accuracy = away_sot / away_shots
+
+            if away_accuracy > home_accuracy * 1.5 and actual_result == "away":
+                # Away team was significantly more clinical
+                insights.append({
+                    "type": "analysis",
+                    "icon": "target",
+                    "message": (
+                        f"{away_team_name} aprovechó cada oportunidad. "
+                        f"Con {away_sot} tiros al arco de {away_shots} intentos, "
+                        f"fueron más efectivos que {home_team_name} ({home_sot} de {home_shots})."
+                    ),
+                    "priority": 3,  # Analysis priority
+                })
+            elif home_accuracy > away_accuracy * 1.5 and actual_result == "home":
+                insights.append({
+                    "type": "analysis",
+                    "icon": "target",
+                    "message": (
+                        f"{home_team_name} aprovechó cada oportunidad. "
+                        f"Con {home_sot} tiros al arco de {home_shots} intentos, "
+                        f"fueron más efectivos que {away_team_name} ({away_sot} de {away_shots})."
+                    ),
+                    "priority": 3,
+                })
+
+        # === CLINICAL FINISHING (Goals vs xG) ===
+        if home_xg and away_xg:
+            home_overperform = home_goals - home_xg
+            away_overperform = away_goals - away_xg
+
+            if away_overperform > 0.5 and actual_result == "away":
+                insights.append({
+                    "type": "analysis",
+                    "icon": "flame.fill",
+                    "message": (
+                        f"{away_team_name} fue letal en el área. "
+                        f"Convirtió {away_goals} goles con pocas chances claras."
+                    ),
+                    "priority": 3,
+                })
+            elif home_overperform > 0.5 and actual_result == "home":
+                insights.append({
+                    "type": "analysis",
+                    "icon": "flame.fill",
+                    "message": (
+                        f"{home_team_name} fue letal en el área. "
+                        f"Convirtió {home_goals} goles con pocas chances claras."
+                    ),
+                    "priority": 3,
+                })
+
+            # STERILE favorite analysis - WARNING type has high priority (caution)
+            if not is_correct and predicted_result == "home" and home_sot <= 2:
+                insights.append({
+                    "type": "caution",
+                    "icon": "exclamationmark.triangle.fill",
+                    "message": (
+                        f"{home_team_name} llegó mucho pero sin peligro real. "
+                        f"De {home_shots} intentos, solo {home_sot} fueron al arco."
+                    ),
+                    "priority": 0,  # Highest priority - warning/caution
+                })
+            elif not is_correct and predicted_result == "away" and away_sot <= 2:
+                insights.append({
+                    "type": "caution",
+                    "icon": "exclamationmark.triangle.fill",
+                    "message": (
+                        f"{away_team_name} llegó mucho pero sin peligro real. "
+                        f"De {away_shots} intentos, solo {away_sot} fueron al arco."
+                    ),
+                    "priority": 0,
+                })
+
+        # === npxG ANALYSIS (Non-Penalty Expected Goals) ===
+        # A penalty has xG of ~0.78. If total xG is inflated by penalties,
+        # the team's real open-play danger was much lower.
+        PENALTY_XG = 0.78
+        NPXG_LOW_THRESHOLD = 1.0  # npxG < 1.0 is low real danger
+
+        if home_xg and not is_correct:
+            home_npxg = home_xg - (home_penalties * PENALTY_XG)
+            away_npxg = (away_xg or 0) - (away_penalties * PENALTY_XG)
+
+            # Favorite had inflated xG due to penalties
+            if predicted_result == "home" and home_penalties > 0 and home_npxg < NPXG_LOW_THRESHOLD:
+                insights.append({
+                    "type": "caution",
+                    "icon": "sportscourt.fill",
+                    "message": (
+                        f"{home_team_name} dependió de jugadas a balón parado. "
+                        f"En juego abierto generó poco peligro real."
+                    ),
+                    "priority": 0,
+                })
+            elif predicted_result == "away" and away_penalties > 0 and away_npxg < NPXG_LOW_THRESHOLD:
+                insights.append({
+                    "type": "caution",
+                    "icon": "sportscourt.fill",
+                    "message": (
+                        f"{away_team_name} dependió de jugadas a balón parado. "
+                        f"En juego abierto generó poco peligro real."
+                    ),
+                    "priority": 0,
+                })
+
+        # === DEFENSIVE ANALYSIS ===
+        # Portero Heroico: Saves >= 5 is exceptional
+        HEROIC_SAVES_THRESHOLD = 5
+        SOLID_SAVES_THRESHOLD = 3
+
+        if winner_name and loser_name:
+            if actual_result == "away":
+                if away_saves >= HEROIC_SAVES_THRESHOLD:
+                    insights.append({
+                        "type": "analysis",
+                        "icon": "shield.fill",
+                        "message": (
+                            f"El arquero de {away_team_name} fue una muralla. "
+                            f"Realizó {away_saves} atajadas clave para asegurar la victoria."
+                        ),
+                        "priority": 1,  # High priority - heroic performance
+                    })
+                elif away_saves >= SOLID_SAVES_THRESHOLD:
+                    insights.append({
+                        "type": "analysis",
+                        "icon": "hand.raised.fill",
+                        "message": (
+                            f"Buena actuación del arquero de {away_team_name} "
+                            f"con {away_saves} atajadas importantes."
+                        ),
+                        "priority": 3,
+                    })
+            elif actual_result == "home":
+                if home_saves >= HEROIC_SAVES_THRESHOLD:
+                    insights.append({
+                        "type": "analysis",
+                        "icon": "shield.fill",
+                        "message": (
+                            f"El arquero de {home_team_name} fue una muralla. "
+                            f"Realizó {home_saves} atajadas clave para asegurar la victoria."
+                        ),
+                        "priority": 1,
+                    })
+                elif home_saves >= SOLID_SAVES_THRESHOLD:
+                    insights.append({
+                        "type": "analysis",
+                        "icon": "hand.raised.fill",
+                        "message": (
+                            f"Buena actuación del arquero de {home_team_name} "
+                            f"con {home_saves} atajadas importantes."
+                        ),
+                        "priority": 3,
+                    })
+
+        # === URGENCY FACTOR (Table Position) ===
+        if home_position and away_position:
+            # Relegation zone is typically positions 18-20
+            RELEGATION_ZONE = 17  # Position 17+ is danger zone
+
+            if away_position >= RELEGATION_ZONE and actual_result == "away":
+                # Team in relegation danger won
+                insights.append({
+                    "type": "context",
+                    "icon": "flame.circle.fill",
+                    "message": (
+                        f"{away_team_name} está peleando por no descender (puesto {away_position}). "
+                        f"Esa necesidad de puntos se notó en la cancha."
+                    ),
+                    "priority": 4,  # Context priority
+                })
+            elif home_position >= RELEGATION_ZONE and actual_result == "home":
+                insights.append({
+                    "type": "context",
+                    "icon": "flame.circle.fill",
+                    "message": (
+                        f"{home_team_name} está peleando por no descender (puesto {home_position}). "
+                        f"Esa necesidad de puntos se notó en la cancha."
+                    ),
+                    "priority": 4,
+                })
+
+            # Position differential insight
+            if abs(home_position - away_position) >= 5:
+                higher_team = home_team_name if home_position < away_position else away_team_name
+                lower_team = away_team_name if home_position < away_position else home_team_name
+                higher_pos = min(home_position, away_position)
+                lower_pos = max(home_position, away_position)
+
+                if (actual_result == "away" and away_position > home_position) or \
+                   (actual_result == "home" and home_position > away_position):
+                    # Underdog won
+                    insights.append({
+                        "type": "context",
+                        "icon": "arrow.up.circle.fill",
+                        "message": (
+                            f"Sorpresa: {lower_team} (puesto {lower_pos}) "
+                            f"venció a {higher_team} (puesto {higher_pos})."
+                        ),
+                        "priority": 4,
+                    })
+
+            # === LOCALÍA EN CRISIS (Big Team Home Collapse) ===
+            # Big teams losing at home to underdogs (position 15+) indicates
+            # psychological collapse under stadium pressure
+            UNDERDOG_POSITION = 15
+
+            is_home_big_team = home_team_name in self.BIG_TEAMS
+            is_away_underdog = away_position >= UNDERDOG_POSITION if away_position else False
+
+            if (is_home_big_team and is_away_underdog and
+                actual_result == "away" and not is_correct):
+                # Big team lost at home to underdog
+                goal_diff = away_goals - home_goals
+                if goal_diff >= 3:
+                    severity_msg = "Una derrota difícil de explicar."
+                else:
+                    severity_msg = "No pudieron con la presión."
+
+                insights.append({
+                    "type": "context",
+                    "icon": "person.3.sequence.fill",
+                    "message": (
+                        f"{home_team_name} se bloqueó ante su gente. "
+                        f"Perdió en casa contra {away_team_name} por {home_goals}-{away_goals}. "
+                        f"{severity_msg}"
+                    ),
+                    "priority": 1,  # High priority - significant event
+                })
+
+        # === MODEL ERROR ADMISSION ===
+        if not is_correct:
+            # Translate result to Spanish (simple terms)
+            result_es = {"home": "local", "away": "visitante", "draw": "empate"}
+            confidence_pct = int(confidence * 100)
+
+            insights.append({
+                "type": "admission",
+                "icon": "brain.head.profile",
+                "message": (
+                    f"Nos equivocamos. Apostamos por victoria {result_es.get(predicted_result, predicted_result)} "
+                    f"con {confidence_pct}% de confianza, pero ganó el {result_es.get(actual_result, actual_result)}."
+                ),
+                "priority": 2,  # Admission comes after caution, before analysis
+            })
+
+        # === SUMMARY INSIGHT ===
+        if not is_correct and winner_name:
+            if away_sot > home_sot and actual_result == "away":
+                insights.append({
+                    "type": "summary",
+                    "icon": "checkmark.seal.fill",
+                    "message": (
+                        f"Resultado justo. {winner_name} tuvo más llegadas claras "
+                        f"({away_sot} tiros al arco vs {home_sot})."
+                    ),
+                    "priority": 5,  # Summary comes last
+                })
+            elif home_sot > away_sot and actual_result == "home":
+                insights.append({
+                    "type": "summary",
+                    "icon": "checkmark.seal.fill",
+                    "message": (
+                        f"Resultado justo. {winner_name} tuvo más llegadas claras "
+                        f"({home_sot} tiros al arco vs {away_sot})."
+                    ),
+                    "priority": 5,
+                })
+
+        # === SORT BY PRIORITY FOR iOS ===
+        # Order: caution (0) → heroic/collapse (1) → admission (2) → analysis (3) → context (4) → summary (5)
+        insights.sort(key=lambda x: x.get("priority", 99))
+
+        # === MOMENTUM ANALYSIS ===
+        # Detect if the losing team "gave up" after conceding
+        # Approximation: If favorite lost badly (3+ goals) and had very few SOT, they collapsed
+        momentum_analysis = None
+
+        if not is_correct and loser_name:
+            goal_diff = abs(home_goals - away_goals)
+            loser_sot = home_sot if actual_result == "away" else away_sot
+
+            # Collapse detection: lost by 2+ goals AND had <= 2 SOT
+            if goal_diff >= 2 and loser_sot <= 2:
+                momentum_analysis = {
+                    "type": "collapse",
+                    "icon": "arrow.down.right.circle.fill",
+                    "message": (
+                        f"{loser_name} no reaccionó después de ir abajo. "
+                        f"Solo {loser_sot} tiro(s) al arco en todo el partido."
+                    ),
+                }
+            elif goal_diff >= 3:
+                # Heavy defeat even with some shots
+                momentum_analysis = {
+                    "type": "overwhelmed",
+                    "icon": "waveform.path.ecg",
+                    "message": (
+                        f"{loser_name} fue superado en todos los aspectos. "
+                        f"El {home_goals}-{away_goals} final lo dice todo."
+                    ),
+                }
+            elif loser_sot >= home_sot + away_sot - loser_sot:
+                # Loser had more SOT but still lost - unlucky
+                momentum_analysis = {
+                    "type": "unlucky",
+                    "icon": "dice.fill",
+                    "message": (
+                        f"{loser_name} tuvo más chances ({loser_sot} tiros al arco) "
+                        f"pero no las convirtió. Faltó efectividad."
+                    ),
+                }
+
+        return {
+            "insights": insights,
+            "momentum_analysis": momentum_analysis,
+        }
+
+    def generate_learning_signals(
+        self,
+        prediction: Prediction,
+        actual_result: str,
+        stats: dict,
+    ) -> list[str]:
+        """
+        Generate specific learning signals for model retraining.
+
+        These are actionable insights about what the model should learn
+        from this match to improve future predictions.
+        """
+        signals = []
+        home_stats = stats.get("home", {})
+        away_stats = stats.get("away", {})
+
+        predicted_result, confidence = self._get_predicted_result(prediction)
+        is_correct = predicted_result == actual_result
+
+        if is_correct:
+            return []  # No learning needed from correct predictions
+
+        # Parse metrics
+        home_sot = self._parse_int(home_stats.get("shots_on_goal")) or 0
+        away_sot = self._parse_int(away_stats.get("shots_on_goal")) or 0
+
+        # Learning signal: Efficiency matters more than possession
+        if predicted_result == "home" and actual_result == "away" and away_sot > home_sot:
+            signals.append(
+                "LEARN: La eficiencia en definición (SOT ratio) puede superar la ventaja de local"
+            )
+
+        if predicted_result == "away" and actual_result == "home" and home_sot > away_sot:
+            signals.append(
+                "LEARN: La presión local con disparos a puerta puede superar la calidad visitante"
+            )
+
+        # Learning signal: Low SOT indicates sterility
+        if predicted_result == "home" and home_sot <= 2:
+            signals.append(
+                f"LEARN: Solo {home_sot} SOT del favorito local indica problema de generación ofensiva"
+            )
+
+        if predicted_result == "away" and away_sot <= 2:
+            signals.append(
+                f"LEARN: Solo {away_sot} SOT del favorito visitante indica problema de generación ofensiva"
+            )
+
+        return signals
 
     async def audit_recent_matches(self, days: int = 7) -> dict:
         """

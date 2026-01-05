@@ -138,11 +138,17 @@ class APIFootballProvider(DataProvider):
         )
 
     def _parse_stats(self, statistics: list) -> dict:
-        """Parse match statistics from API response."""
+        """Parse match statistics from API response.
+
+        API returns stats in order: [home_team, away_team]
+        Each item has team info and statistics array.
+        """
         stats = {"home": {}, "away": {}}
 
-        for team_stats in statistics:
-            team_key = "home" if team_stats.get("team", {}).get("id") else "away"
+        for i, team_stats in enumerate(statistics):
+            # First team in response is home, second is away
+            team_key = "home" if i == 0 else "away"
+
             for stat in team_stats.get("statistics", []):
                 stat_type = stat.get("type", "").lower().replace(" ", "_")
                 value = stat.get("value")
@@ -342,6 +348,104 @@ class APIFootballProvider(DataProvider):
             "goal_diff": standing.get("goalsDiff", 0),
             "form": standing.get("form", ""),
         }
+
+    async def get_lineups(self, fixture_id: int) -> Optional[dict]:
+        """
+        Fetch lineup information for a fixture.
+
+        Returns lineup data including starting XI and substitutes for both teams.
+        Available approximately 60 minutes before kickoff.
+
+        Returns:
+            Dictionary with home and away lineups, each containing:
+            - team_id: Team external ID
+            - team_name: Team name
+            - formation: e.g., "4-3-3"
+            - starting_xi: List of player dicts with id, name, number, pos
+            - substitutes: List of substitute player dicts
+        """
+        data = await self._rate_limited_request("fixtures/lineups", {"fixture": fixture_id})
+        lineups_data = data.get("response", [])
+
+        if not lineups_data:
+            return None
+
+        result = {"home": None, "away": None}
+
+        for i, lineup in enumerate(lineups_data):
+            team_info = lineup.get("team", {})
+            coach = lineup.get("coach", {})
+
+            # Parse starting XI
+            starting_xi = []
+            for player in lineup.get("startXI", []):
+                p = player.get("player", {})
+                starting_xi.append({
+                    "id": p.get("id"),
+                    "name": p.get("name"),
+                    "number": p.get("number"),
+                    "pos": p.get("pos"),
+                    "grid": p.get("grid"),  # Position on pitch grid
+                })
+
+            # Parse substitutes
+            substitutes = []
+            for player in lineup.get("substitutes", []):
+                p = player.get("player", {})
+                substitutes.append({
+                    "id": p.get("id"),
+                    "name": p.get("name"),
+                    "number": p.get("number"),
+                    "pos": p.get("pos"),
+                })
+
+            lineup_data = {
+                "team_id": team_info.get("id"),
+                "team_name": team_info.get("name"),
+                "team_logo": team_info.get("logo"),
+                "formation": lineup.get("formation"),
+                "coach": {
+                    "id": coach.get("id"),
+                    "name": coach.get("name"),
+                } if coach else None,
+                "starting_xi": starting_xi,
+                "substitutes": substitutes,
+            }
+
+            # First team is home, second is away
+            if i == 0:
+                result["home"] = lineup_data
+            else:
+                result["away"] = lineup_data
+
+        return result
+
+    async def get_players_squad(self, team_id: int) -> list[dict]:
+        """
+        Fetch full squad for a team.
+
+        Returns all registered players with their market value and position.
+        Used to determine the "Equipo de Gala" (best XI).
+        """
+        data = await self._rate_limited_request("players/squads", {"team": team_id})
+        squad_data = data.get("response", [])
+
+        if not squad_data:
+            return []
+
+        players = []
+        for team_data in squad_data:
+            for player in team_data.get("players", []):
+                players.append({
+                    "id": player.get("id"),
+                    "name": player.get("name"),
+                    "age": player.get("age"),
+                    "number": player.get("number"),
+                    "position": player.get("position"),
+                    "photo": player.get("photo"),
+                })
+
+        return players
 
     async def close(self) -> None:
         """Close the HTTP client."""

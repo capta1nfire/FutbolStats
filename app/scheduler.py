@@ -85,15 +85,25 @@ async def daily_save_predictions():
 
 async def daily_audit():
     """
-    Daily job to audit completed matches from the last 3 days.
+    Daily job to audit completed matches and update team adjustments.
     Runs every day at 8:00 AM UTC.
+
+    Hybrid Daily Adjustment:
+    - Audits completed matches from the last 3 days
+    - IMMEDIATELY triggers calculate_team_adjustments() after audit
+    - Updates recovery counters for teams with consecutive MINIMAL audits
+    - Applies international commitment penalties for upcoming matches
+
+    This ensures a Tuesday anomaly affects Friday predictions.
     """
     logger.info("Starting daily audit job...")
 
     try:
         from app.audit import create_audit_service
+        from app.ml.recalibration import RecalibrationEngine
 
         async with AsyncSessionLocal() as session:
+            # Step 1: Run the audit
             audit_service = await create_audit_service(session)
             result = await audit_service.audit_recent_matches(days=3)
             await audit_service.close()
@@ -102,6 +112,55 @@ async def daily_audit():
                 f"Daily audit complete: {result['matches_audited']} matches, "
                 f"{result['accuracy']:.1f}% accuracy, {result['anomalies_detected']} anomalies"
             )
+
+            # Step 2: IMMEDIATELY update team adjustments (Hybrid Daily Adjustment)
+            if result['matches_audited'] > 0:
+                logger.info("Triggering immediate team adjustments recalculation...")
+                recalibrator = RecalibrationEngine(session)
+
+                # Calculate new adjustments based on recent performance
+                adj_result = await recalibrator.calculate_team_adjustments(days=14)
+                logger.info(
+                    f"Team adjustments updated: {adj_result['teams_analyzed']} analyzed, "
+                    f"{adj_result['adjustments_made']} adjusted, "
+                    f"{adj_result.get('recoveries_applied', 0)} recoveries"
+                )
+
+                # Step 3: Update recovery counters (El Perdón)
+                recovery_result = await recalibrator.update_recovery_counters()
+                logger.info(
+                    f"Recovery counters updated: {recovery_result['teams_updated']} teams, "
+                    f"{recovery_result['forgiveness_applied']} forgiveness applied"
+                )
+
+                # Step 4: Apply international commitment penalties
+                intl_result = await recalibrator.apply_international_penalties(days_ahead=7)
+                logger.info(
+                    f"International penalties applied: {intl_result['teams_checked']} teams, "
+                    f"{intl_result['penalties_applied']} penalties"
+                )
+
+                # Step 5: Detect league drift (Fase 2.2)
+                drift_result = await recalibrator.detect_league_drift()
+                if drift_result['unstable_leagues'] > 0:
+                    logger.warning(
+                        f"LEAGUE DRIFT DETECTED: {drift_result['unstable_leagues']} unstable leagues"
+                    )
+                    for alert in drift_result['drift_alerts']:
+                        logger.warning(f"  - League {alert['league_id']}: {alert['insight']}")
+                else:
+                    logger.info(f"League drift check: All {drift_result['leagues_analyzed']} leagues stable")
+
+                # Step 6: Check market movements (Fase 2.2)
+                odds_result = await recalibrator.check_all_upcoming_odds_movements(days_ahead=3)
+                if odds_result['movements_detected'] > 0:
+                    logger.warning(
+                        f"ODDS MOVEMENT DETECTED: {odds_result['movements_detected']} matches with significant movement"
+                    )
+                    for alert in odds_result['alerts']:
+                        logger.warning(f"  - Match {alert['match_id']}: {alert['insight']}")
+                else:
+                    logger.info(f"Odds movement check: {odds_result['matches_checked']} matches stable")
 
     except Exception as e:
         logger.error(f"Daily audit failed: {e}")
