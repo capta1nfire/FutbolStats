@@ -8,6 +8,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from sqlalchemy import select, and_
+from sqlalchemy.orm import selectinload
+
 from app.database import AsyncSessionLocal
 from app.etl.pipeline import create_etl_pipeline, ETLPipeline
 from app.etl.api_football import APIFootballProvider
@@ -69,14 +72,154 @@ async def global_sync_today() -> dict:
             await session.commit()
             await provider.close()
 
-        _last_live_sync = datetime.utcnow()
-        logger.info(f"Global sync complete: {synced} matches updated")
+        # Freeze predictions for matches that have started
+        freeze_result = await freeze_predictions_before_kickoff()
 
-        return {"matches_synced": synced, "last_sync_at": _last_live_sync}
+        _last_live_sync = datetime.utcnow()
+        logger.info(f"Global sync complete: {synced} matches updated, {freeze_result.get('frozen_count', 0)} predictions frozen")
+
+        return {
+            "matches_synced": synced,
+            "predictions_frozen": freeze_result.get("frozen_count", 0),
+            "last_sync_at": _last_live_sync,
+        }
 
     except Exception as e:
         logger.error(f"Global sync failed: {e}")
         return {"matches_synced": 0, "error": str(e)}
+
+
+async def freeze_predictions_before_kickoff() -> dict:
+    """
+    Freeze predictions for matches that are about to start or have started.
+
+    This preserves the original prediction the user saw BEFORE the match,
+    including:
+    - The model's probability predictions
+    - The bookmaker odds at freeze time
+    - The EV calculations at freeze time
+    - The confidence tier at freeze time
+    - The value bets at freeze time
+
+    A prediction is frozen when:
+    - Match status changes from NS to any other status (1H, HT, 2H, FT, etc.)
+    - Or match date is in the past (safety net)
+
+    Once frozen, the prediction is immutable even if the model is retrained.
+    """
+    from datetime import timedelta
+    from app.models import Match, Prediction
+
+    frozen_count = 0
+    errors = []
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Find predictions that need freezing:
+            # 1. Prediction is not frozen yet
+            # 2. Match status is NOT 'NS' (match has started or finished)
+            # OR match date is in the past (safety net)
+            now = datetime.utcnow()
+
+            result = await session.execute(
+                select(Prediction)
+                .options(selectinload(Prediction.match))
+                .where(
+                    and_(
+                        Prediction.is_frozen == False,  # noqa: E712
+                    )
+                )
+            )
+            predictions = result.scalars().all()
+
+            for pred in predictions:
+                match = pred.match
+                if not match:
+                    continue
+
+                # Check if match has started or is in the past
+                should_freeze = (
+                    match.status != "NS" or  # Match has started/finished
+                    match.date < now  # Match date is in the past (safety net)
+                )
+
+                if not should_freeze:
+                    continue
+
+                try:
+                    # Freeze the prediction with current data
+                    pred.is_frozen = True
+                    pred.frozen_at = now
+
+                    # Capture bookmaker odds at freeze time
+                    pred.frozen_odds_home = match.odds_home
+                    pred.frozen_odds_draw = match.odds_draw
+                    pred.frozen_odds_away = match.odds_away
+
+                    # Calculate and freeze EV values
+                    if match.odds_home and pred.home_prob > 0:
+                        pred.frozen_ev_home = (pred.home_prob * match.odds_home) - 1
+                    if match.odds_draw and pred.draw_prob > 0:
+                        pred.frozen_ev_draw = (pred.draw_prob * match.odds_draw) - 1
+                    if match.odds_away and pred.away_prob > 0:
+                        pred.frozen_ev_away = (pred.away_prob * match.odds_away) - 1
+
+                    # Calculate and freeze confidence tier
+                    max_prob = max(pred.home_prob, pred.draw_prob, pred.away_prob)
+                    if max_prob >= 0.50:
+                        pred.frozen_confidence_tier = "gold"
+                    elif max_prob >= 0.40:
+                        pred.frozen_confidence_tier = "silver"
+                    else:
+                        pred.frozen_confidence_tier = "copper"
+
+                    # Calculate and freeze value bets
+                    value_bets = []
+                    ev_threshold = 0.05  # 5% EV minimum for value bet
+
+                    if pred.frozen_ev_home and pred.frozen_ev_home >= ev_threshold:
+                        value_bets.append({
+                            "outcome": "home",
+                            "odds": match.odds_home,
+                            "model_prob": pred.home_prob,
+                            "ev": pred.frozen_ev_home,
+                        })
+                    if pred.frozen_ev_draw and pred.frozen_ev_draw >= ev_threshold:
+                        value_bets.append({
+                            "outcome": "draw",
+                            "odds": match.odds_draw,
+                            "model_prob": pred.draw_prob,
+                            "ev": pred.frozen_ev_draw,
+                        })
+                    if pred.frozen_ev_away and pred.frozen_ev_away >= ev_threshold:
+                        value_bets.append({
+                            "outcome": "away",
+                            "odds": match.odds_away,
+                            "model_prob": pred.away_prob,
+                            "ev": pred.frozen_ev_away,
+                        })
+
+                    pred.frozen_value_bets = value_bets if value_bets else None
+
+                    frozen_count += 1
+
+                except Exception as e:
+                    errors.append(f"Error freezing prediction {pred.id}: {e}")
+                    logger.warning(f"Error freezing prediction {pred.id}: {e}")
+
+            await session.commit()
+
+            if frozen_count > 0:
+                logger.info(f"Frozen {frozen_count} predictions")
+
+            return {
+                "frozen_count": frozen_count,
+                "errors": errors[:10] if errors else None,  # Limit error count
+            }
+
+    except Exception as e:
+        logger.error(f"freeze_predictions_before_kickoff failed: {e}")
+        return {"frozen_count": 0, "error": str(e)}
 
 
 async def daily_save_predictions():

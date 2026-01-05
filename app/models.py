@@ -100,6 +100,30 @@ class Prediction(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
+    # Frozen prediction fields - preserves original prediction before match starts
+    is_frozen: bool = Field(default=False, description="Whether prediction is locked")
+    frozen_at: Optional[datetime] = Field(default=None, description="When prediction was frozen")
+
+    # Frozen bookmaker odds at freeze time (for EV calculation proof)
+    frozen_odds_home: Optional[float] = Field(default=None, description="Home odds at freeze time")
+    frozen_odds_draw: Optional[float] = Field(default=None, description="Draw odds at freeze time")
+    frozen_odds_away: Optional[float] = Field(default=None, description="Away odds at freeze time")
+
+    # Frozen EV calculations at freeze time
+    frozen_ev_home: Optional[float] = Field(default=None, description="Home EV at freeze time")
+    frozen_ev_draw: Optional[float] = Field(default=None, description="Draw EV at freeze time")
+    frozen_ev_away: Optional[float] = Field(default=None, description="Away EV at freeze time")
+
+    # Frozen confidence tier at freeze time
+    frozen_confidence_tier: Optional[str] = Field(
+        default=None, max_length=10, description="Confidence tier at freeze time"
+    )
+
+    # Frozen value bets JSON (preserves which bets had value at freeze time)
+    frozen_value_bets: Optional[dict] = Field(
+        default=None, sa_column=Column(JSON), description="Value bets snapshot at freeze time"
+    )
+
     # Relationships
     match: Optional[Match] = Relationship(back_populates="predictions")
 

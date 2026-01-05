@@ -208,6 +208,11 @@ class PredictionItem(BaseModel):
     prediction_insights: Optional[list[str]] = None
     warnings: Optional[list[str]] = None
 
+    # Frozen prediction data (for finished matches)
+    is_frozen: Optional[bool] = False
+    frozen_at: Optional[str] = None  # ISO datetime when prediction was frozen
+    frozen_ev: Optional[dict] = None  # EV values at freeze time
+
 
 class PredictionsResponse(BaseModel):
     predictions: list[PredictionItem]
@@ -534,6 +539,9 @@ async def get_predictions(
     # Make predictions with context
     predictions = ml_engine.predict(df, team_adjustments=team_adjustments, context=context)
 
+    # For finished matches, overlay frozen prediction data if available
+    predictions = await _overlay_frozen_predictions(session, predictions)
+
     # Save predictions to database if requested
     if save:
         saved_count = await _save_predictions_to_db(session, predictions, ml_engine.model_version)
@@ -567,6 +575,10 @@ async def get_predictions(
             adjustments=pred.get("adjustments"),
             prediction_insights=pred.get("prediction_insights"),
             warnings=pred.get("warnings"),
+            # Frozen prediction fields
+            is_frozen=pred.get("is_frozen", False),
+            frozen_at=pred.get("frozen_at"),
+            frozen_ev=pred.get("frozen_ev"),
         )
         prediction_items.append(item)
 
@@ -622,6 +634,93 @@ async def _save_predictions_to_db(
 
     await session.commit()
     return saved
+
+
+async def _overlay_frozen_predictions(
+    session: AsyncSession,
+    predictions: list[dict],
+) -> list[dict]:
+    """
+    Overlay frozen prediction data for finished matches.
+
+    For matches that have frozen predictions (is_frozen=True), we replace
+    the dynamically calculated values with the frozen values. This ensures
+    users see the ORIGINAL prediction they saw before the match, not a
+    recalculated one after model retraining.
+
+    Frozen data includes:
+    - frozen_odds_home/draw/away: Bookmaker odds at freeze time
+    - frozen_ev_home/draw/away: EV calculations at freeze time
+    - frozen_confidence_tier: Confidence tier at freeze time
+    - frozen_value_bets: Value bets at freeze time
+    """
+    if not predictions:
+        return predictions
+
+    # Get match IDs to look up frozen predictions
+    match_ids = [p.get("match_id") for p in predictions if p.get("match_id")]
+    if not match_ids:
+        return predictions
+
+    # Query frozen predictions for these matches
+    result = await session.execute(
+        select(Prediction)
+        .where(
+            Prediction.match_id.in_(match_ids),
+            Prediction.is_frozen == True,  # noqa: E712
+        )
+    )
+    frozen_preds = {p.match_id: p for p in result.scalars().all()}
+
+    if not frozen_preds:
+        return predictions
+
+    # Overlay frozen data for finished matches
+    for pred in predictions:
+        match_id = pred.get("match_id")
+        status = pred.get("status")
+
+        # Only overlay for finished matches with frozen predictions
+        if match_id in frozen_preds and status not in ("NS", None):
+            frozen = frozen_preds[match_id]
+
+            # Overlay frozen odds if available (from when prediction was frozen)
+            if frozen.frozen_odds_home is not None:
+                pred["market_odds"] = {
+                    "home": frozen.frozen_odds_home,
+                    "draw": frozen.frozen_odds_draw,
+                    "away": frozen.frozen_odds_away,
+                    "is_frozen": True,  # Flag to indicate these are frozen odds
+                }
+
+            # Overlay frozen confidence tier
+            if frozen.frozen_confidence_tier:
+                # Keep original for reference but use frozen as main
+                pred["original_tier"] = pred.get("confidence_tier")
+                pred["confidence_tier"] = frozen.frozen_confidence_tier
+
+            # Overlay frozen value bets
+            if frozen.frozen_value_bets:
+                pred["value_bets"] = frozen.frozen_value_bets
+                pred["has_value_bet"] = len(frozen.frozen_value_bets) > 0
+                if frozen.frozen_value_bets:
+                    # Find best value bet (highest EV)
+                    best = max(frozen.frozen_value_bets, key=lambda x: x.get("ev", 0))
+                    pred["best_value_bet"] = best
+
+            # Add frozen metadata
+            pred["is_frozen"] = True
+            pred["frozen_at"] = frozen.frozen_at.isoformat() if frozen.frozen_at else None
+
+            # Add frozen EV values for reference
+            if frozen.frozen_ev_home is not None:
+                pred["frozen_ev"] = {
+                    "home": frozen.frozen_ev_home,
+                    "draw": frozen.frozen_ev_draw,
+                    "away": frozen.frozen_ev_away,
+                }
+
+    return predictions
 
 
 @app.get("/predictions/match/{match_id}")
