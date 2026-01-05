@@ -295,25 +295,24 @@ struct MatchCard: View {
 
             // Teams and odds
             HStack {
-                // Teams with logos
+                // Teams with logos and optional scores
                 VStack(alignment: .leading, spacing: 6) {
-                    teamRow(name: prediction.homeTeam, logoUrl: prediction.homeTeamLogo)
-                    teamRow(name: prediction.awayTeam, logoUrl: prediction.awayTeamLogo)
+                    teamRowWithScore(
+                        name: prediction.homeTeam,
+                        logoUrl: prediction.homeTeamLogo,
+                        goals: prediction.isFinished ? prediction.homeGoals : nil
+                    )
+                    teamRowWithScore(
+                        name: prediction.awayTeam,
+                        logoUrl: prediction.awayTeamLogo,
+                        goals: prediction.isFinished ? prediction.awayGoals : nil
+                    )
                 }
 
                 Spacer()
 
-                // Match time
-                if let date = prediction.matchDate {
-                    Text(formatTime(date))
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.gray)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color(white: 0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
+                // Match status/time badge
+                matchStatusBadge
             }
 
             // Probabilities bar
@@ -328,7 +327,7 @@ struct MatchCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
-    private func teamRow(name: String, logoUrl: String?) -> some View {
+    private func teamRowWithScore(name: String, logoUrl: String?, goals: Int?) -> some View {
         HStack(spacing: 8) {
             if let logoUrl = logoUrl, let url = URL(string: logoUrl) {
                 CachedAsyncImage(url: url) { image in
@@ -351,6 +350,51 @@ struct MatchCard: View {
                 .fontWeight(.semibold)
                 .foregroundStyle(.white)
                 .lineLimit(1)
+
+            Spacer()
+
+            // Show goals if match is finished
+            if let goals = goals {
+                Text("\(goals)")
+                    .font(.subheadline)
+                    .fontWeight(.bold)
+                    .foregroundStyle(.white)
+                    .frame(width: 24)
+            }
+        }
+    }
+
+    /// Match status badge - shows FT, LIVE, or time
+    private var matchStatusBadge: some View {
+        Group {
+            if prediction.isFinished {
+                Text("FT")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.green.opacity(0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            } else if prediction.isLive {
+                Text(prediction.status ?? "LIVE")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.red.opacity(0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            } else if let date = prediction.matchDate {
+                Text(formatTime(date))
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.gray)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color(white: 0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
         }
     }
 

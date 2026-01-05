@@ -22,6 +22,9 @@ struct MatchPrediction: Codable, Identifiable {
     let homeTeamLogo: String?
     let awayTeamLogo: String?
     let date: String?
+    let status: String?           // Match status: NS, FT, 1H, 2H, HT, etc.
+    let homeGoals: Int?           // Final score (nil if not played)
+    let awayGoals: Int?           // Final score (nil if not played)
     let probabilities: Probabilities
     let fairOdds: FairOdds
     let marketOdds: MarketOdds?
@@ -31,6 +34,23 @@ struct MatchPrediction: Codable, Identifiable {
 
     var id: Int {
         matchId ?? matchExternalId ?? UUID().hashValue
+    }
+
+    /// Check if match is finished
+    var isFinished: Bool {
+        status == "FT" || status == "AET" || status == "PEN"
+    }
+
+    /// Check if match is live
+    var isLive: Bool {
+        guard let s = status else { return false }
+        return ["1H", "2H", "HT", "ET", "BT", "P", "LIVE"].contains(s)
+    }
+
+    /// Score display for finished matches
+    var scoreDisplay: String? {
+        guard let home = homeGoals, let away = awayGoals else { return nil }
+        return "\(home) - \(away)"
     }
 
     /// Quick check if this prediction has a value betting opportunity
@@ -83,6 +103,9 @@ struct MatchPrediction: Codable, Identifiable {
         case homeTeamLogo = "home_team_logo"
         case awayTeamLogo = "away_team_logo"
         case date
+        case status
+        case homeGoals = "home_goals"
+        case awayGoals = "away_goals"
         case probabilities
         case fairOdds = "fair_odds"
         case marketOdds = "market_odds"

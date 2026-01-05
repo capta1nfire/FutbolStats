@@ -18,7 +18,7 @@ from app.etl import APIFootballProvider, ETLPipeline
 from app.etl.competitions import ALL_LEAGUE_IDS, COMPETITIONS
 from app.features import FeatureEngineer
 from app.ml import XGBoostEngine
-from app.models import Match, Prediction, Team
+from app.models import Match, Prediction, Team, TeamAdjustment
 from app.scheduler import start_scheduler, stop_scheduler
 
 # Configure logging
@@ -133,6 +133,7 @@ class TrainResponse(BaseModel):
 
 
 class PredictionItem(BaseModel):
+    """Prediction item with contextual intelligence for iOS consumption."""
     match_id: Optional[int] = None
     match_external_id: Optional[int] = None
     home_team: str
@@ -140,17 +141,42 @@ class PredictionItem(BaseModel):
     home_team_logo: Optional[str] = None
     away_team_logo: Optional[str] = None
     date: datetime
+    status: Optional[str] = None  # Match status: NS, FT, 1H, 2H, HT, etc.
+    home_goals: Optional[int] = None  # Final score (nil if not played)
+    away_goals: Optional[int] = None  # Final score (nil if not played)
+    league_id: Optional[int] = None
+
+    # Adjusted probabilities (after team adjustments)
     probabilities: dict
+    # Raw model output before adjustments
+    raw_probabilities: Optional[dict] = None
+
     fair_odds: dict
     market_odds: Optional[dict] = None
+
+    # Confidence tier with degradation tracking
+    confidence_tier: Optional[str] = None  # gold, silver, copper
+    original_tier: Optional[str] = None    # Original tier before degradation
+
+    # Value betting
     value_bets: Optional[list[dict]] = None
     has_value_bet: Optional[bool] = False
     best_value_bet: Optional[dict] = None
+
+    # Contextual adjustments applied
+    adjustment_applied: Optional[bool] = False
+    adjustments: Optional[dict] = None
+
+    # Reasoning engine (human-readable insights)
+    prediction_insights: Optional[list[str]] = None
+    warnings: Optional[list[str]] = None
 
 
 class PredictionsResponse(BaseModel):
     predictions: list[PredictionItem]
     model_version: str
+    # Metadata about contextual filters applied
+    context_applied: Optional[dict] = None
 
 
 # Endpoints
@@ -297,15 +323,22 @@ async def get_predictions(
     league_ids: Optional[str] = None,  # comma-separated
     days: int = 7,
     save: bool = False,  # Save predictions to database
+    with_context: bool = True,  # Apply contextual intelligence
     session: AsyncSession = Depends(get_async_session),
 ):
     """
-    Get predictions for upcoming matches.
+    Get predictions for upcoming matches with contextual intelligence.
 
-    Returns probabilities and fair odds for matches that haven't been played.
+    Returns probabilities, fair odds, and reasoning insights for matches.
+    Applies team adjustments, league drift detection, and market movement analysis.
+
+    Args:
+        league_ids: Comma-separated league IDs to filter
+        days: Number of days ahead to predict
+        save: Persist predictions to database for auditing
+        with_context: Apply contextual intelligence (team adjustments, drift, odds)
+
     Uses in-memory caching (5 min TTL) for faster responses.
-
-    Set save=true to persist predictions to database for later auditing.
     """
     global _predictions_cache
 
@@ -316,11 +349,11 @@ async def get_predictions(
         )
 
     # Cache key based on parameters
-    cache_key = f"{league_ids or 'all'}_{days}"
+    cache_key = f"{league_ids or 'all'}_{days}_{with_context}"
     now = time.time()
 
     # Check cache (only for default requests without league filter and not saving)
-    if league_ids is None and not save and _predictions_cache["data"] is not None:
+    if league_ids is None and not save and with_context and _predictions_cache["data"] is not None:
         if now - _predictions_cache["timestamp"] < _predictions_cache["ttl"]:
             logger.info("Returning cached predictions")
             return _predictions_cache["data"]
@@ -340,8 +373,79 @@ async def get_predictions(
             model_version=ml_engine.model_version,
         )
 
-    # Make predictions
-    predictions = ml_engine.predict(df)
+    # Load contextual intelligence data
+    team_adjustments = None
+    context = None
+    context_metadata = {
+        "team_adjustments_loaded": False,
+        "unstable_leagues": 0,
+        "odds_movements_detected": 0,
+    }
+
+    if with_context:
+        from app.ml.recalibration import RecalibrationEngine, load_team_adjustments
+
+        try:
+            # Load team adjustments
+            team_adjustments = await load_team_adjustments(session)
+            context_metadata["team_adjustments_loaded"] = True
+
+            # Initialize recalibrator for context gathering
+            recalibrator = RecalibrationEngine(session)
+
+            # Detect unstable leagues
+            drift_result = await recalibrator.detect_league_drift()
+            unstable_leagues = {alert["league_id"] for alert in drift_result.get("drift_alerts", [])}
+            context_metadata["unstable_leagues"] = len(unstable_leagues)
+
+            # Check odds movements for upcoming matches
+            odds_result = await recalibrator.check_all_upcoming_odds_movements(days_ahead=days)
+            odds_movements = {
+                alert["match_id"]: alert
+                for alert in odds_result.get("alerts", [])
+            }
+            context_metadata["odds_movements_detected"] = len(odds_movements)
+
+            # Build team details for insights generation
+            team_details = {}
+            adj_query = select(TeamAdjustment)
+            adj_result = await session.execute(adj_query)
+            for adj in adj_result.scalars().all():
+                home_anomaly_rate = adj.home_anomalies / adj.home_predictions if adj.home_predictions > 0 else 0
+                away_anomaly_rate = adj.away_anomalies / adj.away_predictions if adj.away_predictions > 0 else 0
+                team_details[adj.team_id] = {
+                    "home_anomaly_rate": home_anomaly_rate,
+                    "away_anomaly_rate": away_anomaly_rate,
+                    "consecutive_minimal": adj.consecutive_minimal_count,
+                    "international_penalty": adj.international_penalty,
+                }
+
+            # Build context dictionary
+            context = {
+                "unstable_leagues": unstable_leagues,
+                "odds_movements": odds_movements,
+                "international_commitments": {},  # Filled from team_details
+                "team_details": team_details,
+            }
+
+            # Add international commitments from team_details
+            for team_id, details in team_details.items():
+                if details["international_penalty"] < 1.0:
+                    context["international_commitments"][team_id] = {
+                        "penalty": details["international_penalty"],
+                        "days": 3,  # Approximation
+                    }
+
+            logger.info(
+                f"Context loaded: {len(unstable_leagues)} unstable leagues, "
+                f"{len(odds_movements)} odds movements"
+            )
+
+        except Exception as e:
+            logger.warning(f"Error loading context: {e}. Predictions will be made without context.")
+
+    # Make predictions with context
+    predictions = ml_engine.predict(df, team_adjustments=team_adjustments, context=context)
 
     # Save predictions to database if requested
     if save:
@@ -359,22 +463,34 @@ async def get_predictions(
             home_team_logo=pred.get("home_team_logo"),
             away_team_logo=pred.get("away_team_logo"),
             date=pred["date"],
+            status=pred.get("status"),
+            home_goals=pred.get("home_goals"),
+            away_goals=pred.get("away_goals"),
+            league_id=pred.get("league_id"),
             probabilities=pred["probabilities"],
+            raw_probabilities=pred.get("raw_probabilities"),
             fair_odds=pred["fair_odds"],
             market_odds=pred.get("market_odds"),
+            confidence_tier=pred.get("confidence_tier"),
+            original_tier=pred.get("original_tier"),
             value_bets=pred.get("value_bets"),
             has_value_bet=pred.get("has_value_bet", False),
             best_value_bet=pred.get("best_value_bet"),
+            adjustment_applied=pred.get("adjustment_applied", False),
+            adjustments=pred.get("adjustments"),
+            prediction_insights=pred.get("prediction_insights"),
+            warnings=pred.get("warnings"),
         )
         prediction_items.append(item)
 
     response = PredictionsResponse(
         predictions=prediction_items,
         model_version=ml_engine.model_version,
+        context_applied=context_metadata if with_context else None,
     )
 
-    # Cache the response (only for default requests)
-    if league_ids is None and not save:
+    # Cache the response (only for default requests with context)
+    if league_ids is None and not save and with_context:
         _predictions_cache["data"] = response
         _predictions_cache["timestamp"] = now
         logger.info(f"Cached {len(prediction_items)} predictions")
@@ -1075,6 +1191,149 @@ async def calculate_team_adjustments(
     except Exception as e:
         logger.error(f"Error calculating adjustments: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/recalibration/league-drift")
+async def get_league_drift(
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Detect league-level accuracy drift.
+
+    Compares weekly GOLD accuracy per league against historical baseline.
+    Leagues with 15%+ accuracy drop are marked as 'Unstable'.
+
+    Use this to identify structural changes in specific leagues.
+    """
+    from app.ml.recalibration import RecalibrationEngine
+
+    try:
+        recalibrator = RecalibrationEngine(session)
+        result = await recalibrator.detect_league_drift()
+        return result
+    except Exception as e:
+        logger.error(f"Error detecting league drift: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/recalibration/odds-movement")
+async def get_odds_movements(
+    days_ahead: int = 3,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Check for significant market odds movements.
+
+    Compares current market odds with our fair odds at prediction time.
+    Movement of 25%+ triggers tier degradation warning.
+
+    Returns matches with unusual market activity that may indicate
+    information we don't have (injuries, lineup changes, etc).
+    """
+    from app.ml.recalibration import RecalibrationEngine
+
+    try:
+        recalibrator = RecalibrationEngine(session)
+        result = await recalibrator.check_all_upcoming_odds_movements(days_ahead=days_ahead)
+        return result
+    except Exception as e:
+        logger.error(f"Error checking odds movements: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/recalibration/odds-movement/{match_id}")
+async def get_match_odds_movement(
+    match_id: int,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Check odds movement for a specific match.
+
+    Returns detailed analysis of market movement and tier degradation recommendation.
+    """
+    from app.ml.recalibration import RecalibrationEngine
+
+    try:
+        recalibrator = RecalibrationEngine(session)
+        result = await recalibrator.check_odds_movement(match_id)
+        return result
+    except Exception as e:
+        logger.error(f"Error checking match odds movement: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/recalibration/lineup/{match_external_id}")
+async def check_match_lineup(
+    match_external_id: int,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Check lineup validation for a specific match (Fase 3).
+
+    Fetches announced lineup from API-Football (available ~60min before kickoff)
+    and compares with expected best XI.
+
+    Returns:
+    - available: Whether lineups are announced
+    - lineup_data: Formation and starters count for each team
+    - tier_degradation: Recommended tier reduction (0, 1, or 2)
+    - warnings: List of warnings (LINEUP_ROTATION_HOME, LINEUP_ROTATION_SEVERE_AWAY, etc.)
+    - insights: Human-readable rotation analysis
+
+    Variance thresholds:
+    - 30%+ rotation = 1 tier degradation
+    - 50%+ rotation = 2 tier degradation (severe)
+    """
+    from app.ml.recalibration import RecalibrationEngine
+
+    try:
+        recalibrator = RecalibrationEngine(session)
+        result = await recalibrator.check_lineup_for_match(match_external_id)
+        return result
+    except Exception as e:
+        logger.error(f"Error checking match lineup: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/matches/{match_id}/lineup")
+async def get_match_lineup(
+    match_id: int,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Get full lineup information for a match.
+
+    Fetches starting XI and substitutes for both teams.
+    Available approximately 60 minutes before kickoff.
+    """
+    from app.etl.api_football import APIFootballProvider
+
+    # Get match to find external ID
+    match = await session.get(Match, match_id)
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    provider = APIFootballProvider()
+    try:
+        lineup_data = await provider.get_lineups(match.external_id)
+
+        if not lineup_data:
+            return {
+                "available": False,
+                "match_id": match_id,
+                "external_id": match.external_id,
+                "message": "Lineups not yet announced (typically available ~60min before kickoff)",
+            }
+
+        return {
+            "available": True,
+            "match_id": match_id,
+            "external_id": match.external_id,
+            "home": lineup_data.get("home"),
+            "away": lineup_data.get("away"),
+        }
+    finally:
+        await provider.close()
 
 
 @app.get("/recalibration/snapshots", response_model=list[ModelSnapshotResponse])

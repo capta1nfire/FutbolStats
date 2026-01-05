@@ -60,6 +60,8 @@ class MatchDetailViewModel: ObservableObject {
     @Published var primaryInsight: MatchInsight?
     @Published var homeTeamForm: TeamFormData?
     @Published var awayTeamForm: TeamFormData?
+    @Published var narrativeInsights: [NarrativeInsight] = []
+    @Published var momentumAnalysis: MomentumAnalysis?
 
     init(prediction: MatchPrediction) {
         self.prediction = prediction
@@ -286,6 +288,14 @@ struct MatchDetailView: View {
                     formTable
                 }
 
+                // Narrative Insights (post-match analysis)
+                if !viewModel.narrativeInsights.isEmpty {
+                    MatchNarrativeInsightsView(
+                        insights: viewModel.narrativeInsights,
+                        momentumAnalysis: viewModel.momentumAnalysis
+                    )
+                }
+
                 if let insight = viewModel.primaryInsight {
                     insightFooter(insight)
                 }
@@ -333,17 +343,46 @@ struct MatchDetailView: View {
 
                 VStack(spacing: 4) {
                     Spacer()
-                    Text("VS")
-                        .font(.headline)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.gray)
-                    Text(viewModel.formattedMatchDate)
-                        .font(.caption2)
-                        .foregroundStyle(.gray.opacity(0.8))
-                        .multilineTextAlignment(.center)
+                    // Show score if match is finished, otherwise show VS
+                    if prediction.isFinished, let score = prediction.scoreDisplay {
+                        Text(score)
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundStyle(.white)
+                        Text("FT")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.green)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(Color.green.opacity(0.2))
+                            .clipShape(Capsule())
+                    } else if prediction.isLive {
+                        if let score = prediction.scoreDisplay {
+                            Text(score)
+                                .font(.system(size: 28, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                        Text(prediction.status ?? "LIVE")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.red)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(Color.red.opacity(0.2))
+                            .clipShape(Capsule())
+                    } else {
+                        Text("VS")
+                            .font(.headline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.gray)
+                        Text(viewModel.formattedMatchDate)
+                            .font(.caption2)
+                            .foregroundStyle(.gray.opacity(0.8))
+                            .multilineTextAlignment(.center)
+                    }
                     Spacer()
                 }
-                .frame(width: 90)
+                .frame(width: 100)
 
                 teamColumn(
                     name: prediction.awayTeam,
@@ -695,6 +734,9 @@ struct MatchDetailView: View {
             homeTeamLogo: nil,
             awayTeamLogo: nil,
             date: "2026-01-03T07:00:00",
+            status: "FT",
+            homeGoals: 2,
+            awayGoals: 1,
             probabilities: Probabilities(home: 0.334, draw: 0.333, away: 0.333),
             fairOdds: FairOdds(home: 2.47, draw: 3.39, away: 3.33),
             marketOdds: MarketOdds(home: 1.45, draw: 4.50, away: 7.00),

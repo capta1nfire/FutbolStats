@@ -6,7 +6,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -308,19 +308,35 @@ class FeatureEngineer:
     async def get_upcoming_matches_features(
         self,
         league_ids: Optional[list[int]] = None,
+        include_recent_days: int = 2,
     ) -> pd.DataFrame:
         """
-        Get features for upcoming (not yet played) matches.
+        Get features for upcoming and recent matches.
 
         Args:
             league_ids: Optional list of league IDs to filter.
+            include_recent_days: Include finished matches from last N days (for showing scores).
 
         Returns:
-            DataFrame with features for upcoming matches.
+            DataFrame with features for matches (upcoming + recent finished).
         """
+        from datetime import timedelta
+
+        # Calculate date range for recent matches
+        recent_cutoff = datetime.utcnow() - timedelta(days=include_recent_days)
+
+        # Get upcoming matches (NS) AND recent finished matches (FT, AET, PEN)
         query = (
             select(Match)
-            .where(Match.status == "NS")
+            .where(
+                or_(
+                    Match.status == "NS",  # Upcoming
+                    and_(
+                        Match.status.in_(["FT", "AET", "PEN"]),  # Finished
+                        Match.date >= recent_cutoff,  # Recent
+                    ),
+                )
+            )
             .options(selectinload(Match.home_team), selectinload(Match.away_team))
         )
 
@@ -332,7 +348,7 @@ class FeatureEngineer:
         result = await self.session.execute(query)
         matches = list(result.scalars().all())
 
-        logger.info(f"Building features for {len(matches)} upcoming matches...")
+        logger.info(f"Building features for {len(matches)} matches (upcoming + recent)...")
 
         rows = []
         for match in matches:
@@ -345,6 +361,10 @@ class FeatureEngineer:
                 features["odds_home"] = match.odds_home
                 features["odds_draw"] = match.odds_draw
                 features["odds_away"] = match.odds_away
+                # Include match status and score for iOS display
+                features["status"] = match.status
+                features["home_goals"] = match.home_goals
+                features["away_goals"] = match.away_goals
                 rows.append(features)
             except Exception as e:
                 logger.error(f"Error processing match {match.id}: {e}")
