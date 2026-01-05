@@ -233,7 +233,14 @@ async def weekly_recalibration(ml_engine):
                 logger.error(f"Insufficient training data: {len(df)} samples")
                 return
 
-            train_result = ml_engine.train(df)
+            # Train in executor to avoid blocking the event loop
+            import asyncio
+            from concurrent.futures import ThreadPoolExecutor
+
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor() as executor:
+                train_result = await loop.run_in_executor(executor, ml_engine.train, df)
+
             new_brier = train_result["brier_score"]
             logger.info(f"Training complete: Brier Score = {new_brier:.4f}")
 

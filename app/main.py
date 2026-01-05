@@ -328,8 +328,13 @@ async def train_model(
             detail=f"Insufficient training data: {len(df)} samples. Need at least 100.",
         )
 
-    # Train model
-    result = ml_engine.train(df)
+    # Train model in executor to avoid blocking the event loop
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor() as executor:
+        result = await loop.run_in_executor(executor, ml_engine.train, df)
 
     return TrainResponse(
         model_version=result["model_version"],
