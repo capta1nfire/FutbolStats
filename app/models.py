@@ -256,6 +256,18 @@ class PostMatchAudit(SQLModel, table=True):
         default=None, max_length=500, description="Notes for model improvement"
     )
 
+    # Narrative insights (human-readable explanations)
+    narrative_insights: Optional[list] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="List of narrative insight objects with type, icon, message, priority"
+    )
+    momentum_analysis: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="Momentum analysis object with type, icon, message"
+    )
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     # Relationships

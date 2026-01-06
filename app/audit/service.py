@@ -15,6 +15,7 @@ from typing import Optional
 
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.etl.api_football import APIFootballProvider
 from app.models import (
@@ -371,6 +372,19 @@ class PostMatchAuditService:
         else:
             adjustment_notes = None
 
+        # Generate narrative insights for the match
+        narrative_result = self.generate_narrative_insights(
+            prediction=prediction,
+            actual_result=actual_result,
+            home_goals=match.home_goals,
+            away_goals=match.away_goals,
+            stats=stats or {},
+            home_team_name=match.home_team.name if match.home_team else "Local",
+            away_team_name=match.away_team.name if match.away_team else "Visitante",
+            home_position=None,  # Positions require extra API call, skip for now
+            away_position=None,
+        )
+
         audit = PostMatchAudit(
             outcome_id=outcome.id,
             deviation_type=deviation_type,
@@ -383,12 +397,15 @@ class PostMatchAuditService:
             goals_vs_xg_away=(match.away_goals - xg_away) if xg_away else None,
             should_adjust_model=should_learn,
             adjustment_notes=adjustment_notes,
+            narrative_insights=narrative_result.get("insights"),
+            momentum_analysis=narrative_result.get("momentum_analysis"),
         )
 
         self.session.add(audit)
         logger.info(
             f"Audited match {match.id}: {predicted_result} vs {actual_result} "
-            f"({'✓' if is_correct else '✗'}) - {deviation_type}"
+            f"({'✓' if is_correct else '✗'}) - {deviation_type} "
+            f"({len(narrative_result.get('insights', []))} insights)"
         )
 
         return outcome
@@ -872,10 +889,15 @@ class PostMatchAuditService:
         cutoff_date = datetime.utcnow() - timedelta(days=days)
 
         # Find completed matches with predictions that haven't been audited
+        # Eager load home_team and away_team for narrative insights
         query = (
             select(Match, Prediction)
             .join(Prediction, Match.id == Prediction.match_id)
             .outerjoin(PredictionOutcome, Prediction.id == PredictionOutcome.prediction_id)
+            .options(
+                selectinload(Match.home_team),
+                selectinload(Match.away_team),
+            )
             .where(
                 and_(
                     Match.status == "FT",

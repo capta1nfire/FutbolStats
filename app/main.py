@@ -21,7 +21,7 @@ from app.etl.competitions import ALL_LEAGUE_IDS, COMPETITIONS
 from app.features import FeatureEngineer
 from app.ml import XGBoostEngine
 from app.ml.persistence import load_active_model, persist_model_snapshot
-from app.models import Match, OddsHistory, Prediction, Team, TeamAdjustment
+from app.models import Match, OddsHistory, PostMatchAudit, Prediction, PredictionOutcome, Team, TeamAdjustment
 from app.scheduler import start_scheduler, stop_scheduler, get_last_sync_time, SYNC_LEAGUES
 from app.security import limiter, verify_api_key
 
@@ -1095,6 +1095,59 @@ async def get_match_details(
             "league_points": away_league_points,
         },
         "prediction": prediction,
+    }
+
+
+@app.get("/matches/{match_id}/insights")
+async def get_match_insights(
+    match_id: int,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Get narrative insights for a finished match.
+
+    Returns human-readable explanations of why the prediction succeeded or failed,
+    including analysis of efficiency, clinical finishing, goalkeeper heroics, etc.
+
+    Only available for matches that have been audited (finished + processed).
+    """
+    # Get match
+    match = await session.get(Match, match_id)
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    # Only for finished matches
+    if match.status not in ("FT", "AET", "PEN"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Insights only available for finished matches. Status: {match.status}"
+        )
+
+    # Get prediction outcome and audit for this match
+    result = await session.execute(
+        select(PredictionOutcome, PostMatchAudit)
+        .join(PostMatchAudit, PredictionOutcome.id == PostMatchAudit.outcome_id)
+        .where(PredictionOutcome.match_id == match_id)
+    )
+    row = result.first()
+
+    if not row:
+        raise HTTPException(
+            status_code=404,
+            detail="Match has not been audited yet. Insights will be available after the daily audit."
+        )
+
+    outcome, audit = row
+
+    return {
+        "match_id": match_id,
+        "prediction_correct": outcome.prediction_correct,
+        "predicted_result": outcome.predicted_result,
+        "actual_result": outcome.actual_result,
+        "confidence": outcome.confidence,
+        "deviation_type": audit.deviation_type,
+        "insights": audit.narrative_insights or [],
+        "momentum_analysis": audit.momentum_analysis,
     }
 
 

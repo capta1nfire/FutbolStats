@@ -82,12 +82,13 @@ class MatchDetailViewModel: ObservableObject {
             processTeamHistory()
             generateInsights()
 
-            // Load timeline for finished matches
+            // Load timeline and narrative insights for finished matches
             if prediction.isFinished {
-                print("Match \(matchId) is finished, loading timeline...")
+                print("Match \(matchId) is finished, loading timeline and insights...")
                 await loadTimeline(matchId: matchId)
+                await loadNarrativeInsights(matchId: matchId)
             } else {
-                print("Match \(matchId) status: \(prediction.status ?? "nil") - not loading timeline")
+                print("Match \(matchId) status: \(prediction.status ?? "nil") - not loading timeline/insights")
             }
         } catch {
             self.error = error.localizedDescription
@@ -104,6 +105,33 @@ class MatchDetailViewModel: ObservableObject {
             // Timeline is optional - don't fail the whole view
             timelineError = error.localizedDescription
             print("Timeline error: \(error.localizedDescription)")
+        }
+    }
+
+    private func loadNarrativeInsights(matchId: Int) async {
+        do {
+            let response = try await APIClient.shared.getMatchInsights(matchId: matchId)
+            // Convert MatchInsightItem to NarrativeInsight
+            narrativeInsights = response.insights.map { item in
+                NarrativeInsight(
+                    type: item.type,
+                    icon: item.icon,
+                    message: item.message,
+                    priority: item.priority
+                )
+            }
+            // Convert MatchMomentumAnalysis to MomentumAnalysis
+            if let momentum = response.momentumAnalysis {
+                momentumAnalysis = MomentumAnalysis(
+                    type: momentum.type,
+                    icon: momentum.icon,
+                    message: momentum.message
+                )
+            }
+            print("Narrative insights loaded: \(narrativeInsights.count) insights")
+        } catch {
+            // Insights are optional - don't fail the whole view
+            print("Insights error: \(error.localizedDescription)")
         }
     }
 

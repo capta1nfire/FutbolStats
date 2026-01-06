@@ -603,6 +603,48 @@ struct TimelineSummary: Codable {
     }
 }
 
+// MARK: - Match Insights Response
+
+struct MatchInsightsResponse: Codable {
+    let matchId: Int
+    let predictionCorrect: Bool
+    let predictedResult: String
+    let actualResult: String
+    let confidence: Double
+    let deviationType: String
+    let insights: [MatchInsightItem]
+    let momentumAnalysis: MatchMomentumAnalysis?
+
+    enum CodingKeys: String, CodingKey {
+        case matchId = "match_id"
+        case predictionCorrect = "prediction_correct"
+        case predictedResult = "predicted_result"
+        case actualResult = "actual_result"
+        case confidence
+        case deviationType = "deviation_type"
+        case insights
+        case momentumAnalysis = "momentum_analysis"
+    }
+}
+
+struct MatchInsightItem: Codable, Identifiable {
+    var id: UUID { UUID() }
+    let type: String
+    let icon: String
+    let message: String
+    let priority: Int
+
+    enum CodingKeys: String, CodingKey {
+        case type, icon, message, priority
+    }
+}
+
+struct MatchMomentumAnalysis: Codable {
+    let type: String
+    let icon: String
+    let message: String
+}
+
 // MARK: - Health Check
 
 struct HealthResponse: Codable {

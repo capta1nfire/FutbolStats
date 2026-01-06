@@ -259,6 +259,13 @@ actor APIClient {
         return try await performRequest(url: url)
     }
 
+    // MARK: - Match Insights (Narrative Analysis)
+
+    func getMatchInsights(matchId: Int) async throws -> MatchInsightsResponse {
+        let url = URL(string: "\(environment.baseURL)/matches/\(matchId)/insights")!
+        return try await performRequest(url: url)
+    }
+
     // MARK: - ETL Sync (requires API key in production)
 
     func syncData(leagueIds: [Int], season: Int) async throws -> [String: Any] {
