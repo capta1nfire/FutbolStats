@@ -259,7 +259,7 @@ async def monitor_lineups_and_capture_odds() -> dict:
             # 1. Are in NS (not started) or just started (1H)
             # 2. Don't have a lineup_confirmed odds snapshot yet
             result = await session.execute(text("""
-                SELECT m.id, m.external_id, m.date, m.odds_home, m.odds_draw, m.odds_away
+                SELECT m.id, m.external_id, m.date, m.odds_home, m.odds_draw, m.odds_away, m.status
                 FROM matches m
                 WHERE m.date BETWEEN :window_start AND :window_end
                   AND m.status IN ('NS', '1H')
