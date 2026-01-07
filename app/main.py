@@ -3,7 +3,7 @@
 import logging
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -1960,3 +1960,148 @@ async def create_baseline_snapshot(
     except Exception as e:
         logger.error(f"Error creating baseline: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# LINEUP ARBITRAGE - Real-time odds capture at lineup announcement
+# ============================================================================
+
+
+@app.post("/lineup/monitor")
+@limiter.limit("10/minute")
+async def trigger_lineup_monitoring(
+    request: Request,
+    _: bool = Depends(verify_api_key),
+):
+    """
+    Manually trigger lineup monitoring to capture odds at lineup_confirmed time.
+
+    This is the same job that runs every 5 minutes automatically.
+    Use this endpoint to test or force capture for matches in the next 90 minutes.
+
+    The job:
+    1. Finds matches starting within 90 minutes
+    2. Checks if lineups are announced (11 players per team)
+    3. If lineup is confirmed and no snapshot exists:
+       - Captures current odds as 'lineup_confirmed' snapshot
+       - Records exact timestamp for model evaluation
+
+    This data is CRITICAL for evaluating the Lineup Arbitrage hypothesis:
+    Can we beat the market odds AT THE MOMENT lineups are announced?
+
+    Requires API key authentication.
+    """
+    from app.scheduler import monitor_lineups_and_capture_odds
+
+    result = await monitor_lineups_and_capture_odds()
+    return result
+
+
+@app.get("/lineup/snapshots")
+async def get_lineup_snapshots(
+    days: int = 7,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Get lineup_confirmed odds snapshots for recent matches.
+
+    Returns matches where we captured odds at the moment of lineup announcement.
+    This data is used to evaluate the Lineup Arbitrage model.
+
+    Each snapshot includes:
+    - match_id, date
+    - snapshot_at: When we detected the lineup
+    - odds at that moment (H/D/A)
+    - implied probabilities (normalized)
+    - TIMING METRICS: delta_to_kickoff, odds_freshness
+    """
+    from sqlalchemy import text
+
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    result = await session.execute(text("""
+        SELECT
+            os.match_id,
+            os.snapshot_at,
+            os.odds_home,
+            os.odds_draw,
+            os.odds_away,
+            os.prob_home,
+            os.prob_draw,
+            os.prob_away,
+            os.overround,
+            os.bookmaker,
+            os.kickoff_time,
+            os.delta_to_kickoff_seconds,
+            os.odds_freshness,
+            m.date as match_date,
+            m.status,
+            m.home_goals,
+            m.away_goals,
+            ht.name as home_team,
+            at.name as away_team
+        FROM odds_snapshots os
+        JOIN matches m ON os.match_id = m.id
+        LEFT JOIN teams ht ON m.home_team_id = ht.id
+        LEFT JOIN teams at ON m.away_team_id = at.id
+        WHERE os.snapshot_type = 'lineup_confirmed'
+          AND os.snapshot_at >= :cutoff
+        ORDER BY os.snapshot_at DESC
+    """), {"cutoff": cutoff})
+
+    snapshots = result.fetchall()
+
+    # Calculate timing distribution
+    deltas = [s.delta_to_kickoff_seconds for s in snapshots if s.delta_to_kickoff_seconds is not None]
+    freshness_counts = {}
+    for s in snapshots:
+        f = s.odds_freshness or "unknown"
+        freshness_counts[f] = freshness_counts.get(f, 0) + 1
+
+    timing_stats = None
+    if deltas:
+        sorted_deltas = sorted(deltas)
+        p50_idx = len(sorted_deltas) // 2
+        p90_idx = int(len(sorted_deltas) * 0.9)
+        timing_stats = {
+            "count": len(deltas),
+            "min_minutes": round(min(deltas) / 60, 1),
+            "max_minutes": round(max(deltas) / 60, 1),
+            "p50_minutes": round(sorted_deltas[p50_idx] / 60, 1),
+            "p90_minutes": round(sorted_deltas[p90_idx] / 60, 1) if p90_idx < len(sorted_deltas) else None,
+            "mean_minutes": round(sum(deltas) / len(deltas) / 60, 1),
+        }
+
+    return {
+        "count": len(snapshots),
+        "days": days,
+        "timing_stats": timing_stats,
+        "freshness_distribution": freshness_counts,
+        "snapshots": [
+            {
+                "match_id": s.match_id,
+                "home_team": s.home_team,
+                "away_team": s.away_team,
+                "match_date": s.match_date.isoformat() if s.match_date else None,
+                "kickoff_time": s.kickoff_time.isoformat() if s.kickoff_time else None,
+                "status": s.status,
+                "final_score": f"{s.home_goals}-{s.away_goals}" if s.home_goals is not None else None,
+                "snapshot_at": s.snapshot_at.isoformat() if s.snapshot_at else None,
+                "delta_to_kickoff_minutes": round(s.delta_to_kickoff_seconds / 60, 1) if s.delta_to_kickoff_seconds else None,
+                "odds_freshness": s.odds_freshness,
+                "odds": {
+                    "home": float(s.odds_home) if s.odds_home else None,
+                    "draw": float(s.odds_draw) if s.odds_draw else None,
+                    "away": float(s.odds_away) if s.odds_away else None,
+                },
+                "implied_probs": {
+                    "home": float(s.prob_home) if s.prob_home else None,
+                    "draw": float(s.prob_draw) if s.prob_draw else None,
+                    "away": float(s.prob_away) if s.prob_away else None,
+                },
+                "overround": float(s.overround) if s.overround else None,
+                "source": s.bookmaker,
+            }
+            for s in snapshots
+        ],
+    }

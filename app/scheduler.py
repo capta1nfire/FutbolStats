@@ -1,14 +1,16 @@
 """Background scheduler for weekly sync, audit, and training jobs."""
 
+import asyncio
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
+from decimal import Decimal
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, text
 from sqlalchemy.orm import selectinload
 
 from app.database import AsyncSessionLocal
@@ -220,6 +222,282 @@ async def freeze_predictions_before_kickoff() -> dict:
     except Exception as e:
         logger.error(f"freeze_predictions_before_kickoff failed: {e}")
         return {"frozen_count": 0, "error": str(e)}
+
+
+async def monitor_lineups_and_capture_odds() -> dict:
+    """
+    Monitor upcoming matches for lineup announcements and capture odds snapshots.
+
+    This is the CRITICAL job for the Lineup Arbitrage (Value Betting Táctico) strategy.
+
+    When a lineup is announced (~60min before kickoff):
+    1. Fetch lineups from API-Football
+    2. If lineup is confirmed and we don't have a snapshot yet:
+       - Get current odds (from odds_history or match.odds)
+       - Create an odds_snapshot with snapshot_type='lineup_confirmed'
+       - Store the exact timestamp for evaluation
+
+    This provides the TRUE baseline for testing if our lineup model beats the
+    market odds at the moment of lineup announcement.
+
+    Runs every 5 minutes to catch lineup announcements in time.
+    """
+    from app.models import Match
+
+    captured_count = 0
+    checked_count = 0
+    errors = []
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Find matches starting in the next 90 minutes that don't have lineup_confirmed snapshot
+            now = datetime.utcnow()
+            window_start = now - timedelta(minutes=10)  # Include matches that just started
+            window_end = now + timedelta(minutes=90)
+
+            # Get matches in the window that:
+            # 1. Are in NS (not started) or just started (1H)
+            # 2. Don't have a lineup_confirmed odds snapshot yet
+            result = await session.execute(text("""
+                SELECT m.id, m.external_id, m.date, m.odds_home, m.odds_draw, m.odds_away
+                FROM matches m
+                WHERE m.date BETWEEN :window_start AND :window_end
+                  AND m.status IN ('NS', '1H')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM odds_snapshots os
+                      WHERE os.match_id = m.id
+                        AND os.snapshot_type = 'lineup_confirmed'
+                  )
+                ORDER BY m.date
+            """), {"window_start": window_start, "window_end": window_end})
+
+            matches = result.fetchall()
+            
+            # Limit processing to avoid overload (max 50 matches per run)
+            if len(matches) > 50:
+                logger.warning(
+                    f"Too many matches in window ({len(matches)}), processing first 50 "
+                    f"to avoid overload. Remaining will be processed in next run."
+                )
+                matches = matches[:50]
+
+            if not matches:
+                return {"checked": 0, "captured": 0, "message": "No matches in window"}
+
+            # Use API-Football to check lineups
+            provider = APIFootballProvider()
+
+            try:
+                for match in matches:
+                    match_id = match.id
+                    external_id = match.external_id
+                    checked_count += 1
+
+                    try:
+                        # Fetch lineup from API with retry logic
+                        lineup_data = None
+                        max_retries = 3
+                        for attempt in range(max_retries):
+                            try:
+                                lineup_data = await provider.get_lineups(external_id)
+                                break
+                            except Exception as e:
+                                if attempt == max_retries - 1:
+                                    logger.error(
+                                        f"Failed to fetch lineup for match {match_id} "
+                                        f"(external: {external_id}) after {max_retries} attempts: {e}"
+                                    )
+                                    raise
+                                # Exponential backoff: 2s, 4s, 8s
+                                await asyncio.sleep(2 ** attempt)
+                                logger.debug(
+                                    f"Retry {attempt + 1}/{max_retries} for lineup fetch "
+                                    f"(match {match_id})"
+                                )
+
+                        if not lineup_data:
+                            # Lineup not yet announced
+                            continue
+
+                        # Check if we have valid starting XI
+                        home_lineup = lineup_data.get("home")
+                        away_lineup = lineup_data.get("away")
+
+                        if not home_lineup or not away_lineup:
+                            continue
+
+                        home_xi = home_lineup.get("starting_xi", [])
+                        away_xi = away_lineup.get("starting_xi", [])
+
+                        # Consider lineup confirmed if we have 11 players for each team
+                        if len(home_xi) < 11 or len(away_xi) < 11:
+                            continue
+                        
+                        # Validate match hasn't started (double-check after API call delay)
+                        if match.status != 'NS':
+                            logger.debug(
+                                f"Match {match_id} status changed to {match.status} "
+                                f"during processing, skipping"
+                            )
+                            continue
+                        
+                        # Validate data quality: check for None player IDs
+                        if any(p is None for p in home_xi) or any(p is None for p in away_xi):
+                            logger.warning(
+                                f"Invalid player IDs (None values) in lineup for match {match_id}. "
+                                f"Skipping to avoid data quality issues."
+                            )
+                            continue
+
+                        # LINEUP CONFIRMED! Now capture the odds
+                        # CRITICAL: Fetch FRESH odds directly from API at this exact moment
+                        logger.info(f"Lineup confirmed for match {match_id} (external: {external_id})")
+
+                        kickoff_time = match.date
+                        lineup_detected_at = datetime.utcnow()
+
+                        # PRIMARY: Get LIVE odds from API-Football (most accurate)
+                        # CRITICAL: We MUST have fresh odds for valid baseline measurement
+                        # Priority: Bet365 > Pinnacle > 1xBet (sharp bookmakers)
+                        fresh_odds = await provider.get_odds(external_id)
+
+                        if fresh_odds and fresh_odds.get("odds_home"):
+                            odds_home = float(fresh_odds["odds_home"])
+                            odds_draw = float(fresh_odds["odds_draw"])
+                            odds_away = float(fresh_odds["odds_away"])
+                            bookmaker_name = fresh_odds.get("bookmaker", "unknown")
+                            source = f"{bookmaker_name}_live"
+                            logger.info(f"Got FRESH odds from {bookmaker_name} for match {match_id}")
+                        else:
+                            # NO FALLBACK: We cannot use stale odds as baseline
+                            # This would invalidate the evaluation metric
+                            # The baseline MUST be the market odds at the exact moment of lineup detection
+                            logger.error(
+                                f"Cannot capture fresh odds for match {match_id} "
+                                f"(external: {external_id}) - API returned: {fresh_odds}. "
+                                f"Skipping this match. Will retry in next run (5 min)."
+                            )
+                            continue
+
+                        # Calculate implied probabilities
+                        if odds_home > 1 and odds_draw > 1 and odds_away > 1:
+                            raw_home = 1 / odds_home
+                            raw_draw = 1 / odds_draw
+                            raw_away = 1 / odds_away
+                            total = raw_home + raw_draw + raw_away
+                            overround = total - 1
+
+                            prob_home = raw_home / total
+                            prob_draw = raw_draw / total
+                            prob_away = raw_away / total
+                        else:
+                            logger.warning(f"Invalid odds for match {match_id}: {odds_home}, {odds_draw}, {odds_away}")
+                            continue
+
+                        # Insert the lineup_confirmed snapshot with timing metadata
+                        snapshot_at = datetime.utcnow()
+
+                        # CRITICAL VALIDATION: snapshot must be BEFORE kickoff
+                        if kickoff_time and snapshot_at >= kickoff_time:
+                            logger.warning(
+                                f"Snapshot AFTER kickoff for match {match_id}: "
+                                f"snapshot_at={snapshot_at}, kickoff={kickoff_time}. Skipping."
+                            )
+                            continue
+
+                        # Calculate delta to kickoff (positive = before kickoff)
+                        delta_to_kickoff = None
+                        if kickoff_time:
+                            delta_to_kickoff = int((kickoff_time - snapshot_at).total_seconds())
+                            
+                            # Validate delta is in expected range (0-120 minutes before kickoff)
+                            minutes_to_kickoff = delta_to_kickoff / 60
+                            if minutes_to_kickoff < 0:
+                                logger.error(
+                                    f"Negative delta for match {match_id}: {minutes_to_kickoff:.1f} min. "
+                                    f"This should not happen after validation above."
+                                )
+                                continue
+                            elif minutes_to_kickoff > 120:
+                                logger.warning(
+                                    f"Delta very large for match {match_id}: {minutes_to_kickoff:.1f} min. "
+                                    f"Lineup detected very early - may be incorrect."
+                                )
+                                # Don't skip, but log warning for monitoring
+
+                        # Determine odds freshness based on source
+                        if "_live" in source:
+                            odds_freshness = "live"
+                        elif "_stale" in source:
+                            odds_freshness = "stale"
+                        else:
+                            odds_freshness = "unknown"
+
+                        await session.execute(text("""
+                            INSERT INTO odds_snapshots (
+                                match_id, snapshot_type, snapshot_at,
+                                odds_home, odds_draw, odds_away,
+                                prob_home, prob_draw, prob_away,
+                                overround, bookmaker,
+                                kickoff_time, delta_to_kickoff_seconds, odds_freshness
+                            ) VALUES (
+                                :match_id, 'lineup_confirmed', :snapshot_at,
+                                :odds_home, :odds_draw, :odds_away,
+                                :prob_home, :prob_draw, :prob_away,
+                                :overround, :bookmaker,
+                                :kickoff_time, :delta_to_kickoff, :odds_freshness
+                            )
+                            ON CONFLICT (match_id, snapshot_type, bookmaker) DO NOTHING
+                        """), {
+                            "match_id": match_id,
+                            "snapshot_at": snapshot_at,
+                            "odds_home": odds_home,
+                            "odds_draw": odds_draw,
+                            "odds_away": odds_away,
+                            "prob_home": prob_home,
+                            "prob_draw": prob_draw,
+                            "prob_away": prob_away,
+                            "overround": overround,
+                            "bookmaker": source,
+                            "kickoff_time": kickoff_time,
+                            "delta_to_kickoff": delta_to_kickoff,
+                            "odds_freshness": odds_freshness,
+                        })
+
+                        # Also update match_lineups with lineup_confirmed_at if not already set
+                        await session.execute(text("""
+                            UPDATE match_lineups
+                            SET lineup_confirmed_at = COALESCE(lineup_confirmed_at, :confirmed_at)
+                            WHERE match_id = :match_id
+                        """), {"match_id": match_id, "confirmed_at": snapshot_at})
+
+                        captured_count += 1
+                        logger.info(
+                            f"Captured lineup_confirmed odds for match {match_id}: "
+                            f"H={odds_home:.2f}, D={odds_draw:.2f}, A={odds_away:.2f} at {snapshot_at}"
+                        )
+
+                    except Exception as e:
+                        errors.append(f"Match {match_id}: {str(e)}")
+                        logger.warning(f"Error checking lineup for match {match_id}: {e}")
+
+                await session.commit()
+
+            finally:
+                await provider.close()
+
+            if captured_count > 0:
+                logger.info(f"Lineup monitoring: captured {captured_count} lineup_confirmed snapshots")
+
+            return {
+                "checked": checked_count,
+                "captured": captured_count,
+                "errors": errors[:5] if errors else None,
+            }
+
+    except Exception as e:
+        logger.error(f"monitor_lineups_and_capture_odds failed: {e}")
+        return {"checked": 0, "captured": 0, "error": str(e)}
 
 
 async def daily_save_predictions():
@@ -566,11 +844,23 @@ def start_scheduler(ml_engine):
         replace_existing=True,
     )
 
+    # Lineup Monitoring: Every 5 minutes
+    # Checks for lineup announcements and captures odds at lineup_confirmed time
+    # CRITICAL for Value Betting Táctico (Lineup Arbitrage) evaluation
+    scheduler.add_job(
+        monitor_lineups_and_capture_odds,
+        trigger=IntervalTrigger(minutes=5),
+        id="lineup_monitoring",
+        name="Lineup Monitoring (every 5 min)",
+        replace_existing=True,
+    )
+
     scheduler.start()
     _scheduler_started = True
     logger.info(
         "Scheduler started:\n"
         "  - Live global sync: Every 60 seconds\n"
+        "  - Lineup monitoring: Every 5 minutes\n"
         "  - Daily results sync: 6:00 AM UTC\n"
         "  - Daily save predictions: 7:00 AM UTC\n"
         "  - Daily audit: 8:00 AM UTC\n"
