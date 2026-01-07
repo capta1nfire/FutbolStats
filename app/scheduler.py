@@ -20,8 +20,28 @@ from app.features.engineering import FeatureEngineer
 
 logger = logging.getLogger(__name__)
 
-# Top 5 European leagues
-SYNC_LEAGUES = [39, 140, 135, 78, 61]  # EPL, La Liga, Serie A, Bundesliga, Ligue 1
+# Top 5 European leagues (core)
+TOP5_LEAGUES = [39, 140, 135, 78, 61]  # EPL, La Liga, Serie A, Bundesliga, Ligue 1
+
+# Extended leagues for lineup monitoring (more volume)
+EXTENDED_LEAGUES = [
+    39, 140, 135, 78, 61,  # Top 5
+    94,   # Portugal - Primeira Liga
+    88,   # Netherlands - Eredivisie
+    203,  # Turkey - Super Lig
+    71,   # Brazil - Serie A
+    262,  # Mexico - Liga MX
+    253,  # USA - MLS
+    2,    # Champions League
+    3,    # Europa League
+    848,  # Conference League
+    45,   # FA Cup
+    143,  # Copa del Rey
+]
+
+# Use TOP5 for sync, EXTENDED for lineup monitoring
+SYNC_LEAGUES = TOP5_LEAGUES
+LINEUP_MONITORING_LEAGUES = EXTENDED_LEAGUES
 CURRENT_SEASON = 2025
 
 # Flag to prevent multiple scheduler instances (e.g., with --reload)
@@ -230,17 +250,23 @@ async def monitor_lineups_and_capture_odds() -> dict:
 
     This is the CRITICAL job for the Lineup Arbitrage (Value Betting Táctico) strategy.
 
+    OPTIMIZED for PIT evaluation:
+    - Target window: 45-75 minutes before kickoff (when lineups are announced)
+    - Extended monitoring window: 120 minutes ahead
+    - Includes extended leagues for higher volume
+    - Prioritizes matches in target window
+
     When a lineup is announced (~60min before kickoff):
     1. Fetch lineups from API-Football
     2. If lineup is confirmed and we don't have a snapshot yet:
-       - Get current odds (from odds_history or match.odds)
+       - Get current LIVE odds (MUST be fresh)
        - Create an odds_snapshot with snapshot_type='lineup_confirmed'
        - Store the exact timestamp for evaluation
 
     This provides the TRUE baseline for testing if our lineup model beats the
     market odds at the moment of lineup announcement.
 
-    Runs every 5 minutes to catch lineup announcements in time.
+    Runs every 2 minutes to maximize capture in target window (45-75 min).
     """
     from app.models import Match
 
@@ -250,36 +276,62 @@ async def monitor_lineups_and_capture_odds() -> dict:
 
     try:
         async with AsyncSessionLocal() as session:
-            # Find matches starting in the next 90 minutes that don't have lineup_confirmed snapshot
+            # OPTIMIZED: Extended window to 120 minutes ahead
+            # This gives us better chance to catch lineups when they're announced (~60 min before)
             now = datetime.utcnow()
-            window_start = now - timedelta(minutes=10)  # Include matches that just started
-            window_end = now + timedelta(minutes=90)
+            window_start = now - timedelta(minutes=5)  # Very short past window (avoid started matches)
+            window_end = now + timedelta(minutes=120)  # Extended from 90 to 120 min
 
             # Get matches in the window that:
-            # 1. Are in NS (not started) or just started (1H)
+            # 1. Are in NS (not started) status only
             # 2. Don't have a lineup_confirmed odds snapshot yet
+            # 3. Are in our extended leagues (for higher volume)
+            # 4. PRIORITIZED by proximity to target window (45-75 min before kickoff)
             result = await session.execute(text("""
-                SELECT m.id, m.external_id, m.date, m.odds_home, m.odds_draw, m.odds_away, m.status
+                SELECT m.id, m.external_id, m.date, m.odds_home, m.odds_draw, m.odds_away,
+                       m.status, m.league_id,
+                       EXTRACT(EPOCH FROM (m.date - NOW())) / 60 as minutes_to_kickoff
                 FROM matches m
                 WHERE m.date BETWEEN :window_start AND :window_end
-                  AND m.status IN ('NS', '1H')
+                  AND m.status = 'NS'
+                  AND m.league_id = ANY(:league_ids)
                   AND NOT EXISTS (
                       SELECT 1 FROM odds_snapshots os
                       WHERE os.match_id = m.id
                         AND os.snapshot_type = 'lineup_confirmed'
                   )
-                ORDER BY m.date
-            """), {"window_start": window_start, "window_end": window_end})
+                ORDER BY
+                  -- Prioritize matches in target window (45-75 min)
+                  CASE
+                    WHEN EXTRACT(EPOCH FROM (m.date - NOW())) / 60 BETWEEN 45 AND 75 THEN 0
+                    WHEN EXTRACT(EPOCH FROM (m.date - NOW())) / 60 BETWEEN 30 AND 90 THEN 1
+                    ELSE 2
+                  END,
+                  m.date ASC
+            """), {
+                "window_start": window_start,
+                "window_end": window_end,
+                "league_ids": LINEUP_MONITORING_LEAGUES
+            })
 
             matches = result.fetchall()
-            
-            # Limit processing to avoid overload (max 50 matches per run)
-            if len(matches) > 50:
-                logger.warning(
-                    f"Too many matches in window ({len(matches)}), processing first 50 "
-                    f"to avoid overload. Remaining will be processed in next run."
+
+            # Log window status for monitoring
+            if matches:
+                in_target = sum(1 for m in matches if 45 <= (m.minutes_to_kickoff or 0) <= 75)
+                logger.info(
+                    f"Lineup monitor: {len(matches)} matches in window, "
+                    f"{in_target} in target range (45-75 min)"
                 )
-                matches = matches[:50]
+
+            # Limit processing to avoid API rate limits (max 30 matches per run)
+            # With 2-min intervals, this allows ~15 API calls/min for lineups + odds
+            if len(matches) > 30:
+                logger.warning(
+                    f"Too many matches in window ({len(matches)}), processing first 30 "
+                    f"(prioritized by target window). Remaining will be processed in next run."
+                )
+                matches = matches[:30]
 
             if not matches:
                 return {"checked": 0, "captured": 0, "message": "No matches in window"}
@@ -332,15 +384,7 @@ async def monitor_lineups_and_capture_odds() -> dict:
                         # Consider lineup confirmed if we have 11 players for each team
                         if len(home_xi) < 11 or len(away_xi) < 11:
                             continue
-                        
-                        # Validate match hasn't started (double-check after API call delay)
-                        if match.status != 'NS':
-                            logger.debug(
-                                f"Match {match_id} status changed to {match.status} "
-                                f"during processing, skipping"
-                            )
-                            continue
-                        
+
                         # Validate data quality: check for None player IDs
                         if any(p is None for p in home_xi) or any(p is None for p in away_xi):
                             logger.warning(
@@ -844,14 +888,15 @@ def start_scheduler(ml_engine):
         replace_existing=True,
     )
 
-    # Lineup Monitoring: Every 5 minutes
+    # Lineup Monitoring: Every 2 minutes (OPTIMIZED for PIT capture)
     # Checks for lineup announcements and captures odds at lineup_confirmed time
     # CRITICAL for Value Betting Táctico (Lineup Arbitrage) evaluation
+    # Target: Capture in 45-75 min window before kickoff
     scheduler.add_job(
         monitor_lineups_and_capture_odds,
-        trigger=IntervalTrigger(minutes=5),
+        trigger=IntervalTrigger(minutes=2),
         id="lineup_monitoring",
-        name="Lineup Monitoring (every 5 min)",
+        name="Lineup Monitoring (every 2 min - PIT optimized)",
         replace_existing=True,
     )
 
@@ -860,7 +905,7 @@ def start_scheduler(ml_engine):
     logger.info(
         "Scheduler started:\n"
         "  - Live global sync: Every 60 seconds\n"
-        "  - Lineup monitoring: Every 5 minutes\n"
+        "  - Lineup monitoring: Every 2 minutes (PIT optimized, target 45-75 min window)\n"
         "  - Daily results sync: 6:00 AM UTC\n"
         "  - Daily save predictions: 7:00 AM UTC\n"
         "  - Daily audit: 8:00 AM UTC\n"
