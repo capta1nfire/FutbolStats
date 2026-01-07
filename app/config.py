@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     ROLLING_WINDOW: int = 5
     TIME_DECAY_LAMBDA: float = 0.01
 
-    # Rate Limiting
-    API_REQUESTS_PER_MINUTE: int = 30
+    # Rate Limiting (Ultra Plan: 450 r/m, 75K/day)
+    API_REQUESTS_PER_MINUTE: int = 450
     RATE_LIMIT_PER_MINUTE: str = "60/minute"
 
     # API Security
@@ -32,6 +32,9 @@ class Settings(BaseSettings):
 
     # Development settings
     SKIP_AUTO_TRAIN: bool = False  # Skip auto-training on startup (useful during dev)
+
+    # Dashboard security
+    DASHBOARD_TOKEN: str = ""  # Token for /dashboard/pit access (empty = disabled)
 
     class Config:
         env_file = ".env"

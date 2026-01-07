@@ -244,17 +244,76 @@ async def freeze_predictions_before_kickoff() -> dict:
         return {"frozen_count": 0, "error": str(e)}
 
 
-async def monitor_lineups_and_capture_odds() -> dict:
+# Module-level metrics for monitoring (reset weekly)
+_lineup_capture_metrics = {
+    "critical": {"api_errors_429": 0, "api_errors_timeout": 0, "api_errors_other": 0, "captures": 0, "latencies_ms": []},
+    "full": {"api_errors_429": 0, "api_errors_timeout": 0, "api_errors_other": 0, "captures": 0, "latencies_ms": []},
+    "last_reset": None,
+}
+
+
+def get_lineup_capture_metrics() -> dict:
+    """Get current lineup capture metrics for weekly report."""
+    global _lineup_capture_metrics
+    return {
+        "critical_job": {
+            "api_errors_429": _lineup_capture_metrics["critical"]["api_errors_429"],
+            "api_errors_timeout": _lineup_capture_metrics["critical"]["api_errors_timeout"],
+            "api_errors_other": _lineup_capture_metrics["critical"]["api_errors_other"],
+            "captures": _lineup_capture_metrics["critical"]["captures"],
+            "avg_latency_ms": (
+                sum(_lineup_capture_metrics["critical"]["latencies_ms"]) /
+                len(_lineup_capture_metrics["critical"]["latencies_ms"])
+                if _lineup_capture_metrics["critical"]["latencies_ms"] else None
+            ),
+            "max_latency_ms": max(_lineup_capture_metrics["critical"]["latencies_ms"]) if _lineup_capture_metrics["critical"]["latencies_ms"] else None,
+        },
+        "full_job": {
+            "api_errors_429": _lineup_capture_metrics["full"]["api_errors_429"],
+            "api_errors_timeout": _lineup_capture_metrics["full"]["api_errors_timeout"],
+            "api_errors_other": _lineup_capture_metrics["full"]["api_errors_other"],
+            "captures": _lineup_capture_metrics["full"]["captures"],
+            "avg_latency_ms": (
+                sum(_lineup_capture_metrics["full"]["latencies_ms"]) /
+                len(_lineup_capture_metrics["full"]["latencies_ms"])
+                if _lineup_capture_metrics["full"]["latencies_ms"] else None
+            ),
+            "max_latency_ms": max(_lineup_capture_metrics["full"]["latencies_ms"]) if _lineup_capture_metrics["full"]["latencies_ms"] else None,
+        },
+        "last_reset": _lineup_capture_metrics["last_reset"],
+    }
+
+
+def reset_lineup_capture_metrics():
+    """Reset metrics (called weekly before report generation)."""
+    global _lineup_capture_metrics
+    _lineup_capture_metrics = {
+        "critical": {"api_errors_429": 0, "api_errors_timeout": 0, "api_errors_other": 0, "captures": 0, "latencies_ms": []},
+        "full": {"api_errors_429": 0, "api_errors_timeout": 0, "api_errors_other": 0, "captures": 0, "latencies_ms": []},
+        "last_reset": datetime.utcnow().isoformat(),
+    }
+
+
+async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -> dict:
     """
     Monitor upcoming matches for lineup announcements and capture odds snapshots.
 
     This is the CRITICAL job for the Lineup Arbitrage (Value Betting Táctico) strategy.
 
-    OPTIMIZED for PIT evaluation:
+    OPTIMIZED for PIT evaluation (2026-01-07):
     - Target window: 45-75 minutes before kickoff (when lineups are announced)
+    - Sweet spot: 60-80 min (most lineups announced here)
     - Extended monitoring window: 120 minutes ahead
     - Includes extended leagues for higher volume
-    - Prioritizes matches in target window
+
+    ADAPTIVE FREQUENCY SYSTEM:
+    - critical_window_only=False: Full scan every 2 min (all matches in 120 min window)
+    - critical_window_only=True: Aggressive scan every 60s (only 45-90 min matches)
+
+    METRICS TRACKING (for weekly report):
+    - API errors by type (429, timeout, other)
+    - Internal latency (lineup detected -> snapshot saved)
+    - Capture counts per job type
 
     When a lineup is announced (~60min before kickoff):
     1. Fetch lineups from API-Football
@@ -265,10 +324,12 @@ async def monitor_lineups_and_capture_odds() -> dict:
 
     This provides the TRUE baseline for testing if our lineup model beats the
     market odds at the moment of lineup announcement.
-
-    Runs every 2 minutes to maximize capture in target window (45-75 min).
     """
+    global _lineup_capture_metrics
     from app.models import Match
+
+    # Track which job type for metrics
+    job_type = "critical" if critical_window_only else "full"
 
     captured_count = 0
     checked_count = 0
@@ -276,17 +337,28 @@ async def monitor_lineups_and_capture_odds() -> dict:
 
     try:
         async with AsyncSessionLocal() as session:
-            # OPTIMIZED: Extended window to 120 minutes ahead
-            # This gives us better chance to catch lineups when they're announced (~60 min before)
             now = datetime.utcnow()
-            window_start = now - timedelta(minutes=5)  # Very short past window (avoid started matches)
-            window_end = now + timedelta(minutes=120)  # Extended from 90 to 120 min
+
+            # ADAPTIVE WINDOW based on mode:
+            # - Critical mode: Only 45-90 min window (aggressive 60s polling)
+            # - Full mode: 0-120 min window (regular 2 min polling)
+            if critical_window_only:
+                # CRITICAL WINDOW: Focus on 45-90 min where lineups are typically announced
+                # This runs every 60s to maximize capture probability in ideal window
+                window_start = now + timedelta(minutes=45)
+                window_end = now + timedelta(minutes=90)
+                log_prefix = "[CRITICAL]"
+            else:
+                # FULL WINDOW: Extended monitoring
+                window_start = now - timedelta(minutes=5)  # Very short past window
+                window_end = now + timedelta(minutes=120)
+                log_prefix = "[FULL]"
 
             # Get matches in the window that:
             # 1. Are in NS (not started) status only
             # 2. Don't have a lineup_confirmed odds snapshot yet
             # 3. Are in our extended leagues (for higher volume)
-            # 4. PRIORITIZED by proximity to target window (45-75 min before kickoff)
+            # 4. PRIORITIZED by sweet spot (60-80 min) then target window (45-75 min)
             result = await session.execute(text("""
                 SELECT m.id, m.external_id, m.date, m.odds_home, m.odds_draw, m.odds_away,
                        m.status, m.league_id,
@@ -301,11 +373,15 @@ async def monitor_lineups_and_capture_odds() -> dict:
                         AND os.snapshot_type = 'lineup_confirmed'
                   )
                 ORDER BY
-                  -- Prioritize matches in target window (45-75 min)
+                  -- PRIORITY 0: Sweet spot 60-80 min (most lineups announced here)
+                  -- PRIORITY 1: Ideal window 45-75 min
+                  -- PRIORITY 2: Extended window 30-90 min
+                  -- PRIORITY 3: Rest
                   CASE
-                    WHEN EXTRACT(EPOCH FROM (m.date - NOW())) / 60 BETWEEN 45 AND 75 THEN 0
-                    WHEN EXTRACT(EPOCH FROM (m.date - NOW())) / 60 BETWEEN 30 AND 90 THEN 1
-                    ELSE 2
+                    WHEN EXTRACT(EPOCH FROM (m.date - NOW())) / 60 BETWEEN 60 AND 80 THEN 0
+                    WHEN EXTRACT(EPOCH FROM (m.date - NOW())) / 60 BETWEEN 45 AND 75 THEN 1
+                    WHEN EXTRACT(EPOCH FROM (m.date - NOW())) / 60 BETWEEN 30 AND 90 THEN 2
+                    ELSE 3
                   END,
                   m.date ASC
             """), {
@@ -318,23 +394,26 @@ async def monitor_lineups_and_capture_odds() -> dict:
 
             # Log window status for monitoring
             if matches:
-                in_target = sum(1 for m in matches if 45 <= (m.minutes_to_kickoff or 0) <= 75)
+                in_sweet_spot = sum(1 for m in matches if 60 <= (m.minutes_to_kickoff or 0) <= 80)
+                in_ideal = sum(1 for m in matches if 45 <= (m.minutes_to_kickoff or 0) <= 75)
                 logger.info(
-                    f"Lineup monitor: {len(matches)} matches in window, "
-                    f"{in_target} in target range (45-75 min)"
+                    f"{log_prefix} Lineup monitor: {len(matches)} matches, "
+                    f"{in_sweet_spot} in sweet spot (60-80), {in_ideal} in ideal (45-75)"
                 )
 
-            # Limit processing to avoid API rate limits (max 30 matches per run)
-            # With 2-min intervals, this allows ~15 API calls/min for lineups + odds
-            if len(matches) > 30:
+            # Limit processing to avoid API rate limits
+            # Critical mode: Process all (should be fewer matches in narrow window)
+            # Full mode: Max 30 matches per run
+            max_matches = 50 if critical_window_only else 30
+            if len(matches) > max_matches:
                 logger.warning(
-                    f"Too many matches in window ({len(matches)}), processing first 30 "
-                    f"(prioritized by target window). Remaining will be processed in next run."
+                    f"{log_prefix} Too many matches ({len(matches)}), processing first {max_matches} "
+                    f"(prioritized by sweet spot). Remaining will be processed in next run."
                 )
-                matches = matches[:30]
+                matches = matches[:max_matches]
 
             if not matches:
-                return {"checked": 0, "captured": 0, "message": "No matches in window"}
+                return {"checked": 0, "captured": 0, "message": f"{log_prefix} No matches in window"}
 
             # Use API-Football to check lineups
             provider = APIFootballProvider()
@@ -346,6 +425,9 @@ async def monitor_lineups_and_capture_odds() -> dict:
                     checked_count += 1
 
                     try:
+                        # Track start time for latency measurement
+                        capture_start_time = datetime.utcnow()
+
                         # Fetch lineup from API with retry logic
                         lineup_data = None
                         max_retries = 3
@@ -354,6 +436,15 @@ async def monitor_lineups_and_capture_odds() -> dict:
                                 lineup_data = await provider.get_lineups(external_id)
                                 break
                             except Exception as e:
+                                error_str = str(e).lower()
+                                # Track error types for metrics
+                                if "429" in error_str or "rate limit" in error_str:
+                                    _lineup_capture_metrics[job_type]["api_errors_429"] += 1
+                                elif "timeout" in error_str or "timed out" in error_str:
+                                    _lineup_capture_metrics[job_type]["api_errors_timeout"] += 1
+                                else:
+                                    _lineup_capture_metrics[job_type]["api_errors_other"] += 1
+
                                 if attempt == max_retries - 1:
                                     logger.error(
                                         f"Failed to fetch lineup for match {match_id} "
@@ -516,9 +607,22 @@ async def monitor_lineups_and_capture_odds() -> dict:
                         """), {"match_id": match_id, "confirmed_at": snapshot_at})
 
                         captured_count += 1
+
+                        # Track metrics: capture count and latency
+                        capture_end_time = datetime.utcnow()
+                        latency_ms = int((capture_end_time - capture_start_time).total_seconds() * 1000)
+                        _lineup_capture_metrics[job_type]["captures"] += 1
+                        _lineup_capture_metrics[job_type]["latencies_ms"].append(latency_ms)
+
+                        # Keep latencies list bounded (last 1000 captures)
+                        if len(_lineup_capture_metrics[job_type]["latencies_ms"]) > 1000:
+                            _lineup_capture_metrics[job_type]["latencies_ms"] = \
+                                _lineup_capture_metrics[job_type]["latencies_ms"][-1000:]
+
                         logger.info(
                             f"Captured lineup_confirmed odds for match {match_id}: "
-                            f"H={odds_home:.2f}, D={odds_draw:.2f}, A={odds_away:.2f} at {snapshot_at}"
+                            f"H={odds_home:.2f}, D={odds_draw:.2f}, A={odds_away:.2f} at {snapshot_at} "
+                            f"(latency: {latency_ms}ms, job: {job_type})"
                         )
 
                     except Exception as e:
@@ -821,6 +925,382 @@ async def weekly_recalibration(ml_engine):
         logger.error(f"Weekly recalibration failed: {e}")
 
 
+# =============================================================================
+# PIT EVALUATION JOBS (Protocol 2026-01-07 v2.1)
+# =============================================================================
+
+async def daily_pit_evaluation():
+    """
+    Daily PIT evaluation job - runs silently and saves JSON to logs/.
+
+    DOES NOT spam daily reports. Only saves data for weekly consolidation.
+    Weekly report will analyze all daily JSONs and produce a single report.
+
+    Runs daily at 9:00 AM UTC (after audit, after matches have finished).
+    """
+    logger.info("Starting daily PIT evaluation (silent save)...")
+
+    try:
+        import subprocess
+        import os
+
+        # Run the evaluation script
+        env = os.environ.copy()
+        env["DATABASE_URL"] = os.environ.get("DATABASE_URL", "")
+
+        result = subprocess.run(
+            ["python", "scripts/evaluate_pit_live_only.py"],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=300,  # 5 min timeout
+        )
+
+        if result.returncode == 0:
+            # Parse output to find saved file
+            for line in result.stdout.split('\n'):
+                if 'Resultados guardados en:' in line:
+                    logger.info(f"PIT evaluation saved: {line.split(':')[-1].strip()}")
+                    break
+            logger.info("Daily PIT evaluation complete (silent mode)")
+        else:
+            logger.warning(f"PIT evaluation returned non-zero: {result.stderr[:500]}")
+
+    except subprocess.TimeoutExpired:
+        logger.error("PIT evaluation timed out after 5 minutes")
+    except Exception as e:
+        logger.error(f"Daily PIT evaluation failed: {e}")
+
+
+async def weekly_pit_report():
+    """
+    Weekly consolidated PIT report - the ONLY report that gets published.
+
+    Runs every Tuesday at 10:00 AM UTC (to include full weekend data).
+
+    This job:
+    1. Reads all daily pit_evaluation JSONs from the week
+    2. Queries database for FULL capture visibility (avoids operational blindness)
+    3. Produces a consolidated report with:
+       - Checkpoint status (principal + ideal)
+       - Edge decay curve/diagnosis
+       - Data quality trends
+       - ALL live captures (any window) + full minutes distribution
+       - Capture delta % (this week vs previous week in [45-75])
+       - API error counts by job type (CRITICAL vs FULL)
+       - Internal latency metrics (lineup detected -> snapshot saved)
+       - Operational recommendation
+    4. Logs summary and saves consolidated report
+    5. Resets weekly capture metrics for next period
+    """
+    logger.info("Starting weekly PIT report generation...")
+
+    try:
+        import json
+        import os
+        from datetime import datetime, timedelta
+        from glob import glob
+
+        from sqlalchemy import text
+
+        from app.db import async_engine
+
+        # =====================================================================
+        # Get capture metrics BEFORE resetting (for this week's report)
+        # =====================================================================
+        capture_metrics = get_lineup_capture_metrics()
+
+        # Find all PIT evaluation files from the last 7 days
+        logs_dir = "logs"
+        if not os.path.exists(logs_dir):
+            logger.warning("No logs directory found - skipping weekly report")
+            return
+
+        # Get files from last 7 days
+        cutoff = datetime.utcnow() - timedelta(days=7)
+        evaluation_files = sorted(glob(f"{logs_dir}/pit_evaluation_*.json"))
+
+        recent_files = []
+        for f in evaluation_files:
+            try:
+                # Parse timestamp from filename: pit_evaluation_YYYYMMDD_HHMMSS.json
+                basename = os.path.basename(f)
+                timestamp_str = basename.replace("pit_evaluation_", "").replace(".json", "")
+                file_time = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+                if file_time >= cutoff:
+                    recent_files.append(f)
+            except ValueError:
+                continue
+
+        if not recent_files:
+            logger.info("No PIT evaluations in the last 7 days")
+            return
+
+        # Load most recent evaluation for current status
+        with open(recent_files[-1], 'r') as f:
+            latest = json.load(f)
+
+        # =====================================================================
+        # FULL CAPTURE VISIBILITY - Query ALL live captures (any window)
+        # This avoids "operational blindness" if system captures too early/late
+        # =====================================================================
+        full_visibility = {
+            "total_live_pre_kickoff_any_window": 0,
+            "minutes_to_kickoff_distribution": {},
+            "captures_by_range": {
+                "very_early_90plus": 0,
+                "early_75_90": 0,
+                "ideal_45_75": 0,
+                "late_30_45": 0,
+                "very_late_10_30": 0,
+                "too_late_under_10": 0,
+            }
+        }
+
+        # Track capture delta (this week vs last week in ideal window [45-75])
+        capture_delta = {
+            "this_week_ideal": 0,
+            "last_week_ideal": 0,
+            "delta_percent": None,
+            "trend": "unknown",
+        }
+
+        try:
+            async with async_engine.connect() as conn:
+                # Count ALL live captures with delta > 0 (before kickoff)
+                # Uses odds_snapshots table with snapshot_type = 'lineup_confirmed'
+                result = await conn.execute(text("""
+                    SELECT
+                        COUNT(*) as total,
+                        ROUND(delta_to_kickoff_seconds / 60.0) as minutes
+                    FROM odds_snapshots
+                    WHERE snapshot_type = 'lineup_confirmed'
+                      AND odds_freshness = 'live'
+                      AND delta_to_kickoff_seconds > 0
+                    GROUP BY ROUND(delta_to_kickoff_seconds / 60.0)
+                    ORDER BY minutes
+                """))
+                rows = result.fetchall()
+
+                total_any_window = 0
+                minutes_distribution = {}
+
+                for row in rows:
+                    count = row[0]
+                    minutes = int(row[1]) if row[1] is not None else 0
+                    total_any_window += count
+                    minutes_distribution[minutes] = count
+
+                    # Categorize by range
+                    if minutes >= 90:
+                        full_visibility["captures_by_range"]["very_early_90plus"] += count
+                    elif minutes >= 75:
+                        full_visibility["captures_by_range"]["early_75_90"] += count
+                    elif minutes >= 45:
+                        full_visibility["captures_by_range"]["ideal_45_75"] += count
+                    elif minutes >= 30:
+                        full_visibility["captures_by_range"]["late_30_45"] += count
+                    elif minutes >= 10:
+                        full_visibility["captures_by_range"]["very_late_10_30"] += count
+                    else:
+                        full_visibility["captures_by_range"]["too_late_under_10"] += count
+
+                full_visibility["total_live_pre_kickoff_any_window"] = total_any_window
+                full_visibility["minutes_to_kickoff_distribution"] = minutes_distribution
+
+                logger.info(f"Full visibility: {total_any_window} total live captures (any window)")
+
+                # =====================================================================
+                # CAPTURE DELTA: Compare this week vs last week in ideal [45-75] window
+                # This tracks if our adaptive frequency optimization is working
+                # =====================================================================
+                now = datetime.utcnow()
+                this_week_start = now - timedelta(days=7)
+                last_week_start = now - timedelta(days=14)
+                last_week_end = now - timedelta(days=7)
+
+                # This week's ideal captures
+                result = await conn.execute(text("""
+                    SELECT COUNT(*) FROM odds_snapshots
+                    WHERE snapshot_type = 'lineup_confirmed'
+                      AND odds_freshness = 'live'
+                      AND delta_to_kickoff_seconds BETWEEN 2700 AND 4500  -- 45-75 min in seconds
+                      AND snapshot_at >= :this_week_start
+                """), {"this_week_start": this_week_start})
+                this_week_ideal = result.scalar() or 0
+
+                # Last week's ideal captures
+                result = await conn.execute(text("""
+                    SELECT COUNT(*) FROM odds_snapshots
+                    WHERE snapshot_type = 'lineup_confirmed'
+                      AND odds_freshness = 'live'
+                      AND delta_to_kickoff_seconds BETWEEN 2700 AND 4500  -- 45-75 min in seconds
+                      AND snapshot_at >= :last_week_start
+                      AND snapshot_at < :last_week_end
+                """), {"last_week_start": last_week_start, "last_week_end": last_week_end})
+                last_week_ideal = result.scalar() or 0
+
+                capture_delta["this_week_ideal"] = this_week_ideal
+                capture_delta["last_week_ideal"] = last_week_ideal
+
+                if last_week_ideal > 0:
+                    delta_pct = ((this_week_ideal - last_week_ideal) / last_week_ideal) * 100
+                    capture_delta["delta_percent"] = round(delta_pct, 1)
+                    if delta_pct > 10:
+                        capture_delta["trend"] = "IMPROVING"
+                    elif delta_pct < -10:
+                        capture_delta["trend"] = "DECLINING"
+                    else:
+                        capture_delta["trend"] = "STABLE"
+                elif this_week_ideal > 0:
+                    capture_delta["trend"] = "NEW_DATA"
+                else:
+                    capture_delta["trend"] = "NO_DATA"
+
+                logger.info(
+                    f"Capture delta: This week={this_week_ideal}, Last week={last_week_ideal}, "
+                    f"Delta={capture_delta['delta_percent']}%, Trend={capture_delta['trend']}"
+                )
+
+        except Exception as db_err:
+            logger.warning(f"Could not query full capture visibility: {db_err}")
+
+        # Extract key metrics for weekly report
+        checkpoints = latest.get("checkpoints", {})
+        edge_decay = latest.get("edge_decay_diagnostic", {})
+        data_quality = latest.get("data_quality", {})
+
+        principal_n = checkpoints.get("principal", {}).get("n", 0)
+        principal_status = checkpoints.get("principal", {}).get("status", "insufficient")
+        ideal_n = checkpoints.get("ideal", {}).get("n", 0)
+        ideal_status = checkpoints.get("ideal", {}).get("status", "insufficient")
+        edge_diagnostic = edge_decay.get("diagnostic", "UNKNOWN")
+
+        # Determine operational recommendation
+        if principal_status == "formal" and edge_diagnostic == "EDGE_PERSISTS":
+            recommendation = "CONTINUE - Alpha confirmed, operate normally"
+        elif principal_status == "formal" and edge_diagnostic == "EDGE_DECAYS":
+            recommendation = "OPTIMIZE - Maximize [45-75] min captures"
+        elif principal_status == "formal" and edge_diagnostic == "NO_ALPHA":
+            recommendation = "REVIEW MODEL - No significant alpha detected"
+        elif principal_status == "preliminary":
+            recommendation = f"PRELIMINARY - Wait for N>=200 (current: {principal_n})"
+        else:
+            recommendation = f"ACCUMULATING - Need more data (current: {principal_n})"
+
+        # Check if capturing in target window
+        counts = latest.get("counts", {}).get("by_bin", {})
+        ideal_45_75 = counts.get("ideal_45_75", 0)
+        late_10_30 = counts.get("late_10_30", 0)
+
+        if ideal_45_75 < late_10_30 and principal_n > 20:
+            recommendation += " | WARNING: More late captures than ideal - adjust timing"
+
+        # Check for operational blindness using full visibility
+        total_any = full_visibility["total_live_pre_kickoff_any_window"]
+        in_window = principal_n
+        if total_any > 0 and in_window < total_any * 0.5:
+            pct_outside = ((total_any - in_window) / total_any) * 100
+            recommendation += f" | ALERT: {pct_outside:.0f}% of captures outside [10-90] window"
+
+        # Log the weekly summary
+        logger.info("=" * 60)
+        logger.info("WEEKLY PIT REPORT")
+        logger.info("=" * 60)
+        logger.info(f"Evaluations this week: {len(recent_files)}")
+        logger.info(f"Principal [10-90]: N={principal_n}, Status={principal_status}")
+        logger.info(f"Ideal [45-75]: N={ideal_n}, Status={ideal_status}")
+        logger.info(f"Edge Diagnostic: {edge_diagnostic}")
+        logger.info(f"Quality Score: {data_quality.get('quality_score', 'N/A')}%")
+        logger.info("-" * 60)
+        logger.info("FULL CAPTURE VISIBILITY (avoids operational blindness):")
+        logger.info(f"  Total live pre-kickoff (ANY window): {total_any}")
+        logger.info(f"  In [10-90] window: {in_window} ({(in_window/total_any*100) if total_any else 0:.1f}%)")
+        logger.info(f"  Captures by range: {full_visibility['captures_by_range']}")
+        logger.info("-" * 60)
+        logger.info("CAPTURE DELTA (this week vs last week in [45-75]):")
+        logger.info(f"  This week: {capture_delta['this_week_ideal']}")
+        logger.info(f"  Last week: {capture_delta['last_week_ideal']}")
+        logger.info(f"  Delta: {capture_delta['delta_percent']}%")
+        logger.info(f"  Trend: {capture_delta['trend']}")
+        logger.info("-" * 60)
+        logger.info("API ERROR TRACKING (by job type):")
+        logger.info(f"  CRITICAL job: 429s={capture_metrics['critical_job']['api_errors_429']}, "
+                   f"timeouts={capture_metrics['critical_job']['api_errors_timeout']}, "
+                   f"other={capture_metrics['critical_job']['api_errors_other']}")
+        logger.info(f"  FULL job: 429s={capture_metrics['full_job']['api_errors_429']}, "
+                   f"timeouts={capture_metrics['full_job']['api_errors_timeout']}, "
+                   f"other={capture_metrics['full_job']['api_errors_other']}")
+        logger.info("-" * 60)
+        logger.info("INTERNAL LATENCY (lineup detected -> snapshot saved):")
+        logger.info(f"  CRITICAL job: avg={capture_metrics['critical_job']['avg_latency_ms']}ms, "
+                   f"max={capture_metrics['critical_job']['max_latency_ms']}ms, "
+                   f"captures={capture_metrics['critical_job']['captures']}")
+        logger.info(f"  FULL job: avg={capture_metrics['full_job']['avg_latency_ms']}ms, "
+                   f"max={capture_metrics['full_job']['max_latency_ms']}ms, "
+                   f"captures={capture_metrics['full_job']['captures']}")
+        logger.info("-" * 60)
+        logger.info(f"RECOMMENDATION: {recommendation}")
+        logger.info("=" * 60)
+
+        # Save weekly consolidated report
+        weekly_report = {
+            "report_type": "pit_weekly_consolidated",
+            "generated_at": datetime.utcnow().isoformat(),
+            "evaluations_analyzed": len(recent_files),
+            "latest_evaluation": recent_files[-1],
+            "summary": {
+                "principal_n": principal_n,
+                "principal_status": principal_status,
+                "ideal_n": ideal_n,
+                "ideal_status": ideal_status,
+                "edge_diagnostic": edge_diagnostic,
+                "quality_score": data_quality.get("quality_score"),
+            },
+            "full_capture_visibility": full_visibility,
+            "capture_delta": capture_delta,
+            "api_error_tracking": {
+                "critical_job": {
+                    "errors_429": capture_metrics["critical_job"]["api_errors_429"],
+                    "errors_timeout": capture_metrics["critical_job"]["api_errors_timeout"],
+                    "errors_other": capture_metrics["critical_job"]["api_errors_other"],
+                },
+                "full_job": {
+                    "errors_429": capture_metrics["full_job"]["api_errors_429"],
+                    "errors_timeout": capture_metrics["full_job"]["api_errors_timeout"],
+                    "errors_other": capture_metrics["full_job"]["api_errors_other"],
+                },
+            },
+            "internal_latency": {
+                "critical_job": {
+                    "avg_ms": capture_metrics["critical_job"]["avg_latency_ms"],
+                    "max_ms": capture_metrics["critical_job"]["max_latency_ms"],
+                    "captures": capture_metrics["critical_job"]["captures"],
+                },
+                "full_job": {
+                    "avg_ms": capture_metrics["full_job"]["avg_latency_ms"],
+                    "max_ms": capture_metrics["full_job"]["max_latency_ms"],
+                    "captures": capture_metrics["full_job"]["captures"],
+                },
+            },
+            "recommendation": recommendation,
+            "bin_distribution": counts,
+        }
+
+        report_file = f"{logs_dir}/pit_weekly_{datetime.utcnow().strftime('%Y%m%d')}.json"
+        with open(report_file, 'w') as f:
+            json.dump(weekly_report, f, indent=2)
+
+        logger.info(f"Weekly report saved: {report_file}")
+
+        # Reset metrics for next week
+        reset_lineup_capture_metrics()
+        logger.info("Lineup capture metrics reset for next week")
+
+    except Exception as e:
+        logger.error(f"Weekly PIT report failed: {e}")
+
+
 def start_scheduler(ml_engine):
     """
     Start the background scheduler.
@@ -888,15 +1368,50 @@ def start_scheduler(ml_engine):
         replace_existing=True,
     )
 
-    # Lineup Monitoring: Every 2 minutes (OPTIMIZED for PIT capture)
-    # Checks for lineup announcements and captures odds at lineup_confirmed time
-    # CRITICAL for Value Betting Táctico (Lineup Arbitrage) evaluation
-    # Target: Capture in 45-75 min window before kickoff
+    # Lineup Monitoring - ADAPTIVE FREQUENCY SYSTEM (2026-01-07)
+    # Two jobs working together to maximize capture in ideal window:
+
+    # Job 1: CRITICAL WINDOW (45-90 min) - Aggressive 60s polling
+    # This catches lineups right when they're announced (typically 60-70 min before kickoff)
+    # Only processes matches in the critical window to minimize API calls
+    scheduler.add_job(
+        monitor_lineups_and_capture_odds,
+        trigger=IntervalTrigger(seconds=60),
+        kwargs={"critical_window_only": True},
+        id="lineup_monitoring_critical",
+        name="Lineup Monitoring CRITICAL (every 60s, 45-90min window)",
+        replace_existing=True,
+    )
+
+    # Job 2: FULL WINDOW (0-120 min) - Regular 2 min polling
+    # This catches any lineups we might have missed and handles early/late announcements
     scheduler.add_job(
         monitor_lineups_and_capture_odds,
         trigger=IntervalTrigger(minutes=2),
-        id="lineup_monitoring",
-        name="Lineup Monitoring (every 2 min - PIT optimized)",
+        kwargs={"critical_window_only": False},
+        id="lineup_monitoring_full",
+        name="Lineup Monitoring FULL (every 2 min, 0-120min window)",
+        replace_existing=True,
+    )
+
+    # Daily PIT Evaluation: 9:00 AM UTC (after audit, saves JSON silently)
+    # Part of Protocol v2.1 - does NOT produce daily spam
+    scheduler.add_job(
+        daily_pit_evaluation,
+        trigger=CronTrigger(hour=9, minute=0),
+        id="daily_pit_evaluation",
+        name="Daily PIT Evaluation (silent save)",
+        replace_existing=True,
+    )
+
+    # Weekly PIT Report: Tuesdays 10:00 AM UTC (consolidated weekly report)
+    # The ONLY PIT report that gets logged/published - not daily spam
+    # Tuesday chosen to include full weekend football data
+    scheduler.add_job(
+        weekly_pit_report,
+        trigger=CronTrigger(day_of_week="tue", hour=10, minute=0),
+        id="weekly_pit_report",
+        name="Weekly PIT Report (consolidated)",
         replace_existing=True,
     )
 
@@ -905,11 +1420,14 @@ def start_scheduler(ml_engine):
     logger.info(
         "Scheduler started:\n"
         "  - Live global sync: Every 60 seconds\n"
-        "  - Lineup monitoring: Every 2 minutes (PIT optimized, target 45-75 min window)\n"
+        "  - Lineup monitoring CRITICAL: Every 60s (45-90 min window - aggressive)\n"
+        "  - Lineup monitoring FULL: Every 2 min (0-120 min window - backup)\n"
         "  - Daily results sync: 6:00 AM UTC\n"
         "  - Daily save predictions: 7:00 AM UTC\n"
         "  - Daily audit: 8:00 AM UTC\n"
-        "  - Weekly recalibration: Mondays 5:00 AM UTC"
+        "  - Daily PIT evaluation: 9:00 AM UTC (silent save)\n"
+        "  - Weekly recalibration: Mondays 5:00 AM UTC\n"
+        "  - Weekly PIT report: Tuesdays 10:00 AM UTC"
     )
 
 

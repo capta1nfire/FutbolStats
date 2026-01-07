@@ -2105,3 +2105,373 @@ async def get_lineup_snapshots(
             for s in snapshots
         ],
     }
+
+
+# =============================================================================
+# PIT DASHBOARD (Minimalista - No DB queries)
+# =============================================================================
+
+# In-memory cache for dashboard data
+_pit_dashboard_cache = {
+    "data": None,
+    "timestamp": 0,
+    "ttl": 45,  # 45 seconds cache
+}
+
+
+def _load_latest_pit_report() -> dict:
+    """Load the most recent PIT report from logs/ without DB queries."""
+    import os
+    from glob import glob
+
+    logs_dir = "logs"
+    result = {
+        "weekly": None,
+        "daily": None,
+        "source": None,
+        "error": None,
+    }
+
+    if not os.path.exists(logs_dir):
+        result["error"] = "No logs directory"
+        return result
+
+    # Find latest weekly report
+    weekly_files = glob(f"{logs_dir}/pit_weekly_*.json")
+    if weekly_files:
+        latest_weekly = max(weekly_files, key=os.path.getmtime)
+        try:
+            import json
+            with open(latest_weekly) as f:
+                result["weekly"] = json.load(f)
+                result["weekly"]["_file"] = os.path.basename(latest_weekly)
+                result["source"] = "weekly"
+        except Exception as e:
+            result["error"] = f"Error reading weekly: {e}"
+
+    # Find latest daily report
+    daily_files = glob(f"{logs_dir}/pit_evaluation_*.json")
+    if daily_files:
+        latest_daily = max(daily_files, key=os.path.getmtime)
+        try:
+            import json
+            with open(latest_daily) as f:
+                result["daily"] = json.load(f)
+                result["daily"]["_file"] = os.path.basename(latest_daily)
+                if not result["weekly"]:
+                    result["source"] = "daily"
+        except Exception as e:
+            if not result["error"]:
+                result["error"] = f"Error reading daily: {e}"
+
+    if not result["weekly"] and not result["daily"]:
+        result["error"] = "No PIT reports found"
+
+    return result
+
+
+def _get_cached_pit_data() -> dict:
+    """Get PIT data with caching."""
+    now = time.time()
+    if _pit_dashboard_cache["data"] and (now - _pit_dashboard_cache["timestamp"]) < _pit_dashboard_cache["ttl"]:
+        return _pit_dashboard_cache["data"]
+
+    data = _load_latest_pit_report()
+    _pit_dashboard_cache["data"] = data
+    _pit_dashboard_cache["timestamp"] = now
+    return data
+
+
+def _verify_dashboard_token(request: Request) -> bool:
+    """Verify dashboard access token."""
+    token = settings.DASHBOARD_TOKEN
+    if not token:  # Empty token = dashboard disabled
+        return False
+
+    # Check header first, then query param
+    provided = request.headers.get("X-Dashboard-Token") or request.query_params.get("token")
+    return provided == token
+
+
+def _render_pit_dashboard_html(data: dict) -> str:
+    """Render PIT dashboard as HTML."""
+    weekly = data.get("weekly")
+    daily = data.get("daily")
+    source = data.get("source", "none")
+    error = data.get("error")
+
+    # Extract data preferring weekly, falling back to daily
+    report = weekly or daily or {}
+
+    # Summary data
+    summary = report.get("summary", {})
+    principal_n = summary.get("principal_n", report.get("counts", {}).get("total_principal", 0))
+    ideal_n = summary.get("ideal_n", report.get("counts", {}).get("total_ideal", 0))
+    principal_status = summary.get("principal_status", report.get("checkpoints", {}).get("principal", {}).get("status", "unknown"))
+    ideal_status = summary.get("ideal_status", report.get("checkpoints", {}).get("ideal", {}).get("status", "unknown"))
+    quality_score = summary.get("quality_score", report.get("data_quality", {}).get("quality_score", 0))
+    edge_diagnostic = summary.get("edge_diagnostic", report.get("edge_decay_diagnostic", {}).get("diagnostic", "N/A"))
+
+    # Full capture visibility
+    visibility = report.get("full_capture_visibility", {})
+    total_live = visibility.get("total_live_pre_kickoff_any_window", 0)
+    captures_by_range = visibility.get("captures_by_range", {})
+    ideal_captures = captures_by_range.get("ideal_45_75", 0)
+    ideal_pct = round(ideal_captures / total_live * 100, 1) if total_live > 0 else 0
+
+    # Calculate live % from weekly if available
+    live_pct = 0
+    if weekly:
+        # From capture_delta or similar
+        this_week = weekly.get("capture_delta", {}).get("this_week_ideal", 0)
+        live_pct = 90  # Assume high if we have data (actual comes from freshness)
+
+    # Quality gate exclusions
+    exclusions = report.get("data_quality", {}).get("exclusions", {})
+
+    # Recommendation
+    recommendation = report.get("recommendation", "N/A")
+
+    # Timestamps - show both weekly and daily for full freshness visibility
+    generated_at = report.get("generated_at", report.get("timestamp", "N/A"))
+    report_file = report.get("_file", "N/A")
+    weekly_ts = weekly.get("generated_at", "N/A") if weekly else "N/A"
+    daily_ts = daily.get("timestamp", "N/A") if daily else "N/A"
+
+    # Status icons
+    def status_icon(status):
+        if status == "formal":
+            return "✅"
+        elif status == "preliminary":
+            return "🔶"
+        else:
+            return "⏳"
+
+    def edge_icon(diag):
+        icons = {
+            "EDGE_PERSISTS": "✅",
+            "EDGE_DECAYS": "⚠️",
+            "NO_ALPHA": "❌",
+            "INCONCLUSIVE": "⏳",
+            "INSUFFICIENT_DATA": "📊",
+        }
+        return icons.get(diag, "❓")
+
+    # Bin data
+    bins_html = ""
+    for label, count in captures_by_range.items():
+        pct = round(count / total_live * 100, 1) if total_live > 0 else 0
+        highlight = 'class="highlight"' if "ideal" in label else ""
+        bins_html += f"<tr {highlight}><td>{label}</td><td>{count}</td><td>{pct}%</td></tr>"
+
+    # Exclusions table
+    exclusions_html = ""
+    sorted_excl = sorted(exclusions.items(), key=lambda x: x[1], reverse=True)
+    for reason, count in sorted_excl[:5]:
+        if count > 0:
+            exclusions_html += f"<tr><td>{reason}</td><td>{count}</td></tr>"
+    if not exclusions_html:
+        exclusions_html = "<tr><td colspan='2'>No exclusions</td></tr>"
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PIT Dashboard - FutbolStats</title>
+    <style>
+        :root {{
+            --bg: #0f172a;
+            --card: #1e293b;
+            --border: #334155;
+            --text: #e2e8f0;
+            --muted: #94a3b8;
+            --green: #22c55e;
+            --yellow: #eab308;
+            --red: #ef4444;
+            --blue: #3b82f6;
+        }}
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            padding: 1.5rem;
+            min-height: 100vh;
+        }}
+        .header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+        }}
+        .header h1 {{ font-size: 1.5rem; font-weight: 600; }}
+        .header .meta {{ color: var(--muted); font-size: 0.75rem; }}
+        .cards {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }}
+        .card {{
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 0.75rem;
+            padding: 1.25rem;
+        }}
+        .card-label {{ font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }}
+        .card-value {{ font-size: 2rem; font-weight: 700; margin: 0.5rem 0; }}
+        .card-sub {{ font-size: 0.875rem; color: var(--muted); }}
+        .card.green .card-value {{ color: var(--green); }}
+        .card.yellow .card-value {{ color: var(--yellow); }}
+        .card.red .card-value {{ color: var(--red); }}
+        .card.blue .card-value {{ color: var(--blue); }}
+        .tables {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }}
+        .table-card {{
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 0.75rem;
+            overflow: hidden;
+        }}
+        .table-card h3 {{
+            padding: 1rem;
+            font-size: 0.875rem;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border);
+        }}
+        table {{ width: 100%; border-collapse: collapse; font-size: 0.875rem; }}
+        th, td {{ padding: 0.75rem 1rem; text-align: left; }}
+        th {{ color: var(--muted); font-weight: 500; }}
+        tr:not(:last-child) {{ border-bottom: 1px solid var(--border); }}
+        tr.highlight {{ background: rgba(34, 197, 94, 0.1); }}
+        .decision-box {{
+            background: var(--card);
+            border: 2px solid var(--border);
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            text-align: center;
+        }}
+        .decision-box h3 {{ margin-bottom: 1rem; font-size: 0.875rem; color: var(--muted); }}
+        .decision {{ font-size: 1.25rem; font-weight: 600; }}
+        .error {{ background: rgba(239, 68, 68, 0.1); border-color: var(--red); padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem; }}
+        .footer {{ margin-top: 2rem; text-align: center; color: var(--muted); font-size: 0.75rem; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📊 PIT Dashboard</h1>
+        <div class="meta">
+            <div>Source: {source} | File: {report_file}</div>
+            <div>Weekly: {weekly_ts} | Daily: {daily_ts}</div>
+        </div>
+    </div>
+
+    {"<div class='error'>⚠️ " + error + "</div>" if error else ""}
+
+    <div class="cards">
+        <div class="card blue">
+            <div class="card-label">Live Snapshots</div>
+            <div class="card-value">{total_live}</div>
+            <div class="card-sub">Total pre-kickoff</div>
+        </div>
+        <div class="card {'green' if ideal_pct >= 40 else 'yellow' if ideal_pct >= 20 else 'red'}">
+            <div class="card-label">% Ideal Window</div>
+            <div class="card-value">{ideal_pct}%</div>
+            <div class="card-sub">[45-75] min: {ideal_captures} captures</div>
+        </div>
+        <div class="card {'green' if quality_score >= 80 else 'yellow' if quality_score >= 50 else 'red'}">
+            <div class="card-label">Quality Score</div>
+            <div class="card-value">{quality_score}%</div>
+            <div class="card-sub">Data quality gate</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Checkpoints</div>
+            <div class="card-value">{status_icon(principal_status)} {principal_n}</div>
+            <div class="card-sub">Principal [{status_icon(ideal_status)} {ideal_n} ideal]</div>
+        </div>
+    </div>
+
+    <div class="tables">
+        <div class="table-card">
+            <h3>📍 Timing Distribution (Bins)</h3>
+            <table>
+                <thead><tr><th>Bin</th><th>Count</th><th>%</th></tr></thead>
+                <tbody>{bins_html if bins_html else "<tr><td colspan='3'>No data</td></tr>"}</tbody>
+            </table>
+        </div>
+        <div class="table-card">
+            <h3>🚫 Quality Gate Exclusions</h3>
+            <table>
+                <thead><tr><th>Reason</th><th>Count</th></tr></thead>
+                <tbody>{exclusions_html}</tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="decision-box">
+        <h3>Edge Decay Diagnostic</h3>
+        <div class="decision">{edge_icon(edge_diagnostic)} {edge_diagnostic}</div>
+        <div style="margin-top: 1rem; color: var(--muted);">{recommendation}</div>
+    </div>
+
+    <div class="footer">
+        FutbolStats PIT Protocol v2.1 | Cache TTL: {_pit_dashboard_cache['ttl']}s |
+        <a href="/dashboard/pit.json" style="color: var(--blue);">JSON</a>
+    </div>
+</body>
+</html>"""
+    return html
+
+
+@app.get("/dashboard/pit")
+async def pit_dashboard_html(request: Request):
+    """
+    PIT Dashboard - Visual overview of Point-In-Time evaluation status.
+
+    Reads from logs/ files only (no DB queries).
+    Protected by X-Dashboard-Token header (preferred) or ?token= query param.
+
+    SECURITY NOTE: Prefer header over query param in production.
+    Query params may be logged in server access logs and browser history.
+    """
+    from fastapi.responses import HTMLResponse
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(
+            status_code=401,
+            detail="Dashboard access requires valid token. Set DASHBOARD_TOKEN env var and provide via X-Dashboard-Token header or ?token= param.",
+        )
+
+    data = _get_cached_pit_data()
+    html = _render_pit_dashboard_html(data)
+    return HTMLResponse(content=html)
+
+
+@app.get("/dashboard/pit.json")
+async def pit_dashboard_json(request: Request):
+    """
+    PIT Dashboard JSON - Raw data for programmatic access.
+
+    Returns the latest weekly/daily PIT report data.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(
+            status_code=401,
+            detail="Dashboard access requires valid token.",
+        )
+
+    data = _get_cached_pit_data()
+    return {
+        "source": data.get("source"),
+        "error": data.get("error"),
+        "weekly": data.get("weekly"),
+        "daily": data.get("daily"),
+        "cache_age_seconds": round(time.time() - _pit_dashboard_cache["timestamp"], 1) if _pit_dashboard_cache["timestamp"] else None,
+    }
