@@ -599,6 +599,22 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                             "odds_freshness": odds_freshness,
                         })
 
+                        # CRITICAL FIX (2026-01-08): Update matches.lineup_confirmed flag
+                        # This was missing - snapshots were created but the match wasn't marked
+                        await session.execute(text("""
+                            UPDATE matches
+                            SET lineup_confirmed = TRUE,
+                                home_formation = :home_formation,
+                                away_formation = :away_formation,
+                                lineup_features_computed_at = :computed_at
+                            WHERE id = :match_id
+                        """), {
+                            "match_id": match_id,
+                            "home_formation": home_lineup.get("formation"),
+                            "away_formation": away_lineup.get("formation"),
+                            "computed_at": snapshot_at,
+                        })
+
                         # Also update match_lineups with lineup_confirmed_at if not already set
                         await session.execute(text("""
                             UPDATE match_lineups
