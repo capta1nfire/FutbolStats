@@ -1,0 +1,15 @@
+{
+  "generated_at": "2026-01-08T00:00:00.000000",
+  "note": "Placeholder - run with DATABASE_URL to populate",
+  "summary": {
+    "total_leagues_seasons": 0,
+    "total_matches": 0,
+    "total_ft": 0,
+    "overall_ft_pct": 0,
+    "duplicate_external_id_count": 0
+  },
+  "by_league_season": [],
+  "worst_by_ft_pct": [],
+  "worst_by_gaps": [],
+  "missing_or_sparse": []
+}
