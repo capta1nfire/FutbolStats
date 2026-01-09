@@ -16,7 +16,18 @@ from sqlalchemy.orm import selectinload
 
 from app.database import AsyncSessionLocal
 from app.etl.pipeline import create_etl_pipeline, ETLPipeline
-from app.etl.api_football import APIFootballProvider, APIBudgetExceeded, get_api_budget_status
+
+# NOTE: This import is intentionally defensive. In case of a partial deploy/version skew,
+# we prefer the service to start without the budget guardrail rather than crash-loop.
+try:
+    from app.etl.api_football import APIFootballProvider, APIBudgetExceeded, get_api_budget_status
+except ImportError:  # pragma: no cover
+    from app.etl.api_football import APIFootballProvider  # type: ignore
+
+    APIBudgetExceeded = Exception  # type: ignore
+
+    def get_api_budget_status() -> dict:  # type: ignore
+        return {"status": "unavailable"}
 from app.features.engineering import FeatureEngineer
 
 logger = logging.getLogger(__name__)

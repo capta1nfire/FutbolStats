@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional
 
 import httpx
@@ -14,6 +14,56 @@ from app.etl.competitions import COMPETITIONS
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+
+class APIBudgetExceeded(RuntimeError):
+    """Raised when the global daily API request budget is exhausted."""
+
+
+# =============================================================================
+# GLOBAL DAILY API BUDGET (process-wide)
+# =============================================================================
+_budget_lock = asyncio.Lock()
+_budget_day: Optional[date] = None
+_budget_used: int = 0
+
+
+async def _budget_check_and_increment(cost: int = 1) -> None:
+    """
+    Enforce a global daily request budget across ALL APIFootballProvider instances.
+
+    Budget is controlled via env var API_DAILY_BUDGET (default 75000).
+    """
+    global _budget_day, _budget_used
+
+    daily_budget = int(getattr(settings, "API_DAILY_BUDGET", 0) or 0)
+    if daily_budget <= 0:
+        # Backward compatible: if not configured, do not enforce budget.
+        return
+
+    today = datetime.utcnow().date()
+    async with _budget_lock:
+        if _budget_day != today:
+            _budget_day = today
+            _budget_used = 0
+
+        if _budget_used + cost > daily_budget:
+            raise APIBudgetExceeded(
+                f"API daily budget exceeded: used={_budget_used}, cost={cost}, budget={daily_budget}"
+            )
+
+        _budget_used += cost
+
+
+def get_api_budget_status() -> dict:
+    """Expose current budget status for monitoring/logging."""
+    daily_budget = int(getattr(settings, "API_DAILY_BUDGET", 0) or 0)
+    return {
+        "budget_day": _budget_day.isoformat() if _budget_day else None,
+        "budget_used": _budget_used,
+        "budget_total": daily_budget,
+        "budget_remaining": (daily_budget - _budget_used) if daily_budget else None,
+    }
 
 
 class APIFootballProvider(DataProvider):
@@ -60,6 +110,8 @@ class APIFootballProvider(DataProvider):
 
         for attempt in range(max_retries):
             try:
+                # Global budget guardrail (process-wide)
+                await _budget_check_and_increment(cost=1)
                 response = await self.client.get(url, params=params)
 
                 if response.status_code == 429:
