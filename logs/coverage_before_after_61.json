@@ -1,0 +1,18 @@
+{
+  "league_id": 61,
+  "league_name": "Ligue 1",
+  "seasons_processed": [
+    2024
+  ],
+  "min_date": "2015-08-07T18:30:00",
+  "max_date": "2026-05-16T19:00:00",
+  "matches_before": 3658,
+  "matches_after": 3966,
+  "matches_upserted": 308,
+  "ft_matches_before": 3402,
+  "ft_matches_after": 3709,
+  "ft_percentage_before": 93.0,
+  "ft_percentage_after": 93.52,
+  "teams_new": 0,
+  "teams_total": 33
+}
