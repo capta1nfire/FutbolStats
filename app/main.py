@@ -2885,6 +2885,111 @@ async def _load_ops_data() -> dict:
         stats_with = int(row[0] or 0) if row else 0
         stats_missing = int(row[1] or 0) if row else 0
 
+        # =============================================================
+        # PROGRESS METRICS (for re-test / Alpha readiness)
+        # =============================================================
+        # Configurable targets via env vars
+        TARGET_PIT_SNAPSHOTS_30D = int(os.environ.get("TARGET_PIT_SNAPSHOTS_30D", "100"))
+        TARGET_PIT_BETS_30D = int(os.environ.get("TARGET_PIT_BETS_30D", "100"))
+        TARGET_BASELINE_COVERAGE_PCT = int(os.environ.get("TARGET_BASELINE_COVERAGE_PCT", "60"))
+
+        # 1) PIT snapshots (30 days) - lineup_confirmed with live odds
+        pit_snapshots_30d = 0
+        try:
+            res = await session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM odds_snapshots
+                    WHERE snapshot_type = 'lineup_confirmed'
+                      AND odds_freshness = 'live'
+                      AND snapshot_at > NOW() - INTERVAL '30 days'
+                    """
+                )
+            )
+            pit_snapshots_30d = int(res.scalar() or 0)
+        except Exception:
+            pit_snapshots_30d = 0
+
+        # 2) PIT with predictions as-of (evaluable bets, 30 days)
+        # Count PIT snapshots that have a prediction created BEFORE the snapshot
+        pit_bets_30d = 0
+        try:
+            res = await session.execute(
+                text(
+                    """
+                    SELECT COUNT(DISTINCT os.id)
+                    FROM odds_snapshots os
+                    WHERE os.snapshot_type = 'lineup_confirmed'
+                      AND os.odds_freshness = 'live'
+                      AND os.snapshot_at > NOW() - INTERVAL '30 days'
+                      AND EXISTS (
+                          SELECT 1 FROM predictions p
+                          WHERE p.match_id = os.match_id
+                            AND p.created_at < os.snapshot_at
+                      )
+                    """
+                )
+            )
+            pit_bets_30d = int(res.scalar() or 0)
+        except Exception:
+            pit_bets_30d = 0
+
+        # 3) Baseline coverage (% of recent PIT matches with market_movement pre-KO)
+        # This measures how many PIT snapshots have baseline odds for CLV proxy
+        baseline_coverage_pct = 0
+        pit_with_baseline = 0
+        pit_total_for_baseline = 0
+        try:
+            res = await session.execute(
+                text(
+                    """
+                    SELECT
+                        COUNT(*) FILTER (WHERE has_baseline) AS with_baseline,
+                        COUNT(*) AS total
+                    FROM (
+                        SELECT os.id,
+                               EXISTS (
+                                   SELECT 1 FROM market_movement_snapshots mms
+                                   WHERE mms.match_id = os.match_id
+                                     AND mms.captured_at < (
+                                         SELECT m.date FROM matches m WHERE m.id = os.match_id
+                                     )
+                               ) AS has_baseline
+                        FROM odds_snapshots os
+                        WHERE os.snapshot_type = 'lineup_confirmed'
+                          AND os.odds_freshness = 'live'
+                          AND os.snapshot_at > NOW() - INTERVAL '30 days'
+                    ) sub
+                    """
+                )
+            )
+            row = res.first()
+            if row:
+                pit_with_baseline = int(row[0] or 0)
+                pit_total_for_baseline = int(row[1] or 0)
+                if pit_total_for_baseline > 0:
+                    baseline_coverage_pct = round((pit_with_baseline / pit_total_for_baseline) * 100, 1)
+        except Exception:
+            baseline_coverage_pct = 0
+            pit_with_baseline = 0
+            pit_total_for_baseline = 0
+
+        progress_metrics = {
+            "pit_snapshots_30d": pit_snapshots_30d,
+            "target_pit_snapshots_30d": TARGET_PIT_SNAPSHOTS_30D,
+            "pit_bets_30d": pit_bets_30d,
+            "target_pit_bets_30d": TARGET_PIT_BETS_30D,
+            "baseline_coverage_pct": baseline_coverage_pct,
+            "pit_with_baseline": pit_with_baseline,
+            "pit_total_for_baseline": pit_total_for_baseline,
+            "target_baseline_coverage_pct": TARGET_BASELINE_COVERAGE_PCT,
+            "ready_for_retest": (
+                pit_bets_30d >= TARGET_PIT_BETS_30D and
+                baseline_coverage_pct >= TARGET_BASELINE_COVERAGE_PCT
+            ),
+        }
+
     # League names - comprehensive fallback for all known leagues
     # Includes EXTENDED_LEAGUES and other common leagues from API-Football
     LEAGUE_NAMES_FALLBACK: dict[int, str] = {
@@ -2961,6 +3066,7 @@ async def _load_ops_data() -> dict:
         "upcoming": {
             "by_league_24h": upcoming_by_league,
         },
+        "progress": progress_metrics,
     }
 
 
@@ -3019,6 +3125,40 @@ def _friendly_label(value: str) -> str:
     return value.replace("_", " ").title()
 
 
+def _render_progress_bar(label: str, current: int, target: int, tooltip: str) -> str:
+    """Render a progress bar HTML snippet for count-based metrics."""
+    pct = min(100, round((current / target) * 100, 1)) if target > 0 else 0
+    color = "rgba(34, 197, 94, 0.8)" if pct >= 100 else "rgba(59, 130, 246, 0.8)"
+    return f"""
+    <div style="background: var(--card); border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.75rem;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+        <span style="font-size: 0.85rem; color: var(--text);">{label}<span class="info-icon" style="margin-left: 0.25rem;">i<span class="tooltip">{tooltip}</span></span></span>
+        <span style="font-size: 0.85rem; font-weight: 600; color: var(--text);">{current} / {target}</span>
+      </div>
+      <div style="background: var(--border); border-radius: 0.25rem; height: 8px; overflow: hidden;">
+        <div style="background: {color}; height: 100%; width: {pct}%; transition: width 0.3s;"></div>
+      </div>
+    </div>
+    """
+
+
+def _render_progress_bar_pct(label: str, current_pct: float, target_pct: int, with_val: int, total_val: int, tooltip: str) -> str:
+    """Render a progress bar HTML snippet for percentage-based metrics."""
+    pct = min(100, round((current_pct / target_pct) * 100, 1)) if target_pct > 0 else 0
+    color = "rgba(34, 197, 94, 0.8)" if current_pct >= target_pct else "rgba(59, 130, 246, 0.8)"
+    return f"""
+    <div style="background: var(--card); border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.75rem;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+        <span style="font-size: 0.85rem; color: var(--text);">{label}<span class="info-icon" style="margin-left: 0.25rem;">i<span class="tooltip">{tooltip}</span></span></span>
+        <span style="font-size: 0.85rem; font-weight: 600; color: var(--text);">{current_pct}% ({with_val}/{total_val}) / {target_pct}%</span>
+      </div>
+      <div style="background: var(--border); border-radius: 0.25rem; height: 8px; overflow: hidden;">
+        <div style="background: {color}; height: 100%; width: {pct}%; transition: width 0.3s;"></div>
+      </div>
+    </div>
+    """
+
+
 def _render_ops_dashboard_html(data: dict) -> str:
     budget = data.get("budget") or {}
     budget_status = budget.get("status", "unknown")
@@ -3039,6 +3179,7 @@ def _render_ops_dashboard_html(data: dict) -> str:
     upcoming = (data.get("upcoming") or {}).get("by_league_24h") or []
     movement = data.get("movement") or {}
     stats = data.get("stats_backfill") or {}
+    progress = data.get("progress") or {}
 
     def budget_color() -> str:
         if budget_status in ("unavailable", "error"):
@@ -3343,6 +3484,39 @@ def _render_ops_dashboard_html(data: dict) -> str:
         </thead>
         <tbody>{latest_rows}</tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- Progress towards Re-test / Alpha -->
+  <div class="progress-section" style="margin-top: 1.5rem;">
+    <h2 style="font-size: 1.1rem; margin-bottom: 0.75rem; color: var(--text);">
+      Progreso hacia Re-test / Alpha
+      <span class="info-icon">i<span class="tooltip">Métricas de preparación para re-evaluar el modelo. Se recomienda re-test cuando: Bets ≥ 100 y Baseline Coverage ≥ 60%.</span></span>
+    </h2>
+    <div style="display: grid; gap: 1rem;">
+      {_render_progress_bar(
+          "PIT Snapshots (30d)",
+          progress.get("pit_snapshots_30d", 0),
+          progress.get("target_pit_snapshots_30d", 100),
+          "Snapshots PIT (lineup_confirmed + live) capturados en los últimos 30 días."
+      )}
+      {_render_progress_bar(
+          "Bets Evaluables (30d)",
+          progress.get("pit_bets_30d", 0),
+          progress.get("target_pit_bets_30d", 100),
+          "PIT snapshots con predicción válida (created_at < snapshot_at). Listos para evaluar ROI."
+      )}
+      {_render_progress_bar_pct(
+          "Baseline Coverage",
+          progress.get("baseline_coverage_pct", 0),
+          progress.get("target_baseline_coverage_pct", 60),
+          progress.get("pit_with_baseline", 0),
+          progress.get("pit_total_for_baseline", 0),
+          "% de PIT snapshots con market_movement pre-kickoff (para CLV proxy)."
+      )}
+    </div>
+    <div style="margin-top: 0.75rem; padding: 0.75rem; background: {'rgba(34, 197, 94, 0.12)' if progress.get('ready_for_retest') else 'rgba(234, 179, 8, 0.12)'}; border: 1px solid {'rgba(34, 197, 94, 0.35)' if progress.get('ready_for_retest') else 'rgba(234, 179, 8, 0.35)'}; border-radius: 0.5rem; font-size: 0.85rem; color: var(--text);">
+      {'✅ Listo para re-test: N bets ≥ ' + str(progress.get('target_pit_bets_30d', 100)) + ' y baseline coverage ≥ ' + str(progress.get('target_baseline_coverage_pct', 60)) + '%' if progress.get('ready_for_retest') else '⏳ Siguiente re-test recomendado cuando: N bets ≥ ' + str(progress.get('target_pit_bets_30d', 100)) + ' y baseline coverage ≥ ' + str(progress.get('target_baseline_coverage_pct', 60)) + '%'}
     </div>
   </div>
 
