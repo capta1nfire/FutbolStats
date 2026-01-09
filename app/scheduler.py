@@ -472,6 +472,16 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                         home_xi = home_lineup.get("starting_xi", [])
                         away_xi = away_lineup.get("starting_xi", [])
 
+                        # DIAGNOSTIC: Log partial lineups (8-10 players) for timing analysis
+                        # This helps understand when API publishes lineups gradually
+                        if 8 <= len(home_xi) < 11 or 8 <= len(away_xi) < 11:
+                            minutes_to_ko = (match.date - datetime.utcnow()).total_seconds() / 60 if match.date else 0
+                            logger.info(
+                                f"PARTIAL_LINEUP: match_id={match_id} external={external_id} "
+                                f"home={len(home_xi)}/11 away={len(away_xi)}/11 "
+                                f"minutes_to_kickoff={minutes_to_ko:.1f}"
+                            )
+
                         # Consider lineup confirmed if we have 11 players for each team
                         if len(home_xi) < 11 or len(away_xi) < 11:
                             continue
@@ -661,6 +671,505 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
 
     except Exception as e:
         logger.error(f"monitor_lineups_and_capture_odds failed: {e}")
+        return {"checked": 0, "captured": 0, "error": str(e)}
+
+
+# =============================================================================
+# MARKET MOVEMENT TRACKING
+# =============================================================================
+# Time buckets for market movement analysis (minutes before kickoff)
+MARKET_MOVEMENT_BUCKETS = [
+    (58, 62, "T60"),   # ~60 min before kickoff
+    (28, 32, "T30"),   # ~30 min before kickoff
+    (13, 17, "T15"),   # ~15 min before kickoff
+    (3, 7, "T5"),      # ~5 min before kickoff
+]
+
+
+async def capture_market_movement_snapshots() -> dict:
+    """
+    Capture odds at predefined time points before kickoff for market movement analysis.
+
+    This helps understand:
+    1. How much the market moves between lineup announcement and kickoff
+    2. Whether "late" lineup detection (20-30 min) means edge is already priced in
+    3. Optimal timing windows for value capture
+
+    Time buckets: T-60, T-30, T-15, T-5 (minutes before kickoff)
+
+    Run frequency: Every 5 minutes
+    """
+    from app.etl.api_football import APIFootballProvider
+
+    captured_count = 0
+    checked_count = 0
+
+    try:
+        async with AsyncSessionLocal() as session:
+            now = datetime.utcnow()
+
+            # Get matches that have lineup_confirmed but need market movement data
+            # Focus on matches 5-65 minutes from now (covers all buckets)
+            window_start = now + timedelta(minutes=3)
+            window_end = now + timedelta(minutes=65)
+
+            result = await session.execute(text("""
+                SELECT m.id, m.external_id, m.date, m.league_id,
+                       EXTRACT(EPOCH FROM (m.date - NOW())) / 60 as minutes_to_kickoff
+                FROM matches m
+                WHERE m.date BETWEEN :window_start AND :window_end
+                  AND m.status = 'NS'
+                  AND m.lineup_confirmed = TRUE
+                  AND m.market_movement_complete = FALSE
+                  AND m.league_id = ANY(:league_ids)
+                ORDER BY m.date
+            """), {
+                "window_start": window_start,
+                "window_end": window_end,
+                "league_ids": EXTENDED_LEAGUES
+            })
+
+            matches = result.fetchall()
+
+            if not matches:
+                return {"checked": 0, "captured": 0}
+
+            provider = APIFootballProvider()
+
+            try:
+                for match in matches:
+                    match_id = match.id
+                    external_id = match.external_id
+                    minutes_to_kickoff = float(match.minutes_to_kickoff)
+                    kickoff_time = match.date
+                    checked_count += 1
+
+                    # Check which bucket this falls into
+                    current_bucket = None
+                    for min_m, max_m, bucket_name in MARKET_MOVEMENT_BUCKETS:
+                        if min_m <= minutes_to_kickoff <= max_m:
+                            current_bucket = bucket_name
+                            break
+
+                    if not current_bucket:
+                        continue
+
+                    # Check if we already have this bucket for this match
+                    existing = await session.execute(text("""
+                        SELECT 1 FROM market_movement_snapshots
+                        WHERE match_id = :match_id AND snapshot_type = :bucket
+                    """), {"match_id": match_id, "bucket": current_bucket})
+
+                    if existing.fetchone():
+                        continue
+
+                    # Fetch fresh odds
+                    fresh_odds = await provider.get_odds(external_id)
+
+                    if not fresh_odds or not fresh_odds.get("odds_home"):
+                        continue
+
+                    odds_home = float(fresh_odds["odds_home"])
+                    odds_draw = float(fresh_odds["odds_draw"])
+                    odds_away = float(fresh_odds["odds_away"])
+                    bookmaker = fresh_odds.get("bookmaker", "unknown")
+
+                    # Calculate implied probabilities
+                    if odds_home > 1 and odds_draw > 1 and odds_away > 1:
+                        raw_home = 1 / odds_home
+                        raw_draw = 1 / odds_draw
+                        raw_away = 1 / odds_away
+                        total = raw_home + raw_draw + raw_away
+                        overround = total - 1
+                        prob_home = raw_home / total
+                        prob_draw = raw_draw / total
+                        prob_away = raw_away / total
+                    else:
+                        continue
+
+                    snapshot_at = datetime.utcnow()
+
+                    # Insert market movement snapshot
+                    await session.execute(text("""
+                        INSERT INTO market_movement_snapshots (
+                            match_id, snapshot_type, captured_at, kickoff_time,
+                            minutes_to_kickoff, odds_home, odds_draw, odds_away,
+                            bookmaker, odds_freshness,
+                            prob_home, prob_draw, prob_away, overround
+                        ) VALUES (
+                            :match_id, :bucket, :captured_at, :kickoff_time,
+                            :minutes_to_kickoff, :odds_home, :odds_draw, :odds_away,
+                            :bookmaker, 'live',
+                            :prob_home, :prob_draw, :prob_away, :overround
+                        )
+                        ON CONFLICT (match_id, snapshot_type, bookmaker) DO NOTHING
+                    """), {
+                        "match_id": match_id,
+                        "bucket": current_bucket,
+                        "captured_at": snapshot_at,
+                        "kickoff_time": kickoff_time,
+                        "minutes_to_kickoff": minutes_to_kickoff,
+                        "odds_home": odds_home,
+                        "odds_draw": odds_draw,
+                        "odds_away": odds_away,
+                        "bookmaker": f"{bookmaker}_live",
+                        "prob_home": prob_home,
+                        "prob_draw": prob_draw,
+                        "prob_away": prob_away,
+                        "overround": overround,
+                    })
+
+                    captured_count += 1
+                    logger.info(
+                        f"Market movement {current_bucket} captured for match {match_id}: "
+                        f"H={odds_home:.2f} D={odds_draw:.2f} A={odds_away:.2f}"
+                    )
+
+                    # Check if match has all buckets now
+                    bucket_count = await session.execute(text("""
+                        SELECT COUNT(DISTINCT snapshot_type)
+                        FROM market_movement_snapshots
+                        WHERE match_id = :match_id
+                    """), {"match_id": match_id})
+
+                    if bucket_count.scalar() >= 4:
+                        await session.execute(text("""
+                            UPDATE matches SET market_movement_complete = TRUE
+                            WHERE id = :match_id
+                        """), {"match_id": match_id})
+
+                await session.commit()
+
+            finally:
+                await provider.close()
+
+            if captured_count > 0:
+                logger.info(f"Market movement: captured {captured_count} snapshots")
+
+            return {"checked": checked_count, "captured": captured_count}
+
+    except Exception as e:
+        logger.error(f"capture_market_movement_snapshots failed: {e}")
+        return {"checked": 0, "captured": 0, "error": str(e)}
+
+
+# =============================================================================
+# LINEUP-RELATIVE MOVEMENT TRACKING (Auditor Critical Fix)
+# =============================================================================
+# Tracks odds movement RELATIVE to lineup_detected_at, not just pre-kickoff
+# This measures "Did the market move BECAUSE of lineup announcement?"
+#
+# Snapshot types:
+# - L-30: 30 min BEFORE lineup detection (baseline for "pre-lineup odds")
+# - L-15: 15 min BEFORE lineup detection
+# - L-5:  5 min BEFORE lineup detection
+# - L0:   At lineup detection (captured in odds_snapshots already)
+# - L+5:  5 min AFTER lineup detection
+# - L+10: 10 min AFTER lineup detection (captures market reaction)
+#
+# Movement metric: delta_p = max(|p_H(t2)-p_H(t1)|, |p_D(t2)-p_D(t1)|, |p_A(t2)-p_A(t1)|)
+# where p_X are NORMALIZED probabilities (after removing overround)
+
+LINEUP_MOVEMENT_BUCKETS = [
+    (-32, -28, "L-30"),  # ~30 min before lineup
+    (-17, -13, "L-15"),  # ~15 min before lineup
+    (-7, -3, "L-5"),     # ~5 min before lineup
+    (3, 7, "L+5"),       # ~5 min after lineup
+    (8, 12, "L+10"),     # ~10 min after lineup
+]
+
+
+def compute_delta_p(
+    prob_h1: float, prob_d1: float, prob_a1: float,
+    prob_h2: float, prob_d2: float, prob_a2: float
+) -> float:
+    """
+    Compute max absolute movement on normalized probabilities.
+    delta_p = max(|p_H(t2)-p_H(t1)|, |p_D(t2)-p_D(t1)|, |p_A(t2)-p_A(t1)|)
+    """
+    return max(
+        abs(prob_h2 - prob_h1),
+        abs(prob_d2 - prob_d1),
+        abs(prob_a2 - prob_a1)
+    )
+
+
+async def capture_lineup_relative_movement() -> dict:
+    """
+    Capture odds at time points relative to lineup_detected_at.
+
+    This addresses auditor's critical feedback:
+    1. Track movement RELATIVE to lineup detection, not just pre-kickoff
+    2. Use normalized probabilities for movement metrics
+
+    Run frequency: Every 3 minutes (matches are scarce, captures are time-sensitive)
+    """
+    from app.etl.api_football import APIFootballProvider
+
+    captured_count = 0
+    checked_count = 0
+
+    try:
+        async with AsyncSessionLocal() as session:
+            now = datetime.utcnow()
+
+            # Find matches that have lineup_confirmed but need movement tracking
+            # We need matches where:
+            # 1. lineup_confirmed = TRUE
+            # 2. lineup_movement_tracked = FALSE
+            # 3. We have the lineup_detected_at timestamp from odds_snapshots
+            # 4. Match hasn't started yet (status = 'NS')
+
+            result = await session.execute(text("""
+                SELECT
+                    m.id as match_id,
+                    m.external_id,
+                    m.date as kickoff_time,
+                    m.league_id,
+                    os.snapshot_at as lineup_detected_at,
+                    os.prob_home as lineup_prob_home,
+                    os.prob_draw as lineup_prob_draw,
+                    os.prob_away as lineup_prob_away,
+                    os.odds_home as lineup_odds_home,
+                    os.odds_draw as lineup_odds_draw,
+                    os.odds_away as lineup_odds_away,
+                    os.bookmaker as lineup_bookmaker,
+                    EXTRACT(EPOCH FROM (NOW() - os.snapshot_at)) / 60 as minutes_since_lineup
+                FROM matches m
+                JOIN odds_snapshots os ON m.id = os.match_id
+                WHERE m.lineup_confirmed = TRUE
+                  AND m.status = 'NS'
+                  AND os.snapshot_type = 'lineup_confirmed'
+                  AND COALESCE(m.lineup_movement_tracked, FALSE) = FALSE
+                  AND os.snapshot_at IS NOT NULL
+                  AND m.league_id = ANY(:league_ids)
+                  -- TTL: Only process if lineup was detected in last 45 minutes
+                  -- (enough time for L-30 to L+10 window)
+                  AND os.snapshot_at > NOW() - INTERVAL '45 minutes'
+                  -- TTL: Stop tracking 15 min after kickoff (match already started)
+                  AND m.date > NOW() - INTERVAL '15 minutes'
+                ORDER BY os.snapshot_at DESC
+                LIMIT 20
+            """), {"league_ids": EXTENDED_LEAGUES})
+
+            matches = result.fetchall()
+
+            if not matches:
+                return {"checked": 0, "captured": 0}
+
+            provider = APIFootballProvider()
+
+            # Rate limiting: configurable via env var, default 10
+            # 10 calls × 20 runs/hour = 200 calls/hour max for this job
+            api_calls_this_run = 0
+            MAX_API_CALLS_PER_RUN = int(os.environ.get("LINEUP_MOVEMENT_MAX_CALLS", "10"))
+
+            try:
+                for match in matches:
+                    match_id = match.match_id
+                    external_id = match.external_id
+                    lineup_detected_at = match.lineup_detected_at
+                    minutes_since_lineup = float(match.minutes_since_lineup)
+                    kickoff_time = match.kickoff_time
+
+                    checked_count += 1
+
+                    # L0 snapshot already exists in odds_snapshots
+                    # Check if we need to insert it into lineup_movement_snapshots
+                    l0_exists = await session.execute(text("""
+                        SELECT 1 FROM lineup_movement_snapshots
+                        WHERE match_id = :match_id AND snapshot_type = 'L0'
+                    """), {"match_id": match_id})
+
+                    if not l0_exists.fetchone():
+                        # Insert L0 from odds_snapshots data
+                        await session.execute(text("""
+                            INSERT INTO lineup_movement_snapshots (
+                                match_id, lineup_detected_at, snapshot_type,
+                                minutes_from_lineup, captured_at, kickoff_time,
+                                odds_home, odds_draw, odds_away, bookmaker, odds_freshness,
+                                prob_home, prob_draw, prob_away, overround,
+                                delta_p_vs_baseline, baseline_snapshot_type
+                            ) VALUES (
+                                :match_id, :lineup_detected_at, 'L0',
+                                0, :lineup_detected_at, :kickoff_time,
+                                :odds_home, :odds_draw, :odds_away, :bookmaker, 'live',
+                                :prob_home, :prob_draw, :prob_away, :overround,
+                                0, 'L0'
+                            )
+                            ON CONFLICT (match_id, snapshot_type, bookmaker) DO NOTHING
+                        """), {
+                            "match_id": match_id,
+                            "lineup_detected_at": lineup_detected_at,
+                            "kickoff_time": kickoff_time,
+                            "odds_home": match.lineup_odds_home,
+                            "odds_draw": match.lineup_odds_draw,
+                            "odds_away": match.lineup_odds_away,
+                            "bookmaker": match.lineup_bookmaker,
+                            "prob_home": match.lineup_prob_home,
+                            "prob_draw": match.lineup_prob_draw,
+                            "prob_away": match.lineup_prob_away,
+                            "overround": (1/float(match.lineup_odds_home) +
+                                          1/float(match.lineup_odds_draw) +
+                                          1/float(match.lineup_odds_away)) - 1
+                                          if match.lineup_odds_home else 0,
+                        })
+                        captured_count += 1
+
+                    # Check which bucket we should capture now
+                    current_bucket = None
+                    for min_m, max_m, bucket_name in LINEUP_MOVEMENT_BUCKETS:
+                        if min_m <= minutes_since_lineup <= max_m:
+                            current_bucket = bucket_name
+                            break
+
+                    if not current_bucket:
+                        # Not in a capture window, skip
+                        continue
+
+                    # Check if we already have this bucket
+                    existing = await session.execute(text("""
+                        SELECT 1 FROM lineup_movement_snapshots
+                        WHERE match_id = :match_id AND snapshot_type = :bucket
+                    """), {"match_id": match_id, "bucket": current_bucket})
+
+                    if existing.fetchone():
+                        continue
+
+                    # Rate limit check
+                    if api_calls_this_run >= MAX_API_CALLS_PER_RUN:
+                        logger.info(
+                            f"Lineup movement: rate limit reached ({MAX_API_CALLS_PER_RUN} calls), "
+                            f"deferring remaining matches to next run"
+                        )
+                        break
+
+                    # Fetch fresh odds for this time point
+                    try:
+                        fresh_odds = await provider.get_odds(external_id)
+                        api_calls_this_run += 1
+                    except Exception as e:
+                        error_str = str(e).lower()
+                        if "429" in error_str or "rate limit" in error_str:
+                            # Auto-throttle: stop immediately on rate limit
+                            logger.warning(
+                                f"Lineup movement: 429 rate limit hit, stopping run. "
+                                f"Captured {captured_count} before throttle."
+                            )
+                            break
+                        else:
+                            logger.warning(f"API error for match {match_id}: {e}")
+                            continue
+
+                    if not fresh_odds or not fresh_odds.get("odds_home"):
+                        logger.warning(
+                            f"No odds available for lineup movement {current_bucket}, "
+                            f"match {match_id}"
+                        )
+                        continue
+
+                    odds_home = float(fresh_odds["odds_home"])
+                    odds_draw = float(fresh_odds["odds_draw"])
+                    odds_away = float(fresh_odds["odds_away"])
+                    bookmaker = fresh_odds.get("bookmaker", "unknown")
+
+                    # Calculate normalized probabilities
+                    if odds_home > 1 and odds_draw > 1 and odds_away > 1:
+                        raw_home = 1 / odds_home
+                        raw_draw = 1 / odds_draw
+                        raw_away = 1 / odds_away
+                        total = raw_home + raw_draw + raw_away
+                        overround = total - 1
+                        prob_home = raw_home / total
+                        prob_draw = raw_draw / total
+                        prob_away = raw_away / total
+                    else:
+                        continue
+
+                    # Calculate delta_p vs L0 baseline
+                    delta_p = compute_delta_p(
+                        float(match.lineup_prob_home or 0),
+                        float(match.lineup_prob_draw or 0),
+                        float(match.lineup_prob_away or 0),
+                        prob_home, prob_draw, prob_away
+                    )
+
+                    snapshot_at = datetime.utcnow()
+
+                    # Insert the snapshot
+                    await session.execute(text("""
+                        INSERT INTO lineup_movement_snapshots (
+                            match_id, lineup_detected_at, snapshot_type,
+                            minutes_from_lineup, captured_at, kickoff_time,
+                            odds_home, odds_draw, odds_away, bookmaker, odds_freshness,
+                            prob_home, prob_draw, prob_away, overround,
+                            delta_p_vs_baseline, baseline_snapshot_type
+                        ) VALUES (
+                            :match_id, :lineup_detected_at, :bucket,
+                            :minutes_from_lineup, :captured_at, :kickoff_time,
+                            :odds_home, :odds_draw, :odds_away, :bookmaker, 'live',
+                            :prob_home, :prob_draw, :prob_away, :overround,
+                            :delta_p, 'L0'
+                        )
+                        ON CONFLICT (match_id, snapshot_type, bookmaker) DO NOTHING
+                    """), {
+                        "match_id": match_id,
+                        "lineup_detected_at": lineup_detected_at,
+                        "bucket": current_bucket,
+                        "minutes_from_lineup": minutes_since_lineup,
+                        "captured_at": snapshot_at,
+                        "kickoff_time": kickoff_time,
+                        "odds_home": odds_home,
+                        "odds_draw": odds_draw,
+                        "odds_away": odds_away,
+                        "bookmaker": f"{bookmaker}_live",
+                        "prob_home": prob_home,
+                        "prob_draw": prob_draw,
+                        "prob_away": prob_away,
+                        "overround": overround,
+                        "delta_p": delta_p,
+                    })
+
+                    captured_count += 1
+                    logger.info(
+                        f"Lineup movement {current_bucket} captured for match {match_id}: "
+                        f"delta_p={delta_p:.4f} ({minutes_since_lineup:.1f} min since lineup)"
+                    )
+
+                    # Check if match has enough snapshots to mark as tracked
+                    # We need at least L0 and one post-lineup (L+5 or L+10)
+                    snapshot_count = await session.execute(text("""
+                        SELECT
+                            COUNT(*) FILTER (WHERE snapshot_type = 'L0') as has_l0,
+                            COUNT(*) FILTER (WHERE snapshot_type IN ('L+5', 'L+10')) as has_post
+                        FROM lineup_movement_snapshots
+                        WHERE match_id = :match_id
+                    """), {"match_id": match_id})
+
+                    counts = snapshot_count.fetchone()
+                    if counts and counts.has_l0 > 0 and counts.has_post > 0:
+                        await session.execute(text("""
+                            UPDATE matches
+                            SET lineup_movement_tracked = TRUE
+                            WHERE id = :match_id
+                        """), {"match_id": match_id})
+                        logger.info(f"Match {match_id} marked as lineup_movement_tracked")
+
+                await session.commit()
+
+            finally:
+                await provider.close()
+
+            if captured_count > 0:
+                logger.info(
+                    f"Lineup-relative movement: captured {captured_count} snapshots "
+                    f"for {checked_count} matches"
+                )
+
+            return {"checked": checked_count, "captured": captured_count}
+
+    except Exception as e:
+        logger.error(f"capture_lineup_relative_movement failed: {e}")
         return {"checked": 0, "captured": 0, "error": str(e)}
 
 
@@ -1410,6 +1919,29 @@ def start_scheduler(ml_engine):
         replace_existing=True,
     )
 
+    # Job 3: MARKET MOVEMENT - Track odds at T-60, T-30, T-15, T-5
+    # For matches with confirmed lineups, capture odds at predefined time points
+    # This helps measure if the market moves before/after lineup announcement
+    scheduler.add_job(
+        capture_market_movement_snapshots,
+        trigger=IntervalTrigger(minutes=5),
+        id="market_movement_tracking",
+        name="Market Movement Tracking (every 5 min)",
+        replace_existing=True,
+    )
+
+    # Job 4: LINEUP-RELATIVE MOVEMENT (Auditor Critical Fix 2026-01-09)
+    # Track odds RELATIVE to lineup_detected_at, not just pre-kickoff
+    # Snapshots: L-30, L-15, L-5, L0, L+5, L+10 (minutes from lineup detection)
+    # Uses normalized probabilities for delta_p metric
+    scheduler.add_job(
+        capture_lineup_relative_movement,
+        trigger=IntervalTrigger(minutes=3),
+        id="lineup_relative_movement",
+        name="Lineup-Relative Movement (every 3 min)",
+        replace_existing=True,
+    )
+
     # Daily PIT Evaluation: 9:00 AM UTC (after audit, saves JSON silently)
     # Part of Protocol v2.1 - does NOT produce daily spam
     scheduler.add_job(
@@ -1438,6 +1970,8 @@ def start_scheduler(ml_engine):
         "  - Live global sync: Every 60 seconds\n"
         "  - Lineup monitoring CRITICAL: Every 60s (45-90 min window - aggressive)\n"
         "  - Lineup monitoring FULL: Every 2 min (0-120 min window - backup)\n"
+        "  - Market movement tracking: Every 5 min (T-60/T-30/T-15/T-5 pre-kickoff)\n"
+        "  - Lineup-relative movement: Every 3 min (L-30 to L+10 around lineup)\n"
         "  - Daily results sync: 6:00 AM UTC\n"
         "  - Daily save predictions: 7:00 AM UTC\n"
         "  - Daily audit: 8:00 AM UTC\n"
