@@ -408,7 +408,12 @@ def benchmark_model_vs_market(
             home_prob,
             draw_prob,
             away_prob,
-            actual_result
+            actual_result,
+            bookmaker,
+            odds_freshness,
+            opening_odds_home,
+            opening_odds_draw,
+            opening_odds_away
         FROM pit_dataset
         WHERE home_prob IS NOT NULL
           AND pit_odds_home IS NOT NULL
@@ -446,6 +451,16 @@ def benchmark_model_vs_market(
     by_delta_ko_bin: dict = {
         "10-45": {"n_matches": 0, "n_bets": 0, "wins": 0, "returns": []},
         "45-90": {"n_matches": 0, "n_bets": 0, "wins": 0, "returns": []},
+    }
+
+    # Breakdowns by bookmaker and odds_freshness
+    by_bookmaker: dict = {}  # bookmaker -> {"n_matches": 0, "n_bets": 0, "wins": 0, "returns": []}
+    by_freshness: dict = {}  # odds_freshness -> {"n_matches": 0, "n_bets": 0, "wins": 0, "returns": []}
+
+    # Edge analysis (opening vs PIT)
+    edge_analysis = {
+        "n_with_opening": 0,
+        "edges": [],  # list of edge values for bet outcome
     }
 
     # League name mapping
@@ -529,6 +544,18 @@ def benchmark_model_vs_market(
             delta_bin = "45-90"
         by_delta_ko_bin[delta_bin]["n_matches"] += 1
 
+        # --- Track by bookmaker ---
+        bookmaker = row.get("bookmaker") or "unknown"
+        if bookmaker not in by_bookmaker:
+            by_bookmaker[bookmaker] = {"n_matches": 0, "n_bets": 0, "wins": 0, "returns": []}
+        by_bookmaker[bookmaker]["n_matches"] += 1
+
+        # --- Track by odds_freshness ---
+        freshness = row.get("odds_freshness") or "unknown"
+        if freshness not in by_freshness:
+            by_freshness[freshness] = {"n_matches": 0, "n_bets": 0, "wins": 0, "returns": []}
+        by_freshness[freshness]["n_matches"] += 1
+
         # --- Brier scores ---
         brier_row_model = calculate_brier_score(model_probs, actual)
         brier_row_market = calculate_brier_score(market_probs, actual)
@@ -601,6 +628,42 @@ def benchmark_model_vs_market(
             if won:
                 by_delta_ko_bin[delta_bin]["wins"] += 1
             by_delta_ko_bin[delta_bin]["returns"].append(ret)
+
+            # Track by bookmaker
+            if bookmaker in by_bookmaker:
+                by_bookmaker[bookmaker]["n_bets"] += 1
+                if won:
+                    by_bookmaker[bookmaker]["wins"] += 1
+                by_bookmaker[bookmaker]["returns"].append(ret)
+
+            # Track by freshness
+            if freshness in by_freshness:
+                by_freshness[freshness]["n_bets"] += 1
+                if won:
+                    by_freshness[freshness]["wins"] += 1
+                by_freshness[freshness]["returns"].append(ret)
+
+            # --- Edge analysis: opening vs PIT odds ---
+            # Edge = (opening_odds - pit_odds) / opening_odds
+            # Positive edge = odds shortened (market moved toward our pick)
+            opening_h = row.get("opening_odds_home")
+            opening_d = row.get("opening_odds_draw")
+            opening_a = row.get("opening_odds_away")
+            opening_map = {"home": opening_h, "draw": opening_d, "away": opening_a}
+            opening_bet = opening_map.get(model_best_bet)
+            pit_bet = odds[model_best_bet]
+
+            if opening_bet is not None and opening_bet > 0:
+                edge_analysis["n_with_opening"] += 1
+                # Edge = (1/pit - 1/opening) = implied prob difference
+                edge = (1.0 / pit_bet) - (1.0 / opening_bet)
+                edge_analysis["edges"].append({
+                    "outcome": model_best_bet,
+                    "opening_odds": float(opening_bet),
+                    "pit_odds": float(pit_bet),
+                    "edge": round(edge, 4),  # positive = odds shortened toward our pick
+                    "won": won,
+                })
 
         # Market bet selection (same rule for fair comparison)
         market_best_bet = None
@@ -851,6 +914,93 @@ def benchmark_model_vs_market(
             })
         by_delta_ko_results[bin_name] = result
 
+    # --- Calculate breakdown by bookmaker ---
+    by_bookmaker_results = {}
+    for bm, data in by_bookmaker.items():
+        result = {
+            "bookmaker": bm,
+            "n_matches": data["n_matches"],
+            "n_bets": data["n_bets"],
+        }
+        if data["n_bets"] > 0:
+            win_rate = data["wins"] / data["n_bets"]
+            win_ci_low, win_ci_high = calculate_confidence_interval(data["wins"], data["n_bets"])
+            roi_mean, roi_ci_low, roi_ci_high = bootstrap_roi_ci(data["returns"])
+            result.update({
+                "wins": data["wins"],
+                "win_rate": round(win_rate, 4),
+                "win_rate_ci": [round(win_ci_low, 4), round(win_ci_high, 4)],
+                "roi": round(roi_mean, 4),
+                "roi_ci": [round(roi_ci_low, 4), round(roi_ci_high, 4)],
+                "total_pnl": round(sum(data["returns"]), 2),
+            })
+        else:
+            result.update({
+                "wins": 0,
+                "win_rate": None,
+                "roi": None,
+                "roi_ci": None,
+                "total_pnl": 0,
+            })
+        by_bookmaker_results[bm] = result
+
+    # --- Calculate breakdown by odds_freshness ---
+    by_freshness_results = {}
+    for fr, data in by_freshness.items():
+        result = {
+            "freshness": fr,
+            "n_matches": data["n_matches"],
+            "n_bets": data["n_bets"],
+        }
+        if data["n_bets"] > 0:
+            win_rate = data["wins"] / data["n_bets"]
+            win_ci_low, win_ci_high = calculate_confidence_interval(data["wins"], data["n_bets"])
+            roi_mean, roi_ci_low, roi_ci_high = bootstrap_roi_ci(data["returns"])
+            result.update({
+                "wins": data["wins"],
+                "win_rate": round(win_rate, 4),
+                "win_rate_ci": [round(win_ci_low, 4), round(win_ci_high, 4)],
+                "roi": round(roi_mean, 4),
+                "roi_ci": [round(roi_ci_low, 4), round(roi_ci_high, 4)],
+                "total_pnl": round(sum(data["returns"]), 2),
+            })
+        else:
+            result.update({
+                "wins": 0,
+                "win_rate": None,
+                "roi": None,
+                "roi_ci": None,
+                "total_pnl": 0,
+            })
+        by_freshness_results[fr] = result
+
+    # --- Edge analysis summary ---
+    edge_summary = {
+        "n_bets_with_opening": edge_analysis["n_with_opening"],
+        "n_bets_total": model_result.get("n_bets", 0),
+    }
+    if edge_analysis["edges"]:
+        edges_list = [e["edge"] for e in edge_analysis["edges"]]
+        edge_summary.update({
+            "mean_edge": round(float(np.mean(edges_list)), 4),
+            "median_edge": round(float(np.median(edges_list)), 4),
+            "min_edge": round(float(np.min(edges_list)), 4),
+            "max_edge": round(float(np.max(edges_list)), 4),
+            "positive_edge_count": sum(1 for e in edges_list if e > 0),
+            "negative_edge_count": sum(1 for e in edges_list if e < 0),
+            # CLV proxy: did we beat closing line?
+            "positive_edge_win_rate": round(
+                sum(1 for e in edge_analysis["edges"] if e["edge"] > 0 and e["won"]) /
+                max(1, sum(1 for e in edge_analysis["edges"] if e["edge"] > 0)),
+                4
+            ) if any(e["edge"] > 0 for e in edge_analysis["edges"]) else None,
+        })
+    else:
+        edge_summary.update({
+            "mean_edge": None,
+            "note": "No opening odds available for edge analysis",
+        })
+
     # --- GO/NO-GO criterion ---
     # ROI CI95% lower bound > 0 for EV-strategy
     go_no_go = {
@@ -881,6 +1031,10 @@ def benchmark_model_vs_market(
         # Breakdowns
         "by_league": by_league_results,
         "by_delta_ko": by_delta_ko_results,
+        "by_bookmaker": by_bookmaker_results,
+        "by_freshness": by_freshness_results,
+        # Edge analysis
+        "edge_analysis": edge_summary,
         # GO/NO-GO
         "go_no_go": go_no_go,
     }
@@ -1068,6 +1222,81 @@ def generate_report(
                     print(f"{bin_name + ' min':<12} {matches:>8} {bets:>6} {wins:>6} {win_rate:>8} {roi:>8} {roi_ci:>20} {pnl:>8}")
 
             print("-" * 90)
+
+        # Breakdown by Bookmaker
+        if "by_bookmaker" in benchmark and benchmark["by_bookmaker"]:
+            print(f"\n--- BREAKDOWN BY BOOKMAKER (EV-strategy) ---")
+            print("-" * 90)
+            print(f"{'Bookmaker':<20} {'Matches':>8} {'Bets':>6} {'Wins':>6} {'Win%':>8} {'ROI':>8} {'ROI CI':>20} {'P&L':>8}")
+            print("-" * 90)
+
+            for bm_name, data in sorted(benchmark["by_bookmaker"].items(), key=lambda x: x[1]["n_matches"], reverse=True):
+                matches = data["n_matches"]
+                bets = data["n_bets"]
+                if bets > 0:
+                    wins = data["wins"]
+                    win_rate = f"{data['win_rate']:.1%}"
+                    roi = f"{data['roi']:.1%}"
+                    roi_ci = f"[{data['roi_ci'][0]:.1%}, {data['roi_ci'][1]:.1%}]"
+                    pnl = f"{data['total_pnl']:+.2f}"
+                else:
+                    wins = "-"
+                    win_rate = "-"
+                    roi = "-"
+                    roi_ci = "-"
+                    pnl = "-"
+                print(f"{bm_name[:20]:<20} {matches:>8} {bets:>6} {wins:>6} {win_rate:>8} {roi:>8} {roi_ci:>20} {pnl:>8}")
+
+            print("-" * 90)
+
+        # Breakdown by Odds Freshness
+        if "by_freshness" in benchmark and benchmark["by_freshness"]:
+            print(f"\n--- BREAKDOWN BY ODDS FRESHNESS (EV-strategy) ---")
+            print("-" * 90)
+            print(f"{'Freshness':<20} {'Matches':>8} {'Bets':>6} {'Wins':>6} {'Win%':>8} {'ROI':>8} {'ROI CI':>20} {'P&L':>8}")
+            print("-" * 90)
+
+            for fr_name, data in sorted(benchmark["by_freshness"].items(), key=lambda x: x[1]["n_matches"], reverse=True):
+                matches = data["n_matches"]
+                bets = data["n_bets"]
+                if bets > 0:
+                    wins = data["wins"]
+                    win_rate = f"{data['win_rate']:.1%}"
+                    roi = f"{data['roi']:.1%}"
+                    roi_ci = f"[{data['roi_ci'][0]:.1%}, {data['roi_ci'][1]:.1%}]"
+                    pnl = f"{data['total_pnl']:+.2f}"
+                else:
+                    wins = "-"
+                    win_rate = "-"
+                    roi = "-"
+                    roi_ci = "-"
+                    pnl = "-"
+                print(f"{fr_name[:20]:<20} {matches:>8} {bets:>6} {wins:>6} {win_rate:>8} {roi:>8} {roi_ci:>20} {pnl:>8}")
+
+            print("-" * 90)
+
+        # Edge Analysis (CLV proxy)
+        if "edge_analysis" in benchmark:
+            ea = benchmark["edge_analysis"]
+            print(f"\n--- EDGE ANALYSIS (Opening vs PIT odds) ---")
+            print("-" * 70)
+            print(f"Bets with opening odds: {ea.get('n_bets_with_opening', 0)} / {ea.get('n_bets_total', 0)}")
+
+            if ea.get("mean_edge") is not None:
+                print(f"\nEdge = (1/PIT - 1/Opening) = implied prob movement")
+                print(f"  Positive edge = market moved TOWARD our pick (CLV)")
+                print(f"  Negative edge = market moved AWAY from our pick")
+                print(f"\nMean edge:   {ea['mean_edge']:+.4f}")
+                print(f"Median edge: {ea['median_edge']:+.4f}")
+                print(f"Range:       [{ea['min_edge']:+.4f}, {ea['max_edge']:+.4f}]")
+                print(f"\nPositive edge bets: {ea.get('positive_edge_count', 0)}")
+                print(f"Negative edge bets: {ea.get('negative_edge_count', 0)}")
+                if ea.get('positive_edge_win_rate') is not None:
+                    print(f"Win rate on positive edge: {ea['positive_edge_win_rate']:.1%}")
+            else:
+                print(f"\n{ea.get('note', 'No edge data available')}")
+
+            print("-" * 70)
 
         # GO/NO-GO verdict
         if "go_no_go" in benchmark:
