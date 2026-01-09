@@ -398,6 +398,7 @@ def benchmark_model_vs_market(
         SELECT
             snapshot_id,
             match_id,
+            league_id,
             home_team,
             away_team,
             delta_ko_minutes,
@@ -439,6 +440,29 @@ def benchmark_model_vs_market(
 
     # Debug sample collection
     debug_rows = []
+
+    # Breakdowns by league and delta_ko bin
+    by_league: dict = {}  # league_id -> {"n_matches": 0, "n_bets": 0, "wins": 0, "returns": []}
+    by_delta_ko_bin: dict = {
+        "10-45": {"n_matches": 0, "n_bets": 0, "wins": 0, "returns": []},
+        "45-90": {"n_matches": 0, "n_bets": 0, "wins": 0, "returns": []},
+    }
+
+    # League name mapping
+    LEAGUE_NAMES = {
+        39: "Premier League",
+        140: "La Liga",
+        135: "Serie A",
+        78: "Bundesliga",
+        61: "Ligue 1",
+        2: "Champions League",
+        3: "Europa League",
+        848: "Conference League",
+        13: "Copa Libertadores",
+        11: "Copa Sudamericana",
+        45: "FA Cup",
+        48: "League Cup",
+    }
 
     valid_count = 0
 
@@ -488,6 +512,22 @@ def benchmark_model_vs_market(
             continue  # Skip if no result yet
 
         valid_count += 1
+
+        # --- Track by league ---
+        league_id = row.get("league_id")
+        if league_id is not None:
+            league_id = int(league_id)
+            if league_id not in by_league:
+                by_league[league_id] = {"n_matches": 0, "n_bets": 0, "wins": 0, "returns": []}
+            by_league[league_id]["n_matches"] += 1
+
+        # --- Track by delta_ko bin ---
+        delta_ko = float(row["delta_ko_minutes"])
+        if delta_ko < 45:
+            delta_bin = "10-45"
+        else:
+            delta_bin = "45-90"
+        by_delta_ko_bin[delta_bin]["n_matches"] += 1
 
         # --- Brier scores ---
         brier_row_model = calculate_brier_score(model_probs, actual)
@@ -544,11 +584,23 @@ def benchmark_model_vs_market(
         if model_best_bet:
             model_stats["count"] += 1
             won = (actual == result_map[model_best_bet])
+            ret = odds[model_best_bet] - 1 if won else -1
             if won:
                 model_stats["wins"] += 1
-                model_stats["returns"].append(odds[model_best_bet] - 1)
-            else:
-                model_stats["returns"].append(-1)
+            model_stats["returns"].append(ret)
+
+            # Track by league
+            if league_id is not None and league_id in by_league:
+                by_league[league_id]["n_bets"] += 1
+                if won:
+                    by_league[league_id]["wins"] += 1
+                by_league[league_id]["returns"].append(ret)
+
+            # Track by delta_ko bin
+            by_delta_ko_bin[delta_bin]["n_bets"] += 1
+            if won:
+                by_delta_ko_bin[delta_bin]["wins"] += 1
+            by_delta_ko_bin[delta_bin]["returns"].append(ret)
 
         # Market bet selection (same rule for fair comparison)
         market_best_bet = None
@@ -737,6 +789,78 @@ def benchmark_model_vs_market(
 
     baseline_delta_roi = baseline_model_result["roi"] - baseline_market_result["roi"]
 
+    # --- Calculate breakdown by league ---
+    by_league_results = {}
+    for lid, data in by_league.items():
+        league_name = LEAGUE_NAMES.get(lid, f"League {lid}")
+        result = {
+            "league_id": lid,
+            "league_name": league_name,
+            "n_matches": data["n_matches"],
+            "n_bets": data["n_bets"],
+        }
+        if data["n_bets"] > 0:
+            win_rate = data["wins"] / data["n_bets"]
+            win_ci_low, win_ci_high = calculate_confidence_interval(data["wins"], data["n_bets"])
+            roi_mean, roi_ci_low, roi_ci_high = bootstrap_roi_ci(data["returns"])
+            result.update({
+                "wins": data["wins"],
+                "win_rate": round(win_rate, 4),
+                "win_rate_ci": [round(win_ci_low, 4), round(win_ci_high, 4)],
+                "roi": round(roi_mean, 4),
+                "roi_ci": [round(roi_ci_low, 4), round(roi_ci_high, 4)],
+                "total_pnl": round(sum(data["returns"]), 2),
+            })
+        else:
+            result.update({
+                "wins": 0,
+                "win_rate": None,
+                "roi": None,
+                "roi_ci": None,
+                "total_pnl": 0,
+            })
+        by_league_results[league_name] = result
+
+    # --- Calculate breakdown by delta_ko bin ---
+    by_delta_ko_results = {}
+    for bin_name, data in by_delta_ko_bin.items():
+        result = {
+            "bin": bin_name,
+            "n_matches": data["n_matches"],
+            "n_bets": data["n_bets"],
+        }
+        if data["n_bets"] > 0:
+            win_rate = data["wins"] / data["n_bets"]
+            win_ci_low, win_ci_high = calculate_confidence_interval(data["wins"], data["n_bets"])
+            roi_mean, roi_ci_low, roi_ci_high = bootstrap_roi_ci(data["returns"])
+            result.update({
+                "wins": data["wins"],
+                "win_rate": round(win_rate, 4),
+                "win_rate_ci": [round(win_ci_low, 4), round(win_ci_high, 4)],
+                "roi": round(roi_mean, 4),
+                "roi_ci": [round(roi_ci_low, 4), round(roi_ci_high, 4)],
+                "total_pnl": round(sum(data["returns"]), 2),
+            })
+        else:
+            result.update({
+                "wins": 0,
+                "win_rate": None,
+                "roi": None,
+                "roi_ci": None,
+                "total_pnl": 0,
+            })
+        by_delta_ko_results[bin_name] = result
+
+    # --- GO/NO-GO criterion ---
+    # ROI CI95% lower bound > 0 for EV-strategy
+    go_no_go = {
+        "criterion": "ROI CI95% lower bound > 0 (EV-strategy)",
+        "roi_ci_lower": model_result.get("roi_ci", [0, 0])[0] if model_result.get("n_bets", 0) > 0 else None,
+        "verdict": "GO" if model_result.get("roi_ci", [0, 0])[0] > 0 else "NO-GO",
+        "n_bets": model_result.get("n_bets", 0),
+        "min_sample_note": "Need ~100+ bets for reliable CI" if model_result.get("n_bets", 0) < 100 else None,
+    }
+
     return {
         "n_matches": valid_count,
         "overround": overround_stats,
@@ -754,6 +878,11 @@ def benchmark_model_vs_market(
             "market": baseline_market_result,
             "delta_roi": round(baseline_delta_roi, 4),
         },
+        # Breakdowns
+        "by_league": by_league_results,
+        "by_delta_ko": by_delta_ko_results,
+        # GO/NO-GO
+        "go_no_go": go_no_go,
     }
 
 
@@ -885,6 +1014,82 @@ def generate_report(
                 print(" (market pick > model pick)")
             else:
                 print(" (no difference)")
+
+        # Breakdown by League
+        if "by_league" in benchmark and benchmark["by_league"]:
+            print(f"\n--- BREAKDOWN BY LEAGUE (EV-strategy) ---")
+            print("-" * 90)
+            print(f"{'League':<20} {'Matches':>8} {'Bets':>6} {'Wins':>6} {'Win%':>8} {'ROI':>8} {'ROI CI':>20} {'P&L':>8}")
+            print("-" * 90)
+
+            for league_name, data in sorted(benchmark["by_league"].items(), key=lambda x: x[1]["n_matches"], reverse=True):
+                matches = data["n_matches"]
+                bets = data["n_bets"]
+                if bets > 0:
+                    wins = data["wins"]
+                    win_rate = f"{data['win_rate']:.1%}"
+                    roi = f"{data['roi']:.1%}"
+                    roi_ci = f"[{data['roi_ci'][0]:.1%}, {data['roi_ci'][1]:.1%}]"
+                    pnl = f"{data['total_pnl']:+.2f}"
+                else:
+                    wins = "-"
+                    win_rate = "-"
+                    roi = "-"
+                    roi_ci = "-"
+                    pnl = "-"
+                print(f"{league_name[:20]:<20} {matches:>8} {bets:>6} {wins:>6} {win_rate:>8} {roi:>8} {roi_ci:>20} {pnl:>8}")
+
+            print("-" * 90)
+
+        # Breakdown by Delta KO
+        if "by_delta_ko" in benchmark and benchmark["by_delta_ko"]:
+            print(f"\n--- BREAKDOWN BY DELTA KO (EV-strategy) ---")
+            print("-" * 90)
+            print(f"{'ΔKO Bin':<12} {'Matches':>8} {'Bets':>6} {'Wins':>6} {'Win%':>8} {'ROI':>8} {'ROI CI':>20} {'P&L':>8}")
+            print("-" * 90)
+
+            for bin_name in ["10-45", "45-90"]:
+                if bin_name in benchmark["by_delta_ko"]:
+                    data = benchmark["by_delta_ko"][bin_name]
+                    matches = data["n_matches"]
+                    bets = data["n_bets"]
+                    if bets > 0:
+                        wins = data["wins"]
+                        win_rate = f"{data['win_rate']:.1%}"
+                        roi = f"{data['roi']:.1%}"
+                        roi_ci = f"[{data['roi_ci'][0]:.1%}, {data['roi_ci'][1]:.1%}]"
+                        pnl = f"{data['total_pnl']:+.2f}"
+                    else:
+                        wins = "-"
+                        win_rate = "-"
+                        roi = "-"
+                        roi_ci = "-"
+                        pnl = "-"
+                    print(f"{bin_name + ' min':<12} {matches:>8} {bets:>6} {wins:>6} {win_rate:>8} {roi:>8} {roi_ci:>20} {pnl:>8}")
+
+            print("-" * 90)
+
+        # GO/NO-GO verdict
+        if "go_no_go" in benchmark:
+            gng = benchmark["go_no_go"]
+            print(f"\n{'='*70}")
+            print("GO/NO-GO DECISION")
+            print("=" * 70)
+            print(f"Criterion: {gng['criterion']}")
+            print(f"N bets:    {gng['n_bets']}")
+            if gng['roi_ci_lower'] is not None:
+                print(f"ROI CI lower bound: {gng['roi_ci_lower']:.2%}")
+            else:
+                print(f"ROI CI lower bound: N/A (no bets)")
+
+            verdict = gng['verdict']
+            if verdict == "GO":
+                print(f"\n  ✓ VERDICT: {verdict} - ROI significantly positive at 95% CI")
+            else:
+                print(f"\n  ✗ VERDICT: {verdict} - ROI NOT significantly positive at 95% CI")
+
+            if gng.get('min_sample_note'):
+                print(f"  Note: {gng['min_sample_note']}")
 
     print("\n" + "=" * 70)
 
