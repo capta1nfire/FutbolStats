@@ -2541,14 +2541,52 @@ def _render_pit_dashboard_html(data: dict) -> str:
         .decision {{ font-size: 1.25rem; font-weight: 600; }}
         .error {{ background: rgba(239, 68, 68, 0.1); border-color: var(--red); padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem; }}
         .footer {{ margin-top: 2rem; text-align: center; color: var(--muted); font-size: 0.75rem; }}
+        .nav-tabs {{
+            display: inline-flex;
+            gap: 0.35rem;
+            padding: 0.35rem;
+            border: 1px solid var(--border);
+            border-radius: 0.75rem;
+            background: rgba(30, 41, 59, 0.55);
+        }}
+        .nav-tabs a {{
+            display: inline-flex;
+            align-items: center;
+            padding: 0.35rem 0.6rem;
+            border-radius: 0.6rem;
+            color: var(--muted);
+            font-size: 0.8rem;
+            text-decoration: none;
+            border: 1px solid transparent;
+        }}
+        .nav-tabs a:hover {{
+            color: var(--text);
+            border-color: rgba(59, 130, 246, 0.35);
+            background: rgba(59, 130, 246, 0.12);
+        }}
+        .nav-tabs a.active {{
+            color: var(--text);
+            background: rgba(59, 130, 246, 0.18);
+            border-color: rgba(59, 130, 246, 0.45);
+        }}
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>📊 PIT Dashboard</h1>
-        <div class="meta">
-            <div>Source: {source} | File: {report_file}</div>
+        <div>
+            <h1>📊 PIT Dashboard</h1>
+            <div class="meta">Source: {source} | File: {report_file}</div>
+        </div>
+        <div class="meta" style="text-align:right;">
             <div>Weekly: {weekly_ts} | Daily: {daily_ts}</div>
+            <div style="margin-top: 0.35rem;">
+                <div class="nav-tabs">
+                    <a class="nav-link" data-path="/dashboard/ops" href="/dashboard/ops">Ops</a>
+                    <a class="nav-link active" data-path="/dashboard/pit" href="/dashboard/pit">PIT</a>
+                    <a class="nav-link" data-path="/dashboard/ops/logs" href="/dashboard/ops/logs">Logs</a>
+                    <a class="nav-link" data-path="/dashboard/pit.json" href="/dashboard/pit.json">JSON</a>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -2601,9 +2639,23 @@ def _render_pit_dashboard_html(data: dict) -> str:
     </div>
 
     <div class="footer">
-        FutbolStats PIT Protocol v2.1 | Cache TTL: {_pit_dashboard_cache['ttl']}s |
-        <a href="/dashboard/pit.json" style="color: var(--blue);">JSON</a>
+        FutbolStats PIT Protocol v2.1 | Cache TTL: {_pit_dashboard_cache['ttl']}s
     </div>
+
+    <script>
+      // Preserve ?token= across dashboard navigation (for convenience).
+      // Prefer X-Dashboard-Token header in production.
+      (function() {{
+        const params = new URLSearchParams(window.location.search);
+        const token = params.get('token');
+        if (!token) return;
+        document.querySelectorAll('a.nav-link').forEach(a => {{
+          const path = a.getAttribute('data-path');
+          if (!path) return;
+          a.setAttribute('href', path + '?token=' + encodeURIComponent(token));
+        }});
+      }})();
+    </script>
 </body>
 </html>"""
     return html
@@ -3125,6 +3177,34 @@ def _render_ops_dashboard_html(data: dict) -> str:
     }}
     a {{ color: var(--blue); text-decoration: none; }}
     a:hover {{ text-decoration: underline; }}
+    .nav-tabs {{
+      display: inline-flex;
+      gap: 0.35rem;
+      padding: 0.35rem;
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      background: rgba(30, 41, 59, 0.55);
+    }}
+    .nav-tabs a {{
+      display: inline-flex;
+      align-items: center;
+      padding: 0.35rem 0.6rem;
+      border-radius: 0.6rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-decoration: none;
+      border: 1px solid transparent;
+    }}
+    .nav-tabs a:hover {{
+      color: var(--text);
+      border-color: rgba(59, 130, 246, 0.35);
+      background: rgba(59, 130, 246, 0.12);
+    }}
+    .nav-tabs a.active {{
+      color: var(--text);
+      background: rgba(59, 130, 246, 0.18);
+      border-color: rgba(59, 130, 246, 0.45);
+    }}
     /* Tooltip styles */
     .info-icon {{
       display: inline-flex;
@@ -3196,7 +3276,14 @@ def _render_ops_dashboard_html(data: dict) -> str:
     </div>
     <div class="meta">
       API: {budget_status} | Plan: {budget_plan or "N/A"} | Expires: {budget_plan_end[:10] if budget_plan_end else "N/A"}<br/>
-      <a href="/dashboard/ops.json">JSON</a> | <a href="/dashboard/ops/logs">Logs</a>
+      <div style="margin-top: 0.35rem;">
+        <div class="nav-tabs">
+          <a class="nav-link active" data-path="/dashboard/ops" href="/dashboard/ops">Ops</a>
+          <a class="nav-link" data-path="/dashboard/pit" href="/dashboard/pit">PIT</a>
+          <a class="nav-link" data-path="/dashboard/ops/logs" href="/dashboard/ops/logs">Logs</a>
+          <a class="nav-link" data-path="/dashboard/ops.json" href="/dashboard/ops.json">JSON</a>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -3262,6 +3349,21 @@ def _render_ops_dashboard_html(data: dict) -> str:
   <div class="footer">
     Refresh: 60s | Cache TTL: {_ops_dashboard_cache["ttl"]}s
   </div>
+
+  <script>
+    // Preserve ?token= across dashboard navigation (for convenience).
+    // Prefer X-Dashboard-Token header in production.
+    (function() {{
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get('token');
+      if (!token) return;
+      document.querySelectorAll('a.nav-link').forEach(a => {{
+        const path = a.getAttribute('data-path');
+        if (!path) return;
+        a.setAttribute('href', path + '?token=' + encodeURIComponent(token));
+      }});
+    }})();
+  </script>
 </body>
 </html>"""
     return html
@@ -3370,6 +3472,34 @@ async def ops_dashboard_logs_html(
     .btn {{ background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.35); color: var(--text); padding: 0.5rem 0.75rem; border-radius: 0.6rem; cursor:pointer; }}
     .btn:hover {{ background: rgba(59,130,246,0.25); }}
     .hint {{ color: var(--muted); font-size: 0.85rem; }}
+    .nav-tabs {{
+      display: inline-flex;
+      gap: 0.35rem;
+      padding: 0.35rem;
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      background: rgba(30, 41, 59, 0.55);
+    }}
+    .nav-tabs a {{
+      display: inline-flex;
+      align-items: center;
+      padding: 0.35rem 0.6rem;
+      border-radius: 0.6rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-decoration: none;
+      border: 1px solid transparent;
+    }}
+    .nav-tabs a:hover {{
+      color: var(--text);
+      border-color: rgba(59, 130, 246, 0.35);
+      background: rgba(59, 130, 246, 0.12);
+    }}
+    .nav-tabs a.active {{
+      color: var(--text);
+      background: rgba(59, 130, 246, 0.18);
+      border-color: rgba(59, 130, 246, 0.45);
+    }}
   </style>
 </head>
 <body>
@@ -3380,7 +3510,14 @@ async def ops_dashboard_logs_html(
     </div>
     <div class="meta">
       <div>since_minutes={since_minutes} | limit={limit} | level={level or 'INFO+'}</div>
-      <div><a href="/dashboard/ops">Volver a Ops</a> | <a href="{json_link}">JSON</a></div>
+      <div style="margin-top: 0.35rem;">
+        <div class="nav-tabs">
+          <a class="nav-link" data-path="/dashboard/ops" href="/dashboard/ops">Ops</a>
+          <a class="nav-link" data-path="/dashboard/pit" href="/dashboard/pit">PIT</a>
+          <a class="nav-link active" data-path="/dashboard/ops/logs" href="/dashboard/ops/logs">Logs</a>
+          <a class="nav-link" data-path="{json_link}" href="{json_link}">JSON</a>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -3403,7 +3540,37 @@ async def ops_dashboard_logs_html(
       const text = lines.join("\\n");
       navigator.clipboard.writeText(text);
     }}
+
+    // Preserve ?token= across dashboard navigation (for convenience).
+    (function() {{
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get('token');
+      if (!token) return;
+      document.querySelectorAll('a.nav-link').forEach(a => {{
+        const path = a.getAttribute('data-path');
+        if (!path) return;
+        // If data-path already has query params, append with &
+        const joiner = path.includes('?') ? '&' : '?';
+        a.setAttribute('href', path + joiner + 'token=' + encodeURIComponent(token));
+      }});
+    }})();
   </script>
 </body>
 </html>"""
     return HTMLResponse(content=html)
+
+
+@app.get("/dashboard")
+async def dashboard_home(request: Request):
+    """Unified dashboard entrypoint (redirects to Ops)."""
+    from fastapi.responses import RedirectResponse
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    # Preserve token query param if present (convenience). Prefer header in production.
+    token = request.query_params.get("token")
+    target = "/dashboard/ops"
+    if token:
+        target = f"{target}?token={token}"
+    return RedirectResponse(url=target, status_code=307)
