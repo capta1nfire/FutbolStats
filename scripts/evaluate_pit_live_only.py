@@ -99,11 +99,11 @@ async def fetch_pit_data(conn) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-async def fetch_predictions(conn) -> tuple[dict, dict]:
+async def fetch_predictions(conn) -> tuple[list, dict]:
     """
-    Fetch model predictions if available.
+    Fetch all model predictions if available.
     Returns tuple:
-        - dict: match_id -> {home_prob, draw_prob, away_prob, model_version, created_at}
+        - list: all prediction rows [{match_id, home_prob, draw_prob, away_prob, model_version, created_at?}, ...]
         - dict: metadata about prediction integrity
     """
     metadata = {
@@ -122,7 +122,7 @@ async def fetch_predictions(conn) -> tuple[dict, dict]:
     exists = await conn.fetchval(check_query)
 
     if not exists:
-        return {}, metadata
+        return [], metadata
 
     metadata['table_exists'] = True
 
@@ -140,8 +140,10 @@ async def fetch_predictions(conn) -> tuple[dict, dict]:
         query = """
             SELECT match_id, home_prob, draw_prob, away_prob, model_version, created_at
             FROM predictions
+            ORDER BY match_id, created_at DESC
         """
-        metadata['pit_prediction_integrity'] = 'timestamped'
+        # Will be set to 'enforced' after filtering
+        metadata['pit_prediction_integrity'] = 'timestamped_not_enforced'
     else:
         query = """
             SELECT match_id, home_prob, draw_prob, away_prob, model_version
@@ -151,9 +153,54 @@ async def fetch_predictions(conn) -> tuple[dict, dict]:
 
     try:
         rows = await conn.fetch(query)
-        return {r['match_id']: dict(r) for r in rows}, metadata
+        return [dict(r) for r in rows], metadata
     except Exception:
-        return {}, metadata
+        return [], metadata
+
+
+def get_pit_safe_prediction(predictions_list: list, match_id: int, snapshot_at) -> dict | None:
+    """
+    Get the most recent prediction for match_id where created_at <= snapshot_at.
+    Returns None if no PIT-safe prediction exists.
+
+    Args:
+        predictions_list: List of all predictions (sorted by match_id, created_at DESC)
+        match_id: The match to find prediction for
+        snapshot_at: The snapshot timestamp (prediction must be created before this)
+
+    Returns:
+        The PIT-safe prediction dict, or None if not found
+    """
+    # Filter predictions for this match
+    match_preds = [p for p in predictions_list if p['match_id'] == match_id]
+
+    if not match_preds:
+        return None
+
+    # If no created_at column, we can't enforce PIT - return latest (but flag it)
+    if 'created_at' not in match_preds[0] or match_preds[0].get('created_at') is None:
+        return match_preds[0]  # Return first (most recent), but integrity won't be 'enforced'
+
+    # Handle timezone-naive comparison
+    snapshot_at_naive = snapshot_at
+    if hasattr(snapshot_at, 'tzinfo') and snapshot_at.tzinfo is not None:
+        snapshot_at_naive = snapshot_at.replace(tzinfo=None)
+
+    # Find most recent prediction created before snapshot_at
+    for pred in match_preds:  # Already sorted DESC by created_at
+        pred_created = pred['created_at']
+        if pred_created is None:
+            continue
+
+        # Handle timezone
+        if hasattr(pred_created, 'tzinfo') and pred_created.tzinfo is not None:
+            pred_created = pred_created.replace(tzinfo=None)
+
+        if pred_created <= snapshot_at_naive:
+            return pred
+
+    # No prediction exists before snapshot_at
+    return None
 
 
 def calculate_delta_minutes(snapshot: dict) -> float:
@@ -312,7 +359,7 @@ async def run_evaluation() -> dict:
     try:
         # Fetch data
         snapshots = await fetch_pit_data(conn)
-        predictions, pred_metadata = await fetch_predictions(conn)
+        predictions_list, pred_metadata = await fetch_predictions(conn)
 
         # Coverage stats
         n_total = len(snapshots)
@@ -328,6 +375,44 @@ async def run_evaluation() -> dict:
         valid_pit = [s for s in snapshots if is_pit_valid(s, s['delta_min'])]
         n_valid_10_90 = len(valid_pit)
         n_valid_ideal = sum(1 for s in valid_pit if is_timing_ideal(s['delta_min']))
+
+        # Match predictions to snapshots using PIT-safe logic
+        # Only use predictions created BEFORE the snapshot timestamp
+        pit_safe_predictions = {}  # match_id -> prediction
+        n_no_prediction_asof = 0
+        n_with_prediction_any = 0  # Has prediction but maybe not PIT-safe
+
+        can_enforce_pit = pred_metadata.get('has_created_at', False)
+
+        for s in valid_pit:
+            match_id = s['match_id']
+            snapshot_at = s.get('snapshot_at')
+
+            if can_enforce_pit and snapshot_at:
+                # PIT-safe: only use predictions created before snapshot
+                pred = get_pit_safe_prediction(predictions_list, match_id, snapshot_at)
+                if pred:
+                    pit_safe_predictions[match_id] = pred
+                else:
+                    # Check if there's ANY prediction for this match (just not PIT-safe)
+                    any_pred = [p for p in predictions_list if p['match_id'] == match_id]
+                    if any_pred:
+                        n_with_prediction_any += 1
+                    n_no_prediction_asof += 1
+            else:
+                # No timestamps - can't enforce PIT, use any prediction
+                match_preds = [p for p in predictions_list if p['match_id'] == match_id]
+                if match_preds:
+                    pit_safe_predictions[match_id] = match_preds[0]
+                else:
+                    n_no_prediction_asof += 1
+
+        # Update integrity status
+        if can_enforce_pit:
+            pred_metadata['pit_prediction_integrity'] = 'enforced'
+        pred_metadata['n_predictions_pit_safe'] = len(pit_safe_predictions)
+        pred_metadata['n_no_prediction_asof'] = n_no_prediction_asof
+        pred_metadata['n_had_prediction_but_not_pit_safe'] = n_with_prediction_any
 
         # Timing distribution
         valid_deltas = [s['delta_min'] for s in valid_pit]
@@ -356,8 +441,8 @@ async def run_evaluation() -> dict:
             bookmaker_counts[bm] = bookmaker_counts.get(bm, 0) + 1
         top_bookmakers = sorted(bookmaker_counts.items(), key=lambda x: -x[1])[:10]
 
-        # Brier calculation (for snapshots with model predictions)
-        pit_with_preds = [s for s in valid_pit if s['match_id'] in predictions]
+        # Brier calculation (for snapshots with PIT-safe model predictions)
+        pit_with_preds = [s for s in valid_pit if s['match_id'] in pit_safe_predictions]
 
         brier_results = {
             'n_with_predictions': len(pit_with_preds),
@@ -375,7 +460,7 @@ async def run_evaluation() -> dict:
             y_proba_uniform = []
 
             for s in pit_with_preds:
-                pred = predictions[s['match_id']]
+                pred = pit_safe_predictions[s['match_id']]
                 result = get_result(s)
                 y_true.append(result)
 
@@ -491,7 +576,8 @@ async def run_evaluation() -> dict:
                 'n_pre_kickoff': n_pre_kickoff,
                 'n_pit_valid_10_90': n_valid_10_90,
                 'n_pit_valid_ideal_45_75': n_valid_ideal,
-                'n_with_predictions': len(pit_with_preds),
+                'n_with_pit_safe_predictions': len(pit_with_preds),
+                'n_no_prediction_asof': n_no_prediction_asof,
             },
             'timing_distribution': timing_dist,
             'breakdown_by_league': [{'league_id': lid, 'n': n} for lid, n in top_leagues],
@@ -505,7 +591,7 @@ async def run_evaluation() -> dict:
                 'formal'
             ),
             'prediction_integrity': pred_metadata,
-            'notes': 'read-only evaluation; no writes to DB; probs normalized',
+            'notes': 'read-only evaluation; no writes to DB; probs normalized; PIT integrity enforced (pred.created_at <= snapshot_at)',
         }
 
         return report
@@ -522,12 +608,15 @@ def print_summary(report: dict):
     print("=" * 60)
 
     counts = report.get('counts', {})
+    pred_integrity = report.get('prediction_integrity', {})
     print(f"\nCoverage:")
     print(f"  Total snapshots:     {counts.get('n_total_snapshots', 0)}")
     print(f"  Live:                {counts.get('n_live', 0)}")
     print(f"  Valid PIT (10-90):   {counts.get('n_pit_valid_10_90', 0)}")
     print(f"  Ideal (45-75):       {counts.get('n_pit_valid_ideal_45_75', 0)}")
-    print(f"  With predictions:    {counts.get('n_with_predictions', 0)}")
+    print(f"  PIT-safe preds:      {counts.get('n_with_pit_safe_predictions', 0)}")
+    print(f"  No pred as-of:       {counts.get('n_no_prediction_asof', 0)}")
+    print(f"  PIT integrity:       {pred_integrity.get('pit_prediction_integrity', 'unknown')}")
 
     brier = report.get('brier', {})
     if brier.get('brier_model') is not None:
