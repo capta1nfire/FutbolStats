@@ -21,6 +21,7 @@ class Settings(BaseSettings):
 
     # Rate Limiting (Ultra Plan: 450 r/m, 75K/day)
     API_REQUESTS_PER_MINUTE: int = 450
+    API_DAILY_BUDGET: int = 75000
     RATE_LIMIT_PER_MINUTE: str = "60/minute"
 
     # API Security
@@ -35,6 +36,11 @@ class Settings(BaseSettings):
 
     # Dashboard security
     DASHBOARD_TOKEN: str = ""  # Token for /dashboard/pit access (empty = disabled)
+
+    # Stats Backfill Job Configuration
+    STATS_BACKFILL_ENABLED: bool = True
+    STATS_BACKFILL_LOOKBACK_HOURS: int = 72
+    STATS_BACKFILL_MAX_CALLS_PER_RUN: int = 200
 
     class Config:
         env_file = ".env"

@@ -5,6 +5,7 @@ import logging
 import os
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -15,7 +16,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import AsyncSessionLocal
 from app.etl.pipeline import create_etl_pipeline, ETLPipeline
-from app.etl.api_football import APIFootballProvider
+from app.etl.api_football import APIFootballProvider, APIBudgetExceeded, get_api_budget_status
 from app.features.engineering import FeatureEngineer
 
 logger = logging.getLogger(__name__)
@@ -42,29 +43,79 @@ EXTENDED_LEAGUES = [
     11,   # CONMEBOL Sudamericana
 ]
 
-# League scopes:
-# - LIVE_SYNC_LEAGUES: leagues included in the 1-call global sync (/fixtures?date=...) filter
-#   This is cheap on API calls, but increases DB upserts.
-# - SYNC_LEAGUES: leagues used for per-league sync jobs (daily/weekly). Keep tight.
-# - LINEUP_MONITORING_LEAGUES: leagues eligible for PIT lineup+odds capture jobs.
-LIVE_SYNC_LEAGUES = list(dict.fromkeys(TOP5_LEAGUES + [71, 262, 128, 13, 11]))
+# League scopes (dynamic via LEAGUE_MODE env var):
+# - tracked (default): ALL leagues present in DB (supports "todas las ligas")
+# - extended: EXTENDED_LEAGUES
+# - top5: TOP5_LEAGUES
+#
+# SYNC_LEAGUES is intentionally kept tight for daily/weekly sync jobs.
 SYNC_LEAGUES = TOP5_LEAGUES
-LINEUP_MONITORING_LEAGUES = EXTENDED_LEAGUES
 CURRENT_SEASON = 2025
 
 # Flag to prevent multiple scheduler instances (e.g., with --reload)
 _scheduler_started = False
 scheduler = AsyncIOScheduler()
 
-from typing import Optional
-
 # Global state for live sync tracking
 _last_live_sync: Optional[datetime] = None
+
+# Global state: tracked leagues cache (to support "all leagues" without hardcoding)
+_tracked_leagues_cache: Optional[list[int]] = None
+_tracked_leagues_cache_at: Optional[datetime] = None
+_TRACKED_LEAGUES_TTL_SECONDS = int(os.environ.get("TRACKED_LEAGUES_TTL_SECONDS", "21600"))  # 6h
 
 
 def get_last_sync_time() -> Optional[datetime]:
     """Get the last live sync timestamp (for API endpoint)."""
     return _last_live_sync
+
+
+async def get_tracked_leagues(session) -> list[int]:
+    """
+    Return league_ids we consider "tracked" (all leagues present in DB),
+    cached for TTL to avoid DB churn.
+    """
+    global _tracked_leagues_cache, _tracked_leagues_cache_at
+
+    now = datetime.utcnow()
+    if _tracked_leagues_cache and _tracked_leagues_cache_at:
+        if (now - _tracked_leagues_cache_at).total_seconds() < _TRACKED_LEAGUES_TTL_SECONDS:
+            return _tracked_leagues_cache
+
+    result = await session.execute(text("SELECT DISTINCT league_id FROM matches"))
+    leagues = sorted([row[0] for row in result.fetchall() if row[0] is not None])
+    _tracked_leagues_cache = leagues
+    _tracked_leagues_cache_at = now
+    return leagues
+
+
+def _league_mode() -> str:
+    """
+    Scheduler league mode:
+    - tracked: all leagues present in DB (default)
+    - extended: EXTENDED_LEAGUES list
+    - top5: TOP5_LEAGUES list
+    """
+    return os.environ.get("LEAGUE_MODE", "tracked").strip().lower()
+
+
+async def resolve_live_sync_leagues(session) -> Optional[list[int]]:
+    mode = _league_mode()
+    if mode == "top5":
+        return TOP5_LEAGUES
+    if mode == "extended":
+        return EXTENDED_LEAGUES
+    # tracked (default): all leagues in DB
+    return await get_tracked_leagues(session)
+
+
+async def resolve_lineup_monitoring_leagues(session) -> Optional[list[int]]:
+    mode = _league_mode()
+    if mode == "top5":
+        return TOP5_LEAGUES
+    if mode == "extended":
+        return EXTENDED_LEAGUES
+    return await get_tracked_leagues(session)
 
 
 async def global_sync_today() -> dict:
@@ -83,10 +134,12 @@ async def global_sync_today() -> dict:
         async with AsyncSessionLocal() as session:
             provider = APIFootballProvider()
 
+            league_ids = await resolve_live_sync_leagues(session)
+
             # 1 SINGLE API CALL - all fixtures worldwide, filtered to our leagues
             our_fixtures = await provider.get_fixtures_by_date(
                 date=today,
-                league_ids=LIVE_SYNC_LEAGUES  # Filter in memory
+                league_ids=league_ids  # Filter in memory (tracked/extended/top5)
             )
 
             # Upsert to DB
@@ -114,6 +167,9 @@ async def global_sync_today() -> dict:
             "last_sync_at": _last_live_sync,
         }
 
+    except APIBudgetExceeded as e:
+        logger.warning(f"Global sync stopped: {e}. Budget status: {get_api_budget_status()}")
+        return {"matches_synced": 0, "error": str(e), "budget": get_api_budget_status()}
     except Exception as e:
         logger.error(f"Global sync failed: {e}")
         return {"matches_synced": 0, "error": str(e)}
@@ -259,6 +315,16 @@ _lineup_capture_metrics = {
     "last_reset": None,
 }
 
+# In-memory cooldown to reduce redundant lineup checks (per process).
+# Keyed by external fixture id; value is datetime of last check that found no confirmed lineup.
+_lineup_check_cooldown: dict[int, datetime] = {}
+_LINEUP_COOLDOWN_SECONDS = int(os.environ.get("LINEUP_CHECK_COOLDOWN_SECONDS", "120"))  # 2 min
+
+# Per-run caps to keep API usage bounded when monitoring "all leagues".
+LINEUP_MAX_LINEUPS_PER_RUN_CRITICAL = int(os.environ.get("LINEUP_MAX_LINEUPS_PER_RUN_CRITICAL", "20"))
+LINEUP_MAX_LINEUPS_PER_RUN_FULL = int(os.environ.get("LINEUP_MAX_LINEUPS_PER_RUN_FULL", "10"))
+LINEUP_MAX_ODDS_PER_RUN = int(os.environ.get("LINEUP_MAX_ODDS_PER_RUN", "10"))
+
 
 def get_lineup_capture_metrics() -> dict:
     """Get current lineup capture metrics for weekly report."""
@@ -346,6 +412,11 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
     try:
         async with AsyncSessionLocal() as session:
             now = datetime.utcnow()
+            try:
+                league_ids = await resolve_lineup_monitoring_leagues(session)
+            except Exception as e:
+                logger.warning(f"Could not resolve tracked leagues; falling back to EXTENDED_LEAGUES: {e}")
+                league_ids = EXTENDED_LEAGUES
 
             # ADAPTIVE WINDOW based on mode:
             # - Critical mode: Only 45-90 min window (aggressive 60s polling)
@@ -374,7 +445,7 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                 FROM matches m
                 WHERE m.date BETWEEN :window_start AND :window_end
                   AND m.status = 'NS'
-                  AND m.league_id = ANY(:league_ids)
+                  AND (:league_ids_is_null = TRUE OR m.league_id = ANY(:league_ids))
                   AND NOT EXISTS (
                       SELECT 1 FROM odds_snapshots os
                       WHERE os.match_id = m.id
@@ -395,7 +466,8 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
             """), {
                 "window_start": window_start,
                 "window_end": window_end,
-                "league_ids": LINEUP_MONITORING_LEAGUES
+                "league_ids": league_ids,
+                "league_ids_is_null": league_ids is None,
             })
 
             matches = result.fetchall()
@@ -410,9 +482,9 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                 )
 
             # Limit processing to avoid API rate limits
-            # Critical mode: Process all (should be fewer matches in narrow window)
-            # Full mode: Max 30 matches per run
-            max_matches = 50 if critical_window_only else 30
+            # Hard cap per run (independent of match count) to keep API bounded when tracking all leagues.
+            max_lineup_checks = LINEUP_MAX_LINEUPS_PER_RUN_CRITICAL if critical_window_only else LINEUP_MAX_LINEUPS_PER_RUN_FULL
+            max_matches = max_lineup_checks  # 1 lineup call per match baseline
             if len(matches) > max_matches:
                 logger.warning(
                     f"{log_prefix} Too many matches ({len(matches)}), processing first {max_matches} "
@@ -427,12 +499,24 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
             provider = APIFootballProvider()
 
             try:
+                lineup_calls = 0
+                odds_calls = 0
                 for match in matches:
                     match_id = match.id
                     external_id = match.external_id
                     checked_count += 1
 
                     try:
+                        # Cooldown: if we recently checked this fixture and it wasn't confirmed, skip.
+                        if external_id:
+                            last = _lineup_check_cooldown.get(int(external_id))
+                            if last and (datetime.utcnow() - last).total_seconds() < _LINEUP_COOLDOWN_SECONDS:
+                                continue
+
+                        # Per-run cap (lineups)
+                        if lineup_calls >= max_lineup_checks:
+                            break
+
                         # Track start time for latency measurement
                         capture_start_time = datetime.utcnow()
 
@@ -442,6 +526,7 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                         for attempt in range(max_retries):
                             try:
                                 lineup_data = await provider.get_lineups(external_id)
+                                lineup_calls += 1
                                 break
                             except Exception as e:
                                 error_str = str(e).lower()
@@ -468,6 +553,8 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
 
                         if not lineup_data:
                             # Lineup not yet announced
+                            if external_id:
+                                _lineup_check_cooldown[int(external_id)] = datetime.utcnow()
                             continue
 
                         # Check if we have valid starting XI
@@ -475,6 +562,8 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                         away_lineup = lineup_data.get("away")
 
                         if not home_lineup or not away_lineup:
+                            if external_id:
+                                _lineup_check_cooldown[int(external_id)] = datetime.utcnow()
                             continue
 
                         home_xi = home_lineup.get("starting_xi", [])
@@ -492,6 +581,8 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
 
                         # Consider lineup confirmed if we have 11 players for each team
                         if len(home_xi) < 11 or len(away_xi) < 11:
+                            if external_id:
+                                _lineup_check_cooldown[int(external_id)] = datetime.utcnow()
                             continue
 
                         # Validate data quality: check for None player IDs
@@ -512,7 +603,12 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                         # PRIMARY: Get LIVE odds from API-Football (most accurate)
                         # CRITICAL: We MUST have fresh odds for valid baseline measurement
                         # Priority: Bet365 > Pinnacle > 1xBet (sharp bookmakers)
+                        if odds_calls >= LINEUP_MAX_ODDS_PER_RUN:
+                            logger.info(f"{log_prefix} Odds cap reached ({LINEUP_MAX_ODDS_PER_RUN}), deferring odds capture.")
+                            continue
+
                         fresh_odds = await provider.get_odds(external_id)
+                        odds_calls += 1
 
                         if fresh_odds and fresh_odds.get("odds_home"):
                             odds_home = float(fresh_odds["odds_home"])
@@ -674,9 +770,14 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
             return {
                 "checked": checked_count,
                 "captured": captured_count,
+                "lineup_calls": lineup_calls,
+                "odds_calls": odds_calls,
                 "errors": errors[:5] if errors else None,
             }
 
+    except APIBudgetExceeded as e:
+        logger.warning(f"Lineup monitoring stopped: {e}. Budget status: {get_api_budget_status()}")
+        return {"checked": checked_count, "captured": captured_count, "error": str(e), "budget": get_api_budget_status()}
     except Exception as e:
         logger.error(f"monitor_lineups_and_capture_odds failed: {e}")
         return {"checked": 0, "captured": 0, "error": str(e)}
@@ -715,6 +816,7 @@ async def capture_market_movement_snapshots() -> dict:
     try:
         async with AsyncSessionLocal() as session:
             now = datetime.utcnow()
+            league_ids = await resolve_lineup_monitoring_leagues(session)
 
             # Get matches that have lineup_confirmed but need market movement data
             # Focus on matches 5-65 minutes from now (covers all buckets)
@@ -729,12 +831,13 @@ async def capture_market_movement_snapshots() -> dict:
                   AND m.status = 'NS'
                   AND m.lineup_confirmed = TRUE
                   AND m.market_movement_complete = FALSE
-                  AND m.league_id = ANY(:league_ids)
+                  AND (:league_ids_is_null = TRUE OR m.league_id = ANY(:league_ids))
                 ORDER BY m.date
             """), {
                 "window_start": window_start,
                 "window_end": window_end,
-                "league_ids": EXTENDED_LEAGUES
+                "league_ids": league_ids,
+                "league_ids_is_null": league_ids is None,
             })
 
             matches = result.fetchall()
@@ -745,6 +848,8 @@ async def capture_market_movement_snapshots() -> dict:
             provider = APIFootballProvider()
 
             try:
+                api_calls_this_run = 0
+                MAX_API_CALLS_PER_RUN = int(os.environ.get("MARKET_MOVEMENT_MAX_CALLS", "15"))
                 for match in matches:
                     match_id = match.id
                     external_id = match.external_id
@@ -771,8 +876,12 @@ async def capture_market_movement_snapshots() -> dict:
                     if existing.fetchone():
                         continue
 
+                    if api_calls_this_run >= MAX_API_CALLS_PER_RUN:
+                        break
+
                     # Fetch fresh odds
                     fresh_odds = await provider.get_odds(external_id)
+                    api_calls_this_run += 1
 
                     if not fresh_odds or not fresh_odds.get("odds_home"):
                         continue
@@ -856,6 +965,9 @@ async def capture_market_movement_snapshots() -> dict:
 
             return {"checked": checked_count, "captured": captured_count}
 
+    except APIBudgetExceeded as e:
+        logger.warning(f"Market movement stopped: {e}. Budget status: {get_api_budget_status()}")
+        return {"checked": checked_count, "captured": captured_count, "error": str(e), "budget": get_api_budget_status()}
     except Exception as e:
         logger.error(f"capture_market_movement_snapshots failed: {e}")
         return {"checked": 0, "captured": 0, "error": str(e)}
@@ -920,6 +1032,7 @@ async def capture_lineup_relative_movement() -> dict:
     try:
         async with AsyncSessionLocal() as session:
             now = datetime.utcnow()
+            league_ids = await resolve_lineup_monitoring_leagues(session)
 
             # Find matches that have lineup_confirmed but need movement tracking
             # We need matches where:
@@ -950,7 +1063,7 @@ async def capture_lineup_relative_movement() -> dict:
                   AND os.snapshot_type = 'lineup_confirmed'
                   AND COALESCE(m.lineup_movement_tracked, FALSE) = FALSE
                   AND os.snapshot_at IS NOT NULL
-                  AND m.league_id = ANY(:league_ids)
+                  AND (:league_ids_is_null = TRUE OR m.league_id = ANY(:league_ids))
                   -- TTL: Only process if lineup was detected in last 45 minutes
                   -- (enough time for L-30 to L+10 window)
                   AND os.snapshot_at > NOW() - INTERVAL '45 minutes'
@@ -958,7 +1071,7 @@ async def capture_lineup_relative_movement() -> dict:
                   AND m.date > NOW() - INTERVAL '15 minutes'
                 ORDER BY os.snapshot_at DESC
                 LIMIT 20
-            """), {"league_ids": EXTENDED_LEAGUES})
+            """), {"league_ids": league_ids, "league_ids_is_null": league_ids is None})
 
             matches = result.fetchall()
 
@@ -1176,6 +1289,9 @@ async def capture_lineup_relative_movement() -> dict:
 
             return {"checked": checked_count, "captured": captured_count}
 
+    except APIBudgetExceeded as e:
+        logger.warning(f"Lineup-relative movement stopped: {e}. Budget status: {get_api_budget_status()}")
+        return {"checked": checked_count, "captured": captured_count, "error": str(e), "budget": get_api_budget_status()}
     except Exception as e:
         logger.error(f"capture_lineup_relative_movement failed: {e}")
         return {"checked": 0, "captured": 0, "error": str(e)}
@@ -1458,6 +1574,187 @@ async def weekly_recalibration(ml_engine):
 
     except Exception as e:
         logger.error(f"Weekly recalibration failed: {e}")
+
+
+# =============================================================================
+# FINISHED MATCH STATS BACKFILL
+# =============================================================================
+# Captures post-match statistics (possession, shots, corners, cards, etc.)
+# for recently finished matches that don't have stats yet.
+# Uses APIFootballProvider.get_fixture_statistics() which already exists.
+
+async def capture_finished_match_stats() -> dict:
+    """
+    Backfill job to fetch detailed statistics for recently finished matches.
+
+    This job:
+    1. Selects matches with status FT/AET/PEN in last N hours without stats
+    2. Fetches statistics from API-Football per external_id
+    3. Updates matches.stats with the JSON dict {home: {...}, away: {...}}
+
+    Guardrails:
+    - STATS_BACKFILL_ENABLED: If false, job returns immediately
+    - STATS_BACKFILL_MAX_CALLS_PER_RUN: Hard cap on API calls per run
+    - STATS_BACKFILL_LOOKBACK_HOURS: Only look at matches this recent
+    - Respects global API budget (APIBudgetExceeded)
+    - Auto-throttle on 429 errors
+
+    Run frequency: Every 60 minutes (configurable)
+    """
+    import json
+    import os
+    from datetime import datetime
+    from pathlib import Path
+
+    from app.config import get_settings
+
+    settings = get_settings()
+
+    # Check if job is enabled
+    enabled = os.environ.get("STATS_BACKFILL_ENABLED", str(settings.STATS_BACKFILL_ENABLED)).lower()
+    if enabled in ("false", "0", "no"):
+        logger.info("Stats backfill job disabled via STATS_BACKFILL_ENABLED=false")
+        return {"status": "disabled"}
+
+    # Get configuration from env or settings
+    lookback_hours = int(os.environ.get("STATS_BACKFILL_LOOKBACK_HOURS", settings.STATS_BACKFILL_LOOKBACK_HOURS))
+    max_calls = int(os.environ.get("STATS_BACKFILL_MAX_CALLS_PER_RUN", settings.STATS_BACKFILL_MAX_CALLS_PER_RUN))
+
+    # Metrics tracking
+    metrics = {
+        "checked": 0,
+        "fetched": 0,
+        "updated": 0,
+        "skipped_already_has_stats": 0,
+        "skipped_no_external_id": 0,
+        "api_calls": 0,
+        "errors_429": 0,
+        "errors_other": 0,
+        "started_at": datetime.utcnow().isoformat(),
+    }
+
+    try:
+        async with AsyncSessionLocal() as session:
+            now = datetime.utcnow()
+
+            # Select finished matches that need stats
+            # - status IN ('FT', 'AET', 'PEN')
+            # - date >= NOW() - INTERVAL lookback_hours
+            # - stats IS NULL OR stats = '{}'
+            # - external_id IS NOT NULL
+            # ORDER BY date DESC (most recent first)
+            # LIMIT max_calls
+            result = await session.execute(text("""
+                SELECT id, external_id, date, status, stats, league_id, home_goals, away_goals
+                FROM matches
+                WHERE status IN ('FT', 'AET', 'PEN')
+                  AND date >= NOW() - INTERVAL ':lookback hours'
+                  AND external_id IS NOT NULL
+                  AND (stats IS NULL OR stats = '{}' OR stats::text = 'null')
+                ORDER BY date DESC
+                LIMIT :max_matches
+            """.replace(":lookback", str(lookback_hours))), {
+                "max_matches": max_calls,
+            })
+
+            matches = result.fetchall()
+            metrics["checked"] = len(matches)
+
+            if not matches:
+                logger.info(f"Stats backfill: No matches need stats (lookback={lookback_hours}h)")
+                return {**metrics, "status": "no_matches"}
+
+            logger.info(f"Stats backfill: Found {len(matches)} matches needing stats")
+
+            # Use APIFootballProvider to fetch stats
+            provider = APIFootballProvider()
+
+            try:
+                for match in matches:
+                    match_id = match.id
+                    external_id = match.external_id
+
+                    if not external_id:
+                        metrics["skipped_no_external_id"] += 1
+                        continue
+
+                    # Double-check: skip if already has stats
+                    if match.stats and match.stats != {} and str(match.stats) != 'null':
+                        metrics["skipped_already_has_stats"] += 1
+                        continue
+
+                    # Check API call cap
+                    if metrics["api_calls"] >= max_calls:
+                        logger.info(f"Stats backfill: Hit call cap ({max_calls}), stopping")
+                        break
+
+                    try:
+                        # Fetch stats from API
+                        stats_data = await provider.get_fixture_statistics(external_id)
+                        metrics["api_calls"] += 1
+                        metrics["fetched"] += 1
+
+                        if not stats_data:
+                            # API returned no stats (match might be too old or stats unavailable)
+                            logger.debug(f"No stats available for match {match_id} (external: {external_id})")
+                            continue
+
+                        # Update matches.stats with the JSON
+                        # _parse_stats already returns {home: {...}, away: {...}}
+                        # Cast explicitly to JSON to avoid Postgres text->json type error
+                        await session.execute(text("""
+                            UPDATE matches
+                            SET stats = CAST(:stats_json AS JSON)
+                            WHERE id = :match_id
+                        """), {
+                            "match_id": match_id,
+                            "stats_json": json.dumps(stats_data),
+                        })
+                        metrics["updated"] += 1
+
+                        logger.debug(f"Updated stats for match {match_id}: {list(stats_data.get('home', {}).keys())}")
+
+                    except Exception as e:
+                        error_str = str(e).lower()
+                        if "429" in error_str or "rate limit" in error_str:
+                            metrics["errors_429"] += 1
+                            logger.warning(f"Stats backfill: 429 rate limit hit, stopping run")
+                            break
+                        else:
+                            metrics["errors_other"] += 1
+                            logger.warning(f"Error fetching stats for match {match_id}: {e}")
+                            continue
+
+                await session.commit()
+
+            finally:
+                await provider.close()
+
+        # Log summary
+        metrics["completed_at"] = datetime.utcnow().isoformat()
+        logger.info(
+            f"Stats backfill complete: "
+            f"checked={metrics['checked']}, fetched={metrics['fetched']}, "
+            f"updated={metrics['updated']}, api_calls={metrics['api_calls']}, "
+            f"errors_429={metrics['errors_429']}, errors_other={metrics['errors_other']}"
+        )
+
+        # Save log file
+        logs_dir = Path("logs")
+        logs_dir.mkdir(exist_ok=True)
+        log_file = logs_dir / f"finished_match_stats_backfill_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.log"
+        with open(log_file, "w") as f:
+            f.write(json.dumps(metrics, indent=2))
+
+        return {**metrics, "status": "completed", "log_file": str(log_file)}
+
+    except APIBudgetExceeded as e:
+        logger.warning(f"Stats backfill stopped: {e}. Budget status: {get_api_budget_status()}")
+        metrics["budget_status"] = get_api_budget_status()
+        return {**metrics, "status": "budget_exceeded", "error": str(e)}
+    except Exception as e:
+        logger.error(f"Stats backfill failed: {e}")
+        return {**metrics, "status": "error", "error": str(e)}
 
 
 # =============================================================================
@@ -1962,6 +2259,17 @@ def start_scheduler(ml_engine):
         replace_existing=True,
     )
 
+    # Finished Match Stats Backfill: Every 60 minutes
+    # Fetches detailed statistics (possession, shots, corners, cards) for finished matches
+    # Guardrails: STATS_BACKFILL_ENABLED, STATS_BACKFILL_MAX_CALLS_PER_RUN (200), lookback 72h
+    scheduler.add_job(
+        capture_finished_match_stats,
+        trigger=IntervalTrigger(minutes=60),
+        id="finished_match_stats_backfill",
+        name="Finished Match Stats Backfill (every 60 min)",
+        replace_existing=True,
+    )
+
     # Weekly PIT Report: Tuesdays 10:00 AM UTC (consolidated weekly report)
     # The ONLY PIT report that gets logged/published - not daily spam
     # Tuesday chosen to include full weekend football data
@@ -1982,6 +2290,7 @@ def start_scheduler(ml_engine):
         "  - Lineup monitoring FULL: Every 2 min (0-120 min window - backup)\n"
         "  - Market movement tracking: Every 5 min (T-60/T-30/T-15/T-5 pre-kickoff)\n"
         "  - Lineup-relative movement: Every 3 min (L-30 to L+10 around lineup)\n"
+        "  - Finished match stats backfill: Every 60 min\n"
         "  - Daily results sync: 6:00 AM UTC\n"
         "  - Daily save predictions: 7:00 AM UTC\n"
         "  - Daily audit: 8:00 AM UTC\n"
