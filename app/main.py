@@ -2655,15 +2655,49 @@ async def _load_ops_data() -> dict:
         stats_with = int(row[0] or 0) if row else 0
         stats_missing = int(row[1] or 0) if row else 0
 
-    # League names (best-effort)
-    # NOTE: COMPETITIONS is a dict[league_id, Competition] in this codebase.
-    league_name_by_id: dict[int, str] = {}
+    # League names - comprehensive fallback for all known leagues
+    # Includes EXTENDED_LEAGUES and other common leagues from API-Football
+    LEAGUE_NAMES_FALLBACK: dict[int, str] = {
+        1: "World Cup",
+        2: "Champions League",
+        3: "Europa League",
+        4: "Euro",
+        5: "Nations League",
+        9: "Copa América",
+        10: "Friendlies",
+        11: "Sudamericana",
+        13: "Libertadores",
+        22: "Gold Cup",
+        28: "WCQ CONMEBOL",
+        29: "WCQ CONCACAF",
+        39: "Premier League",
+        45: "FA Cup",
+        61: "Ligue 1",
+        71: "Brazil Serie A",
+        78: "Bundesliga",
+        88: "Eredivisie",
+        94: "Primeira Liga",
+        128: "Argentina Primera",
+        135: "Serie A",
+        140: "La Liga",
+        143: "Copa del Rey",
+        203: "Super Lig",
+        239: "MLS",
+        253: "MLS",
+        262: "Liga MX",
+        848: "Conference League",
+    }
+
+    # Merge with COMPETITIONS (if available)
+    league_name_by_id: dict[int, str] = LEAGUE_NAMES_FALLBACK.copy()
     try:
-        for league_id, comp in (COMPETITIONS or {}).items():  # type: ignore[union-attr]
+        for league_id, comp in (COMPETITIONS or {}).items():
             if league_id is not None and comp is not None:
-                league_name_by_id[int(league_id)] = getattr(comp, "name", None) or str(league_id)
+                name = getattr(comp, "name", None)
+                if name:
+                    league_name_by_id[int(league_id)] = name
     except Exception:
-        league_name_by_id = {}
+        pass  # Keep fallback names
 
     for item in upcoming_by_league:
         lid = item["league_id"]
@@ -2748,10 +2782,11 @@ def _render_ops_dashboard_html(data: dict) -> str:
     # Tables HTML
     upcoming_rows = ""
     for r in upcoming:
-        name = r.get("league_name") or f"League {r.get('league_id')}"
-        upcoming_rows += f"<tr><td>{name}</td><td>{r.get('league_id')}</td><td>{r.get('upcoming_24h')}</td></tr>"
+        lid = r.get("league_id")
+        name = r.get("league_name") or "Unknown"
+        upcoming_rows += f"<tr><td>{name} ({lid})</td><td>{r.get('upcoming_24h')}</td></tr>"
     if not upcoming_rows:
-        upcoming_rows = "<tr><td colspan='3'>Sin partidos próximos en 24h</td></tr>"
+        upcoming_rows = "<tr><td colspan='2'>Sin partidos próximos en 24h</td></tr>"
 
     dko_rows = ""
     for r in dko:
@@ -2761,12 +2796,13 @@ def _render_ops_dashboard_html(data: dict) -> str:
 
     latest_rows = ""
     for r in latest:
-        name = r.get("league_name") or f"League {r.get('league_id')}"
+        lid = r.get("league_id")
+        name = r.get("league_name") or "Unknown"
         odds = r.get("odds") or {}
         latest_rows += (
             "<tr>"
             f"<td>{r.get('snapshot_at')}</td>"
-            f"<td>{name}</td>"
+            f"<td>{name} ({lid})</td>"
             f"<td>{r.get('odds_freshness')}</td>"
             f"<td>{r.get('delta_to_kickoff_minutes')}</td>"
             f"<td>{odds.get('home')}</td>"
@@ -2914,7 +2950,7 @@ def _render_ops_dashboard_html(data: dict) -> str:
     <div class="table-card">
       <h3>Próximos partidos (24h) por liga</h3>
       <table>
-        <thead><tr><th>Liga</th><th>ID</th><th>Upcoming</th></tr></thead>
+        <thead><tr><th>Liga (ID)</th><th>Upcoming</th></tr></thead>
         <tbody>{upcoming_rows}</tbody>
       </table>
     </div>
