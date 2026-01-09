@@ -2988,6 +2988,8 @@ def _render_ops_dashboard_html(data: dict) -> str:
       border: 1px solid var(--border);
       z-index: 100;
       transition: opacity 0.2s, visibility 0.2s;
+      text-transform: none;
+      letter-spacing: normal;
     }}
     .info-icon .tooltip::after {{
       content: "";
