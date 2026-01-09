@@ -23,6 +23,12 @@ Brier Score (multi-class):
   Brier = sum_{k in {H,D,A}} (p_k - y_k)^2
   where y_k is one-hot encoded actual result
 
+Baseline Comparison (argmax, no EV threshold):
+  - model_pick = argmax(model_probs) - always bet on model's favorite
+  - market_pick = argmax(market_probs) - always bet on market's favorite (de-vig)
+  - N bets = N matches (no "no-bet" scenario)
+  - Fair comparison for calibration quality
+
 Usage:
     python3 scripts/evaluate_pit_ev.py
     python3 scripts/evaluate_pit_ev.py --input data/pit_dataset.duckdb
@@ -371,6 +377,7 @@ def benchmark_model_vs_market(
     delta_ko_max: float = 90.0,
     min_odds: float = 1.20,
     max_odds: float = 5.00,
+    debug_sample: int = 0,
 ) -> dict:
     """
     Benchmark model vs market (de-vig implied probabilities).
@@ -422,8 +429,16 @@ def benchmark_model_vs_market(
     brier_market_sum = 0.0
     overrounds = []
 
+    # EV-threshold strategy stats
     model_stats = {"count": 0, "wins": 0, "returns": []}
     market_stats = {"count": 0, "wins": 0, "returns": []}
+
+    # Baseline argmax stats (always bet on favorite, no threshold)
+    baseline_model = {"count": 0, "wins": 0, "returns": []}
+    baseline_market = {"count": 0, "wins": 0, "returns": []}
+
+    # Debug sample collection
+    debug_rows = []
 
     valid_count = 0
 
@@ -475,8 +490,27 @@ def benchmark_model_vs_market(
         valid_count += 1
 
         # --- Brier scores ---
-        brier_model_sum += calculate_brier_score(model_probs, actual)
-        brier_market_sum += calculate_brier_score(market_probs, actual)
+        brier_row_model = calculate_brier_score(model_probs, actual)
+        brier_row_market = calculate_brier_score(market_probs, actual)
+        brier_model_sum += brier_row_model
+        brier_market_sum += brier_row_market
+
+        # --- Debug sample collection ---
+        if debug_sample > 0 and len(debug_rows) < debug_sample:
+            one_hot = {"H": 0, "D": 0, "A": 0}
+            one_hot[actual] = 1
+            debug_rows.append({
+                "match_id": row["match_id"],
+                "home_team": row["home_team"],
+                "away_team": row["away_team"],
+                "actual_result": actual,
+                "y_onehot": one_hot,
+                "probs_model": {k: round(v, 4) for k, v in model_probs.items()},
+                "probs_market": {k: round(v, 4) for k, v in market_probs.items()},
+                "brier_row_model": round(brier_row_model, 4),
+                "brier_row_market": round(brier_row_market, 4),
+                "overround": round(overround, 4),
+            })
 
         # --- EV-based betting (model) ---
         model_evs = {
@@ -533,6 +567,54 @@ def benchmark_model_vs_market(
                 market_stats["returns"].append(odds[market_best_bet] - 1)
             else:
                 market_stats["returns"].append(-1)
+
+        # --- BASELINE: argmax (always bet on favorite, no threshold) ---
+        # Model pick = argmax(model_probs)
+        model_pick = max(model_probs.items(), key=lambda x: x[1])[0]
+        model_pick_outcome = {"H": "home", "D": "draw", "A": "away"}[model_pick]
+        baseline_model["count"] += 1
+        if actual == model_pick:
+            baseline_model["wins"] += 1
+            baseline_model["returns"].append(odds[model_pick_outcome] - 1)
+        else:
+            baseline_model["returns"].append(-1)
+
+        # Market pick = argmax(market_probs)
+        market_pick = max(market_probs.items(), key=lambda x: x[1])[0]
+        market_pick_outcome = {"H": "home", "D": "draw", "A": "away"}[market_pick]
+        baseline_market["count"] += 1
+        if actual == market_pick:
+            baseline_market["wins"] += 1
+            baseline_market["returns"].append(odds[market_pick_outcome] - 1)
+        else:
+            baseline_market["returns"].append(-1)
+
+    # Print debug sample if requested
+    if debug_sample > 0 and debug_rows:
+        print("\n" + "=" * 80)
+        print(f"BRIER SCORE AUDIT (first {len(debug_rows)} samples)")
+        print("=" * 80)
+        print("\nFormula: Brier = sum_{k in {H,D,A}} (p_k - y_k)^2")
+        print("         where y_k = 1 if k == actual_result, else 0\n")
+
+        for i, dr in enumerate(debug_rows, 1):
+            print(f"--- Sample {i}: {dr['home_team']} vs {dr['away_team']} (match_id={dr['match_id']}) ---")
+            print(f"  actual_result: {dr['actual_result']}")
+            print(f"  y_onehot:      {dr['y_onehot']}")
+            print(f"  probs_model:   {dr['probs_model']}")
+            print(f"  probs_market:  {dr['probs_market']} (overround={dr['overround']:.2%})")
+
+            # Show calculation step by step
+            y = dr["y_onehot"]
+            pm = dr["probs_model"]
+            pmkt = dr["probs_market"]
+            calc_model = f"({pm['H']}-{y['H']})² + ({pm['D']}-{y['D']})² + ({pm['A']}-{y['A']})²"
+            calc_market = f"({pmkt['H']}-{y['H']})² + ({pmkt['D']}-{y['D']})² + ({pmkt['A']}-{y['A']})²"
+            print(f"  brier_model:   {calc_model} = {dr['brier_row_model']:.4f}")
+            print(f"  brier_market:  {calc_market} = {dr['brier_row_market']:.4f}")
+            print()
+
+        print("=" * 80 + "\n")
 
     if valid_count == 0:
         return {"error": "No valid records with results"}
@@ -603,17 +685,74 @@ def benchmark_model_vs_market(
             "roi": 0, "roi_ci": [0, 0], "total_pnl": 0,
         })
 
-    # Calculate delta ROI
+    # Calculate delta ROI (EV-threshold strategy)
     delta_roi = model_result["roi"] - market_result["roi"]
+
+    # --- Baseline argmax results ---
+    baseline_model_result = {
+        "n_bets": baseline_model["count"],
+        "wins": baseline_model["wins"],
+    }
+    if baseline_model["count"] > 0:
+        win_rate = baseline_model["wins"] / baseline_model["count"]
+        win_ci_low, win_ci_high = calculate_confidence_interval(
+            baseline_model["wins"], baseline_model["count"]
+        )
+        roi_mean, roi_ci_low, roi_ci_high = bootstrap_roi_ci(baseline_model["returns"])
+        baseline_model_result.update({
+            "win_rate": round(win_rate, 4),
+            "win_rate_ci": [round(win_ci_low, 4), round(win_ci_high, 4)],
+            "roi": round(roi_mean, 4),
+            "roi_ci": [round(roi_ci_low, 4), round(roi_ci_high, 4)],
+            "total_pnl": round(sum(baseline_model["returns"]), 2),
+        })
+    else:
+        baseline_model_result.update({
+            "win_rate": 0, "win_rate_ci": [0, 0],
+            "roi": 0, "roi_ci": [0, 0], "total_pnl": 0,
+        })
+
+    baseline_market_result = {
+        "n_bets": baseline_market["count"],
+        "wins": baseline_market["wins"],
+    }
+    if baseline_market["count"] > 0:
+        win_rate = baseline_market["wins"] / baseline_market["count"]
+        win_ci_low, win_ci_high = calculate_confidence_interval(
+            baseline_market["wins"], baseline_market["count"]
+        )
+        roi_mean, roi_ci_low, roi_ci_high = bootstrap_roi_ci(baseline_market["returns"])
+        baseline_market_result.update({
+            "win_rate": round(win_rate, 4),
+            "win_rate_ci": [round(win_ci_low, 4), round(win_ci_high, 4)],
+            "roi": round(roi_mean, 4),
+            "roi_ci": [round(roi_ci_low, 4), round(roi_ci_high, 4)],
+            "total_pnl": round(sum(baseline_market["returns"]), 2),
+        })
+    else:
+        baseline_market_result.update({
+            "win_rate": 0, "win_rate_ci": [0, 0],
+            "roi": 0, "roi_ci": [0, 0], "total_pnl": 0,
+        })
+
+    baseline_delta_roi = baseline_model_result["roi"] - baseline_market_result["roi"]
 
     return {
         "n_matches": valid_count,
         "overround": overround_stats,
+        # EV-threshold strategy
         "model": model_result,
         "market": market_result,
         "delta": {
             "brier": round(delta_brier, 4),  # Positive = model better
             "roi": round(delta_roi, 4),      # Positive = model better
+        },
+        # Baseline (argmax, no threshold)
+        "baseline": {
+            "description": "argmax pick (always bet on favorite, no EV threshold)",
+            "model": baseline_model_result,
+            "market": baseline_market_result,
+            "delta_roi": round(baseline_delta_roi, 4),
         },
     }
 
@@ -715,13 +854,37 @@ def generate_report(
         print("-" * 70)
 
         delta_roi = benchmark["delta"]["roi"]
-        print(f"\nDelta ROI: {delta_roi:+.2%}", end="")
+        print(f"\nDelta ROI (EV strategy): {delta_roi:+.2%}", end="")
         if delta_roi > 0:
             print(" (model outperforms market)")
         elif delta_roi < 0:
             print(" (market outperforms model)")
         else:
             print(" (no difference)")
+
+        # Baseline section (argmax, no threshold)
+        if "baseline" in benchmark:
+            bl = benchmark["baseline"]
+            print(f"\n--- BASELINE: {bl['description']} ---")
+            print("-" * 70)
+            print(f"{'Source':<12} {'Bets':>6} {'Wins':>6} {'Win%':>8} {'Win% CI':>16} {'ROI':>8} {'ROI CI':>16} {'P&L':>8}")
+            print("-" * 70)
+
+            for src_name, src_data in [("MODEL", bl["model"]), ("MARKET", bl["market"])]:
+                if src_data.get("n_bets", 0) > 0:
+                    win_ci = f"[{src_data['win_rate_ci'][0]:.1%}, {src_data['win_rate_ci'][1]:.1%}]"
+                    roi_ci = f"[{src_data['roi_ci'][0]:.1%}, {src_data['roi_ci'][1]:.1%}]"
+                    print(f"{src_name:<12} {src_data['n_bets']:>6} {src_data['wins']:>6} {src_data['win_rate']:>7.1%} {win_ci:>16} {src_data['roi']:>7.1%} {roi_ci:>16} {src_data['total_pnl']:>+8.2f}")
+
+            print("-" * 70)
+            bl_delta = bl["delta_roi"]
+            print(f"Delta ROI (baseline): {bl_delta:+.2%}", end="")
+            if bl_delta > 0:
+                print(" (model pick > market pick)")
+            elif bl_delta < 0:
+                print(" (market pick > model pick)")
+            else:
+                print(" (no difference)")
 
     print("\n" + "=" * 70)
 
@@ -763,6 +926,12 @@ def main():
         default=5.00,
         help="Maximum odds to consider (default: 5.00)"
     )
+    parser.add_argument(
+        "--debug-sample",
+        type=int,
+        default=0,
+        help="Print N sample rows for Brier score audit (default: 0 = off)"
+    )
     args = parser.parse_args()
 
     logger.info(f"Loading PIT dataset from: {args.input}")
@@ -789,6 +958,7 @@ def main():
         delta_ko_max=args.delta_ko_max,
         min_odds=args.min_odds,
         max_odds=args.max_odds,
+        debug_sample=args.debug_sample,
     )
 
     con.close()
