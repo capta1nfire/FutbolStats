@@ -46,6 +46,7 @@ OPS_LOG_DEFAULT_SINCE_MINUTES = int(os.environ.get("OPS_LOG_DEFAULT_SINCE_MINUTE
 
 _ops_log_buffer: "deque[dict]" = deque(maxlen=OPS_LOG_BUFFER_MAX)
 _ops_log_handler_installed = False
+_seen_scheduler_started = False  # Deduplicate "Scheduler started" (show only once per deploy)
 
 
 def _is_relevant_ops_log(record: logging.LogRecord, message: str) -> bool:
@@ -74,6 +75,9 @@ def _is_relevant_ops_log(record: logging.LogRecord, message: str) -> bool:
         "Job ",
         "HTTP Request: GET",
         "HTTP Request: POST",
+        # Global sync spam (keep only "complete" and "Filtered to")
+        "Global sync: Fetching all fixtures",
+        "Global sync: Received",
     ]
     if any(s in msg for s in spam_substrings):
         return False
@@ -112,6 +116,8 @@ def _is_relevant_ops_log(record: logging.LogRecord, message: str) -> bool:
 
 class OpsLogBufferHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
+        global _seen_scheduler_started
+
         try:
             message = record.getMessage()
         except Exception:
@@ -119,6 +125,12 @@ class OpsLogBufferHandler(logging.Handler):
 
         if not _is_relevant_ops_log(record, message):
             return
+
+        # Deduplicate "Scheduler started" - show only once per deploy
+        if "Scheduler started:" in message:
+            if _seen_scheduler_started:
+                return  # Skip duplicate
+            _seen_scheduler_started = True
 
         ts = getattr(record, "created", None)
         dt = datetime.utcfromtimestamp(ts) if isinstance(ts, (int, float)) else datetime.utcnow()
@@ -148,6 +160,7 @@ def _get_ops_logs(
     since_minutes: int = OPS_LOG_DEFAULT_SINCE_MINUTES,
     limit: int = OPS_LOG_DEFAULT_LIMIT,
     level: Optional[str] = None,
+    compact: bool = False,
 ) -> list[dict]:
     # Copy without holding locks (deque ops are atomic-ish for append; acceptable for dashboard use)
     rows = list(_ops_log_buffer)
@@ -172,6 +185,32 @@ def _get_ops_logs(
         min_lvl = order.get(level)
         if min_lvl is not None:
             filtered = [r for r in filtered if order.get(r.get("level", "INFO"), 20) >= min_lvl]
+
+    # Compact mode: group by message, show count + first/last timestamp
+    if compact:
+        from collections import OrderedDict
+        groups: OrderedDict[str, dict] = OrderedDict()
+        for r in filtered:
+            msg = r.get("message", "")
+            # Normalize message for grouping (remove variable parts like match counts)
+            # Keep first 80 chars for grouping key
+            key = msg[:80] if len(msg) > 80 else msg
+            if key not in groups:
+                groups[key] = {
+                    "message": msg,
+                    "level": r.get("level"),
+                    "logger": r.get("logger"),
+                    "count": 1,
+                    "first_ts": r.get("ts_utc"),
+                    "last_ts": r.get("ts_utc"),
+                }
+            else:
+                groups[key]["count"] += 1
+                groups[key]["last_ts"] = r.get("ts_utc")
+        # Sort by last_ts descending (newest groups first)
+        result = list(groups.values())
+        result.sort(key=lambda x: x.get("last_ts", ""), reverse=True)
+        return result[: max(1, int(limit))]
 
     # Newest first
     filtered.reverse()
@@ -3577,16 +3616,19 @@ async def ops_dashboard_logs_json(
     limit: int = OPS_LOG_DEFAULT_LIMIT,
     since_minutes: int = OPS_LOG_DEFAULT_SINCE_MINUTES,
     level: Optional[str] = None,
+    mode: Optional[str] = None,
 ):
-    """Filtered in-memory ops logs (copy/paste friendly)."""
+    """Filtered in-memory ops logs (copy/paste friendly). Use mode=compact for grouped view."""
     if not _verify_dashboard_token(request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+    compact = mode == "compact"
     return {
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "limit": limit,
         "since_minutes": since_minutes,
         "level": level,
-        "entries": _get_ops_logs(since_minutes=since_minutes, limit=limit, level=level),
+        "mode": mode,
+        "entries": _get_ops_logs(since_minutes=since_minutes, limit=limit, level=level, compact=compact),
     }
 
 
@@ -3596,29 +3638,47 @@ async def ops_dashboard_logs_html(
     limit: int = OPS_LOG_DEFAULT_LIMIT,
     since_minutes: int = OPS_LOG_DEFAULT_SINCE_MINUTES,
     level: Optional[str] = None,
+    mode: Optional[str] = None,
 ):
-    """HTML view of filtered in-memory ops logs."""
+    """HTML view of filtered in-memory ops logs. Use mode=compact for grouped view."""
     from fastapi.responses import HTMLResponse
 
     if not _verify_dashboard_token(request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
-    entries = _get_ops_logs(since_minutes=since_minutes, limit=limit, level=level)
+    compact = mode == "compact"
+    entries = _get_ops_logs(since_minutes=since_minutes, limit=limit, level=level, compact=compact)
 
     rows_html = ""
-    for e in entries:
-        rows_html += (
-            "<tr>"
-            f"<td>{e.get('ts_utc')}</td>"
-            f"<td>{e.get('level')}</td>"
-            f"<td>{e.get('logger')}</td>"
-            f"<td style='white-space: pre-wrap;'>{e.get('message')}</td>"
-            "</tr>"
-        )
+    if compact:
+        # Compact mode: show count, first_ts, last_ts
+        for e in entries:
+            count = e.get("count", 1)
+            count_badge = f"<span style='background: rgba(59,130,246,0.25); padding: 0.15rem 0.4rem; border-radius: 0.3rem; font-size: 0.8rem;'>×{count}</span>" if count > 1 else ""
+            rows_html += (
+                "<tr>"
+                f"<td>{e.get('first_ts', '')[:19]}</td>"
+                f"<td>{e.get('last_ts', '')[:19] if count > 1 else ''}</td>"
+                f"<td>{count_badge}</td>"
+                f"<td>{e.get('level')}</td>"
+                f"<td style='white-space: pre-wrap;'>{e.get('message')}</td>"
+                "</tr>"
+            )
+    else:
+        for e in entries:
+            rows_html += (
+                "<tr>"
+                f"<td>{e.get('ts_utc')}</td>"
+                f"<td>{e.get('level')}</td>"
+                f"<td>{e.get('logger')}</td>"
+                f"<td style='white-space: pre-wrap;'>{e.get('message')}</td>"
+                "</tr>"
+            )
     if not rows_html:
-        rows_html = "<tr><td colspan='4'>Sin eventos relevantes en el buffer (aún).</td></tr>"
+        cols = 5 if compact else 4
+        rows_html = f"<tr><td colspan='{cols}'>Sin eventos relevantes en el buffer (aún).</td></tr>"
 
-    json_link = f"/dashboard/ops/logs.json?limit={limit}&since_minutes={since_minutes}" + (f"&level={level}" if level else "")
+    json_link = f"/dashboard/ops/logs.json?limit={limit}&since_minutes={since_minutes}" + (f"&level={level}" if level else "") + (f"&mode={mode}" if mode else "")
 
     html = f"""<!DOCTYPE html>
 <html lang="es">
@@ -3679,11 +3739,11 @@ async def ops_dashboard_logs_html(
 <body>
   <div class="header">
     <div>
-      <h2>Logs relevantes (Ops)</h2>
+      <h2>Logs relevantes (Ops){' - Compact' if compact else ''}</h2>
       <div class="hint">Solo eventos de captura/sync/movement/budget/errores. Se excluye spam de apscheduler/httpx.</div>
     </div>
     <div class="meta">
-      <div>since_minutes={since_minutes} | limit={limit} | level={level or 'INFO+'}</div>
+      <div>since_minutes={since_minutes} | limit={limit} | level={level or 'INFO+'} | mode={mode or 'normal'}</div>
       <div style="margin-top: 0.35rem;">
         <div class="nav-tabs">
           <a class="nav-link" data-path="/dashboard/ops" href="/dashboard/ops">Ops</a>
@@ -3697,12 +3757,15 @@ async def ops_dashboard_logs_html(
 
   <div class="toolbar">
     <button class="btn" onclick="copyLogs()">Copiar (últimos {len(entries)})</button>
-    <div class="hint">Tip: puedes pasar `?level=WARNING` o `?since_minutes=180`.</div>
+    <span class="hint">
+      {'<a href="?since_minutes=' + str(since_minutes) + '&limit=' + str(limit) + ('&level=' + level if level else '') + '">Normal</a>' if compact else '<a href="?since_minutes=' + str(since_minutes) + '&limit=' + str(limit) + ('&level=' + level if level else '') + '&mode=compact">Compact</a>'}
+      | Tip: `?level=WARNING` o `?since_minutes=180`
+    </span>
   </div>
 
   <div class="card">
     <table>
-      <thead><tr><th>ts_utc</th><th>level</th><th>logger</th><th>message</th></tr></thead>
+      <thead><tr>{'<th>first_ts</th><th>last_ts</th><th>count</th><th>level</th><th>message</th>' if compact else '<th>ts_utc</th><th>level</th><th>logger</th><th>message</th>'}</tr></thead>
       <tbody>{rows_html}</tbody>
     </table>
   </div>
