@@ -1,6 +1,7 @@
 """FastAPI application for FutbolStat MVP."""
 
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -11,7 +12,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -2474,4 +2475,495 @@ async def pit_dashboard_json(request: Request):
         "weekly": data.get("weekly"),
         "daily": data.get("daily"),
         "cache_age_seconds": round(time.time() - _pit_dashboard_cache["timestamp"], 1) if _pit_dashboard_cache["timestamp"] else None,
+    }
+
+
+# =============================================================================
+# OPS DASHBOARD (DB-backed, cached)
+# =============================================================================
+
+_ops_dashboard_cache = {
+    "data": None,
+    "timestamp": 0,
+    "ttl": 45,  # seconds
+}
+
+
+async def _load_ops_data() -> dict:
+    """
+    Ops dashboard: read-only aggregated metrics from DB + in-process state.
+    Designed to be lightweight (few aggregated queries) and cached.
+    """
+    now = datetime.utcnow()
+
+    # Budget status (best-effort: may be unavailable during version skew)
+    budget_status: dict = {"status": "unavailable"}
+    try:
+        from app.etl.api_football import get_api_budget_status  # type: ignore
+
+        budget_status = get_api_budget_status()  # type: ignore
+    except Exception:
+        budget_status = {"status": "unavailable"}
+
+    league_mode = os.environ.get("LEAGUE_MODE", "tracked").strip().lower()
+    last_sync = get_last_sync_time()
+
+    async with AsyncSessionLocal() as session:
+        # Tracked leagues (distinct league_id)
+        res = await session.execute(text("SELECT COUNT(DISTINCT league_id) FROM matches WHERE league_id IS NOT NULL"))
+        tracked_leagues_count = int(res.scalar() or 0)
+
+        # Upcoming matches (next 24h)
+        res = await session.execute(
+            text(
+                """
+                SELECT league_id, COUNT(*) AS upcoming
+                FROM matches
+                WHERE league_id IS NOT NULL
+                  AND date >= NOW()
+                  AND date < NOW() + INTERVAL '24 hours'
+                GROUP BY league_id
+                ORDER BY upcoming DESC
+                LIMIT 20
+                """
+            )
+        )
+        upcoming_by_league = [{"league_id": int(r[0]), "upcoming_24h": int(r[1])} for r in res.fetchall()]
+
+        # PIT snapshots (live, lineup_confirmed)
+        res = await session.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM odds_snapshots
+                WHERE snapshot_type = 'lineup_confirmed'
+                  AND odds_freshness = 'live'
+                  AND snapshot_at > NOW() - INTERVAL '60 minutes'
+                """
+            )
+        )
+        pit_live_60m = int(res.scalar() or 0)
+
+        res = await session.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM odds_snapshots
+                WHERE snapshot_type = 'lineup_confirmed'
+                  AND odds_freshness = 'live'
+                  AND snapshot_at > NOW() - INTERVAL '24 hours'
+                """
+            )
+        )
+        pit_live_24h = int(res.scalar() or 0)
+
+        # ΔKO distribution (last 60m)
+        res = await session.execute(
+            text(
+                """
+                SELECT ROUND(delta_to_kickoff_seconds / 60.0) AS min_to_ko, COUNT(*) AS c
+                FROM odds_snapshots
+                WHERE snapshot_type = 'lineup_confirmed'
+                  AND odds_freshness = 'live'
+                  AND snapshot_at > NOW() - INTERVAL '60 minutes'
+                  AND delta_to_kickoff_seconds IS NOT NULL
+                GROUP BY 1
+                ORDER BY 1
+                """
+            )
+        )
+        pit_dko_60m = [{"min_to_ko": int(r[0]), "count": int(r[1])} for r in res.fetchall()]
+
+        # Latest PIT snapshots (last 10, any freshness)
+        res = await session.execute(
+            text(
+                """
+                SELECT os.snapshot_at, os.match_id, m.league_id, os.odds_freshness, os.delta_to_kickoff_seconds,
+                       os.odds_home, os.odds_draw, os.odds_away, os.bookmaker
+                FROM odds_snapshots os
+                JOIN matches m ON m.id = os.match_id
+                WHERE os.snapshot_type = 'lineup_confirmed'
+                ORDER BY os.snapshot_at DESC
+                LIMIT 10
+                """
+            )
+        )
+        latest_pit = []
+        for r in res.fetchall():
+            latest_pit.append(
+                {
+                    "snapshot_at": r[0].isoformat() if r[0] else None,
+                    "match_id": int(r[1]) if r[1] is not None else None,
+                    "league_id": int(r[2]) if r[2] is not None else None,
+                    "odds_freshness": r[3],
+                    "delta_to_kickoff_minutes": round(float(r[4]) / 60.0, 1) if r[4] is not None else None,
+                    "odds": {
+                        "home": float(r[5]) if r[5] is not None else None,
+                        "draw": float(r[6]) if r[6] is not None else None,
+                        "away": float(r[7]) if r[7] is not None else None,
+                    },
+                    "bookmaker": r[8],
+                }
+            )
+
+        # Movement snapshots (last 24h)
+        lineup_movement_24h = None
+        market_movement_24h = None
+        try:
+            res = await session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM lineup_movement_snapshots
+                    WHERE captured_at > NOW() - INTERVAL '24 hours'
+                    """
+                )
+            )
+            lineup_movement_24h = int(res.scalar() or 0)
+        except Exception:
+            lineup_movement_24h = None
+
+        try:
+            res = await session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM market_movement_snapshots
+                    WHERE captured_at > NOW() - INTERVAL '24 hours'
+                    """
+                )
+            )
+            market_movement_24h = int(res.scalar() or 0)
+        except Exception:
+            market_movement_24h = None
+
+        # Stats backfill health (last 72h finished matches)
+        res = await session.execute(
+            text(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE stats IS NOT NULL AND stats::text != '{}' AND stats::text != 'null') AS with_stats,
+                    COUNT(*) FILTER (WHERE stats IS NULL OR stats::text = '{}' OR stats::text = 'null') AS missing_stats
+                FROM matches
+                WHERE status IN ('FT', 'AET', 'PEN')
+                  AND date > NOW() - INTERVAL '72 hours'
+                """
+            )
+        )
+        row = res.first()
+        stats_with = int(row[0] or 0) if row else 0
+        stats_missing = int(row[1] or 0) if row else 0
+
+    # League names (best-effort)
+    league_name_by_id: dict[int, str] = {}
+    try:
+        for c in COMPETITIONS:  # type: ignore[iteration-over-optional]
+            league_name_by_id[getattr(c, "league_id")] = getattr(c, "name")
+    except Exception:
+        league_name_by_id = {}
+
+    for item in upcoming_by_league:
+        lid = item["league_id"]
+        item["league_name"] = league_name_by_id.get(lid)
+
+    for item in latest_pit:
+        lid = item.get("league_id")
+        if isinstance(lid, int):
+            item["league_name"] = league_name_by_id.get(lid)
+
+    return {
+        "generated_at": now.isoformat(),
+        "league_mode": league_mode,
+        "tracked_leagues_count": tracked_leagues_count,
+        "last_sync_at": last_sync.isoformat() if last_sync else None,
+        "budget": budget_status,
+        "pit": {
+            "live_60m": pit_live_60m,
+            "live_24h": pit_live_24h,
+            "delta_to_kickoff_60m": pit_dko_60m,
+            "latest": latest_pit,
+        },
+        "movement": {
+            "lineup_movement_24h": lineup_movement_24h,
+            "market_movement_24h": market_movement_24h,
+        },
+        "stats_backfill": {
+            "finished_72h_with_stats": stats_with,
+            "finished_72h_missing_stats": stats_missing,
+        },
+        "upcoming": {
+            "by_league_24h": upcoming_by_league,
+        },
+    }
+
+
+async def _get_cached_ops_data() -> dict:
+    now = time.time()
+    if _ops_dashboard_cache["data"] and (now - _ops_dashboard_cache["timestamp"]) < _ops_dashboard_cache["ttl"]:
+        return _ops_dashboard_cache["data"]
+    data = await _load_ops_data()
+    _ops_dashboard_cache["data"] = data
+    _ops_dashboard_cache["timestamp"] = now
+    return data
+
+
+def _render_ops_dashboard_html(data: dict) -> str:
+    budget = data.get("budget") or {}
+    budget_status = budget.get("status", "unknown")
+    budget_used = budget.get("used")
+    budget_limit = budget.get("budget")
+    budget_day = budget.get("day")
+
+    pit = data.get("pit") or {}
+    pit_60m = pit.get("live_60m", 0)
+    pit_24h = pit.get("live_24h", 0)
+    dko = pit.get("delta_to_kickoff_60m") or []
+    latest = pit.get("latest") or []
+
+    upcoming = (data.get("upcoming") or {}).get("by_league_24h") or []
+    movement = data.get("movement") or {}
+    stats = data.get("stats_backfill") or {}
+
+    def budget_color() -> str:
+        if budget_status == "unavailable":
+            return "yellow"
+        if isinstance(budget_used, int) and isinstance(budget_limit, int) and budget_limit > 0:
+            pct = budget_used / budget_limit
+            if pct >= 0.9:
+                return "red"
+            if pct >= 0.7:
+                return "yellow"
+            return "green"
+        return "blue"
+
+    # Tables HTML
+    upcoming_rows = ""
+    for r in upcoming:
+        name = r.get("league_name") or f"League {r.get('league_id')}"
+        upcoming_rows += f"<tr><td>{name}</td><td>{r.get('league_id')}</td><td>{r.get('upcoming_24h')}</td></tr>"
+    if not upcoming_rows:
+        upcoming_rows = "<tr><td colspan='3'>Sin partidos próximos en 24h</td></tr>"
+
+    dko_rows = ""
+    for r in dko:
+        dko_rows += f"<tr><td>{r.get('min_to_ko')}</td><td>{r.get('count')}</td></tr>"
+    if not dko_rows:
+        dko_rows = "<tr><td colspan='2'>Sin PIT live en la última hora</td></tr>"
+
+    latest_rows = ""
+    for r in latest:
+        name = r.get("league_name") or f"League {r.get('league_id')}"
+        odds = r.get("odds") or {}
+        latest_rows += (
+            "<tr>"
+            f"<td>{r.get('snapshot_at')}</td>"
+            f"<td>{name}</td>"
+            f"<td>{r.get('odds_freshness')}</td>"
+            f"<td>{r.get('delta_to_kickoff_minutes')}</td>"
+            f"<td>{odds.get('home')}</td>"
+            f"<td>{odds.get('draw')}</td>"
+            f"<td>{odds.get('away')}</td>"
+            f"<td>{r.get('bookmaker')}</td>"
+            "</tr>"
+        )
+    if not latest_rows:
+        latest_rows = "<tr><td colspan='8'>Sin snapshots PIT</td></tr>"
+
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="refresh" content="60">
+  <title>Ops Dashboard - FutbolStats</title>
+  <style>
+    :root {{
+      --bg: #0f172a;
+      --card: #1e293b;
+      --border: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --green: #22c55e;
+      --yellow: #eab308;
+      --red: #ef4444;
+      --blue: #3b82f6;
+    }}
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 1.5rem;
+      min-height: 100vh;
+    }}
+    .header {{
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 1.25rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+      gap: 1rem;
+    }}
+    .header h1 {{ font-size: 1.5rem; font-weight: 650; }}
+    .meta {{ color: var(--muted); font-size: 0.8rem; line-height: 1.3; text-align: right; }}
+    .cards {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.25rem;
+    }}
+    .card {{
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+    }}
+    .card-label {{ font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }}
+    .card-value {{ font-size: 2rem; font-weight: 800; margin-top: 0.5rem; }}
+    .card-sub {{ margin-top: 0.4rem; font-size: 0.9rem; color: var(--muted); }}
+    .card.green .card-value {{ color: var(--green); }}
+    .card.yellow .card-value {{ color: var(--yellow); }}
+    .card.red .card-value {{ color: var(--red); }}
+    .card.blue .card-value {{ color: var(--blue); }}
+    .tables {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 1rem;
+    }}
+    .table-card {{
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      overflow: hidden;
+    }}
+    .table-card h3 {{
+      padding: 1rem;
+      font-size: 0.9rem;
+      font-weight: 650;
+      border-bottom: 1px solid var(--border);
+    }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 0.875rem; }}
+    th, td {{ padding: 0.75rem 1rem; text-align: left; vertical-align: top; }}
+    th {{ color: var(--muted); font-weight: 550; }}
+    tr:not(:last-child) {{ border-bottom: 1px solid var(--border); }}
+    .footer {{
+      margin-top: 1.5rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }}
+    a {{ color: var(--blue); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>Ops Dashboard</h1>
+      <div class="meta" style="text-align:left;">
+        Generado: {data.get("generated_at")} UTC<br/>
+        LEAGUE_MODE: {data.get("league_mode")} | Tracked leagues: {data.get("tracked_leagues_count")}<br/>
+        Last live sync: {data.get("last_sync_at")}
+      </div>
+    </div>
+    <div class="meta">
+      Budget: {budget_status}<br/>
+      used={budget_used} / budget={budget_limit} (day={budget_day})<br/>
+      <a href="/dashboard/ops.json">JSON</a>
+    </div>
+  </div>
+
+  <div class="cards">
+    <div class="card blue">
+      <div class="card-label">PIT live (60 min)</div>
+      <div class="card-value">{pit_60m}</div>
+      <div class="card-sub">lineup_confirmed + live</div>
+    </div>
+    <div class="card blue">
+      <div class="card-label">PIT live (24 h)</div>
+      <div class="card-value">{pit_24h}</div>
+      <div class="card-sub">volumen último día</div>
+    </div>
+    <div class="card {budget_color()}">
+      <div class="card-label">API Budget</div>
+      <div class="card-value">{budget_status}</div>
+      <div class="card-sub">used={budget_used} / {budget_limit}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Movimiento (24 h)</div>
+      <div class="card-value">{movement.get("lineup_movement_24h")}</div>
+      <div class="card-sub">lineup_movement_snapshots (market: {movement.get("market_movement_24h")})</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Stats FT (72 h)</div>
+      <div class="card-value">{stats.get("finished_72h_with_stats")}</div>
+      <div class="card-sub">missing: {stats.get("finished_72h_missing_stats")}</div>
+    </div>
+  </div>
+
+  <div class="tables">
+    <div class="table-card">
+      <h3>Próximos partidos (24h) por liga</h3>
+      <table>
+        <thead><tr><th>Liga</th><th>ID</th><th>Upcoming</th></tr></thead>
+        <tbody>{upcoming_rows}</tbody>
+      </table>
+    </div>
+
+    <div class="table-card">
+      <h3>ΔKO PIT live (últimos 60 min)</h3>
+      <table>
+        <thead><tr><th>min_to_ko</th><th>count</th></tr></thead>
+        <tbody>{dko_rows}</tbody>
+      </table>
+    </div>
+
+    <div class="table-card" style="grid-column: 1 / -1;">
+      <h3>Últimos 10 PIT (lineup_confirmed)</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>snapshot_at</th><th>liga</th><th>freshness</th><th>ΔKO(min)</th>
+            <th>H</th><th>D</th><th>A</th><th>bookmaker</th>
+          </tr>
+        </thead>
+        <tbody>{latest_rows}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="footer">
+    Refresh: 60s | Cache TTL: {_ops_dashboard_cache["ttl"]}s
+  </div>
+</body>
+</html>"""
+    return html
+
+
+@app.get("/dashboard/ops")
+async def ops_dashboard_html(request: Request):
+    """
+    Ops Dashboard - Monitoreo en vivo del backend (DB-backed).
+
+    Protegido por X-Dashboard-Token (preferido) o ?token=.
+    """
+    from fastapi.responses import HTMLResponse
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    data = await _get_cached_ops_data()
+    html = _render_ops_dashboard_html(data)
+    return HTMLResponse(content=html)
+
+
+@app.get("/dashboard/ops.json")
+async def ops_dashboard_json(request: Request):
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+    data = await _get_cached_ops_data()
+    return {
+        "data": data,
+        "cache_age_seconds": round(time.time() - _ops_dashboard_cache["timestamp"], 1) if _ops_dashboard_cache["timestamp"] else None,
     }
