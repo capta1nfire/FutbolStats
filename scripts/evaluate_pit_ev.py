@@ -393,6 +393,27 @@ def benchmark_model_vs_market(
       mH = qH/overround, mD = qD/overround, mA = qA/overround
     """
 
+    # --- Detect available columns (backward compatibility) ---
+    table_info = con.execute("PRAGMA table_info('pit_dataset')").fetchall()
+    available_columns = {row[1] for row in table_info}  # column name is index 1
+
+    has_baseline_cols = all(col in available_columns for col in [
+        "baseline_odds_home", "baseline_odds_draw", "baseline_odds_away", "baseline_source"
+    ])
+
+    if has_baseline_cols:
+        logger.info("Dataset has baseline_odds columns (CLV proxy enabled)")
+        baseline_select = """,
+            baseline_odds_home,
+            baseline_odds_draw,
+            baseline_odds_away,
+            baseline_snapshot_type,
+            baseline_source"""
+    else:
+        logger.warning("Dataset legacy: baseline_odds_* columns not present. "
+                       "Rebuild with build_pit_dataset.py to enable CLV proxy fallback.")
+        baseline_select = ""
+
     # Fetch records where ALL odds are present (required for de-vig)
     query = f"""
         SELECT
@@ -413,7 +434,7 @@ def benchmark_model_vs_market(
             odds_freshness,
             opening_odds_home,
             opening_odds_draw,
-            opening_odds_away
+            opening_odds_away{baseline_select}
         FROM pit_dataset
         WHERE home_prob IS NOT NULL
           AND pit_odds_home IS NOT NULL
@@ -457,10 +478,12 @@ def benchmark_model_vs_market(
     by_bookmaker: dict = {}  # bookmaker -> {"n_matches": 0, "n_bets": 0, "wins": 0, "returns": []}
     by_freshness: dict = {}  # odds_freshness -> {"n_matches": 0, "n_bets": 0, "wins": 0, "returns": []}
 
-    # Edge analysis (opening vs PIT)
+    # Edge analysis (baseline vs PIT)
     edge_analysis = {
-        "n_with_opening": 0,
+        "n_with_baseline": 0,
+        "baseline_source_counts": {},
         "edges": [],  # list of edge values for bet outcome
+        "has_baseline_cols": has_baseline_cols,  # track if dataset supports baseline
     }
 
     # League name mapping
@@ -643,26 +666,43 @@ def benchmark_model_vs_market(
                     by_freshness[freshness]["wins"] += 1
                 by_freshness[freshness]["returns"].append(ret)
 
-            # --- Edge analysis: opening vs PIT odds ---
-            # Edge = (opening_odds - pit_odds) / opening_odds
-            # Positive edge = odds shortened (market moved toward our pick)
-            opening_h = row.get("opening_odds_home")
-            opening_d = row.get("opening_odds_draw")
-            opening_a = row.get("opening_odds_away")
-            opening_map = {"home": opening_h, "draw": opening_d, "away": opening_a}
-            opening_bet = opening_map.get(model_best_bet)
+            # --- Edge analysis: baseline vs PIT odds ---
+            # Baseline priority:
+            #  1) opening_odds_* (FDUK)
+            #  2) baseline_odds_* (market_movement_snapshots earliest pre-KO)
+            # Note: Use safe column access for backward compatibility with legacy datasets
+            opening_h = row.get("opening_odds_home") if "opening_odds_home" in row.index else None
+            opening_d = row.get("opening_odds_draw") if "opening_odds_draw" in row.index else None
+            opening_a = row.get("opening_odds_away") if "opening_odds_away" in row.index else None
+            baseline_h = row.get("baseline_odds_home") if "baseline_odds_home" in row.index else None
+            baseline_d = row.get("baseline_odds_draw") if "baseline_odds_draw" in row.index else None
+            baseline_a = row.get("baseline_odds_away") if "baseline_odds_away" in row.index else None
+            baseline_src = row.get("baseline_source") if "baseline_source" in row.index else None
+
+            base_h = opening_h or baseline_h
+            base_d = opening_d or baseline_d
+            base_a = opening_a or baseline_a
+            baseline_source = "opening_odds" if opening_h else baseline_src
+
+            base_map = {"home": base_h, "draw": base_d, "away": base_a}
+            baseline_bet = base_map.get(model_best_bet)
             pit_bet = odds[model_best_bet]
 
-            if opening_bet is not None and opening_bet > 0:
-                edge_analysis["n_with_opening"] += 1
-                # Edge = (1/pit - 1/opening) = implied prob difference
-                edge = (1.0 / pit_bet) - (1.0 / opening_bet)
+            if baseline_bet is not None and baseline_bet > 0 and pit_bet is not None and pit_bet > 0:
+                edge_analysis["n_with_baseline"] += 1
+                if baseline_source:
+                    edge_analysis["baseline_source_counts"][baseline_source] = (
+                        edge_analysis["baseline_source_counts"].get(baseline_source, 0) + 1
+                    )
+                # Edge = (1/pit - 1/baseline) = implied prob difference
+                edge = (1.0 / pit_bet) - (1.0 / baseline_bet)
                 edge_analysis["edges"].append({
                     "outcome": model_best_bet,
-                    "opening_odds": float(opening_bet),
+                    "baseline_odds": float(baseline_bet),
                     "pit_odds": float(pit_bet),
                     "edge": round(edge, 4),  # positive = odds shortened toward our pick
                     "won": won,
+                    "baseline_source": baseline_source,
                 })
 
         # Market bet selection (same rule for fair comparison)
@@ -976,8 +1016,9 @@ def benchmark_model_vs_market(
 
     # --- Edge analysis summary ---
     edge_summary = {
-        "n_bets_with_opening": edge_analysis["n_with_opening"],
+        "n_bets_with_baseline": edge_analysis["n_with_baseline"],
         "n_bets_total": model_result.get("n_bets", 0),
+        "baseline_source_counts": edge_analysis.get("baseline_source_counts", {}),
     }
     if edge_analysis["edges"]:
         edges_list = [e["edge"] for e in edge_analysis["edges"]]
@@ -996,9 +1037,15 @@ def benchmark_model_vs_market(
             ) if any(e["edge"] > 0 for e in edge_analysis["edges"]) else None,
         })
     else:
+        # Differentiate between legacy dataset and no baseline data
+        if not edge_analysis.get("has_baseline_cols", True):
+            note = ("Dataset legacy: baseline_odds_* columns not present. "
+                    "Rebuild with build_pit_dataset.py to enable CLV proxy fallback.")
+        else:
+            note = "No baseline odds available for edge analysis (opening_odds_* and baseline_odds_* are missing)"
         edge_summary.update({
             "mean_edge": None,
-            "note": "No opening odds available for edge analysis",
+            "note": note,
         })
 
     # --- GO/NO-GO criterion ---
@@ -1278,9 +1325,11 @@ def generate_report(
         # Edge Analysis (CLV proxy)
         if "edge_analysis" in benchmark:
             ea = benchmark["edge_analysis"]
-            print(f"\n--- EDGE ANALYSIS (Opening vs PIT odds) ---")
+            print(f"\n--- EDGE ANALYSIS (Baseline vs PIT odds) ---")
             print("-" * 70)
-            print(f"Bets with opening odds: {ea.get('n_bets_with_opening', 0)} / {ea.get('n_bets_total', 0)}")
+            print(f"Bets with baseline odds: {ea.get('n_bets_with_baseline', 0)} / {ea.get('n_bets_total', 0)}")
+            if ea.get("baseline_source_counts"):
+                print(f"Baseline sources: {ea.get('baseline_source_counts')}")
 
             if ea.get("mean_edge") is not None:
                 print(f"\nEdge = (1/PIT - 1/Opening) = implied prob movement")
