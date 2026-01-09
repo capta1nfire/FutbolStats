@@ -31,15 +31,23 @@ EXTENDED_LEAGUES = [
     203,  # Turkey - Super Lig
     71,   # Brazil - Serie A
     262,  # Mexico - Liga MX
+    128,  # Argentina - Primera División
     253,  # USA - MLS
     2,    # Champions League
     3,    # Europa League
     848,  # Conference League
     45,   # FA Cup
     143,  # Copa del Rey
+    13,   # CONMEBOL Libertadores
+    11,   # CONMEBOL Sudamericana
 ]
 
-# Use TOP5 for sync, EXTENDED for lineup monitoring
+# League scopes:
+# - LIVE_SYNC_LEAGUES: leagues included in the 1-call global sync (/fixtures?date=...) filter
+#   This is cheap on API calls, but increases DB upserts.
+# - SYNC_LEAGUES: leagues used for per-league sync jobs (daily/weekly). Keep tight.
+# - LINEUP_MONITORING_LEAGUES: leagues eligible for PIT lineup+odds capture jobs.
+LIVE_SYNC_LEAGUES = list(dict.fromkeys(TOP5_LEAGUES + [71, 262, 128, 13, 11]))
 SYNC_LEAGUES = TOP5_LEAGUES
 LINEUP_MONITORING_LEAGUES = EXTENDED_LEAGUES
 CURRENT_SEASON = 2025
@@ -78,7 +86,7 @@ async def global_sync_today() -> dict:
             # 1 SINGLE API CALL - all fixtures worldwide, filtered to our leagues
             our_fixtures = await provider.get_fixtures_by_date(
                 date=today,
-                league_ids=SYNC_LEAGUES  # Filter in memory
+                league_ids=LIVE_SYNC_LEAGUES  # Filter in memory
             )
 
             # Upsert to DB
@@ -1374,7 +1382,9 @@ async def weekly_recalibration(ml_engine):
             sync_result = await pipeline.sync_multiple_leagues(
                 league_ids=SYNC_LEAGUES,
                 season=CURRENT_SEASON,
-                fetch_odds=True,
+                # Guardrail: weekly recalibration must not write odds history.
+                # PIT odds capture is handled by lineup jobs into odds_snapshots.
+                fetch_odds=False,
             )
             logger.info(f"Sync complete: {sync_result['total_matches_synced']} matches")
 

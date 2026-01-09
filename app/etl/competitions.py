@@ -157,6 +157,43 @@ LIGUE_1 = Competition(
     priority=Priority.HIGH,
 )
 
+# LATAM - Pack1 (Domestic leagues)
+BRAZIL_SERIE_A = Competition(
+    league_id=71,
+    name="Brazil Serie A",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
+MEXICO_LIGA_MX = Competition(
+    league_id=262,
+    name="Mexico Liga MX",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
+ARGENTINA_PRIMERA = Competition(
+    league_id=128,
+    name="Argentina Primera División",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
+# CONMEBOL (Sudamérica)
+CONMEBOL_LIBERTADORES = Competition(
+    league_id=13,
+    name="CONMEBOL Libertadores",
+    match_type="official",
+    priority=Priority.HIGH,
+)
+
+CONMEBOL_SUDAMERICANA = Competition(
+    league_id=11,
+    name="CONMEBOL Sudamericana",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
 # All competitions dictionary
 COMPETITIONS: dict[int, Competition] = {
     comp.league_id: comp
@@ -180,6 +217,12 @@ COMPETITIONS: dict[int, Competition] = {
         SERIE_A,
         BUNDESLIGA,
         LIGUE_1,
+        # LATAM / CONMEBOL
+        BRAZIL_SERIE_A,
+        MEXICO_LIGA_MX,
+        ARGENTINA_PRIMERA,
+        CONMEBOL_LIBERTADORES,
+        CONMEBOL_SUDAMERICANA,
     ]
 }
 
