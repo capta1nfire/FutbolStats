@@ -2744,6 +2744,29 @@ async def _get_cached_ops_data() -> dict:
     return data
 
 
+def _format_timestamp_la(ts_str: str) -> str:
+    """Convert UTC timestamp string to Los Angeles time in friendly format."""
+    if not ts_str:
+        return ""
+    try:
+        from zoneinfo import ZoneInfo
+        # Parse UTC timestamp
+        if "T" in ts_str:
+            dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        else:
+            dt = datetime.fromisoformat(ts_str)
+        # If naive, assume UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+        # Convert to LA time
+        la_tz = ZoneInfo("America/Los_Angeles")
+        dt_la = dt.astimezone(la_tz)
+        return dt_la.strftime("%m/%d %H:%M PT")
+    except Exception:
+        # Fallback: just truncate to readable format
+        return ts_str[:16].replace("T", " ") if len(ts_str) > 16 else ts_str
+
+
 def _render_ops_dashboard_html(data: dict) -> str:
     budget = data.get("budget") or {}
     budget_status = budget.get("status", "unknown")
@@ -2799,9 +2822,10 @@ def _render_ops_dashboard_html(data: dict) -> str:
         lid = r.get("league_id")
         name = r.get("league_name") or "Unknown"
         odds = r.get("odds") or {}
+        snapshot_time = _format_timestamp_la(r.get("snapshot_at") or "")
         latest_rows += (
             "<tr>"
-            f"<td>{r.get('snapshot_at')}</td>"
+            f"<td>{snapshot_time}</td>"
             f"<td>{name} ({lid})</td>"
             f"<td>{r.get('odds_freshness')}</td>"
             f"<td>{r.get('delta_to_kickoff_minutes')}</td>"
