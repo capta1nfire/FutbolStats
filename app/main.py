@@ -2655,10 +2655,12 @@ async def _load_ops_data() -> dict:
         stats_missing = int(row[1] or 0) if row else 0
 
     # League names (best-effort)
+    # NOTE: COMPETITIONS is a dict[league_id, Competition] in this codebase.
     league_name_by_id: dict[int, str] = {}
     try:
-        for c in COMPETITIONS:  # type: ignore[iteration-over-optional]
-            league_name_by_id[getattr(c, "league_id")] = getattr(c, "name")
+        for league_id, comp in (COMPETITIONS or {}).items():  # type: ignore[union-attr]
+            if league_id is not None and comp is not None:
+                league_name_by_id[int(league_id)] = getattr(comp, "name", None) or str(league_id)
     except Exception:
         league_name_by_id = {}
 
