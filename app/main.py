@@ -3,6 +3,7 @@
 import logging
 import os
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional
@@ -35,6 +36,148 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
+# =============================================================================
+# OPS LOG BUFFER (in-memory, filtered)
+# =============================================================================
+
+OPS_LOG_BUFFER_MAX = int(os.environ.get("OPS_LOG_BUFFER_MAX", "500"))
+OPS_LOG_DEFAULT_LIMIT = int(os.environ.get("OPS_LOG_DEFAULT_LIMIT", "200"))
+OPS_LOG_DEFAULT_SINCE_MINUTES = int(os.environ.get("OPS_LOG_DEFAULT_SINCE_MINUTES", "1440"))  # 24h
+
+_ops_log_buffer: "deque[dict]" = deque(maxlen=OPS_LOG_BUFFER_MAX)
+_ops_log_handler_installed = False
+
+
+def _is_relevant_ops_log(record: logging.LogRecord, message: str) -> bool:
+    """
+    Decide if a log line is relevant for the operator dashboard.
+    Goal: include capture/sync/budget/errors, exclude noisy scheduler/httpx spam.
+    """
+    name = record.name or ""
+    msg = message or ""
+
+    # Always include warnings/errors
+    if record.levelno >= logging.WARNING:
+        return True
+
+    # Exclude very noisy loggers
+    if name.startswith("apscheduler"):
+        return False
+    if name.startswith("httpx"):
+        return False
+    if name.startswith("uvicorn.access"):
+        return False
+
+    # Exclude common spam patterns
+    spam_substrings = [
+        "executed successfully",
+        "Job ",
+        "HTTP Request: GET",
+        "HTTP Request: POST",
+    ]
+    if any(s in msg for s in spam_substrings):
+        return False
+
+    # Include key operational events (high signal)
+    include_substrings = [
+        "Global sync complete",
+        "Lineup confirmed for match",
+        "Captured lineup_confirmed odds",
+        "PIT_SNAPSHOT_CREATED",
+        "Market movement",
+        "lineup_movement",
+        "finished_match_stats",
+        "Stats backfill",
+        "BUDGET",
+        "APIBudgetExceeded",
+        "budget exceeded",
+        "Rate limited",
+        "ERROR",
+        "Error ",
+        "WARNING",
+    ]
+    if any(s in msg for s in include_substrings):
+        return True
+
+    # Include some internal modules even at INFO
+    if name.startswith("app.scheduler") or name.startswith("app.etl.api_football"):
+        # Keep only if it doesn't look like low-signal spam
+        low_signal = ["Adding job tentatively", "Database tables created successfully"]
+        if any(s in msg for s in low_signal):
+            return False
+        return True
+
+    return False
+
+
+class OpsLogBufferHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            message = record.getMessage()
+        except Exception:
+            message = "<unprintable>"
+
+        if not _is_relevant_ops_log(record, message):
+            return
+
+        ts = getattr(record, "created", None)
+        dt = datetime.utcfromtimestamp(ts) if isinstance(ts, (int, float)) else datetime.utcnow()
+
+        _ops_log_buffer.append(
+            {
+                "ts_utc": dt.isoformat() + "Z",
+                "level": record.levelname,
+                "logger": record.name,
+                "message": message,
+            }
+        )
+
+
+def _install_ops_log_handler() -> None:
+    global _ops_log_handler_installed
+    if _ops_log_handler_installed:
+        return
+
+    root = logging.getLogger()
+    handler = OpsLogBufferHandler(level=logging.INFO)
+    root.addHandler(handler)
+    _ops_log_handler_installed = True
+
+
+def _get_ops_logs(
+    since_minutes: int = OPS_LOG_DEFAULT_SINCE_MINUTES,
+    limit: int = OPS_LOG_DEFAULT_LIMIT,
+    level: Optional[str] = None,
+) -> list[dict]:
+    # Copy without holding locks (deque ops are atomic-ish for append; acceptable for dashboard use)
+    rows = list(_ops_log_buffer)
+
+    # Filter by since (UTC)
+    cutoff = datetime.utcnow() - timedelta(minutes=since_minutes)
+    filtered = []
+    for r in rows:
+        ts_str = r.get("ts_utc")
+        try:
+            dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).replace(tzinfo=None) if ts_str else None
+        except Exception:
+            dt = None
+        if dt and dt < cutoff:
+            continue
+        filtered.append(r)
+
+    # Filter by minimum level if provided
+    if level:
+        level = level.upper()
+        order = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
+        min_lvl = order.get(level)
+        if min_lvl is not None:
+            filtered = [r for r in filtered if order.get(r.get("level", "INFO"), 20) >= min_lvl]
+
+    # Newest first
+    filtered.reverse()
+    return filtered[: max(1, int(limit))]
+
+
 # Global ML engine
 ml_engine = XGBoostEngine()
 
@@ -53,6 +196,7 @@ async def lifespan(app: FastAPI):
 
     # Startup
     logger.info("Starting FutbolStat MVP...")
+    _install_ops_log_handler()
     await init_db()
 
     # Try to load model from PostgreSQL first (fast path)
@@ -3052,7 +3196,7 @@ def _render_ops_dashboard_html(data: dict) -> str:
     </div>
     <div class="meta">
       API: {budget_status} | Plan: {budget_plan or "N/A"} | Expires: {budget_plan_end[:10] if budget_plan_end else "N/A"}<br/>
-      <a href="/dashboard/ops.json">JSON</a>
+      <a href="/dashboard/ops.json">JSON</a> | <a href="/dashboard/ops/logs">Logs</a>
     </div>
   </div>
 
@@ -3149,3 +3293,117 @@ async def ops_dashboard_json(request: Request):
         "data": data,
         "cache_age_seconds": round(time.time() - _ops_dashboard_cache["timestamp"], 1) if _ops_dashboard_cache["timestamp"] else None,
     }
+
+
+@app.get("/dashboard/ops/logs.json")
+async def ops_dashboard_logs_json(
+    request: Request,
+    limit: int = OPS_LOG_DEFAULT_LIMIT,
+    since_minutes: int = OPS_LOG_DEFAULT_SINCE_MINUTES,
+    level: Optional[str] = None,
+):
+    """Filtered in-memory ops logs (copy/paste friendly)."""
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "limit": limit,
+        "since_minutes": since_minutes,
+        "level": level,
+        "entries": _get_ops_logs(since_minutes=since_minutes, limit=limit, level=level),
+    }
+
+
+@app.get("/dashboard/ops/logs")
+async def ops_dashboard_logs_html(
+    request: Request,
+    limit: int = OPS_LOG_DEFAULT_LIMIT,
+    since_minutes: int = OPS_LOG_DEFAULT_SINCE_MINUTES,
+    level: Optional[str] = None,
+):
+    """HTML view of filtered in-memory ops logs."""
+    from fastapi.responses import HTMLResponse
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    entries = _get_ops_logs(since_minutes=since_minutes, limit=limit, level=level)
+
+    rows_html = ""
+    for e in entries:
+        rows_html += (
+            "<tr>"
+            f"<td>{e.get('ts_utc')}</td>"
+            f"<td>{e.get('level')}</td>"
+            f"<td>{e.get('logger')}</td>"
+            f"<td style='white-space: pre-wrap;'>{e.get('message')}</td>"
+            "</tr>"
+        )
+    if not rows_html:
+        rows_html = "<tr><td colspan='4'>Sin eventos relevantes en el buffer (aún).</td></tr>"
+
+    json_link = f"/dashboard/ops/logs.json?limit={limit}&since_minutes={since_minutes}" + (f"&level={level}" if level else "")
+
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="refresh" content="60">
+  <title>Ops Logs - FutbolStats</title>
+  <style>
+    :root {{
+      --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #e2e8f0; --muted: #94a3b8; --blue: #3b82f6;
+    }}
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{ font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 1.25rem; }}
+    .header {{ display:flex; justify-content:space-between; align-items:flex-end; gap:1rem; margin-bottom:1rem; border-bottom:1px solid var(--border); padding-bottom:0.75rem; }}
+    .meta {{ color: var(--muted); font-size:0.85rem; line-height:1.3; text-align:right; }}
+    a {{ color: var(--blue); text-decoration:none; }}
+    a:hover {{ text-decoration:underline; }}
+    .card {{ background: var(--card); border: 1px solid var(--border); border-radius: 0.75rem; overflow:hidden; }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 0.9rem; }}
+    th, td {{ padding: 0.75rem 0.9rem; text-align:left; vertical-align: top; }}
+    th {{ color: var(--muted); font-weight: 600; }}
+    tr:not(:last-child) {{ border-bottom: 1px solid var(--border); }}
+    .toolbar {{ display:flex; justify-content:space-between; align-items:center; gap:1rem; margin: 0.75rem 0 1rem; }}
+    .btn {{ background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.35); color: var(--text); padding: 0.5rem 0.75rem; border-radius: 0.6rem; cursor:pointer; }}
+    .btn:hover {{ background: rgba(59,130,246,0.25); }}
+    .hint {{ color: var(--muted); font-size: 0.85rem; }}
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h2>Logs relevantes (Ops)</h2>
+      <div class="hint">Solo eventos de captura/sync/movement/budget/errores. Se excluye spam de apscheduler/httpx.</div>
+    </div>
+    <div class="meta">
+      <div>since_minutes={since_minutes} | limit={limit} | level={level or 'INFO+'}</div>
+      <div><a href="/dashboard/ops">Volver a Ops</a> | <a href="{json_link}">JSON</a></div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <button class="btn" onclick="copyLogs()">Copiar (últimos {len(entries)})</button>
+    <div class="hint">Tip: puedes pasar `?level=WARNING` o `?since_minutes=180`.</div>
+  </div>
+
+  <div class="card">
+    <table>
+      <thead><tr><th>ts_utc</th><th>level</th><th>logger</th><th>message</th></tr></thead>
+      <tbody>{rows_html}</tbody>
+    </table>
+  </div>
+
+  <script>
+    function copyLogs() {{
+      const rows = Array.from(document.querySelectorAll("tbody tr"));
+      const lines = rows.map(r => Array.from(r.children).map(td => td.innerText).join(" | "));
+      const text = lines.join("\\n");
+      navigator.clipboard.writeText(text);
+    }}
+  </script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
