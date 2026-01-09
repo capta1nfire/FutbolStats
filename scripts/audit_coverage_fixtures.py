@@ -72,7 +72,7 @@ async def run_audit():
                 MIN(date) as kickoff_min,
                 MAX(date) as kickoff_max,
                 COUNT(DISTINCT home_team_id) + COUNT(DISTINCT away_team_id) as teams_raw,
-                COUNT(DISTINCT LEAST(home_team_id, away_team_id), GREATEST(home_team_id, away_team_id)) as teams_distinct_approx
+                COUNT(DISTINCT (LEAST(home_team_id, away_team_id), GREATEST(home_team_id, away_team_id))) as teams_distinct_approx
             FROM matches
             GROUP BY league_id, season
             ORDER BY league_id, season
