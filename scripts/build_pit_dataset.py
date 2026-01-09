@@ -125,7 +125,7 @@ ORDER BY ps.snapshot_at DESC
 async def fetch_pit_data(database_url: str) -> list[dict]:
     """Fetch PIT dataset from PostgreSQL."""
     logger.info("Connecting to PostgreSQL...")
-    conn = await asyncpg.connect(database_url)
+    conn = await asyncpg.connect(database_url, timeout=60)
 
     try:
         logger.info("Executing PIT dataset query...")
