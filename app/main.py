@@ -2767,6 +2767,28 @@ def _format_timestamp_la(ts_str: str) -> str:
         return ts_str[:16].replace("T", " ") if len(ts_str) > 16 else ts_str
 
 
+def _friendly_label(value: str) -> str:
+    """Convert snake_case or technical values to friendly labels."""
+    if not value:
+        return ""
+    # Known mappings
+    LABELS = {
+        "lineup_confirmed": "Lineup Confirmed",
+        "pre_match": "Pre-Match",
+        "live": "Live",
+        "stale": "Stale",
+        "unknown": "Unknown",
+        "ok": "OK",
+        "error": "Error",
+        "unavailable": "Unavailable",
+        "inactive": "Inactive",
+    }
+    if value in LABELS:
+        return LABELS[value]
+    # Fallback: convert snake_case to Title Case
+    return value.replace("_", " ").title()
+
+
 def _render_ops_dashboard_html(data: dict) -> str:
     budget = data.get("budget") or {}
     budget_status = budget.get("status", "unknown")
@@ -2823,11 +2845,12 @@ def _render_ops_dashboard_html(data: dict) -> str:
         name = r.get("league_name") or "Unknown"
         odds = r.get("odds") or {}
         snapshot_time = _format_timestamp_la(r.get("snapshot_at") or "")
+        freshness = _friendly_label(r.get("odds_freshness") or "")
         latest_rows += (
             "<tr>"
             f"<td>{snapshot_time}</td>"
             f"<td>{name} ({lid})</td>"
-            f"<td>{r.get('odds_freshness')}</td>"
+            f"<td>{freshness}</td>"
             f"<td>{r.get('delta_to_kickoff_minutes')}</td>"
             f"<td>{odds.get('home')}</td>"
             f"<td>{odds.get('draw')}</td>"
@@ -2946,7 +2969,7 @@ def _render_ops_dashboard_html(data: dict) -> str:
     <div class="card blue">
       <div class="card-label">PIT live (60 min)</div>
       <div class="card-value">{pit_60m}</div>
-      <div class="card-sub">lineup_confirmed + live</div>
+      <div class="card-sub">Lineup Confirmed + Live</div>
     </div>
     <div class="card blue">
       <div class="card-label">PIT live (24 h)</div>
@@ -2988,7 +3011,7 @@ def _render_ops_dashboard_html(data: dict) -> str:
     </div>
 
     <div class="table-card" style="grid-column: 1 / -1;">
-      <h3>Últimos 10 PIT (lineup_confirmed)</h3>
+      <h3>Últimos 10 PIT (Lineup Confirmed)</h3>
       <table>
         <thead>
           <tr>
