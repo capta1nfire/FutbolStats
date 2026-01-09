@@ -1,0 +1,29 @@
+{
+  "league_id": 253,
+  "league_name": "MLS",
+  "worker": "AM",
+  "generated_at": "2026-01-08T00:00:00.000000",
+  "note": "Placeholder - run script with DATABASE_URL and RAPIDAPI_KEY to populate",
+  "before": {
+    "league_id": 253,
+    "captured_at": null,
+    "by_season": [],
+    "totals": {"matches": 0, "ft": 0, "teams": 0}
+  },
+  "after": {
+    "league_id": 253,
+    "captured_at": null,
+    "by_season": [],
+    "totals": {"matches": 0, "ft": 0, "teams": 0}
+  },
+  "sync_result": {
+    "matches_synced": 0,
+    "seasons_processed": 0,
+    "errors_count": 0,
+    "errors_sample": []
+  },
+  "delta": {
+    "matches_added": 0,
+    "ft_added": 0
+  }
+}
