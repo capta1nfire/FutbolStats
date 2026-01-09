@@ -242,13 +242,47 @@ async def get_sync_status():
     Used by mobile app to show data freshness.
     """
     last_sync = get_last_sync_time()
+
+    # Best-effort: expose real budget numbers (prefer internal guardrail, optionally enrich with cached /status)
+    daily_budget = int(getattr(settings, "API_DAILY_BUDGET", 0) or 0) or 75000
+    daily_used = None
+    remaining_pct = None
+    api_account_status = None
+
+    try:
+        from app.etl.api_football import get_api_budget_status, get_api_account_status  # type: ignore
+
+        internal = get_api_budget_status()
+        # Internal is authoritative for guardrail; can be None early in day before first request
+        daily_used = internal.get("budget_used")
+        daily_budget = internal.get("budget_total") or daily_budget
+
+        # Enrich with real API status (cached 10 min); don't fail endpoint if unavailable
+        api_account_status = await get_api_account_status()  # type: ignore
+        ext_used = api_account_status.get("requests_today")
+        ext_limit = api_account_status.get("requests_limit")
+        if isinstance(ext_used, int) and ext_used >= 0:
+            # Use the max to avoid under-reporting after process restart
+            if isinstance(daily_used, int):
+                daily_used = max(daily_used, ext_used)
+            else:
+                daily_used = ext_used
+        if isinstance(ext_limit, int) and ext_limit > 0:
+            daily_budget = ext_limit
+    except Exception:
+        pass
+
+    if isinstance(daily_used, int) and daily_budget > 0:
+        remaining_pct = round((1 - (daily_used / daily_budget)) * 100, 1)
+
     return {
         "last_sync_at": last_sync.isoformat() if last_sync else None,
         "sync_interval_seconds": 60,
-        "daily_api_calls": 1440,
-        "daily_budget": 7500,
-        "budget_remaining_percent": 80,
+        "daily_api_calls": daily_used,
+        "daily_budget": daily_budget,
+        "budget_remaining_percent": remaining_pct,
         "leagues": SYNC_LEAGUES,
+        "api_account_status": api_account_status,  # optional debug visibility for iOS
     }
 
 

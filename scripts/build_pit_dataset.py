@@ -107,7 +107,7 @@ predictions_asof AS (
         p.created_at as prediction_at
     FROM predictions p
     JOIN pit_snapshots ps ON p.match_id = ps.match_id
-    WHERE p.created_at <= ps.snapshot_at  -- ANTI-LEAKAGE: prediction must exist BEFORE snapshot
+    WHERE p.created_at < ps.snapshot_at  -- ANTI-LEAKAGE: prediction must exist STRICTLY before snapshot
     ORDER BY p.match_id, ps.snapshot_id, p.created_at DESC
 )
 SELECT
@@ -388,11 +388,11 @@ def generate_summary(output_path: str) -> dict:
         "max": str(result[1]) if result[1] else None,
     }
 
-    # Anti-leakage validation
+    # Anti-leakage validation (strict)
     result = con.execute("""
         SELECT COUNT(*)
         FROM pit_dataset
-        WHERE prediction_at > snapshot_at
+        WHERE prediction_at >= snapshot_at
     """).fetchone()
     summary["leakage_violations"] = result[0]
 

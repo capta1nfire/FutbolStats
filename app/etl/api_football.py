@@ -26,6 +26,7 @@ class APIBudgetExceeded(RuntimeError):
 _budget_lock = asyncio.Lock()
 _budget_day: Optional[date] = None
 _budget_used: int = 0
+_budget_synced_at_ts: float = 0.0
 
 
 async def _budget_check_and_increment(cost: int = 1) -> None:
@@ -46,6 +47,26 @@ async def _budget_check_and_increment(cost: int = 1) -> None:
         if _budget_day != today:
             _budget_day = today
             _budget_used = 0
+            # Reset sync marker daily
+            global _budget_synced_at_ts
+            _budget_synced_at_ts = 0.0
+
+        # Optional safety sync with external /status when near budget exhaustion.
+        # This mitigates process restarts resetting _budget_used to 0.
+        # Uses cached get_api_account_status() (10 min TTL) so it won't spam the API.
+        try:
+            import time
+
+            now_ts = time.time()
+            if daily_budget > 0 and _budget_used >= int(daily_budget * 0.8) and (now_ts - _budget_synced_at_ts) > 600:
+                status = await get_api_account_status()
+                real_used = status.get("requests_today")
+                if isinstance(real_used, int) and real_used >= 0:
+                    _budget_used = max(_budget_used, real_used)
+                _budget_synced_at_ts = now_ts
+        except Exception:
+            # Never block requests if /status fails; internal counter remains enforced.
+            pass
 
         if _budget_used + cost > daily_budget:
             raise APIBudgetExceeded(
