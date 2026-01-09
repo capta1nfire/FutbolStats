@@ -451,9 +451,9 @@ async def get_db_matches_for_league_date(
     conn, league_id: int, date_str: str, tolerance_days: int = 1
 ) -> list[dict]:
     """Fetch matches from DB for a league within date tolerance."""
-    date_obj = datetime.strptime(date_str, "%Y-%m-%d")
-    date_min = (date_obj - timedelta(days=tolerance_days)).strftime("%Y-%m-%d")
-    date_max = (date_obj + timedelta(days=tolerance_days)).strftime("%Y-%m-%d")
+    date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+    date_min = date_obj - timedelta(days=tolerance_days)
+    date_max = date_obj + timedelta(days=tolerance_days)
 
     rows = await conn.fetch("""
         SELECT m.id, m.date, m.home_team_id, m.away_team_id,
@@ -463,8 +463,8 @@ async def get_db_matches_for_league_date(
         JOIN teams th ON th.id = m.home_team_id
         JOIN teams ta ON ta.id = m.away_team_id
         WHERE m.league_id = $1
-          AND m.date::date >= $2::date
-          AND m.date::date <= $3::date
+          AND m.date::date >= $2
+          AND m.date::date <= $3
           AND m.status = 'FT'
     """, league_id, date_min, date_max)
 
