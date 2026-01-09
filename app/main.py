@@ -2496,14 +2496,15 @@ async def _load_ops_data() -> dict:
     """
     now = datetime.utcnow()
 
-    # Budget status (best-effort: may be unavailable during version skew)
+    # Budget status - fetch real API account status from API-Football
     budget_status: dict = {"status": "unavailable"}
     try:
-        from app.etl.api_football import get_api_budget_status  # type: ignore
+        from app.etl.api_football import get_api_account_status
 
-        budget_status = get_api_budget_status()  # type: ignore
-    except Exception:
-        budget_status = {"status": "unavailable"}
+        budget_status = await get_api_account_status()
+    except Exception as e:
+        logger.warning(f"Could not fetch API account status: {e}")
+        budget_status = {"status": "unavailable", "error": str(e)}
 
     league_mode = os.environ.get("LEAGUE_MODE", "tracked").strip().lower()
     last_sync = get_last_sync_time()
@@ -2712,9 +2713,13 @@ async def _get_cached_ops_data() -> dict:
 def _render_ops_dashboard_html(data: dict) -> str:
     budget = data.get("budget") or {}
     budget_status = budget.get("status", "unknown")
-    budget_used = budget.get("used")
-    budget_limit = budget.get("budget")
-    budget_day = budget.get("day")
+    # New API account status fields
+    budget_used = budget.get("requests_today") or budget.get("used")
+    budget_limit = budget.get("requests_limit") or budget.get("budget")
+    budget_remaining = budget.get("requests_remaining")
+    budget_plan = budget.get("plan", "")
+    budget_plan_end = budget.get("plan_end", "")
+    budget_cached = budget.get("cached", False)
 
     pit = data.get("pit") or {}
     pit_60m = pit.get("live_60m", 0)
@@ -2727,8 +2732,10 @@ def _render_ops_dashboard_html(data: dict) -> str:
     stats = data.get("stats_backfill") or {}
 
     def budget_color() -> str:
-        if budget_status == "unavailable":
+        if budget_status in ("unavailable", "error"):
             return "yellow"
+        if budget_status == "inactive":
+            return "red"
         if isinstance(budget_used, int) and isinstance(budget_limit, int) and budget_limit > 0:
             pct = budget_used / budget_limit
             if pct >= 0.9:
@@ -2870,8 +2877,7 @@ def _render_ops_dashboard_html(data: dict) -> str:
       </div>
     </div>
     <div class="meta">
-      Budget: {budget_status}<br/>
-      used={budget_used} / budget={budget_limit} (day={budget_day})<br/>
+      API: {budget_status} | Plan: {budget_plan or "N/A"} | Expires: {budget_plan_end[:10] if budget_plan_end else "N/A"}<br/>
       <a href="/dashboard/ops.json">JSON</a>
     </div>
   </div>
@@ -2888,9 +2894,9 @@ def _render_ops_dashboard_html(data: dict) -> str:
       <div class="card-sub">volumen último día</div>
     </div>
     <div class="card {budget_color()}">
-      <div class="card-label">API Budget</div>
-      <div class="card-value">{budget_status}</div>
-      <div class="card-sub">used={budget_used} / {budget_limit}</div>
+      <div class="card-label">API Budget{f" ({budget_plan})" if budget_plan else ""}</div>
+      <div class="card-value">{f"{budget_used:,}" if budget_used is not None else "?"} / {f"{budget_limit:,}" if budget_limit is not None else "?"}</div>
+      <div class="card-sub">{f"{budget_remaining:,} remaining" if budget_remaining is not None else budget_status}{" (cached)" if budget_cached else ""}</div>
     </div>
     <div class="card">
       <div class="card-label">Movimiento (24 h)</div>

@@ -66,6 +66,82 @@ def get_api_budget_status() -> dict:
     }
 
 
+# Cached API status (to avoid hitting /status too frequently)
+_api_status_cache: dict = {
+    "data": None,
+    "timestamp": 0,
+    "ttl": 300,  # 5 minutes cache
+}
+
+
+async def get_api_account_status() -> dict:
+    """
+    Fetch real account status from API-Football /status endpoint.
+
+    Returns subscription info, request usage, and limits directly from the API.
+    Cached for 5 minutes to avoid unnecessary API calls.
+    """
+    import time
+
+    now = time.time()
+    if _api_status_cache["data"] and (now - _api_status_cache["timestamp"]) < _api_status_cache["ttl"]:
+        return _api_status_cache["data"]
+
+    try:
+        # Build headers based on API type
+        host = settings.RAPIDAPI_HOST
+        if "api-sports.io" in host:
+            base_url = f"https://{host}"
+            headers = {"x-apisports-key": settings.RAPIDAPI_KEY}
+        else:
+            base_url = f"https://{host}/v3"
+            headers = {
+                "X-RapidAPI-Key": settings.RAPIDAPI_KEY,
+                "X-RapidAPI-Host": host,
+            }
+
+        async with httpx.AsyncClient(headers=headers, timeout=10.0) as client:
+            response = await client.get(f"{base_url}/status")
+            response.raise_for_status()
+            data = response.json()
+
+        api_response = data.get("response", {})
+        account = api_response.get("account", {})
+        subscription = api_response.get("subscription", {})
+        requests = api_response.get("requests", {})
+
+        result = {
+            "status": "ok" if subscription.get("active") else "inactive",
+            "plan": subscription.get("plan"),
+            "plan_end": subscription.get("end"),
+            "active": subscription.get("active", False),
+            "requests_today": requests.get("current", 0),
+            "requests_limit": requests.get("limit_day", 0),
+            "requests_remaining": (requests.get("limit_day", 0) - requests.get("current", 0)),
+            "account_email": account.get("email"),
+            "cached": False,
+            "cache_age_seconds": 0,
+        }
+
+        _api_status_cache["data"] = result
+        _api_status_cache["timestamp"] = now
+
+        return result
+
+    except Exception as e:
+        logger.warning(f"Failed to fetch API account status: {e}")
+        # Return cached data if available, otherwise error status
+        if _api_status_cache["data"]:
+            cached = _api_status_cache["data"].copy()
+            cached["cached"] = True
+            cached["cache_age_seconds"] = int(now - _api_status_cache["timestamp"])
+            return cached
+        return {
+            "status": "error",
+            "error": str(e),
+        }
+
+
 class APIFootballProvider(DataProvider):
     """API-Football data provider with rate limiting (supports RapidAPI and API-Sports)."""
 
