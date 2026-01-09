@@ -2947,6 +2947,61 @@ def _render_ops_dashboard_html(data: dict) -> str:
     }}
     a {{ color: var(--blue); text-decoration: none; }}
     a:hover {{ text-decoration: underline; }}
+    /* Tooltip styles */
+    .info-icon {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--border);
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      cursor: help;
+      margin-left: 6px;
+      position: relative;
+      vertical-align: middle;
+    }}
+    .info-icon:hover {{
+      background: var(--blue);
+      color: white;
+    }}
+    .info-icon .tooltip {{
+      visibility: hidden;
+      opacity: 0;
+      position: absolute;
+      bottom: 125%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1a1a2e;
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 400;
+      width: 240px;
+      text-align: left;
+      line-height: 1.4;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+      border: 1px solid var(--border);
+      z-index: 100;
+      transition: opacity 0.2s, visibility 0.2s;
+    }}
+    .info-icon .tooltip::after {{
+      content: "";
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      border: 6px solid transparent;
+      border-top-color: #1a1a2e;
+    }}
+    .info-icon:hover .tooltip {{
+      visibility: visible;
+      opacity: 1;
+    }}
   </style>
 </head>
 <body>
@@ -2967,35 +3022,35 @@ def _render_ops_dashboard_html(data: dict) -> str:
 
   <div class="cards">
     <div class="card blue">
-      <div class="card-label">PIT live (60 min)</div>
+      <div class="card-label">PIT Live (60 min)<span class="info-icon">i<span class="tooltip">Point-In-Time: Snapshots de odds capturados en el momento exacto que se confirman las alineaciones. Mide cuántos partidos tuvieron captura de odds "live" en la última hora.</span></span></div>
       <div class="card-value">{pit_60m}</div>
       <div class="card-sub">Lineup Confirmed + Live</div>
     </div>
     <div class="card blue">
-      <div class="card-label">PIT live (24 h)</div>
+      <div class="card-label">PIT Live (24 h)<span class="info-icon">i<span class="tooltip">Volumen total de snapshots PIT capturados en las últimas 24 horas. Indica la actividad general del sistema de monitoreo de odds.</span></span></div>
       <div class="card-value">{pit_24h}</div>
-      <div class="card-sub">volumen último día</div>
+      <div class="card-sub">Volumen último día</div>
     </div>
     <div class="card {budget_color()}">
-      <div class="card-label">API Budget{f" ({budget_plan})" if budget_plan else ""}</div>
+      <div class="card-label">API Budget{f" ({budget_plan})" if budget_plan else ""}<span class="info-icon">i<span class="tooltip">Consumo de la API de API-Football. Muestra requests usados hoy vs límite diario. Verde: &lt;70%, Amarillo: 70-90%, Rojo: &gt;90%.</span></span></div>
       <div class="card-value">{f"{budget_used:,}" if budget_used is not None else "?"} / {f"{budget_limit:,}" if budget_limit is not None else "?"}</div>
       <div class="card-sub">{f"{budget_remaining:,} remaining" if budget_remaining is not None else budget_status}{" (cached)" if budget_cached else ""}</div>
     </div>
     <div class="card">
-      <div class="card-label">Movimiento (24 h)</div>
+      <div class="card-label">Movimiento (24 h)<span class="info-icon">i<span class="tooltip">Snapshots de movimiento de odds capturados. Lineup Movement: cambios cerca del anuncio de alineaciones. Market Movement: cambios pre-partido (T-60 a T-5 min).</span></span></div>
       <div class="card-value">{movement.get("lineup_movement_24h")}</div>
-      <div class="card-sub">lineup_movement_snapshots (market: {movement.get("market_movement_24h")})</div>
+      <div class="card-sub">Lineup Movement (Market: {movement.get("market_movement_24h")})</div>
     </div>
     <div class="card">
-      <div class="card-label">Stats FT (72 h)</div>
+      <div class="card-label">Stats FT (72 h)<span class="info-icon">i<span class="tooltip">Partidos finalizados (FT) en las últimas 72 horas que tienen estadísticas completas vs los que faltan. El backfill automático rellena los faltantes.</span></span></div>
       <div class="card-value">{stats.get("finished_72h_with_stats")}</div>
-      <div class="card-sub">missing: {stats.get("finished_72h_missing_stats")}</div>
+      <div class="card-sub">Faltan: {stats.get("finished_72h_missing_stats")}</div>
     </div>
   </div>
 
   <div class="tables">
     <div class="table-card">
-      <h3>Próximos partidos (24h) por liga</h3>
+      <h3>Próximos partidos (24h) por liga<span class="info-icon">i<span class="tooltip">Partidos programados en las próximas 24 horas, agrupados por liga. Estas son las ligas que el sistema está monitoreando activamente.</span></span></h3>
       <table>
         <thead><tr><th>Liga (ID)</th><th>Upcoming</th></tr></thead>
         <tbody>{upcoming_rows}</tbody>
@@ -3003,7 +3058,7 @@ def _render_ops_dashboard_html(data: dict) -> str:
     </div>
 
     <div class="table-card">
-      <h3>ΔKO PIT live (últimos 60 min)</h3>
+      <h3>ΔKO PIT Live (últimos 60 min)<span class="info-icon">i<span class="tooltip">Delta to Kickoff: Minutos antes del inicio del partido cuando se capturó el snapshot PIT. Valores negativos indican captura antes del kickoff. Ideal: -45 a -90 minutos.</span></span></h3>
       <table>
         <thead><tr><th>min_to_ko</th><th>count</th></tr></thead>
         <tbody>{dko_rows}</tbody>
@@ -3011,7 +3066,7 @@ def _render_ops_dashboard_html(data: dict) -> str:
     </div>
 
     <div class="table-card" style="grid-column: 1 / -1;">
-      <h3>Últimos 10 PIT (Lineup Confirmed)</h3>
+      <h3>Últimos 10 PIT (Lineup Confirmed)<span class="info-icon">i<span class="tooltip">Los 10 snapshots PIT más recientes donde se confirmaron alineaciones. Muestra: hora (PT), liga, frescura de odds, minutos al kickoff, y odds H/D/A del bookmaker.</span></span></h3>
       <table>
         <thead>
           <tr>
