@@ -70,7 +70,7 @@ def get_api_budget_status() -> dict:
 _api_status_cache: dict = {
     "data": None,
     "timestamp": 0,
-    "ttl": 300,  # 5 minutes cache
+    "ttl": 600,  # 10 minutes cache (reduce external API calls per auditor recommendation)
 }
 
 
@@ -79,7 +79,7 @@ async def get_api_account_status() -> dict:
     Fetch real account status from API-Football /status endpoint.
 
     Returns subscription info, request usage, and limits directly from the API.
-    Cached for 5 minutes to avoid unnecessary API calls.
+    Cached for 10 minutes to avoid unnecessary API calls.
     """
     import time
 
