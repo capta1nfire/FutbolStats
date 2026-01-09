@@ -818,29 +818,40 @@ async def capture_market_movement_snapshots() -> dict:
     Time buckets: T-60, T-30, T-15, T-5 (minutes before kickoff)
 
     Run frequency: Every 5 minutes
+
+    Environment variables:
+    - MARKET_MOVEMENT_REQUIRE_LINEUP: If "0", capture snapshots even without lineup_confirmed.
+      Default "1" requires lineup_confirmed=TRUE (legacy behavior).
+      Set to "0" to enable CLV proxy baseline capture (T-60/T-30 before lineup).
     """
     from app.etl.api_football import APIFootballProvider
 
     captured_count = 0
     checked_count = 0
 
+    # Guardrail: require lineup_confirmed by default to avoid extra API calls
+    require_lineup = os.environ.get("MARKET_MOVEMENT_REQUIRE_LINEUP", "1") == "1"
+
     try:
         async with AsyncSessionLocal() as session:
             now = datetime.utcnow()
             league_ids = await resolve_lineup_monitoring_leagues(session)
 
-            # Get matches that have lineup_confirmed but need market movement data
+            # Get matches that need market movement data
             # Focus on matches 5-65 minutes from now (covers all buckets)
             window_start = now + timedelta(minutes=3)
             window_end = now + timedelta(minutes=65)
 
-            result = await session.execute(text("""
+            # Build query conditionally based on require_lineup setting
+            lineup_condition = "AND m.lineup_confirmed = TRUE" if require_lineup else ""
+
+            result = await session.execute(text(f"""
                 SELECT m.id, m.external_id, m.date, m.league_id,
                        EXTRACT(EPOCH FROM (m.date - NOW())) / 60 as minutes_to_kickoff
                 FROM matches m
                 WHERE m.date BETWEEN :window_start AND :window_end
                   AND m.status = 'NS'
-                  AND m.lineup_confirmed = TRUE
+                  {lineup_condition}
                   AND m.market_movement_complete = FALSE
                   AND (:league_ids_is_null = TRUE OR m.league_id = ANY(:league_ids))
                 ORDER BY m.date

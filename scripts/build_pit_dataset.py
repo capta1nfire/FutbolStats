@@ -63,6 +63,37 @@ WITH pit_snapshots AS (
     WHERE os.snapshot_type = 'lineup_confirmed'
       AND m.status = 'FT'
 ),
+baseline_market_same AS (
+    -- Baseline odds from market_movement_snapshots for the SAME bookmaker as PIT (best-effort).
+    -- We pick the earliest available pre-kickoff snapshot (max minutes_to_kickoff).
+    SELECT DISTINCT ON (mms.match_id, mms.bookmaker)
+        mms.match_id,
+        mms.bookmaker,
+        mms.snapshot_type as baseline_snapshot_type,
+        mms.captured_at as baseline_captured_at,
+        mms.minutes_to_kickoff as baseline_minutes_to_kickoff,
+        mms.odds_home as baseline_odds_home,
+        mms.odds_draw as baseline_odds_draw,
+        mms.odds_away as baseline_odds_away
+    FROM market_movement_snapshots mms
+    WHERE mms.captured_at < mms.kickoff_time
+    ORDER BY mms.match_id, mms.bookmaker, mms.minutes_to_kickoff DESC, mms.captured_at ASC
+),
+baseline_market_any AS (
+    -- Fallback baseline odds from market_movement_snapshots for ANY bookmaker.
+    SELECT DISTINCT ON (mms.match_id)
+        mms.match_id,
+        mms.bookmaker,
+        mms.snapshot_type as baseline_snapshot_type,
+        mms.captured_at as baseline_captured_at,
+        mms.minutes_to_kickoff as baseline_minutes_to_kickoff,
+        mms.odds_home as baseline_odds_home,
+        mms.odds_draw as baseline_odds_draw,
+        mms.odds_away as baseline_odds_away
+    FROM market_movement_snapshots mms
+    WHERE mms.captured_at < mms.kickoff_time
+    ORDER BY mms.match_id, mms.minutes_to_kickoff DESC, mms.captured_at ASC
+),
 predictions_asof AS (
     -- Latest prediction BEFORE snapshot (ANTI-LEAKAGE constraint)
     SELECT DISTINCT ON (p.match_id, ps.snapshot_id)
@@ -100,6 +131,19 @@ SELECT
     ps.opening_odds_home,
     ps.opening_odds_draw,
     ps.opening_odds_away,
+    -- Baseline odds (CLV proxy) from market_movement_snapshots
+    COALESCE(bms.baseline_odds_home, bma.baseline_odds_home) as baseline_odds_home,
+    COALESCE(bms.baseline_odds_draw, bma.baseline_odds_draw) as baseline_odds_draw,
+    COALESCE(bms.baseline_odds_away, bma.baseline_odds_away) as baseline_odds_away,
+    COALESCE(bms.baseline_snapshot_type, bma.baseline_snapshot_type) as baseline_snapshot_type,
+    COALESCE(bms.bookmaker, bma.bookmaker) as baseline_bookmaker,
+    COALESCE(bms.baseline_captured_at, bma.baseline_captured_at) as baseline_captured_at,
+    COALESCE(bms.baseline_minutes_to_kickoff, bma.baseline_minutes_to_kickoff) as baseline_minutes_to_kickoff,
+    CASE
+        WHEN bms.baseline_odds_home IS NOT NULL THEN 'market_movement_same_bookmaker'
+        WHEN bma.baseline_odds_home IS NOT NULL THEN 'market_movement_any_bookmaker'
+        ELSE NULL
+    END as baseline_source,
     -- Model predictions (as-of, anti-leakage)
     pa.prediction_id,
     pa.home_prob,
@@ -117,6 +161,10 @@ SELECT
         ELSE 'D'
     END as actual_result
 FROM pit_snapshots ps
+LEFT JOIN baseline_market_same bms
+    ON bms.match_id = ps.match_id AND bms.bookmaker = ps.bookmaker
+LEFT JOIN baseline_market_any bma
+    ON bma.match_id = ps.match_id
 LEFT JOIN predictions_asof pa ON pa.snapshot_id = ps.snapshot_id
 ORDER BY ps.snapshot_at DESC
 """
@@ -147,9 +195,12 @@ def export_to_duckdb(data: list[dict], output_path: str) -> None:
     # Create DuckDB connection
     con = duckdb.connect(output_path)
 
+    # Drop existing table to avoid schema mismatch with old datasets
+    con.execute("DROP TABLE IF EXISTS pit_dataset")
+
     # Create table schema
     con.execute("""
-        CREATE TABLE IF NOT EXISTS pit_dataset (
+        CREATE TABLE pit_dataset (
             snapshot_id INTEGER,
             match_id INTEGER,
             match_external_id INTEGER,
@@ -170,6 +221,15 @@ def export_to_duckdb(data: list[dict], output_path: str) -> None:
             opening_odds_home DOUBLE,
             opening_odds_draw DOUBLE,
             opening_odds_away DOUBLE,
+            -- Baseline odds (CLV proxy)
+            baseline_odds_home DOUBLE,
+            baseline_odds_draw DOUBLE,
+            baseline_odds_away DOUBLE,
+            baseline_snapshot_type VARCHAR,
+            baseline_bookmaker VARCHAR,
+            baseline_captured_at TIMESTAMP,
+            baseline_minutes_to_kickoff DOUBLE,
+            baseline_source VARCHAR,
             -- Model predictions
             prediction_id INTEGER,
             home_prob DOUBLE,
@@ -190,9 +250,6 @@ def export_to_duckdb(data: list[dict], output_path: str) -> None:
         )
     """)
 
-    # Clear existing data
-    con.execute("DELETE FROM pit_dataset")
-
     # Insert data
     for row in data:
         con.execute("""
@@ -202,10 +259,13 @@ def export_to_duckdb(data: list[dict], output_path: str) -> None:
                 delta_to_kickoff_seconds, delta_ko_minutes, odds_freshness, bookmaker,
                 pit_odds_home, pit_odds_draw, pit_odds_away,
                 opening_odds_home, opening_odds_draw, opening_odds_away,
+                baseline_odds_home, baseline_odds_draw, baseline_odds_away,
+                baseline_snapshot_type, baseline_bookmaker, baseline_captured_at,
+                baseline_minutes_to_kickoff, baseline_source,
                 prediction_id, home_prob, draw_prob, away_prob,
                 model_version, prediction_at,
                 home_goals, away_goals, status, actual_result
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, [
             row.get("snapshot_id"),
             row.get("match_id"),
@@ -225,6 +285,14 @@ def export_to_duckdb(data: list[dict], output_path: str) -> None:
             float(row["opening_odds_home"]) if row.get("opening_odds_home") else None,
             float(row["opening_odds_draw"]) if row.get("opening_odds_draw") else None,
             float(row["opening_odds_away"]) if row.get("opening_odds_away") else None,
+            float(row["baseline_odds_home"]) if row.get("baseline_odds_home") else None,
+            float(row["baseline_odds_draw"]) if row.get("baseline_odds_draw") else None,
+            float(row["baseline_odds_away"]) if row.get("baseline_odds_away") else None,
+            row.get("baseline_snapshot_type"),
+            row.get("baseline_bookmaker"),
+            row.get("baseline_captured_at"),
+            float(row["baseline_minutes_to_kickoff"]) if row.get("baseline_minutes_to_kickoff") else None,
+            row.get("baseline_source"),
             row.get("prediction_id"),
             float(row["home_prob"]) if row.get("home_prob") else None,
             float(row["draw_prob"]) if row.get("draw_prob") else None,
@@ -269,6 +337,20 @@ def generate_summary(output_path: str) -> dict:
     # Records with opening odds
     result = con.execute("SELECT COUNT(*) FROM pit_dataset WHERE opening_odds_home IS NOT NULL").fetchone()
     summary["with_opening_odds"] = result[0]
+
+    # Records with baseline odds (market movement fallback)
+    result = con.execute("SELECT COUNT(*) FROM pit_dataset WHERE baseline_odds_home IS NOT NULL").fetchone()
+    summary["with_baseline_odds"] = result[0]
+
+    # Baseline source distribution
+    result = con.execute("""
+        SELECT baseline_source, COUNT(*) as c
+        FROM pit_dataset
+        WHERE baseline_source IS NOT NULL
+        GROUP BY 1
+        ORDER BY c DESC
+    """).fetchall()
+    summary["baseline_source_distribution"] = {row[0]: row[1] for row in result}
 
     # By league
     result = con.execute("""
@@ -349,6 +431,7 @@ async def main():
     print(f"Total records: {summary['total_records']}")
     print(f"With predictions (as-of): {summary['with_predictions']}")
     print(f"With opening odds: {summary['with_opening_odds']}")
+    print(f"With baseline odds: {summary.get('with_baseline_odds', 0)}")
     print(f"Leakage violations: {summary['leakage_violations']} (must be 0)")
     print(f"\nDate range: {summary['date_range']['min']} to {summary['date_range']['max']}")
     print(f"\nBy league: {summary['by_league']}")
