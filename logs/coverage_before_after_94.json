@@ -1,0 +1,21 @@
+{
+  "league_id": 94,
+  "league_name": "Primeira Liga",
+  "seasons_processed": [
+    2016,
+    2017,
+    2018,
+    2019
+  ],
+  "min_date": "2016-08-12T19:30:00",
+  "max_date": "2025-06-01T18:45:00",
+  "matches_before": 1540,
+  "matches_after": 2764,
+  "matches_upserted": 1224,
+  "ft_matches_before": 1539,
+  "ft_matches_after": 2763,
+  "ft_percentage_before": 99.94,
+  "ft_percentage_after": 99.96,
+  "teams_new": 3,
+  "teams_total": 28
+}
