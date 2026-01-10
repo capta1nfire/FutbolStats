@@ -2883,6 +2883,80 @@ async def pit_dashboard_json(request: Request):
     }
 
 
+@app.get("/dashboard/pit/debug")
+async def pit_dashboard_debug(request: Request):
+    """
+    Debug endpoint - shows raw pit_reports table content.
+    Protected by dashboard token.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from sqlalchemy import text
+
+    result = {
+        "table_contents": [],
+        "weekly_count": 0,
+        "daily_count": 0,
+        "error": None,
+    }
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Get all rows
+            rows_result = await session.execute(text("""
+                SELECT id, report_type, report_date, source, created_at, updated_at,
+                       LENGTH(payload::text) as payload_size
+                FROM pit_reports
+                ORDER BY report_date DESC, report_type DESC
+                LIMIT 20
+            """))
+            rows = rows_result.fetchall()
+
+            result["table_contents"] = [
+                {
+                    "id": row[0],
+                    "report_type": row[1],
+                    "report_date": str(row[2]),
+                    "source": row[3],
+                    "created_at": str(row[4]),
+                    "updated_at": str(row[5]),
+                    "payload_size": row[6],
+                }
+                for row in rows
+            ]
+
+            # Counts
+            daily_result = await session.execute(text("SELECT COUNT(*) FROM pit_reports WHERE report_type='daily'"))
+            result["daily_count"] = daily_result.scalar()
+
+            weekly_result = await session.execute(text("SELECT COUNT(*) FROM pit_reports WHERE report_type='weekly'"))
+            result["weekly_count"] = weekly_result.scalar()
+
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
+
+
+@app.post("/dashboard/pit/trigger")
+async def pit_trigger_evaluation(request: Request):
+    """
+    Manually trigger PIT evaluation (for testing).
+    Protected by dashboard token.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from app.scheduler import daily_pit_evaluation
+
+    try:
+        await daily_pit_evaluation()
+        return {"status": "ok", "message": "PIT evaluation triggered"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 # =============================================================================
 # OPS DASHBOARD (DB-backed, cached)
 # =============================================================================
