@@ -52,6 +52,17 @@ EXTENDED_LEAGUES = [
     143,  # Copa del Rey
     13,   # CONMEBOL Libertadores
     11,   # CONMEBOL Sudamericana
+    # LATAM Pack2 - extend monitoring coverage
+    239,  # Colombia Primera A
+    242,  # Ecuador Liga Pro
+    250,  # Paraguay Division Profesional - Apertura
+    252,  # Paraguay Division Profesional - Clausura
+    265,  # Chile Primera Division
+    268,  # Uruguay Primera - Apertura
+    270,  # Uruguay Primera - Clausura
+    281,  # Peru Primera Division
+    299,  # Venezuela Primera Division
+    344,  # Bolivia Primera Division
 ]
 
 # League scopes (dynamic via LEAGUE_MODE env var):
