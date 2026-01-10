@@ -2155,6 +2155,305 @@ async def weekly_pit_report():
         logger.error(f"Weekly PIT report failed: {e}")
 
 
+# =============================================================================
+# DAILY OPS ROLLUP
+# =============================================================================
+# League name mapping for rollups
+LEAGUE_NAMES_ROLLUP = {
+    39: "Premier League",
+    140: "La Liga",
+    135: "Serie A",
+    78: "Bundesliga",
+    61: "Ligue 1",
+    94: "Primeira Liga",
+    88: "Eredivisie",
+    203: "Super Lig",
+    71: "Brazil Serie A",
+    262: "Liga MX",
+    128: "Argentina Primera",
+    253: "MLS",
+    2: "Champions League",
+    3: "Europa League",
+    848: "Conference League",
+}
+
+
+async def daily_ops_rollup() -> dict:
+    """
+    Daily ops rollup job - aggregates metrics for the current day (UTC).
+
+    Runs at 09:05 UTC daily, UPSERT by day (idempotent).
+    Collects:
+    - PIT snapshots (total, live, evaluable)
+    - Delta KO bins distribution
+    - Baseline coverage metrics
+    - Market movement counts by type
+    - Per-league breakdown for key leagues
+    - Error summary (429s, budget exceeded) if available
+
+    Returns dict with rollup summary.
+    """
+    import json
+    from datetime import date
+
+    today = date.today()
+    logger.info(f"Daily ops rollup starting for {today}")
+
+    try:
+        async with AsyncSessionLocal() as session:
+            payload = {
+                "generated_at": datetime.utcnow().isoformat(),
+                "day": str(today),
+            }
+
+            # =================================================================
+            # GLOBAL METRICS (today, UTC)
+            # =================================================================
+
+            # PIT snapshots total (lineup_confirmed)
+            res = await session.execute(text("""
+                SELECT COUNT(*)
+                FROM odds_snapshots
+                WHERE snapshot_type = 'lineup_confirmed'
+                  AND snapshot_at::date = :today
+            """), {"today": today})
+            payload["pit_snapshots_total"] = int(res.scalar() or 0)
+
+            # PIT snapshots live
+            res = await session.execute(text("""
+                SELECT COUNT(*)
+                FROM odds_snapshots
+                WHERE snapshot_type = 'lineup_confirmed'
+                  AND odds_freshness = 'live'
+                  AND snapshot_at::date = :today
+            """), {"today": today})
+            payload["pit_snapshots_live"] = int(res.scalar() or 0)
+
+            # PIT bets evaluable (have prediction before snapshot)
+            res = await session.execute(text("""
+                SELECT COUNT(DISTINCT os.id)
+                FROM odds_snapshots os
+                WHERE os.snapshot_type = 'lineup_confirmed'
+                  AND os.odds_freshness = 'live'
+                  AND os.snapshot_at::date = :today
+                  AND EXISTS (
+                      SELECT 1 FROM predictions p
+                      WHERE p.match_id = os.match_id
+                        AND p.created_at < os.snapshot_at
+                  )
+            """), {"today": today})
+            payload["pit_bets_evaluable"] = int(res.scalar() or 0)
+
+            # Delta KO bins distribution
+            res = await session.execute(text("""
+                SELECT
+                    CASE
+                        WHEN delta_to_kickoff_seconds < 0 THEN 'after_ko'
+                        WHEN delta_to_kickoff_seconds < 600 THEN '0-10'
+                        WHEN delta_to_kickoff_seconds < 2700 THEN '10-45'
+                        WHEN delta_to_kickoff_seconds < 5400 THEN '45-90'
+                        ELSE '90+'
+                    END AS bin,
+                    COUNT(*) AS cnt
+                FROM odds_snapshots
+                WHERE snapshot_type = 'lineup_confirmed'
+                  AND odds_freshness = 'live'
+                  AND snapshot_at::date = :today
+                  AND delta_to_kickoff_seconds IS NOT NULL
+                GROUP BY 1
+            """), {"today": today})
+            delta_ko_bins = {row[0]: int(row[1]) for row in res.fetchall()}
+            payload["delta_ko_bins"] = delta_ko_bins
+
+            # =================================================================
+            # BASELINE COVERAGE
+            # =================================================================
+            # PIT with market_movement pre-KO (for CLV proxy)
+            res = await session.execute(text("""
+                SELECT
+                    COUNT(*) FILTER (WHERE has_baseline) AS with_baseline,
+                    COUNT(*) AS total
+                FROM (
+                    SELECT os.id,
+                           EXISTS (
+                               SELECT 1 FROM market_movement_snapshots mms
+                               WHERE mms.match_id = os.match_id
+                                 AND mms.captured_at < (
+                                     SELECT m.date FROM matches m WHERE m.id = os.match_id
+                                 )
+                           ) AS has_baseline
+                    FROM odds_snapshots os
+                    WHERE os.snapshot_type = 'lineup_confirmed'
+                      AND os.odds_freshness = 'live'
+                      AND os.snapshot_at::date = :today
+                ) sub
+            """), {"today": today})
+            row = res.first()
+            pit_with_baseline = int(row[0] or 0) if row else 0
+            pit_total_baseline = int(row[1] or 0) if row else 0
+            baseline_pct = round((pit_with_baseline / pit_total_baseline) * 100, 1) if pit_total_baseline > 0 else 0
+
+            payload["baseline_coverage"] = {
+                "pit_with_market_baseline": pit_with_baseline,
+                "pit_total": pit_total_baseline,
+                "baseline_pct": baseline_pct,
+            }
+
+            # =================================================================
+            # MARKET MOVEMENT COUNTS
+            # =================================================================
+            res = await session.execute(text("""
+                SELECT snapshot_type, COUNT(*) AS cnt
+                FROM market_movement_snapshots
+                WHERE captured_at::date = :today
+                GROUP BY snapshot_type
+            """), {"today": today})
+            market_movement_by_type = {row[0]: int(row[1]) for row in res.fetchall()}
+            market_movement_total = sum(market_movement_by_type.values())
+
+            payload["market_movement"] = {
+                "total": market_movement_total,
+                "by_type": market_movement_by_type,
+            }
+
+            # Lineup movement counts
+            try:
+                res = await session.execute(text("""
+                    SELECT COUNT(*)
+                    FROM lineup_movement_snapshots
+                    WHERE captured_at::date = :today
+                """), {"today": today})
+                payload["lineup_movement_total"] = int(res.scalar() or 0)
+            except Exception:
+                payload["lineup_movement_total"] = None
+
+            # =================================================================
+            # PER-LEAGUE BREAKDOWN (Top 5 + key leagues)
+            # =================================================================
+            key_leagues = TOP5_LEAGUES + [2, 3]  # Top 5 + UCL + UEL
+            res = await session.execute(text("""
+                SELECT
+                    m.league_id,
+                    COUNT(*) FILTER (WHERE os.odds_freshness = 'live') AS pit_live,
+                    COUNT(*) FILTER (
+                        WHERE os.odds_freshness = 'live'
+                          AND EXISTS (
+                              SELECT 1 FROM predictions p
+                              WHERE p.match_id = os.match_id
+                                AND p.created_at < os.snapshot_at
+                          )
+                    ) AS bets_evaluable
+                FROM odds_snapshots os
+                JOIN matches m ON m.id = os.match_id
+                WHERE os.snapshot_type = 'lineup_confirmed'
+                  AND os.snapshot_at::date = :today
+                  AND m.league_id = ANY(:leagues)
+                GROUP BY m.league_id
+            """), {"today": today, "leagues": key_leagues})
+
+            by_league = {}
+            for row in res.fetchall():
+                league_id = int(row[0])
+                league_name = LEAGUE_NAMES_ROLLUP.get(league_id, f"League {league_id}")
+                by_league[league_name] = {
+                    "league_id": league_id,
+                    "pit_snapshots_live": int(row[1] or 0),
+                    "bets_evaluable": int(row[2] or 0),
+                }
+
+            # Add baseline % per league (separate query for clarity)
+            for league_name, data in by_league.items():
+                league_id = data["league_id"]
+                res = await session.execute(text("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE has_baseline) AS with_baseline,
+                        COUNT(*) AS total
+                    FROM (
+                        SELECT os.id,
+                               EXISTS (
+                                   SELECT 1 FROM market_movement_snapshots mms
+                                   WHERE mms.match_id = os.match_id
+                                     AND mms.captured_at < m.date
+                               ) AS has_baseline
+                        FROM odds_snapshots os
+                        JOIN matches m ON m.id = os.match_id
+                        WHERE os.snapshot_type = 'lineup_confirmed'
+                          AND os.odds_freshness = 'live'
+                          AND os.snapshot_at::date = :today
+                          AND m.league_id = :league_id
+                    ) sub
+                """), {"today": today, "league_id": league_id})
+                row = res.first()
+                with_b = int(row[0] or 0) if row else 0
+                total_b = int(row[1] or 0) if row else 0
+                data["baseline_pct"] = round((with_b / total_b) * 100, 1) if total_b > 0 else 0.0
+
+                # Market movement total per league
+                res = await session.execute(text("""
+                    SELECT COUNT(*)
+                    FROM market_movement_snapshots mms
+                    JOIN matches m ON m.id = mms.match_id
+                    WHERE mms.captured_at::date = :today
+                      AND m.league_id = :league_id
+                """), {"today": today, "league_id": league_id})
+                data["market_movement_total"] = int(res.scalar() or 0)
+
+            payload["by_league"] = by_league
+
+            # =================================================================
+            # ERROR SUMMARY (best-effort from in-memory counters)
+            # =================================================================
+            # Get error counts from lineup capture metrics
+            error_summary = {
+                "api_429_critical": _lineup_capture_metrics.get("critical_window", {}).get("api_errors_429", 0),
+                "api_429_full": _lineup_capture_metrics.get("full_window", {}).get("api_errors_429", 0),
+                "timeouts_critical": _lineup_capture_metrics.get("critical_window", {}).get("api_errors_timeout", 0),
+                "timeouts_full": _lineup_capture_metrics.get("full_window", {}).get("api_errors_timeout", 0),
+            }
+            # Add budget status
+            try:
+                budget_status = get_api_budget_status()
+                error_summary["budget_used"] = budget_status.get("used")
+                error_summary["budget_limit"] = budget_status.get("limit")
+                error_summary["budget_pct"] = budget_status.get("used_pct")
+            except Exception:
+                pass
+
+            payload["errors_summary"] = error_summary
+
+            # =================================================================
+            # UPSERT INTO ops_daily_rollups
+            # =================================================================
+            payload_json = json.dumps(payload)
+            await session.execute(text("""
+                INSERT INTO ops_daily_rollups (day, payload, created_at, updated_at)
+                VALUES (:day, :payload, NOW(), NOW())
+                ON CONFLICT (day) DO UPDATE SET
+                    payload = :payload,
+                    updated_at = NOW()
+            """), {"day": today, "payload": payload_json})
+            await session.commit()
+
+            logger.info(
+                f"Daily ops rollup complete for {today}: "
+                f"pit_live={payload['pit_snapshots_live']}, "
+                f"bets_evaluable={payload['pit_bets_evaluable']}, "
+                f"baseline_pct={baseline_pct}%"
+            )
+
+            return {
+                "status": "success",
+                "day": str(today),
+                "pit_snapshots_live": payload["pit_snapshots_live"],
+                "pit_bets_evaluable": payload["pit_bets_evaluable"],
+                "baseline_pct": baseline_pct,
+            }
+
+    except Exception as e:
+        logger.error(f"Daily ops rollup failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 def start_scheduler(ml_engine):
     """
     Start the background scheduler.
@@ -2303,6 +2602,16 @@ def start_scheduler(ml_engine):
         replace_existing=True,
     )
 
+    # Daily Ops Rollup: 09:05 UTC (after PIT evaluation)
+    # Aggregates daily KPIs to ops_daily_rollups table (idempotent UPSERT)
+    scheduler.add_job(
+        daily_ops_rollup,
+        trigger=CronTrigger(hour=9, minute=5),
+        id="daily_ops_rollup",
+        name="Daily Ops Rollup (KPI aggregation)",
+        replace_existing=True,
+    )
+
     scheduler.start()
     _scheduler_started = True
     logger.info(
@@ -2317,6 +2626,7 @@ def start_scheduler(ml_engine):
         "  - Daily save predictions: 7:00 AM UTC\n"
         "  - Daily audit: 8:00 AM UTC\n"
         "  - Daily PIT evaluation: 9:00 AM UTC (silent save)\n"
+        "  - Daily ops rollup: 9:05 AM UTC (KPI aggregation)\n"
         "  - Weekly recalibration: Mondays 5:00 AM UTC\n"
         "  - Weekly PIT report: Tuesdays 10:00 AM UTC"
     )

@@ -238,6 +238,18 @@ async def lifespan(app: FastAPI):
     _install_ops_log_handler()
     await init_db()
 
+    # Ensure ops_daily_rollups table exists (idempotent)
+    async with AsyncSessionLocal() as session:
+        await session.execute(text("""
+            CREATE TABLE IF NOT EXISTS ops_daily_rollups (
+                day DATE PRIMARY KEY,
+                payload JSONB NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        """))
+        await session.commit()
+
     # Try to load model from PostgreSQL first (fast path)
     model_loaded = False
     async with AsyncSessionLocal() as session:
@@ -3198,7 +3210,39 @@ def _render_progress_bar_pct(label: str, current_pct: float, target_pct: int, wi
     """
 
 
-def _render_ops_dashboard_html(data: dict) -> str:
+def _render_history_rows(history: list) -> str:
+    """Render history table rows for the ops dashboard."""
+    if not history:
+        return "<tr><td colspan='6' style='text-align:center; color:var(--muted);'>No hay datos históricos aún. El rollup diario corre a las 09:05 UTC.</td></tr>"
+
+    rows = ""
+    for entry in history:
+        day = entry.get("day", "")
+        p = entry.get("payload") or {}
+
+        pit_live = p.get("pit_snapshots_live", 0)
+        bets_eval = p.get("pit_bets_evaluable", 0)
+        baseline_pct = p.get("baseline_coverage", {}).get("baseline_pct", 0)
+        market_total = p.get("market_movement", {}).get("total", 0)
+
+        bins = p.get("delta_ko_bins", {})
+        bin_10_45 = bins.get("10-45", 0)
+        bin_45_90 = bins.get("45-90", 0)
+
+        rows += f"""
+        <tr>
+            <td style="font-weight:500;">{day}</td>
+            <td style="text-align:center;">{pit_live}</td>
+            <td style="text-align:center;">{bets_eval}</td>
+            <td style="text-align:center;">{baseline_pct}%</td>
+            <td style="text-align:center;">{bin_10_45} / {bin_45_90}</td>
+            <td style="text-align:center;">{market_total}</td>
+        </tr>"""
+
+    return rows
+
+
+def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
     budget = data.get("budget") or {}
     budget_status = budget.get("status", "unknown")
     # New API account status fields
@@ -3218,6 +3262,7 @@ def _render_ops_dashboard_html(data: dict) -> str:
     upcoming = (data.get("upcoming") or {}).get("by_league_24h") or []
     movement = data.get("movement") or {}
     stats = data.get("stats_backfill") or {}
+    history = history or []
     progress = data.get("progress") or {}
 
     def budget_color() -> str:
@@ -3460,7 +3505,8 @@ def _render_ops_dashboard_html(data: dict) -> str:
         <div class="nav-tabs">
           <a class="nav-link active" data-path="/dashboard/ops" href="/dashboard/ops">Ops</a>
           <a class="nav-link" data-path="/dashboard/pit" href="/dashboard/pit">PIT</a>
-          <a class="nav-link" data-path="/dashboard/ops/logs" href="/dashboard/ops/logs">Logs</a>
+          <a class="nav-link" data-path="/dashboard/ops/history" href="/dashboard/ops/history">History</a>
+          <a class="nav-link" data-path="/dashboard/ops/logs" href="/dashboard/ops/logs">Logs (debug)</a>
           <a class="nav-link" data-path="/dashboard/ops.json" href="/dashboard/ops.json">JSON</a>
         </div>
       </div>
@@ -3559,6 +3605,31 @@ def _render_ops_dashboard_html(data: dict) -> str:
     </div>
   </div>
 
+  <!-- KPI History (últimos 14 días) -->
+  <div class="history-section" style="margin-top: 1.5rem;">
+    <h2 style="font-size: 1.1rem; margin-bottom: 0.75rem; color: var(--text);">
+      KPI Histórico (últimos 14 días)
+      <span class="info-icon">i<span class="tooltip">Métricas diarias persistentes. Rollup generado a las 09:05 UTC cada día. Ver pestaña History para más detalles.</span></span>
+    </h2>
+    <div class="table-card">
+      <table>
+        <thead>
+          <tr>
+            <th>Día</th>
+            <th>PIT Live</th>
+            <th>Bets Eval</th>
+            <th>Baseline %</th>
+            <th>ΔKO (10-45 / 45-90)</th>
+            <th>Mkt Mov</th>
+          </tr>
+        </thead>
+        <tbody>
+          {_render_history_rows(history[:14])}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <div class="footer">
     Refresh: 60s | Cache TTL: {_ops_dashboard_cache["ttl"]}s
   </div>
@@ -3595,7 +3666,11 @@ async def ops_dashboard_html(request: Request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
     data = await _get_cached_ops_data()
-    html = _render_ops_dashboard_html(data)
+
+    # Fetch KPI history (last 14 days for dashboard display)
+    history = await _get_ops_history(days=14)
+
+    html = _render_ops_dashboard_html(data, history=history)
     return HTMLResponse(content=html)
 
 
@@ -3787,6 +3862,217 @@ async def ops_dashboard_logs_html(
         const path = a.getAttribute('data-path');
         if (!path) return;
         // If data-path already has query params, append with &
+        const joiner = path.includes('?') ? '&' : '?';
+        a.setAttribute('href', path + joiner + 'token=' + encodeURIComponent(token));
+      }});
+    }})();
+  </script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+# =============================================================================
+# OPS HISTORY ENDPOINTS (KPI rollups from ops_daily_rollups table)
+# =============================================================================
+
+
+async def _get_ops_history(days: int = 30) -> list[dict]:
+    """Fetch recent daily rollups from ops_daily_rollups table."""
+    import json
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(text("""
+            SELECT day, payload, updated_at
+            FROM ops_daily_rollups
+            ORDER BY day DESC
+            LIMIT :days
+        """), {"days": days})
+
+        rows = result.fetchall()
+        history = []
+        for row in rows:
+            day = row[0]
+            payload = row[1]
+            updated_at = row[2]
+
+            # Parse payload if it's a string
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+
+            history.append({
+                "day": str(day),
+                "payload": payload,
+                "updated_at": updated_at.isoformat() if updated_at else None,
+            })
+
+        return history
+
+
+@app.get("/dashboard/ops/history.json")
+async def ops_history_json(request: Request, days: int = 30):
+    """JSON endpoint for historical daily KPIs."""
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    history = await _get_ops_history(days=days)
+    return {
+        "days_requested": days,
+        "days_available": len(history),
+        "history": history,
+    }
+
+
+@app.get("/dashboard/ops/history")
+async def ops_history_html(request: Request, days: int = 30):
+    """HTML view of historical daily KPIs."""
+    from fastapi.responses import HTMLResponse
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    history = await _get_ops_history(days=days)
+
+    # Build table rows
+    rows_html = ""
+    for entry in history:
+        day = entry["day"]
+        p = entry.get("payload") or {}
+
+        pit_live = p.get("pit_snapshots_live", 0)
+        bets_eval = p.get("pit_bets_evaluable", 0)
+        baseline_pct = p.get("baseline_coverage", {}).get("baseline_pct", 0)
+        market_total = p.get("market_movement", {}).get("total", 0)
+
+        # Delta KO bins
+        bins = p.get("delta_ko_bins", {})
+        bin_10_45 = bins.get("10-45", 0)
+        bin_45_90 = bins.get("45-90", 0)
+
+        # Errors
+        errors = p.get("errors_summary", {})
+        err_429 = errors.get("api_429_critical", 0) + errors.get("api_429_full", 0)
+        budget_pct = errors.get("budget_pct", "-")
+
+        rows_html += f"""
+        <tr>
+            <td>{day}</td>
+            <td>{pit_live}</td>
+            <td>{bets_eval}</td>
+            <td>{baseline_pct}%</td>
+            <td>{bin_10_45} / {bin_45_90}</td>
+            <td>{market_total}</td>
+            <td>{err_429 if err_429 > 0 else '-'}</td>
+            <td>{budget_pct}%</td>
+        </tr>"""
+
+    if not rows_html:
+        rows_html = "<tr><td colspan='8'>No hay datos históricos aún. El rollup diario corre a las 09:05 UTC.</td></tr>"
+
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="refresh" content="300">
+  <title>Ops History - FutbolStats</title>
+  <style>
+    :root {{
+      --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #e2e8f0; --muted: #94a3b8; --blue: #3b82f6;
+      --green: #22c55e; --yellow: #eab308; --red: #ef4444;
+    }}
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{ font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 1.25rem; }}
+    .header {{ display:flex; justify-content:space-between; align-items:flex-end; gap:1rem; margin-bottom:1rem; border-bottom:1px solid var(--border); padding-bottom:0.75rem; }}
+    .meta {{ color: var(--muted); font-size:0.85rem; line-height:1.3; text-align:right; }}
+    a {{ color: var(--blue); text-decoration:none; }}
+    a:hover {{ text-decoration:underline; }}
+    .card {{ background: var(--card); border: 1px solid var(--border); border-radius: 0.75rem; overflow:hidden; }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 0.9rem; }}
+    th, td {{ padding: 0.75rem 0.9rem; text-align:center; vertical-align: middle; }}
+    th {{ color: var(--muted); font-weight: 600; }}
+    td:first-child {{ text-align: left; font-weight: 500; }}
+    tr:not(:last-child) {{ border-bottom: 1px solid var(--border); }}
+    .nav-tabs {{
+      display: inline-flex;
+      gap: 0.35rem;
+      padding: 0.35rem;
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      background: rgba(30, 41, 59, 0.55);
+    }}
+    .nav-tabs a {{
+      display: inline-flex;
+      align-items: center;
+      padding: 0.35rem 0.6rem;
+      border-radius: 0.6rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-decoration: none;
+      border: 1px solid transparent;
+    }}
+    .nav-tabs a:hover {{
+      color: var(--text);
+      border-color: rgba(59, 130, 246, 0.35);
+      background: rgba(59, 130, 246, 0.12);
+    }}
+    .nav-tabs a.active {{
+      color: var(--text);
+      background: rgba(59, 130, 246, 0.18);
+      border-color: rgba(59, 130, 246, 0.45);
+    }}
+    .hint {{ color: var(--muted); font-size: 0.85rem; }}
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h2>KPI Histórico (últimos {days} días)</h2>
+      <div class="hint">Métricas diarias persistentes desde ops_daily_rollups</div>
+    </div>
+    <div class="meta">
+      <div>{len(history)} días con datos</div>
+      <div style="margin-top: 0.35rem;">
+        <div class="nav-tabs">
+          <a class="nav-link" data-path="/dashboard/ops" href="/dashboard/ops">Ops</a>
+          <a class="nav-link" data-path="/dashboard/pit" href="/dashboard/pit">PIT</a>
+          <a class="nav-link active" data-path="/dashboard/ops/history" href="/dashboard/ops/history">History</a>
+          <a class="nav-link" data-path="/dashboard/ops/logs" href="/dashboard/ops/logs">Logs</a>
+          <a class="nav-link" data-path="/dashboard/ops/history.json?days={days}" href="/dashboard/ops/history.json?days={days}">JSON</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Día</th>
+          <th>PIT Live</th>
+          <th>Bets Eval</th>
+          <th>Baseline %</th>
+          <th>ΔKO (10-45 / 45-90)</th>
+          <th>Mkt Mov</th>
+          <th>429s</th>
+          <th>Budget %</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows_html}
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    // Preserve ?token= across dashboard navigation
+    (function() {{
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get('token');
+      if (!token) return;
+      document.querySelectorAll('a.nav-link').forEach(a => {{
+        const path = a.getAttribute('data-path');
+        if (!path) return;
         const joiner = path.includes('?') ? '&' : '?';
         a.setAttribute('href', path + joiner + 'token=' + encodeURIComponent(token));
       }});
