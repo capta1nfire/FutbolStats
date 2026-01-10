@@ -3869,6 +3869,30 @@ async def ops_dashboard_logs_html(
 
 
 # =============================================================================
+# OPS ADMIN ENDPOINTS (manual triggers, protected by token)
+# =============================================================================
+
+
+@app.post("/dashboard/ops/rollup")
+async def trigger_ops_rollup(request: Request):
+    """
+    Manually trigger the daily ops rollup job.
+
+    Protected by dashboard token. Use for testing/validation.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from app.scheduler import daily_ops_rollup
+
+    result = await daily_ops_rollup()
+    return {
+        "status": "executed",
+        "result": result,
+    }
+
+
+# =============================================================================
 # OPS HISTORY ENDPOINTS (KPI rollups from ops_daily_rollups table)
 # =============================================================================
 
