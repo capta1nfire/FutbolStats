@@ -2698,6 +2698,37 @@ def _render_pit_dashboard_html(data: dict) -> str:
         }
         return labels.get(label, label.replace("_", " ").title())
 
+    def get_diagnostic_context(n: int, phase: str, diag: str) -> tuple[str, str]:
+        """
+        Get context icon and tooltip based on sample size.
+        Returns (context_icon, tooltip_text).
+        """
+        if phase == "insufficient" or n < 50:
+            return (
+                "ℹ️",
+                "Early diagnostic (low N). High variance - not a business verdict. Accumulating data."
+            )
+        elif phase in ("piloto", "preliminar") or 50 <= n < 200:
+            return (
+                "⚠️",
+                "Preliminary signal. Useful for monitoring, not conclusive. Review trend and wait for more N."
+            )
+        else:
+            # Formal phase (n >= 200)
+            if diag == "EDGE_PERSISTS":
+                return (
+                    "✅",
+                    "Diagnostic with sufficient N (more reliable). Verify ROI/EV with CI before decisions."
+                )
+            else:
+                return (
+                    "❌",
+                    "Diagnostic with sufficient N (more reliable). Verify ROI/EV with CI before decisions."
+                )
+
+    # Get diagnostic context based on sample size
+    diag_context_icon, diag_tooltip = get_diagnostic_context(principal_n, principal_status, edge_diagnostic)
+
     # Bin data
     bins_html = ""
     for label, count in captures_by_range.items():
@@ -2802,6 +2833,17 @@ def _render_pit_dashboard_html(data: dict) -> str:
         }}
         .decision-box h3 {{ margin-bottom: 1rem; font-size: 0.875rem; color: var(--muted); }}
         .decision {{ font-size: 1.25rem; font-weight: 600; }}
+        .context-icon {{ cursor: help; margin-left: 0.5rem; }}
+        .tooltip-hint {{
+            font-size: 0.75rem;
+            color: var(--muted);
+            margin-top: 0.5rem;
+            cursor: help;
+            text-decoration: underline dotted;
+        }}
+        .tooltip-hint:hover, .context-icon:hover {{
+            color: var(--blue);
+        }}
         .error {{ background: rgba(239, 68, 68, 0.1); border-color: var(--red); padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem; }}
         .footer {{ margin-top: 2rem; text-align: center; color: var(--muted); font-size: 0.75rem; }}
         .nav-tabs {{
@@ -2896,8 +2938,9 @@ def _render_pit_dashboard_html(data: dict) -> str:
     </div>
 
     <div class="decision-box">
-        <h3>Edge Decay Diagnostic</h3>
+        <h3>Edge Decay Diagnostic <span class="context-icon" title="{diag_tooltip}">{diag_context_icon}</span></h3>
         <div class="decision">{edge_icon(edge_diagnostic)} {format_edge_label(edge_diagnostic)}</div>
+        <div class="tooltip-hint" title="{diag_tooltip}">N={principal_n} &bull; {principal_status}</div>
         <div style="margin-top: 1rem; color: var(--muted);">{recommendation}</div>
     </div>
 
