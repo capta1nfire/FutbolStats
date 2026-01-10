@@ -2437,7 +2437,7 @@ async def _load_pit_reports_from_db_async() -> dict:
 
     try:
         async with AsyncSessionLocal() as session:
-            # Get latest daily
+            # Get latest daily - process result INSIDE the session context
             daily_result = await session.execute(text("""
                 SELECT payload, report_date, created_at, source
                 FROM pit_reports
@@ -2446,6 +2446,13 @@ async def _load_pit_reports_from_db_async() -> dict:
                 LIMIT 1
             """))
             daily_row = daily_result.fetchone()
+
+            # Extract daily data while still in session
+            if daily_row:
+                result["daily"] = daily_row[0]  # payload is JSON
+                result["report_date"] = str(daily_row[1])
+                result["created_at"] = str(daily_row[2])
+                result["source"] = f"db_{daily_row[3]}"
 
             # Get latest weekly
             weekly_result = await session.execute(text("""
@@ -2457,23 +2464,20 @@ async def _load_pit_reports_from_db_async() -> dict:
             """))
             weekly_row = weekly_result.fetchone()
 
-        if daily_row:
-            result["daily"] = daily_row[0]  # payload is JSON
-            result["report_date"] = str(daily_row[1])
-            result["created_at"] = str(daily_row[2])
-            result["source"] = f"db_{daily_row[3]}"
+            # Extract weekly data while still in session
+            if weekly_row:
+                result["weekly"] = weekly_row[0]
+                if not result["source"]:
+                    result["report_date"] = str(weekly_row[1])
+                    result["created_at"] = str(weekly_row[2])
+                    result["source"] = f"db_{weekly_row[3]}"
 
-        if weekly_row:
-            result["weekly"] = weekly_row[0]
-            if not result["source"]:
-                result["report_date"] = str(weekly_row[1])
-                result["created_at"] = str(weekly_row[2])
-                result["source"] = f"db_{weekly_row[3]}"
-
+        # Check after session closes
         if not result["weekly"] and not result["daily"]:
             result["error"] = "No PIT reports in database"
 
     except Exception as e:
+        logger.warning(f"PIT DB load error: {e}")
         result["error"] = f"DB error: {str(e)[:100]}"
 
     return result
