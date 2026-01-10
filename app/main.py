@@ -2977,7 +2977,23 @@ def _render_pit_dashboard_html(data: dict) -> str:
         .json-dropdown-content a:first-child {{
             border-radius: 0.5rem 0.5rem 0 0;
         }}
-        .json-dropdown-content a:last-child {{
+        .copy-json-btn {{
+            display: block;
+            width: 100%;
+            padding: 0.4rem 0.75rem;
+            color: var(--muted);
+            font-size: 0.75rem;
+            text-align: left;
+            background: rgba(59, 130, 246, 0.08);
+            border: none;
+            border-top: 1px solid var(--border);
+            cursor: pointer;
+        }}
+        .copy-json-btn:hover {{
+            background: rgba(59, 130, 246, 0.18);
+            color: var(--text);
+        }}
+        .copy-json-btn:last-child {{
             border-radius: 0 0 0.5rem 0.5rem;
         }}
     </style>
@@ -2998,10 +3014,14 @@ def _render_pit_dashboard_html(data: dict) -> str:
                     <div class="json-dropdown">
                         <span class="json-dropdown-btn">JSON ▾</span>
                         <div class="json-dropdown-content">
-                            <a data-path="/dashboard/ops.json" href="/dashboard/ops.json">Ops JSON</a>
-                            <a data-path="/dashboard/pit.json" href="/dashboard/pit.json">PIT JSON</a>
-                            <a data-path="/dashboard/ops/history.json?days=30" href="/dashboard/ops/history.json?days=30">History JSON</a>
-                            <a data-path="/dashboard/ops/logs.json?limit=200" href="/dashboard/ops/logs.json?limit=200">Logs JSON</a>
+                            <a data-path="/dashboard/ops.json" href="/dashboard/ops.json" target="_blank">Ops JSON</a>
+                            <button class="copy-json-btn" data-endpoint="/dashboard/ops.json">📋 Copy Ops</button>
+                            <a data-path="/dashboard/pit.json" href="/dashboard/pit.json" target="_blank">PIT JSON</a>
+                            <button class="copy-json-btn" data-endpoint="/dashboard/pit.json">📋 Copy PIT</button>
+                            <a data-path="/dashboard/ops/history.json?days=30" href="/dashboard/ops/history.json?days=30" target="_blank">History JSON</a>
+                            <button class="copy-json-btn" data-endpoint="/dashboard/ops/history.json?days=30">📋 Copy History</button>
+                            <a data-path="/dashboard/ops/logs.json?limit=200" href="/dashboard/ops/logs.json?limit=200" target="_blank">Logs JSON</a>
+                            <button class="copy-json-btn" data-endpoint="/dashboard/ops/logs.json?limit=200">📋 Copy Logs</button>
                         </div>
                     </div>
                 </div>
@@ -3075,7 +3095,32 @@ def _render_pit_dashboard_html(data: dict) -> str:
           const joiner = path.includes('?') ? '&' : '?';
           a.setAttribute('href', path + joiner + 'token=' + encodeURIComponent(token));
         }});
+        // Update copy buttons with token
+        document.querySelectorAll('.copy-json-btn').forEach(btn => {{
+          const endpoint = btn.getAttribute('data-endpoint');
+          if (!endpoint) return;
+          const joiner = endpoint.includes('?') ? '&' : '?';
+          btn.setAttribute('data-endpoint', endpoint + joiner + 'token=' + encodeURIComponent(token));
+        }});
       }})();
+
+      // Copy JSON to clipboard
+      document.querySelectorAll('.copy-json-btn').forEach(btn => {{
+        btn.addEventListener('click', async () => {{
+          const endpoint = btn.getAttribute('data-endpoint');
+          try {{
+            const res = await fetch(endpoint);
+            const json = await res.json();
+            await navigator.clipboard.writeText(JSON.stringify(json, null, 2));
+            const orig = btn.textContent;
+            btn.textContent = '✅ Copied!';
+            setTimeout(() => btn.textContent = orig, 1500);
+          }} catch (e) {{
+            btn.textContent = '❌ Error';
+            setTimeout(() => btn.textContent = btn.textContent.replace('❌ Error', '📋'), 1500);
+          }}
+        }});
+      }});
     </script>
 </body>
 </html>"""
@@ -4016,7 +4061,23 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
     .json-dropdown-content a:first-child {{
       border-radius: 0.5rem 0.5rem 0 0;
     }}
-    .json-dropdown-content a:last-child {{
+    .copy-json-btn {{
+      display: block;
+      width: 100%;
+      padding: 0.4rem 0.75rem;
+      color: var(--muted);
+      font-size: 0.75rem;
+      text-align: left;
+      background: rgba(59, 130, 246, 0.08);
+      border: none;
+      border-top: 1px solid var(--border);
+      cursor: pointer;
+    }}
+    .copy-json-btn:hover {{
+      background: rgba(59, 130, 246, 0.18);
+      color: var(--text);
+    }}
+    .copy-json-btn:last-child {{
       border-radius: 0 0 0.5rem 0.5rem;
     }}
   </style>
@@ -4042,10 +4103,14 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
           <div class="json-dropdown">
             <span class="json-dropdown-btn">JSON ▾</span>
             <div class="json-dropdown-content">
-              <a data-path="/dashboard/ops.json" href="/dashboard/ops.json">Ops JSON</a>
-              <a data-path="/dashboard/pit.json" href="/dashboard/pit.json">PIT JSON</a>
-              <a data-path="/dashboard/ops/history.json?days=30" href="/dashboard/ops/history.json?days=30">History JSON</a>
-              <a data-path="/dashboard/ops/logs.json?limit=200" href="/dashboard/ops/logs.json?limit=200">Logs JSON</a>
+              <a data-path="/dashboard/ops.json" href="/dashboard/ops.json" target="_blank">Ops JSON</a>
+              <button class="copy-json-btn" data-endpoint="/dashboard/ops.json">📋 Copy Ops</button>
+              <a data-path="/dashboard/pit.json" href="/dashboard/pit.json" target="_blank">PIT JSON</a>
+              <button class="copy-json-btn" data-endpoint="/dashboard/pit.json">📋 Copy PIT</button>
+              <a data-path="/dashboard/ops/history.json?days=30" href="/dashboard/ops/history.json?days=30" target="_blank">History JSON</a>
+              <button class="copy-json-btn" data-endpoint="/dashboard/ops/history.json?days=30">📋 Copy History</button>
+              <a data-path="/dashboard/ops/logs.json?limit=200" href="/dashboard/ops/logs.json?limit=200" target="_blank">Logs JSON</a>
+              <button class="copy-json-btn" data-endpoint="/dashboard/ops/logs.json?limit=200">📋 Copy Logs</button>
             </div>
           </div>
         </div>
@@ -4127,6 +4192,25 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
       </div>
     </div>
 
+    <div class="table-card">
+      <h3>KPI Histórico (14 días)<span class="info-icon">i<span class="tooltip">Métricas diarias persistentes (día UTC 00:00-23:59). Rollup generado a las 09:05 UTC. Nota: los valores del día actual pueden diferir del "PIT Live 24h" que cuenta últimas 24 horas móviles.</span></span></h3>
+      <table style="font-size: 0.8rem;">
+        <thead>
+          <tr>
+            <th>Día</th>
+            <th>PIT</th>
+            <th>Bets</th>
+            <th>Base%</th>
+            <th>ΔKO</th>
+            <th>Mov</th>
+          </tr>
+        </thead>
+        <tbody>
+          {_render_history_rows(history[:14])}
+        </tbody>
+      </table>
+    </div>
+
     <div class="table-card" style="grid-column: 1 / -1;">
       <h3>Últimos 10 PIT (Lineup Confirmed)<span class="info-icon">i<span class="tooltip">Los 10 snapshots PIT más recientes donde se confirmaron alineaciones. Muestra: hora (PT), liga, frescura de odds, minutos al kickoff, y odds H/D/A del bookmaker.</span></span></h3>
       <table>
@@ -4137,31 +4221,6 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
           </tr>
         </thead>
         <tbody>{latest_rows}</tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- KPI History (últimos 14 días) -->
-  <div class="history-section" style="margin-top: 1.5rem;">
-    <h2 style="font-size: 1.1rem; margin-bottom: 0.75rem; color: var(--text);">
-      KPI Histórico (últimos 14 días)
-      <span class="info-icon">i<span class="tooltip">Métricas diarias persistentes (día UTC 00:00-23:59). Rollup generado a las 09:05 UTC. Nota: los valores del día actual pueden diferir del "PIT Live 24h" que cuenta últimas 24 horas móviles.</span></span>
-    </h2>
-    <div class="table-card">
-      <table>
-        <thead>
-          <tr>
-            <th>Día</th>
-            <th>PIT Live</th>
-            <th>Bets Eval</th>
-            <th>Baseline %</th>
-            <th>ΔKO (10-45 / 45-90)</th>
-            <th>Mkt Mov</th>
-          </tr>
-        </thead>
-        <tbody>
-          {_render_history_rows(history[:14])}
-        </tbody>
       </table>
     </div>
   </div>
@@ -4183,7 +4242,32 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
         const joiner = path.includes('?') ? '&' : '?';
         a.setAttribute('href', path + joiner + 'token=' + encodeURIComponent(token));
       }});
+      // Update copy buttons with token
+      document.querySelectorAll('.copy-json-btn').forEach(btn => {{
+        const endpoint = btn.getAttribute('data-endpoint');
+        if (!endpoint) return;
+        const joiner = endpoint.includes('?') ? '&' : '?';
+        btn.setAttribute('data-endpoint', endpoint + joiner + 'token=' + encodeURIComponent(token));
+      }});
     }})();
+
+    // Copy JSON to clipboard
+    document.querySelectorAll('.copy-json-btn').forEach(btn => {{
+      btn.addEventListener('click', async () => {{
+        const endpoint = btn.getAttribute('data-endpoint');
+        try {{
+          const res = await fetch(endpoint);
+          const json = await res.json();
+          await navigator.clipboard.writeText(JSON.stringify(json, null, 2));
+          const orig = btn.textContent;
+          btn.textContent = '✅ Copied!';
+          setTimeout(() => btn.textContent = orig, 1500);
+        }} catch (e) {{
+          btn.textContent = '❌ Error';
+          setTimeout(() => btn.textContent = btn.textContent.replace('❌ Error', '📋'), 1500);
+        }}
+      }});
+    }});
   </script>
 </body>
 </html>"""
@@ -4396,7 +4480,23 @@ async def ops_dashboard_logs_html(
     .json-dropdown-content a:first-child {{
       border-radius: 0.5rem 0.5rem 0 0;
     }}
-    .json-dropdown-content a:last-child {{
+    .copy-json-btn {{
+      display: block;
+      width: 100%;
+      padding: 0.4rem 0.75rem;
+      color: var(--muted);
+      font-size: 0.75rem;
+      text-align: left;
+      background: rgba(59, 130, 246, 0.08);
+      border: none;
+      border-top: 1px solid var(--border);
+      cursor: pointer;
+    }}
+    .copy-json-btn:hover {{
+      background: rgba(59, 130, 246, 0.18);
+      color: var(--text);
+    }}
+    .copy-json-btn:last-child {{
       border-radius: 0 0 0.5rem 0.5rem;
     }}
   </style>
@@ -4417,10 +4517,14 @@ async def ops_dashboard_logs_html(
           <div class="json-dropdown">
             <span class="json-dropdown-btn">JSON ▾</span>
             <div class="json-dropdown-content">
-              <a data-path="/dashboard/ops.json" href="/dashboard/ops.json">Ops JSON</a>
-              <a data-path="/dashboard/pit.json" href="/dashboard/pit.json">PIT JSON</a>
-              <a data-path="/dashboard/ops/history.json?days=30" href="/dashboard/ops/history.json?days=30">History JSON</a>
-              <a data-path="/dashboard/ops/logs.json?limit=200" href="/dashboard/ops/logs.json?limit=200">Logs JSON</a>
+              <a data-path="/dashboard/ops.json" href="/dashboard/ops.json" target="_blank">Ops JSON</a>
+              <button class="copy-json-btn" data-endpoint="/dashboard/ops.json">📋 Copy Ops</button>
+              <a data-path="/dashboard/pit.json" href="/dashboard/pit.json" target="_blank">PIT JSON</a>
+              <button class="copy-json-btn" data-endpoint="/dashboard/pit.json">📋 Copy PIT</button>
+              <a data-path="/dashboard/ops/history.json?days=30" href="/dashboard/ops/history.json?days=30" target="_blank">History JSON</a>
+              <button class="copy-json-btn" data-endpoint="/dashboard/ops/history.json?days=30">📋 Copy History</button>
+              <a data-path="/dashboard/ops/logs.json?limit=200" href="/dashboard/ops/logs.json?limit=200" target="_blank">Logs JSON</a>
+              <button class="copy-json-btn" data-endpoint="/dashboard/ops/logs.json?limit=200">📋 Copy Logs</button>
             </div>
           </div>
         </div>
@@ -4463,7 +4567,32 @@ async def ops_dashboard_logs_html(
         const joiner = path.includes('?') ? '&' : '?';
         a.setAttribute('href', path + joiner + 'token=' + encodeURIComponent(token));
       }});
+      // Update copy buttons with token
+      document.querySelectorAll('.copy-json-btn').forEach(btn => {{
+        const endpoint = btn.getAttribute('data-endpoint');
+        if (!endpoint) return;
+        const joiner = endpoint.includes('?') ? '&' : '?';
+        btn.setAttribute('data-endpoint', endpoint + joiner + 'token=' + encodeURIComponent(token));
+      }});
     }})();
+
+    // Copy JSON to clipboard
+    document.querySelectorAll('.copy-json-btn').forEach(btn => {{
+      btn.addEventListener('click', async () => {{
+        const endpoint = btn.getAttribute('data-endpoint');
+        try {{
+          const res = await fetch(endpoint);
+          const json = await res.json();
+          await navigator.clipboard.writeText(JSON.stringify(json, null, 2));
+          const orig = btn.textContent;
+          btn.textContent = '✅ Copied!';
+          setTimeout(() => btn.textContent = orig, 1500);
+        }} catch (e) {{
+          btn.textContent = '❌ Error';
+          setTimeout(() => btn.textContent = btn.textContent.replace('❌ Error', '📋'), 1500);
+        }}
+      }});
+    }});
   </script>
 </body>
 </html>"""
@@ -4699,7 +4828,23 @@ async def ops_history_html(request: Request, days: int = 30):
     .json-dropdown-content a:first-child {{
       border-radius: 0.5rem 0.5rem 0 0;
     }}
-    .json-dropdown-content a:last-child {{
+    .copy-json-btn {{
+      display: block;
+      width: 100%;
+      padding: 0.4rem 0.75rem;
+      color: var(--muted);
+      font-size: 0.75rem;
+      text-align: left;
+      background: rgba(59, 130, 246, 0.08);
+      border: none;
+      border-top: 1px solid var(--border);
+      cursor: pointer;
+    }}
+    .copy-json-btn:hover {{
+      background: rgba(59, 130, 246, 0.18);
+      color: var(--text);
+    }}
+    .copy-json-btn:last-child {{
       border-radius: 0 0 0.5rem 0.5rem;
     }}
   </style>
@@ -4721,10 +4866,14 @@ async def ops_history_html(request: Request, days: int = 30):
           <div class="json-dropdown">
             <span class="json-dropdown-btn">JSON ▾</span>
             <div class="json-dropdown-content">
-              <a data-path="/dashboard/ops.json" href="/dashboard/ops.json">Ops JSON</a>
-              <a data-path="/dashboard/pit.json" href="/dashboard/pit.json">PIT JSON</a>
-              <a data-path="/dashboard/ops/history.json?days=30" href="/dashboard/ops/history.json?days=30">History JSON</a>
-              <a data-path="/dashboard/ops/logs.json?limit=200" href="/dashboard/ops/logs.json?limit=200">Logs JSON</a>
+              <a data-path="/dashboard/ops.json" href="/dashboard/ops.json" target="_blank">Ops JSON</a>
+              <button class="copy-json-btn" data-endpoint="/dashboard/ops.json">📋 Copy Ops</button>
+              <a data-path="/dashboard/pit.json" href="/dashboard/pit.json" target="_blank">PIT JSON</a>
+              <button class="copy-json-btn" data-endpoint="/dashboard/pit.json">📋 Copy PIT</button>
+              <a data-path="/dashboard/ops/history.json?days=30" href="/dashboard/ops/history.json?days=30" target="_blank">History JSON</a>
+              <button class="copy-json-btn" data-endpoint="/dashboard/ops/history.json?days=30">📋 Copy History</button>
+              <a data-path="/dashboard/ops/logs.json?limit=200" href="/dashboard/ops/logs.json?limit=200" target="_blank">Logs JSON</a>
+              <button class="copy-json-btn" data-endpoint="/dashboard/ops/logs.json?limit=200">📋 Copy Logs</button>
             </div>
           </div>
         </div>
@@ -4764,7 +4913,32 @@ async def ops_history_html(request: Request, days: int = 30):
         const joiner = path.includes('?') ? '&' : '?';
         a.setAttribute('href', path + joiner + 'token=' + encodeURIComponent(token));
       }});
+      // Update copy buttons with token
+      document.querySelectorAll('.copy-json-btn').forEach(btn => {{
+        const endpoint = btn.getAttribute('data-endpoint');
+        if (!endpoint) return;
+        const joiner = endpoint.includes('?') ? '&' : '?';
+        btn.setAttribute('data-endpoint', endpoint + joiner + 'token=' + encodeURIComponent(token));
+      }});
     }})();
+
+    // Copy JSON to clipboard
+    document.querySelectorAll('.copy-json-btn').forEach(btn => {{
+      btn.addEventListener('click', async () => {{
+        const endpoint = btn.getAttribute('data-endpoint');
+        try {{
+          const res = await fetch(endpoint);
+          const json = await res.json();
+          await navigator.clipboard.writeText(JSON.stringify(json, null, 2));
+          const orig = btn.textContent;
+          btn.textContent = '✅ Copied!';
+          setTimeout(() => btn.textContent = orig, 1500);
+        }} catch (e) {{
+          btn.textContent = '❌ Error';
+          setTimeout(() => btn.textContent = btn.textContent.replace('❌ Error', '📋'), 1500);
+        }}
+      }});
+    }});
   </script>
 </body>
 </html>"""
