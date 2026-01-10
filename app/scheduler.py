@@ -2282,6 +2282,71 @@ async def pit_reports_retention():
         logger.error(f"PIT reports retention failed: {e}")
 
 
+async def daily_alpha_progress_snapshot() -> dict:
+    """
+    Daily Alpha Progress snapshot - captures progress state for auditing.
+
+    Runs at 09:10 UTC daily (after ops rollup), saves to alpha_progress_snapshots table.
+    Allows tracking evolution of "Progreso hacia Re-test/Alpha" over time.
+    """
+    import os
+    from app.models import AlphaProgressSnapshot
+
+    logger.info("Starting daily Alpha Progress snapshot...")
+
+    try:
+        # Import here to avoid circular imports
+        from app.main import _get_cached_ops_data
+
+        # Get current ops data
+        data = await _get_cached_ops_data()
+
+        # Extract relevant fields for the snapshot
+        payload = {
+            "generated_at": data.get("generated_at"),
+            "league_mode": data.get("league_mode"),
+            "tracked_leagues_count": data.get("tracked_leagues_count"),
+            "progress": data.get("progress"),
+            "budget": {
+                "status": data.get("budget", {}).get("status"),
+                "plan": data.get("budget", {}).get("plan"),
+                "requests_today": data.get("budget", {}).get("requests_today"),
+                "requests_limit": data.get("budget", {}).get("requests_limit"),
+            },
+            "pit": {
+                "live_60m": data.get("pit", {}).get("live_60m"),
+                "live_24h": data.get("pit", {}).get("live_24h"),
+            },
+        }
+
+        # Get git commit SHA from env if available
+        app_commit = os.environ.get("RAILWAY_GIT_COMMIT_SHA") or os.environ.get("GIT_COMMIT_SHA")
+
+        # Save to DB
+        async with AsyncSessionLocal() as session:
+            snapshot = AlphaProgressSnapshot(
+                payload=payload,
+                source="scheduler_daily",
+                app_commit=app_commit[:40] if app_commit else None,
+            )
+            session.add(snapshot)
+            await session.commit()
+            await session.refresh(snapshot)
+
+            logger.info(f"Alpha Progress snapshot captured: id={snapshot.id}, progress={payload.get('progress', {})}")
+
+            return {
+                "status": "captured",
+                "id": snapshot.id,
+                "captured_at": snapshot.captured_at.isoformat(),
+                "progress": payload.get("progress"),
+            }
+
+    except Exception as e:
+        logger.error(f"Daily Alpha Progress snapshot failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 # =============================================================================
 # DAILY OPS ROLLUP
 # =============================================================================
@@ -2753,6 +2818,16 @@ def start_scheduler(ml_engine):
         replace_existing=True,
     )
 
+    # Daily Alpha Progress Snapshot: 09:10 UTC (after ops rollup)
+    # Captures progress towards Re-test/Alpha for auditing
+    scheduler.add_job(
+        daily_alpha_progress_snapshot,
+        trigger=CronTrigger(hour=9, minute=10),
+        id="daily_alpha_progress_snapshot",
+        name="Daily Alpha Progress Snapshot",
+        replace_existing=True,
+    )
+
     # Monthly PIT Reports Retention: 1st of month at 04:00 UTC
     # Deletes old reports: daily > 180 days, weekly > 365 days
     scheduler.add_job(
@@ -2778,6 +2853,7 @@ def start_scheduler(ml_engine):
         "  - Daily audit: 8:00 AM UTC\n"
         "  - Daily PIT evaluation: 9:00 AM UTC (silent save)\n"
         "  - Daily ops rollup: 9:05 AM UTC (KPI aggregation)\n"
+        "  - Daily Alpha Progress snapshot: 9:10 AM UTC\n"
         "  - Weekly recalibration: Mondays 5:00 AM UTC\n"
         "  - Weekly PIT report: Tuesdays 10:00 AM UTC\n"
         "  - Monthly PIT retention: 1st of month 04:00 UTC"

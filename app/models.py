@@ -532,3 +532,34 @@ class PITReport(SQLModel, table=True):
     )
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AlphaProgressSnapshot(SQLModel, table=True):
+    """
+    Alpha Progress Snapshots - tracks evolution of "Progreso hacia Re-test/Alpha".
+    Allows auditing progress over time without screenshots.
+    Survives Railway deploys (DB-backed).
+    """
+
+    __tablename__ = "alpha_progress_snapshots"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    captured_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        index=True,
+        description="UTC timestamp of capture"
+    )
+    payload: dict = Field(
+        sa_column=Column(JSON),
+        description="Progress data: generated_at, league_mode, tracked_leagues_count, progress, budget_subset"
+    )
+    source: str = Field(
+        default="dashboard_manual",
+        max_length=50,
+        description="Origin: dashboard_manual, scheduler_daily, script"
+    )
+    app_commit: Optional[str] = Field(
+        default=None,
+        max_length=40,
+        description="Git SHA if available via env"
+    )

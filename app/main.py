@@ -3022,6 +3022,8 @@ def _render_pit_dashboard_html(data: dict) -> str:
                             <button class="copy-json-btn" data-endpoint="/dashboard/ops/history.json?days=30">📋 Copy History</button>
                             <a data-path="/dashboard/ops/logs.json?limit=200" href="/dashboard/ops/logs.json?limit=200" target="_blank">Logs JSON</a>
                             <button class="copy-json-btn" data-endpoint="/dashboard/ops/logs.json?limit=200">📋 Copy Logs</button>
+                            <a data-path="/dashboard/ops/progress_snapshots.json" href="/dashboard/ops/progress_snapshots.json" target="_blank">Alpha Snapshots</a>
+                            <button class="copy-json-btn" data-endpoint="/dashboard/ops/progress_snapshots.json">📋 Copy Alpha</button>
                         </div>
                     </div>
                 </div>
@@ -4111,6 +4113,8 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
               <button class="copy-json-btn" data-endpoint="/dashboard/ops/history.json?days=30">📋 Copy History</button>
               <a data-path="/dashboard/ops/logs.json?limit=200" href="/dashboard/ops/logs.json?limit=200" target="_blank">Logs JSON</a>
               <button class="copy-json-btn" data-endpoint="/dashboard/ops/logs.json?limit=200">📋 Copy Logs</button>
+              <a data-path="/dashboard/ops/progress_snapshots.json" href="/dashboard/ops/progress_snapshots.json" target="_blank">Alpha Snapshots</a>
+              <button class="copy-json-btn" data-endpoint="/dashboard/ops/progress_snapshots.json">📋 Copy Alpha</button>
             </div>
           </div>
         </div>
@@ -4525,6 +4529,8 @@ async def ops_dashboard_logs_html(
               <button class="copy-json-btn" data-endpoint="/dashboard/ops/history.json?days=30">📋 Copy History</button>
               <a data-path="/dashboard/ops/logs.json?limit=200" href="/dashboard/ops/logs.json?limit=200" target="_blank">Logs JSON</a>
               <button class="copy-json-btn" data-endpoint="/dashboard/ops/logs.json?limit=200">📋 Copy Logs</button>
+              <a data-path="/dashboard/ops/progress_snapshots.json" href="/dashboard/ops/progress_snapshots.json" target="_blank">Alpha Snapshots</a>
+              <button class="copy-json-btn" data-endpoint="/dashboard/ops/progress_snapshots.json">📋 Copy Alpha</button>
             </div>
           </div>
         </div>
@@ -4621,6 +4627,113 @@ async def trigger_ops_rollup(request: Request):
         "status": "executed",
         "result": result,
     }
+
+
+# =============================================================================
+# ALPHA PROGRESS SNAPSHOTS (track Re-test/Alpha evolution over time)
+# =============================================================================
+
+
+@app.post("/dashboard/ops/progress_snapshot")
+async def capture_progress_snapshot(request: Request):
+    """
+    Capture current Alpha Progress state to DB for auditing.
+
+    Creates a snapshot with: generated_at, league_mode, tracked_leagues_count,
+    progress metrics, and budget subset.
+    Protected by dashboard token.
+    """
+    import os
+    from app.models import AlphaProgressSnapshot
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    # Get current ops data
+    data = await _get_cached_ops_data()
+
+    # Extract relevant fields for the snapshot
+    payload = {
+        "generated_at": data.get("generated_at"),
+        "league_mode": data.get("league_mode"),
+        "tracked_leagues_count": data.get("tracked_leagues_count"),
+        "progress": data.get("progress"),
+        "budget": {
+            "status": data.get("budget", {}).get("status"),
+            "plan": data.get("budget", {}).get("plan"),
+            "requests_today": data.get("budget", {}).get("requests_today"),
+            "requests_limit": data.get("budget", {}).get("requests_limit"),
+        },
+        "pit": {
+            "live_60m": data.get("pit", {}).get("live_60m"),
+            "live_24h": data.get("pit", {}).get("live_24h"),
+        },
+    }
+
+    # Get git commit SHA from env if available
+    app_commit = os.environ.get("RAILWAY_GIT_COMMIT_SHA") or os.environ.get("GIT_COMMIT_SHA")
+
+    # Save to DB
+    async with AsyncSessionLocal() as session:
+        snapshot = AlphaProgressSnapshot(
+            payload=payload,
+            source="dashboard_manual",
+            app_commit=app_commit[:40] if app_commit else None,
+        )
+        session.add(snapshot)
+        await session.commit()
+        await session.refresh(snapshot)
+
+        return {
+            "status": "captured",
+            "id": snapshot.id,
+            "captured_at": snapshot.captured_at.isoformat(),
+            "source": snapshot.source,
+            "app_commit": snapshot.app_commit,
+        }
+
+
+@app.get("/dashboard/ops/progress_snapshots.json")
+async def get_progress_snapshots(request: Request, limit: int = 50):
+    """
+    Get historical Alpha Progress snapshots for auditing.
+
+    Returns list of snapshots ordered by captured_at DESC (most recent first).
+    Protected by dashboard token.
+    """
+    import json
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(text("""
+            SELECT id, captured_at, payload, source, app_commit
+            FROM alpha_progress_snapshots
+            ORDER BY captured_at DESC
+            LIMIT :limit
+        """), {"limit": limit})
+
+        rows = result.fetchall()
+        snapshots = []
+        for row in rows:
+            payload = row[2]
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+
+            snapshots.append({
+                "id": row[0],
+                "captured_at": row[1].isoformat() if row[1] else None,
+                "payload": payload,
+                "source": row[3],
+                "app_commit": row[4],
+            })
+
+        return {
+            "count": len(snapshots),
+            "limit": limit,
+            "snapshots": snapshots,
+        }
 
 
 # =============================================================================
@@ -4874,6 +4987,8 @@ async def ops_history_html(request: Request, days: int = 30):
               <button class="copy-json-btn" data-endpoint="/dashboard/ops/history.json?days=30">📋 Copy History</button>
               <a data-path="/dashboard/ops/logs.json?limit=200" href="/dashboard/ops/logs.json?limit=200" target="_blank">Logs JSON</a>
               <button class="copy-json-btn" data-endpoint="/dashboard/ops/logs.json?limit=200">📋 Copy Logs</button>
+              <a data-path="/dashboard/ops/progress_snapshots.json" href="/dashboard/ops/progress_snapshots.json" target="_blank">Alpha Snapshots</a>
+              <button class="copy-json-btn" data-endpoint="/dashboard/ops/progress_snapshots.json">📋 Copy Alpha</button>
             </div>
           </div>
         </div>
