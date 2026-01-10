@@ -1804,18 +1804,22 @@ async def capture_finished_match_stats() -> dict:
 
 async def daily_pit_evaluation():
     """
-    Daily PIT evaluation job - runs silently and saves JSON to logs/.
+    Daily PIT evaluation job - runs silently and saves to DB + logs/.
 
     DOES NOT spam daily reports. Only saves data for weekly consolidation.
     Weekly report will analyze all daily JSONs and produce a single report.
 
     Runs daily at 9:00 AM UTC (after audit, after matches have finished).
+
+    Now also persists to pit_reports table for Railway deploy resilience.
     """
     logger.info("Starting daily PIT evaluation (silent save)...")
 
     try:
         import subprocess
         import os
+        import json
+        from glob import glob
 
         # Run the evaluation script
         env = os.environ.copy()
@@ -1829,12 +1833,37 @@ async def daily_pit_evaluation():
             timeout=300,  # 5 min timeout
         )
 
+        saved_file = None
         if result.returncode == 0:
             # Parse output to find saved file
             for line in result.stdout.split('\n'):
                 if 'Resultados guardados en:' in line:
-                    logger.info(f"PIT evaluation saved: {line.split(':')[-1].strip()}")
+                    saved_file = line.split(':')[-1].strip()
+                    logger.info(f"PIT evaluation saved: {saved_file}")
                     break
+
+            # If no explicit file found, try to find the most recent one
+            if not saved_file:
+                logs_dir = "logs"
+                files = sorted(glob(f"{logs_dir}/pit_evaluation_live_only_*.json"))
+                if files:
+                    saved_file = files[-1]
+
+            # Persist to database for Railway deploy resilience
+            if saved_file and os.path.exists(saved_file):
+                try:
+                    with open(saved_file, 'r') as f:
+                        payload = json.load(f)
+
+                    await _save_pit_report_to_db(
+                        report_type="daily",
+                        payload=payload,
+                        source="scheduler"
+                    )
+                    logger.info("PIT evaluation persisted to DB (pit_reports table)")
+                except Exception as db_err:
+                    logger.warning(f"Failed to persist PIT report to DB: {db_err}")
+
             logger.info("Daily PIT evaluation complete (silent mode)")
         else:
             logger.warning(f"PIT evaluation returned non-zero: {result.stderr[:500]}")
@@ -1843,6 +1872,36 @@ async def daily_pit_evaluation():
         logger.error("PIT evaluation timed out after 5 minutes")
     except Exception as e:
         logger.error(f"Daily PIT evaluation failed: {e}")
+
+
+async def _save_pit_report_to_db(report_type: str, payload: dict, source: str = "scheduler"):
+    """
+    Upsert PIT report to pit_reports table.
+    Uses report_date = today (UTC) for uniqueness.
+    """
+    from sqlalchemy import text
+    from app.database import AsyncSessionLocal
+    import json
+
+    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    async with AsyncSessionLocal() as session:
+        # UPSERT: insert or update if exists for same type+date
+        await session.execute(text("""
+            INSERT INTO pit_reports (report_type, report_date, payload, source, created_at, updated_at)
+            VALUES (:report_type, :report_date, CAST(:payload AS JSON), :source, NOW(), NOW())
+            ON CONFLICT (report_type, report_date) DO UPDATE SET
+                payload = CAST(EXCLUDED.payload AS JSON),
+                source = EXCLUDED.source,
+                updated_at = NOW()
+        """), {
+            "report_type": report_type,
+            "report_date": today,
+            "payload": json.dumps(payload),
+            "source": source,
+        })
+        await session.commit()
+        logger.info(f"Saved {report_type} PIT report to DB for {today.date()}")
 
 
 async def weekly_pit_report():

@@ -2350,20 +2350,37 @@ _pit_dashboard_cache = {
 
 
 def _load_latest_pit_report() -> dict:
-    """Load the most recent PIT report from logs/ without DB queries."""
+    """
+    Load the most recent PIT report from DB first, then filesystem fallback.
+
+    Priority: DB (pit_reports table) > filesystem (logs/)
+    This ensures reports survive Railway deploys.
+    """
     import os
     from glob import glob
 
-    logs_dir = "logs"
     result = {
         "weekly": None,
         "daily": None,
         "source": None,
         "error": None,
+        "report_date": None,
+        "created_at": None,
     }
 
+    # Try DB first (persistent across deploys)
+    try:
+        db_result = _load_pit_reports_from_db()
+        if db_result.get("daily") or db_result.get("weekly"):
+            return db_result
+    except Exception as e:
+        # Log but don't fail - fall through to filesystem
+        logger.debug(f"DB PIT lookup failed (will try filesystem): {e}")
+
+    # Fallback to filesystem (for backwards compatibility)
+    logs_dir = "logs"
     if not os.path.exists(logs_dir):
-        result["error"] = "No logs directory"
+        result["error"] = "No PIT reports found (DB empty, no logs directory)"
         return result
 
     # Find latest weekly report
@@ -2375,7 +2392,7 @@ def _load_latest_pit_report() -> dict:
             with open(latest_weekly) as f:
                 result["weekly"] = json.load(f)
                 result["weekly"]["_file"] = os.path.basename(latest_weekly)
-                result["source"] = "weekly"
+                result["source"] = "filesystem_weekly"
         except Exception as e:
             result["error"] = f"Error reading weekly: {e}"
 
@@ -2389,13 +2406,90 @@ def _load_latest_pit_report() -> dict:
                 result["daily"] = json.load(f)
                 result["daily"]["_file"] = os.path.basename(latest_daily)
                 if not result["weekly"]:
-                    result["source"] = "daily"
+                    result["source"] = "filesystem_daily"
         except Exception as e:
             if not result["error"]:
                 result["error"] = f"Error reading daily: {e}"
 
     if not result["weekly"] and not result["daily"]:
         result["error"] = "No PIT reports found"
+
+    return result
+
+
+def _load_pit_reports_from_db() -> dict:
+    """
+    Load latest PIT reports from pit_reports table (synchronous wrapper).
+    Returns dict with weekly/daily payloads and metadata.
+    """
+    import asyncio
+    from sqlalchemy import text
+    from app.database import AsyncSessionLocal
+
+    result = {
+        "weekly": None,
+        "daily": None,
+        "source": None,
+        "error": None,
+        "report_date": None,
+        "created_at": None,
+    }
+
+    async def _fetch():
+        async with AsyncSessionLocal() as session:
+            # Get latest daily
+            daily_result = await session.execute(text("""
+                SELECT payload, report_date, created_at, source
+                FROM pit_reports
+                WHERE report_type = 'daily'
+                ORDER BY report_date DESC
+                LIMIT 1
+            """))
+            daily_row = daily_result.fetchone()
+
+            # Get latest weekly
+            weekly_result = await session.execute(text("""
+                SELECT payload, report_date, created_at, source
+                FROM pit_reports
+                WHERE report_type = 'weekly'
+                ORDER BY report_date DESC
+                LIMIT 1
+            """))
+            weekly_row = weekly_result.fetchone()
+
+            return daily_row, weekly_row
+
+    # Run async query
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If already in async context, create new loop
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                daily_row, weekly_row = pool.submit(
+                    lambda: asyncio.run(_fetch())
+                ).result(timeout=5)
+        else:
+            daily_row, weekly_row = loop.run_until_complete(_fetch())
+    except RuntimeError:
+        # No event loop, create one
+        daily_row, weekly_row = asyncio.run(_fetch())
+
+    if daily_row:
+        result["daily"] = daily_row[0]  # payload is JSON
+        result["report_date"] = str(daily_row[1])
+        result["created_at"] = str(daily_row[2])
+        result["source"] = f"db_{daily_row[3]}"
+
+    if weekly_row:
+        result["weekly"] = weekly_row[0]
+        if not result["source"]:
+            result["report_date"] = str(weekly_row[1])
+            result["created_at"] = str(weekly_row[2])
+            result["source"] = f"db_{weekly_row[3]}"
+
+    if not result["weekly"] and not result["daily"]:
+        result["error"] = "No PIT reports in database"
 
     return result
 
@@ -2753,6 +2847,8 @@ async def pit_dashboard_json(request: Request):
     return {
         "source": data.get("source"),
         "error": data.get("error"),
+        "report_date": data.get("report_date"),
+        "created_at": data.get("created_at"),
         "weekly": data.get("weekly"),
         "daily": data.get("daily"),
         "cache_age_seconds": round(time.time() - _pit_dashboard_cache["timestamp"], 1) if _pit_dashboard_cache["timestamp"] else None,
