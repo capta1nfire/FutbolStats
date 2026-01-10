@@ -344,6 +344,9 @@ def bootstrap_ci(values: list[float], n_iterations: int = BOOTSTRAP_ITERATIONS, 
     return (bootstrap_means[lower_idx], bootstrap_means[upper_idx], "ok")
 
 
+MIN_PREDICTIONS_FOR_STABLE_METRICS = 30
+
+
 def generate_interpretation(phase: str, brier: dict, betting: dict) -> dict:
     """
     Generate interpretation block based on explicit rules.
@@ -352,6 +355,7 @@ def generate_interpretation(phase: str, brier: dict, betting: dict) -> dict:
     1. If phase=insufficient OR betting.roi_ci_status=insufficient_n => confidence='low', verdict='HOLD'
     2. If brier.skill_vs_market < 0 => add note 'model worse than market (early signal)'
     3. If ROI CI95 lower bound > 0 => confidence='high', verdict='GO (alpha)'
+    4. If brier.n_with_predictions < 30 => add variance warning note
 
     Returns:
         {confidence: str, verdict: str, bullet_notes: list[str]}
@@ -364,6 +368,7 @@ def generate_interpretation(phase: str, brier: dict, betting: dict) -> dict:
     roi_ci_status = betting.get('roi_ci_status', 'no_bets')
     roi_ci95_low = betting.get('roi_ci95_low')
     skill_vs_market = brier.get('skill_vs_market')
+    n_with_predictions = brier.get('n_with_predictions', 0)
 
     # Rule 1: insufficient data => low confidence, HOLD
     if phase == 'insufficient' or roi_ci_status == 'insufficient_n':
@@ -381,6 +386,10 @@ def generate_interpretation(phase: str, brier: dict, betting: dict) -> dict:
         confidence = "high"
         verdict = "GO (alpha)"
         bullet_notes.append(f"ROI CI95 lower bound positive: {roi_ci95_low:.2%}")
+
+    # Rule 4: low N predictions => high variance warning
+    if n_with_predictions is not None and n_with_predictions < MIN_PREDICTIONS_FOR_STABLE_METRICS:
+        bullet_notes.append(f"low_n_predictions: n_with_predictions={n_with_predictions}, metrics have high variance")
 
     # Additional context notes
     if roi_ci_status == 'no_bets':
