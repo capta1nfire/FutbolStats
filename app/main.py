@@ -4635,13 +4635,16 @@ async def trigger_ops_rollup(request: Request):
 
 
 @app.post("/dashboard/ops/progress_snapshot")
-async def capture_progress_snapshot(request: Request):
+async def capture_progress_snapshot(request: Request, milestone: str | None = None):
     """
     Capture current Alpha Progress state to DB for auditing.
 
     Creates a snapshot with: generated_at, league_mode, tracked_leagues_count,
     progress metrics, and budget subset.
     Protected by dashboard token.
+
+    Optional query param:
+    - milestone: Label for this capture (e.g., "baseline_0", "pit_75", "pit_100", "bets_100", "ready_true")
     """
     import os
     from app.models import AlphaProgressSnapshot
@@ -4670,6 +4673,10 @@ async def capture_progress_snapshot(request: Request):
         },
     }
 
+    # Add milestone label if provided
+    if milestone:
+        payload["milestone"] = milestone
+
     # Get git commit SHA from env if available
     app_commit = os.environ.get("RAILWAY_GIT_COMMIT_SHA") or os.environ.get("GIT_COMMIT_SHA")
 
@@ -4677,7 +4684,7 @@ async def capture_progress_snapshot(request: Request):
     async with AsyncSessionLocal() as session:
         snapshot = AlphaProgressSnapshot(
             payload=payload,
-            source="dashboard_manual",
+            source="dashboard_manual" if milestone else "dashboard_manual",
             app_commit=app_commit[:40] if app_commit else None,
         )
         session.add(snapshot)
@@ -4687,6 +4694,7 @@ async def capture_progress_snapshot(request: Request):
         return {
             "status": "captured",
             "id": snapshot.id,
+            "milestone": milestone,
             "captured_at": snapshot.captured_at.isoformat(),
             "source": snapshot.source,
             "app_commit": snapshot.app_commit,
