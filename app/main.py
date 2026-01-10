@@ -2396,8 +2396,10 @@ def _load_latest_pit_report() -> dict:
         except Exception as e:
             result["error"] = f"Error reading weekly: {e}"
 
-    # Find latest daily report
-    daily_files = glob(f"{logs_dir}/pit_evaluation_*.json")
+    # Find latest daily report (legacy fallbacks)
+    # - pit_evaluation_live_only_*.json (current script)
+    # - pit_evaluation_*.json (older/legacy)
+    daily_files = glob(f"{logs_dir}/pit_evaluation_live_only_*.json") + glob(f"{logs_dir}/pit_evaluation_*.json")
     if daily_files:
         latest_daily = max(daily_files, key=os.path.getmtime)
         try:
@@ -2419,12 +2421,11 @@ def _load_latest_pit_report() -> dict:
 
 def _load_pit_reports_from_db() -> dict:
     """
-    Load latest PIT reports from pit_reports table (synchronous wrapper).
+    Load latest PIT reports from pit_reports table using sync connection.
     Returns dict with weekly/daily payloads and metadata.
     """
-    import asyncio
-    from sqlalchemy import text
-    from app.database import AsyncSessionLocal
+    import os
+    from sqlalchemy import create_engine, text
 
     result = {
         "weekly": None,
@@ -2435,10 +2436,23 @@ def _load_pit_reports_from_db() -> dict:
         "created_at": None,
     }
 
-    async def _fetch():
-        async with AsyncSessionLocal() as session:
+    # Get sync DATABASE_URL (convert asyncpg to psycopg2 if needed)
+    db_url = os.environ.get("DATABASE_URL", "")
+    if not db_url:
+        result["error"] = "No DATABASE_URL configured"
+        return result
+
+    # Convert async URL to sync if needed
+    if "asyncpg" in db_url:
+        db_url = db_url.replace("postgresql+asyncpg", "postgresql")
+    elif db_url.startswith("postgresql://"):
+        pass  # Already sync format
+
+    try:
+        engine = create_engine(db_url, pool_pre_ping=True)
+        with engine.connect() as conn:
             # Get latest daily
-            daily_result = await session.execute(text("""
+            daily_result = conn.execute(text("""
                 SELECT payload, report_date, created_at, source
                 FROM pit_reports
                 WHERE report_type = 'daily'
@@ -2448,7 +2462,7 @@ def _load_pit_reports_from_db() -> dict:
             daily_row = daily_result.fetchone()
 
             # Get latest weekly
-            weekly_result = await session.execute(text("""
+            weekly_result = conn.execute(text("""
                 SELECT payload, report_date, created_at, source
                 FROM pit_reports
                 WHERE report_type = 'weekly'
@@ -2457,39 +2471,26 @@ def _load_pit_reports_from_db() -> dict:
             """))
             weekly_row = weekly_result.fetchone()
 
-            return daily_row, weekly_row
+        engine.dispose()
 
-    # Run async query
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If already in async context, create new loop
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                daily_row, weekly_row = pool.submit(
-                    lambda: asyncio.run(_fetch())
-                ).result(timeout=5)
-        else:
-            daily_row, weekly_row = loop.run_until_complete(_fetch())
-    except RuntimeError:
-        # No event loop, create one
-        daily_row, weekly_row = asyncio.run(_fetch())
+        if daily_row:
+            result["daily"] = daily_row[0]  # payload is JSON
+            result["report_date"] = str(daily_row[1])
+            result["created_at"] = str(daily_row[2])
+            result["source"] = f"db_{daily_row[3]}"
 
-    if daily_row:
-        result["daily"] = daily_row[0]  # payload is JSON
-        result["report_date"] = str(daily_row[1])
-        result["created_at"] = str(daily_row[2])
-        result["source"] = f"db_{daily_row[3]}"
+        if weekly_row:
+            result["weekly"] = weekly_row[0]
+            if not result["source"]:
+                result["report_date"] = str(weekly_row[1])
+                result["created_at"] = str(weekly_row[2])
+                result["source"] = f"db_{weekly_row[3]}"
 
-    if weekly_row:
-        result["weekly"] = weekly_row[0]
-        if not result["source"]:
-            result["report_date"] = str(weekly_row[1])
-            result["created_at"] = str(weekly_row[2])
-            result["source"] = f"db_{weekly_row[3]}"
+        if not result["weekly"] and not result["daily"]:
+            result["error"] = "No PIT reports in database"
 
-    if not result["weekly"] and not result["daily"]:
-        result["error"] = "No PIT reports in database"
+    except Exception as e:
+        result["error"] = f"DB error: {str(e)[:100]}"
 
     return result
 
