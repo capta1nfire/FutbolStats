@@ -36,7 +36,7 @@ WORLD_CUP = Competition(
 )
 
 WC_QUALIFIERS_CONMEBOL = Competition(
-    league_id=28,
+    league_id=34,  # API-Football: "World Cup - Qualification South America"
     name="WC Qualifiers - CONMEBOL",
     match_type="official",
     priority=Priority.HIGH,
@@ -50,7 +50,7 @@ WC_QUALIFIERS_UEFA = Competition(
 )
 
 WC_QUALIFIERS_CONCACAF = Competition(
-    league_id=29,
+    league_id=31,  # API-Football: "World Cup - Qualification CONCACAF"
     name="WC Qualifiers - CONCACAF",
     match_type="official",
     priority=Priority.HIGH,
@@ -64,8 +64,22 @@ WC_QUALIFIERS_AFC = Competition(
 )
 
 WC_QUALIFIERS_CAF = Competition(
-    league_id=31,
+    league_id=29,  # API-Football: "World Cup - Qualification Africa"
     name="WC Qualifiers - CAF",
+    match_type="official",
+    priority=Priority.HIGH,
+)
+
+WC_QUALIFIERS_OFC = Competition(
+    league_id=33,  # API-Football: "World Cup - Qualification Oceania"
+    name="WC Qualifiers - OFC",
+    match_type="official",
+    priority=Priority.HIGH,
+)
+
+WC_QUALIFIERS_INTERCONTINENTAL = Competition(
+    league_id=37,  # API-Football: "World Cup - Qualification Intercontinental Play-offs"
+    name="WC Qualifiers - Intercontinental",
     match_type="official",
     priority=Priority.HIGH,
 )
@@ -204,6 +218,8 @@ COMPETITIONS: dict[int, Competition] = {
         WC_QUALIFIERS_CONCACAF,
         WC_QUALIFIERS_AFC,
         WC_QUALIFIERS_CAF,
+        WC_QUALIFIERS_OFC,
+        WC_QUALIFIERS_INTERCONTINENTAL,
         COPA_AMERICA,
         UEFA_EURO,
         UEFA_NATIONS_LEAGUE,
