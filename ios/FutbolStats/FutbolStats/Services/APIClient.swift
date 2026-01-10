@@ -114,6 +114,14 @@ actor APIClient {
 
     // MARK: - Generic Request with Retry
 
+    private func _applyAuthHeaders(_ request: inout URLRequest) {
+        // Prefer header token to avoid query-param token leaking into logs.
+        if let token = AppConfiguration.dashboardToken {
+            request.setValue(token, forHTTPHeaderField: "X-Dashboard-Token")
+        }
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+    }
+
     private func performRequest<T: Decodable>(
         url: URL,
         method: String = "GET",
@@ -125,6 +133,7 @@ actor APIClient {
             do {
                 var request = URLRequest(url: url)
                 request.httpMethod = method
+                _applyAuthHeaders(&request)
                 if let body = body {
                     request.httpBody = body
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -136,7 +145,7 @@ actor APIClient {
                     throw APIError.noData
                 }
 
-                guard httpResponse.statusCode == 200 else {
+                guard (200..<300).contains(httpResponse.statusCode) else {
                     let error = APIError.serverError(httpResponse.statusCode)
                     if error.isRetryable && attempt < retryConfig.maxRetries - 1 {
                         lastError = error
@@ -145,6 +154,10 @@ actor APIClient {
                         continue
                     }
                     throw error
+                }
+
+                guard !data.isEmpty else {
+                    throw APIError.noData
                 }
 
                 do {
@@ -236,6 +249,28 @@ actor APIClient {
         return try await performRequest(url: url)
     }
 
+    // MARK: - Dashboards (OPS / PIT)
+
+    func getOpsDashboard() async throws -> OpsDashboardResponse {
+        let url = URL(string: "\(environment.baseURL)/dashboard/ops.json")!
+        let wrapper: OpsDashboardWrapper = try await performRequest(url: url)
+        return wrapper.data
+    }
+
+    func getPITDashboard() async throws -> PITDashboardResponse {
+        let url = URL(string: "\(environment.baseURL)/dashboard/pit.json")!
+        return try await performRequest(url: url)
+    }
+
+    func getAlphaProgressSnapshots(limit: Int = 50) async throws -> AlphaProgressSnapshotsResponse {
+        var components = URLComponents(string: "\(environment.baseURL)/dashboard/ops/progress_snapshots.json")!
+        components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        guard let url = components.url else {
+            throw APIError.invalidURL
+        }
+        return try await performRequest(url: url)
+    }
+
     // MARK: - League Standings
 
     func getStandings(leagueId: Int, season: Int? = nil) async throws -> StandingsResponse {
@@ -272,6 +307,7 @@ actor APIClient {
         let url = URL(string: "\(environment.baseURL)/etl/sync")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        _applyAuthHeaders(&request)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let body: [String: Any] = [
@@ -286,7 +322,7 @@ actor APIClient {
             throw APIError.noData
         }
 
-        guard httpResponse.statusCode == 200 else {
+        guard (200..<300).contains(httpResponse.statusCode) else {
             throw APIError.serverError(httpResponse.statusCode)
         }
 

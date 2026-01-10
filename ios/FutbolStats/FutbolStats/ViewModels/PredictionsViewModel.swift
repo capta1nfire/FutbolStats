@@ -9,6 +9,7 @@ class PredictionsViewModel: ObservableObject {
     @Published var modelLoaded = false
     @Published var lastUpdated: Date?
     @Published var selectedDate: Date = Date()
+    @Published var opsProgress: OpsProgress?
 
     private let apiClient = APIClient.shared
 
@@ -44,8 +45,24 @@ class PredictionsViewModel: ObservableObject {
     // MARK: - Refresh
 
     func refresh() async {
-        await checkHealth()
-        await loadPredictions()
+        // Parallel: health + ops don't block predictions
+        async let healthTask: () = checkHealth()
+        async let opsTask: () = loadOpsProgress()
+        async let predictionsTask: () = loadPredictions()
+
+        _ = await (healthTask, opsTask, predictionsTask)
+    }
+
+    // MARK: - Ops Progress (Alpha readiness)
+
+    func loadOpsProgress() async {
+        do {
+            let ops = try await apiClient.getOpsDashboard()
+            opsProgress = ops.progress
+        } catch {
+            // Non-blocking: predictions can still work even if dashboard token is missing
+            opsProgress = nil
+        }
     }
 
     // MARK: - Filtered Predictions

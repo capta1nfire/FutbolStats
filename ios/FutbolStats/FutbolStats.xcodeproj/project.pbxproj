@@ -20,6 +20,10 @@
 		A100000123345678000001A /* LeagueStandingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000123345678000001B /* LeagueStandingsView.swift */; };
 		A100000123345678000001C /* NarrativeInsightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000123345678000001D /* NarrativeInsightsView.swift */; };
 		A100000123345678000001E /* PredictionTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000123345678000001F /* PredictionTimelineView.swift */; };
+		B1000001233456780000001 /* DashboardModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001233456780000011 /* DashboardModels.swift */; };
+		B1000001233456780000002 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001233456780000012 /* DashboardView.swift */; };
+		B1000001233456780000003 /* AppConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001233456780000013 /* AppConfiguration.swift */; };
+		B1000001233456780000004 /* AlphaStatusBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001233456780000014 /* AlphaStatusBadge.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -37,6 +41,11 @@
 		A100000123345678000001B /* LeagueStandingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeagueStandingsView.swift; sourceTree = "<group>"; };
 		A100000123345678000001D /* NarrativeInsightsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NarrativeInsightsView.swift; sourceTree = "<group>"; };
 		A100000123345678000001F /* PredictionTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PredictionTimelineView.swift; sourceTree = "<group>"; };
+		B1000001233456780000011 /* DashboardModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardModels.swift; sourceTree = "<group>"; };
+		B1000001233456780000012 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
+		B1000001233456780000013 /* AppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfiguration.swift; sourceTree = "<group>"; };
+		B1000001233456780000014 /* AlphaStatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlphaStatusBadge.swift; sourceTree = "<group>"; };
+		B1000001233456780000015 /* Components */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Components; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -74,6 +83,7 @@
 		A1000001233456780000022 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				B1000001233456780000020 /* Components */,
 				71DFDAFD2F0A0F3000B3351D /* CachedAsyncImage.swift */,
 				A1000001233456780000012 /* PredictionsListView.swift */,
 				A1000001233456780000013 /* MatchDetailView.swift */,
@@ -82,8 +92,17 @@
 				A100000123345678000001B /* LeagueStandingsView.swift */,
 				A100000123345678000001D /* NarrativeInsightsView.swift */,
 				A100000123345678000001F /* PredictionTimelineView.swift */,
+				B1000001233456780000012 /* DashboardView.swift */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		B1000001233456780000020 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				B1000001233456780000014 /* AlphaStatusBadge.swift */,
+			);
+			path = Components;
 			sourceTree = "<group>";
 		};
 		A1000001233456780000023 /* ViewModels */ = {
@@ -98,6 +117,7 @@
 			isa = PBXGroup;
 			children = (
 				A1000001233456780000014 /* Match.swift */,
+				B1000001233456780000011 /* DashboardModels.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -106,6 +126,7 @@
 			isa = PBXGroup;
 			children = (
 				A1000001233456780000015 /* APIClient.swift */,
+				B1000001233456780000013 /* AppConfiguration.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -200,6 +221,10 @@
 				A100000123345678000001A /* LeagueStandingsView.swift in Sources */,
 				A100000123345678000001C /* NarrativeInsightsView.swift in Sources */,
 				A100000123345678000001E /* PredictionTimelineView.swift in Sources */,
+				B1000001233456780000001 /* DashboardModels.swift in Sources */,
+				B1000001233456780000002 /* DashboardView.swift in Sources */,
+				B1000001233456780000003 /* AppConfiguration.swift in Sources */,
+				B1000001233456780000004 /* AlphaStatusBadge.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

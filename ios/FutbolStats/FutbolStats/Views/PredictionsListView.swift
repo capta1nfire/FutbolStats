@@ -13,6 +13,13 @@ struct PredictionsListView: View {
                     dateSelector
                         .padding(.top, 8)
 
+                    // Alpha readiness (non-blocking, only show if data available)
+                    if viewModel.opsProgress != nil {
+                        AlphaStatusBadge(progress: viewModel.opsProgress)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 10)
+                    }
+
                     // Content
                     if viewModel.isLoading && viewModel.predictions.isEmpty {
                         Spacer()
