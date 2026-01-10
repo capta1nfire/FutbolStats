@@ -3558,6 +3558,35 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
       </table>
     </div>
 
+    <div class="table-card">
+      <h3>Progreso hacia Re-test / Alpha<span class="info-icon">i<span class="tooltip">Métricas de preparación para re-evaluar el modelo. Se recomienda re-test cuando: Bets ≥ 100 y Baseline Coverage ≥ 60%.</span></span></h3>
+      <div style="padding: 0.75rem;">
+        {_render_progress_bar(
+            "PIT Snapshots (30d)",
+            progress.get("pit_snapshots_30d", 0),
+            progress.get("target_pit_snapshots_30d", 100),
+            "Snapshots PIT (lineup_confirmed + live) capturados en los últimos 30 días."
+        )}
+        {_render_progress_bar(
+            "Bets Evaluables (30d)",
+            progress.get("pit_bets_30d", 0),
+            progress.get("target_pit_bets_30d", 100),
+            "PIT snapshots con predicción válida (created_at < snapshot_at). Listos para evaluar ROI."
+        )}
+        {_render_progress_bar_pct(
+            "Baseline Coverage",
+            progress.get("baseline_coverage_pct", 0),
+            progress.get("target_baseline_coverage_pct", 60),
+            progress.get("pit_with_baseline", 0),
+            progress.get("pit_total_for_baseline", 0),
+            "% de PIT snapshots con market_movement pre-kickoff (para CLV proxy)."
+        )}
+        <div style="margin-top: 0.75rem; padding: 0.6rem; background: {'rgba(34, 197, 94, 0.12)' if progress.get('ready_for_retest') else 'rgba(234, 179, 8, 0.12)'}; border: 1px solid {'rgba(34, 197, 94, 0.35)' if progress.get('ready_for_retest') else 'rgba(234, 179, 8, 0.35)'}; border-radius: 0.5rem; font-size: 0.8rem; color: var(--text);">
+          {'✅ Listo para re-test' if progress.get('ready_for_retest') else '⏳ N bets ≥ ' + str(progress.get('target_pit_bets_30d', 100)) + ' y baseline ≥ ' + str(progress.get('target_baseline_coverage_pct', 60)) + '%'}
+        </div>
+      </div>
+    </div>
+
     <div class="table-card" style="grid-column: 1 / -1;">
       <h3>Últimos 10 PIT (Lineup Confirmed)<span class="info-icon">i<span class="tooltip">Los 10 snapshots PIT más recientes donde se confirmaron alineaciones. Muestra: hora (PT), liga, frescura de odds, minutos al kickoff, y odds H/D/A del bookmaker.</span></span></h3>
       <table>
@@ -3569,39 +3598,6 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
         </thead>
         <tbody>{latest_rows}</tbody>
       </table>
-    </div>
-  </div>
-
-  <!-- Progress towards Re-test / Alpha -->
-  <div class="progress-section" style="margin-top: 1.5rem;">
-    <h2 style="font-size: 1.1rem; margin-bottom: 0.75rem; color: var(--text);">
-      Progreso hacia Re-test / Alpha
-      <span class="info-icon">i<span class="tooltip">Métricas de preparación para re-evaluar el modelo. Se recomienda re-test cuando: Bets ≥ 100 y Baseline Coverage ≥ 60%.</span></span>
-    </h2>
-    <div style="display: grid; gap: 1rem;">
-      {_render_progress_bar(
-          "PIT Snapshots (30d)",
-          progress.get("pit_snapshots_30d", 0),
-          progress.get("target_pit_snapshots_30d", 100),
-          "Snapshots PIT (lineup_confirmed + live) capturados en los últimos 30 días."
-      )}
-      {_render_progress_bar(
-          "Bets Evaluables (30d)",
-          progress.get("pit_bets_30d", 0),
-          progress.get("target_pit_bets_30d", 100),
-          "PIT snapshots con predicción válida (created_at < snapshot_at). Listos para evaluar ROI."
-      )}
-      {_render_progress_bar_pct(
-          "Baseline Coverage",
-          progress.get("baseline_coverage_pct", 0),
-          progress.get("target_baseline_coverage_pct", 60),
-          progress.get("pit_with_baseline", 0),
-          progress.get("pit_total_for_baseline", 0),
-          "% de PIT snapshots con market_movement pre-kickoff (para CLV proxy)."
-      )}
-    </div>
-    <div style="margin-top: 0.75rem; padding: 0.75rem; background: {'rgba(34, 197, 94, 0.12)' if progress.get('ready_for_retest') else 'rgba(234, 179, 8, 0.12)'}; border: 1px solid {'rgba(34, 197, 94, 0.35)' if progress.get('ready_for_retest') else 'rgba(234, 179, 8, 0.35)'}; border-radius: 0.5rem; font-size: 0.85rem; color: var(--text);">
-      {'✅ Listo para re-test: N bets ≥ ' + str(progress.get('target_pit_bets_30d', 100)) + ' y baseline coverage ≥ ' + str(progress.get('target_baseline_coverage_pct', 60)) + '%' if progress.get('ready_for_retest') else '⏳ Siguiente re-test recomendado cuando: N bets ≥ ' + str(progress.get('target_pit_bets_30d', 100)) + ' y baseline coverage ≥ ' + str(progress.get('target_baseline_coverage_pct', 60)) + '%'}
     </div>
   </div>
 
