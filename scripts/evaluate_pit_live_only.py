@@ -495,7 +495,8 @@ async def run_evaluation() -> dict:
         # Betting simulation
         bets = []
         for s in pit_with_preds:
-            pred = predictions[s['match_id']]
+            # Use PIT-safe prediction selected above
+            pred = pit_safe_predictions[s['match_id']]
             odds = [to_float(s['odds_home']), to_float(s['odds_draw']), to_float(s['odds_away'])]
 
             # Normalize model probabilities
