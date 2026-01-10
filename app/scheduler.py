@@ -2422,6 +2422,19 @@ async def daily_ops_rollup() -> dict:
             payload["errors_summary"] = error_summary
 
             # =================================================================
+            # NOTE FIELD (explain zeros)
+            # =================================================================
+            notes = []
+            if payload["pit_snapshots_live"] == 0:
+                notes.append("no PIT snapshots in window")
+            if market_movement_total == 0:
+                notes.append("no market movement captures")
+            if payload["pit_bets_evaluable"] == 0 and payload["pit_snapshots_live"] > 0:
+                notes.append("PIT snapshots exist but no predictions found")
+
+            payload["note"] = "; ".join(notes) if notes else None
+
+            # =================================================================
             # UPSERT INTO ops_daily_rollups
             # =================================================================
             payload_json = json.dumps(payload)
@@ -2447,6 +2460,7 @@ async def daily_ops_rollup() -> dict:
                 "pit_snapshots_live": payload["pit_snapshots_live"],
                 "pit_bets_evaluable": payload["pit_bets_evaluable"],
                 "baseline_pct": baseline_pct,
+                "note": payload.get("note"),
             }
 
     except Exception as e:

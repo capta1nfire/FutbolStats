@@ -3224,14 +3224,18 @@ def _render_history_rows(history: list) -> str:
         bets_eval = p.get("pit_bets_evaluable", 0)
         baseline_pct = p.get("baseline_coverage", {}).get("baseline_pct", 0)
         market_total = p.get("market_movement", {}).get("total", 0)
+        note = p.get("note")
 
         bins = p.get("delta_ko_bins", {})
         bin_10_45 = bins.get("10-45", 0)
         bin_45_90 = bins.get("45-90", 0)
 
+        # Show note indicator if present
+        note_indicator = f' <span class="info-icon" style="font-size:0.7em;">i<span class="tooltip">{note}</span></span>' if note else ""
+
         rows += f"""
         <tr>
-            <td style="font-weight:500;">{day}</td>
+            <td style="font-weight:500;">{day}{note_indicator}</td>
             <td style="text-align:center;">{pit_live}</td>
             <td style="text-align:center;">{bets_eval}</td>
             <td style="text-align:center;">{baseline_pct}%</td>
