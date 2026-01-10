@@ -504,3 +504,31 @@ class OddsHistory(SQLModel, table=True):
             implied_away=implied_away,
             overround=overround,
         )
+
+
+class PITReport(SQLModel, table=True):
+    """
+    PIT (Point-In-Time) evaluation reports stored in DB for persistence.
+    Survives Railway deploys (unlike filesystem logs/).
+    """
+
+    __tablename__ = "pit_reports"
+    __table_args__ = (
+        UniqueConstraint("report_type", "report_date", name="uq_pit_report_type_date"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    report_type: str = Field(
+        max_length=20, index=True, description="'daily' or 'weekly'"
+    )
+    report_date: datetime = Field(
+        index=True, description="Date of the report (UTC, date only)"
+    )
+    payload: dict = Field(
+        sa_column=Column(JSON), description="Full JSON report content"
+    )
+    source: str = Field(
+        default="scheduler", max_length=50, description="Origin: scheduler, manual, script"
+    )
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
