@@ -2419,13 +2419,12 @@ def _load_latest_pit_report() -> dict:
     return result
 
 
-def _load_pit_reports_from_db() -> dict:
+async def _load_pit_reports_from_db_async() -> dict:
     """
-    Load latest PIT reports from pit_reports table using sync connection.
+    Load latest PIT reports from pit_reports table (async version).
     Returns dict with weekly/daily payloads and metadata.
     """
-    import os
-    from sqlalchemy import create_engine, text
+    from sqlalchemy import text
 
     result = {
         "weekly": None,
@@ -2436,23 +2435,10 @@ def _load_pit_reports_from_db() -> dict:
         "created_at": None,
     }
 
-    # Get sync DATABASE_URL (convert asyncpg to psycopg2 if needed)
-    db_url = os.environ.get("DATABASE_URL", "")
-    if not db_url:
-        result["error"] = "No DATABASE_URL configured"
-        return result
-
-    # Convert async URL to sync if needed
-    if "asyncpg" in db_url:
-        db_url = db_url.replace("postgresql+asyncpg", "postgresql")
-    elif db_url.startswith("postgresql://"):
-        pass  # Already sync format
-
     try:
-        engine = create_engine(db_url, pool_pre_ping=True)
-        with engine.connect() as conn:
+        async with AsyncSessionLocal() as session:
             # Get latest daily
-            daily_result = conn.execute(text("""
+            daily_result = await session.execute(text("""
                 SELECT payload, report_date, created_at, source
                 FROM pit_reports
                 WHERE report_type = 'daily'
@@ -2462,7 +2448,7 @@ def _load_pit_reports_from_db() -> dict:
             daily_row = daily_result.fetchone()
 
             # Get latest weekly
-            weekly_result = conn.execute(text("""
+            weekly_result = await session.execute(text("""
                 SELECT payload, report_date, created_at, source
                 FROM pit_reports
                 WHERE report_type = 'weekly'
@@ -2470,8 +2456,6 @@ def _load_pit_reports_from_db() -> dict:
                 LIMIT 1
             """))
             weekly_row = weekly_result.fetchone()
-
-        engine.dispose()
 
         if daily_row:
             result["daily"] = daily_row[0]  # payload is JSON
@@ -2495,8 +2479,47 @@ def _load_pit_reports_from_db() -> dict:
     return result
 
 
+def _load_pit_reports_from_db() -> dict:
+    """
+    Sync wrapper for _load_pit_reports_from_db_async.
+    Used by cached functions that need sync interface.
+    """
+    import asyncio
+    try:
+        # Try to get existing event loop
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # We're inside an async context, can't use run_until_complete
+            # Return empty to fall through to filesystem fallback
+            return {"error": "Cannot run sync in async context"}
+        return loop.run_until_complete(_load_pit_reports_from_db_async())
+    except RuntimeError:
+        # No event loop exists, create new one
+        return asyncio.run(_load_pit_reports_from_db_async())
+
+
+async def _get_cached_pit_data_async() -> dict:
+    """Get PIT data with caching (async version for DB access)."""
+    now = time.time()
+    if _pit_dashboard_cache["data"] and (now - _pit_dashboard_cache["timestamp"]) < _pit_dashboard_cache["ttl"]:
+        return _pit_dashboard_cache["data"]
+
+    # Try DB first (async)
+    data = await _load_pit_reports_from_db_async()
+    if data.get("daily") or data.get("weekly"):
+        _pit_dashboard_cache["data"] = data
+        _pit_dashboard_cache["timestamp"] = now
+        return data
+
+    # Fallback to filesystem
+    data = _load_latest_pit_report()
+    _pit_dashboard_cache["data"] = data
+    _pit_dashboard_cache["timestamp"] = now
+    return data
+
+
 def _get_cached_pit_data() -> dict:
-    """Get PIT data with caching."""
+    """Get PIT data with caching (sync fallback, uses filesystem only)."""
     now = time.time()
     if _pit_dashboard_cache["data"] and (now - _pit_dashboard_cache["timestamp"]) < _pit_dashboard_cache["ttl"]:
         return _pit_dashboard_cache["data"]
@@ -2826,7 +2849,7 @@ async def pit_dashboard_html(request: Request):
             detail="Dashboard access requires valid token. Set DASHBOARD_TOKEN env var and provide via X-Dashboard-Token header or ?token= param.",
         )
 
-    data = _get_cached_pit_data()
+    data = await _get_cached_pit_data_async()
     html = _render_pit_dashboard_html(data)
     return HTMLResponse(content=html)
 
@@ -2844,7 +2867,7 @@ async def pit_dashboard_json(request: Request):
             detail="Dashboard access requires valid token.",
         )
 
-    data = _get_cached_pit_data()
+    data = await _get_cached_pit_data_async()
     return {
         "source": data.get("source"),
         "error": data.get("error"),
