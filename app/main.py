@@ -23,7 +23,7 @@ from app.etl.competitions import ALL_LEAGUE_IDS, COMPETITIONS
 from app.features import FeatureEngineer
 from app.ml import XGBoostEngine
 from app.ml.persistence import load_active_model, persist_model_snapshot
-from app.models import Match, OddsHistory, PostMatchAudit, Prediction, PredictionOutcome, Team, TeamAdjustment
+from app.models import Match, OddsHistory, PITReport, PostMatchAudit, Prediction, PredictionOutcome, Team, TeamAdjustment
 from app.scheduler import start_scheduler, stop_scheduler, get_last_sync_time, SYNC_LEAGUES
 from app.security import limiter, verify_api_key
 
