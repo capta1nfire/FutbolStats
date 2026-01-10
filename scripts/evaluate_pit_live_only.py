@@ -389,7 +389,7 @@ def generate_interpretation(phase: str, brier: dict, betting: dict) -> dict:
 
     # Rule 4: low N predictions => high variance warning
     if n_with_predictions is not None and n_with_predictions < MIN_PREDICTIONS_FOR_STABLE_METRICS:
-        bullet_notes.append(f"low_n_predictions: n_with_predictions={n_with_predictions}, metrics have high variance")
+        bullet_notes.append(f"low_n_predictions: n_with_predictions={n_with_predictions} (<{MIN_PREDICTIONS_FOR_STABLE_METRICS}), metrics have high variance")
 
     # Additional context notes
     if roi_ci_status == 'no_bets':
