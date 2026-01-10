@@ -1931,46 +1931,40 @@ async def weekly_pit_report():
         import json
         import os
         from datetime import datetime, timedelta
-        from glob import glob
 
         from sqlalchemy import text
 
         from app.db import async_engine
+        from app.database import AsyncSessionLocal
 
         # =====================================================================
         # Get capture metrics BEFORE resetting (for this week's report)
         # =====================================================================
         capture_metrics = get_lineup_capture_metrics()
 
-        # Find all PIT evaluation files from the last 7 days
-        logs_dir = "logs"
-        if not os.path.exists(logs_dir):
-            logger.warning("No logs directory found - skipping weekly report")
+        # ============================================================
+        # Load daily PIT reports from DB (persistent across deploys)
+        # ============================================================
+        cutoff_dt = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=7)
+        daily_reports: list[dict] = []
+        async with AsyncSessionLocal() as session:
+            res = await session.execute(text("""
+                SELECT payload, report_date
+                FROM pit_reports
+                WHERE report_type = 'daily'
+                  AND report_date >= :cutoff
+                ORDER BY report_date ASC
+            """), {"cutoff": cutoff_dt})
+            rows = res.fetchall()
+            for r in rows:
+                daily_reports.append({"payload": r[0], "report_date": r[1]})
+
+        if not daily_reports:
+            logger.info("No PIT daily reports in the last 7 days (DB) - skipping weekly report")
             return
 
-        # Get files from last 7 days
-        cutoff = datetime.utcnow() - timedelta(days=7)
-        evaluation_files = sorted(glob(f"{logs_dir}/pit_evaluation_*.json"))
-
-        recent_files = []
-        for f in evaluation_files:
-            try:
-                # Parse timestamp from filename: pit_evaluation_YYYYMMDD_HHMMSS.json
-                basename = os.path.basename(f)
-                timestamp_str = basename.replace("pit_evaluation_", "").replace(".json", "")
-                file_time = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
-                if file_time >= cutoff:
-                    recent_files.append(f)
-            except ValueError:
-                continue
-
-        if not recent_files:
-            logger.info("No PIT evaluations in the last 7 days")
-            return
-
-        # Load most recent evaluation for current status
-        with open(recent_files[-1], 'r') as f:
-            latest = json.load(f)
+        latest = daily_reports[-1]["payload"] or {}
+        latest_ref = f"db:daily:{daily_reports[-1]['report_date'].date().isoformat()}"
 
         # =====================================================================
         # FULL CAPTURE VISIBILITY - Query ALL live captures (any window)
@@ -2139,7 +2133,7 @@ async def weekly_pit_report():
         logger.info("=" * 60)
         logger.info("WEEKLY PIT REPORT")
         logger.info("=" * 60)
-        logger.info(f"Evaluations this week: {len(recent_files)}")
+        logger.info(f"Daily reports analyzed this week: {len(daily_reports)}")
         logger.info(f"Principal [10-90]: N={principal_n}, Status={principal_status}")
         logger.info(f"Ideal [45-75]: N={ideal_n}, Status={ideal_status}")
         logger.info(f"Edge Diagnostic: {edge_diagnostic}")
@@ -2179,8 +2173,8 @@ async def weekly_pit_report():
         weekly_report = {
             "report_type": "pit_weekly_consolidated",
             "generated_at": datetime.utcnow().isoformat(),
-            "evaluations_analyzed": len(recent_files),
-            "latest_evaluation": recent_files[-1],
+            "evaluations_analyzed": len(daily_reports),
+            "latest_evaluation": latest_ref,
             "summary": {
                 "principal_n": principal_n,
                 "principal_status": principal_status,
@@ -2219,11 +2213,23 @@ async def weekly_pit_report():
             "bin_distribution": counts,
         }
 
-        report_file = f"{logs_dir}/pit_weekly_{datetime.utcnow().strftime('%Y%m%d')}.json"
-        with open(report_file, 'w') as f:
-            json.dump(weekly_report, f, indent=2)
+        # Persist to DB so PIT dashboard survives Railway deploys
+        try:
+            await _save_pit_report_to_db(report_type="weekly", payload=weekly_report, source="scheduler")
+            logger.info("Weekly PIT report persisted to DB (pit_reports table)")
+        except Exception as db_err:
+            logger.warning(f"Failed to persist weekly PIT report to DB: {db_err}")
 
-        logger.info(f"Weekly report saved: {report_file}")
+        # Optional: also write to filesystem for debugging (ephemeral on Railway)
+        try:
+            logs_dir = "logs"
+            os.makedirs(logs_dir, exist_ok=True)
+            report_file = f"{logs_dir}/pit_weekly_{datetime.utcnow().strftime('%Y%m%d')}.json"
+            with open(report_file, "w") as f:
+                json.dump(weekly_report, f, indent=2)
+            logger.info(f"Weekly report saved (filesystem): {report_file}")
+        except Exception as fs_err:
+            logger.debug(f"Could not write weekly PIT report to filesystem: {fs_err}")
 
         # Reset metrics for next week
         reset_lineup_capture_metrics()
@@ -2231,6 +2237,49 @@ async def weekly_pit_report():
 
     except Exception as e:
         logger.error(f"Weekly PIT report failed: {e}")
+
+
+async def pit_reports_retention():
+    """
+    Monthly cleanup of old PIT reports to prevent unbounded growth.
+
+    Retention policy:
+    - daily reports: 180 days
+    - weekly reports: 365 days
+
+    Runs monthly on the 1st at 4:00 AM UTC.
+    """
+    logger.info("Starting PIT reports retention cleanup...")
+
+    try:
+        from sqlalchemy import text
+        from app.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            # Delete old daily reports (> 180 days)
+            daily_result = await session.execute(text("""
+                DELETE FROM pit_reports
+                WHERE report_type = 'daily'
+                  AND report_date < (NOW() - INTERVAL '180 days')
+                RETURNING id
+            """))
+            daily_deleted = len(daily_result.fetchall())
+
+            # Delete old weekly reports (> 365 days)
+            weekly_result = await session.execute(text("""
+                DELETE FROM pit_reports
+                WHERE report_type = 'weekly'
+                  AND report_date < (NOW() - INTERVAL '365 days')
+                RETURNING id
+            """))
+            weekly_deleted = len(weekly_result.fetchall())
+
+            await session.commit()
+
+            logger.info(f"PIT retention: deleted {daily_deleted} daily (>180d), {weekly_deleted} weekly (>365d) reports")
+
+    except Exception as e:
+        logger.error(f"PIT reports retention failed: {e}")
 
 
 # =============================================================================
@@ -2704,6 +2753,16 @@ def start_scheduler(ml_engine):
         replace_existing=True,
     )
 
+    # Monthly PIT Reports Retention: 1st of month at 04:00 UTC
+    # Deletes old reports: daily > 180 days, weekly > 365 days
+    scheduler.add_job(
+        pit_reports_retention,
+        trigger=CronTrigger(day=1, hour=4, minute=0),
+        id="pit_reports_retention",
+        name="Monthly PIT Reports Retention",
+        replace_existing=True,
+    )
+
     scheduler.start()
     _scheduler_started = True
     logger.info(
@@ -2720,7 +2779,8 @@ def start_scheduler(ml_engine):
         "  - Daily PIT evaluation: 9:00 AM UTC (silent save)\n"
         "  - Daily ops rollup: 9:05 AM UTC (KPI aggregation)\n"
         "  - Weekly recalibration: Mondays 5:00 AM UTC\n"
-        "  - Weekly PIT report: Tuesdays 10:00 AM UTC"
+        "  - Weekly PIT report: Tuesdays 10:00 AM UTC\n"
+        "  - Monthly PIT retention: 1st of month 04:00 UTC"
     )
 
 
