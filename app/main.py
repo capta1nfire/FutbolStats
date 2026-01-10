@@ -2555,21 +2555,92 @@ def _render_pit_dashboard_html(data: dict) -> str:
     # Extract data preferring weekly, falling back to daily
     report = weekly or daily or {}
 
-    # Summary data
-    summary = report.get("summary", {})
-    principal_n = summary.get("principal_n", report.get("counts", {}).get("total_principal", 0))
-    ideal_n = summary.get("ideal_n", report.get("counts", {}).get("total_ideal", 0))
-    principal_status = summary.get("principal_status", report.get("checkpoints", {}).get("principal", {}).get("status", "unknown"))
-    ideal_status = summary.get("ideal_status", report.get("checkpoints", {}).get("ideal", {}).get("status", "unknown"))
-    quality_score = summary.get("quality_score", report.get("data_quality", {}).get("quality_score", 0))
-    edge_diagnostic = summary.get("edge_diagnostic", report.get("edge_decay_diagnostic", {}).get("diagnostic", "N/A"))
+    # Detect if this is a daily live_only report (has protocol_version or counts.n_pit_valid_10_90)
+    is_daily_live_only = (
+        report.get("protocol_version") is not None or
+        report.get("counts", {}).get("n_pit_valid_10_90") is not None
+    )
 
-    # Full capture visibility
-    visibility = report.get("full_capture_visibility", {})
-    total_live = visibility.get("total_live_pre_kickoff_any_window", 0)
-    captures_by_range = visibility.get("captures_by_range", {})
-    ideal_captures = captures_by_range.get("ideal_45_75", 0)
-    ideal_pct = round(ideal_captures / total_live * 100, 1) if total_live > 0 else 0
+    if is_daily_live_only:
+        # Map daily live_only schema to dashboard variables
+        counts = report.get("counts", {})
+        principal_n = counts.get("n_pit_valid_10_90", 0)
+        ideal_n = counts.get("n_pit_valid_ideal_45_75", 0)
+        total_live = counts.get("n_total_snapshots", counts.get("n_pre_kickoff", 0))
+
+        # Phase maps to status
+        phase = report.get("phase", "unknown")
+        phase_to_status = {
+            "formal": "formal",
+            "preliminar": "preliminary",
+            "piloto": "piloto",
+            "insufficient": "insufficient",
+        }
+        principal_status = phase_to_status.get(phase, phase)
+        ideal_status = principal_status  # Same for daily
+
+        # Quality score: use % ideal window as proxy, or N/A
+        ideal_pct = round(ideal_n / principal_n * 100, 1) if principal_n > 0 else 0
+        quality_score = ideal_pct  # Proxy: % in ideal window
+
+        # Edge diagnostic: not available in daily, show phase info
+        brier = report.get("brier", {})
+        if brier.get("skill_vs_market") is not None:
+            skill = brier.get("skill_vs_market", 0)
+            if skill > 0.05:
+                edge_diagnostic = "EDGE_PERSISTS"
+            elif skill > -0.05:
+                edge_diagnostic = "INCONCLUSIVE"
+            else:
+                edge_diagnostic = "NO_ALPHA"
+        else:
+            edge_diagnostic = "INSUFFICIENT_DATA"
+
+        # Build captures_by_range from timing_distribution if available
+        captures_by_range = {}
+        timing = report.get("timing_distribution", {})
+        if timing:
+            # Approximate distribution based on counts
+            captures_by_range = {
+                "ideal_45_75": ideal_n,
+                "valid_10_90": principal_n,
+            }
+        ideal_captures = ideal_n
+
+        # Exclusions: not in daily schema
+        exclusions = {}
+
+        # Recommendation based on phase
+        phase_recommendations = {
+            "insufficient": f"Accumulating data (N={principal_n}, need 50+)",
+            "piloto": f"Pilot phase (N={principal_n}, need 200+)",
+            "preliminar": f"Preliminary phase (N={principal_n}, need 500+)",
+            "formal": "Formal evaluation phase - metrics are statistically significant",
+        }
+        recommendation = phase_recommendations.get(phase, f"Phase: {phase}")
+
+    else:
+        # Original weekly schema mapping
+        summary = report.get("summary", {})
+        principal_n = summary.get("principal_n", report.get("counts", {}).get("total_principal", 0))
+        ideal_n = summary.get("ideal_n", report.get("counts", {}).get("total_ideal", 0))
+        principal_status = summary.get("principal_status", report.get("checkpoints", {}).get("principal", {}).get("status", "unknown"))
+        ideal_status = summary.get("ideal_status", report.get("checkpoints", {}).get("ideal", {}).get("status", "unknown"))
+        quality_score = summary.get("quality_score", report.get("data_quality", {}).get("quality_score", 0))
+        edge_diagnostic = summary.get("edge_diagnostic", report.get("edge_decay_diagnostic", {}).get("diagnostic", "N/A"))
+
+        # Full capture visibility
+        visibility = report.get("full_capture_visibility", {})
+        total_live = visibility.get("total_live_pre_kickoff_any_window", 0)
+        captures_by_range = visibility.get("captures_by_range", {})
+        ideal_captures = captures_by_range.get("ideal_45_75", 0)
+        ideal_pct = round(ideal_captures / total_live * 100, 1) if total_live > 0 else 0
+
+        # Quality gate exclusions
+        exclusions = report.get("data_quality", {}).get("exclusions", {})
+
+        # Recommendation
+        recommendation = report.get("recommendation", "N/A")
 
     # Calculate live % from weekly if available
     live_pct = 0
@@ -2578,17 +2649,11 @@ def _render_pit_dashboard_html(data: dict) -> str:
         this_week = weekly.get("capture_delta", {}).get("this_week_ideal", 0)
         live_pct = 90  # Assume high if we have data (actual comes from freshness)
 
-    # Quality gate exclusions
-    exclusions = report.get("data_quality", {}).get("exclusions", {})
-
-    # Recommendation
-    recommendation = report.get("recommendation", "N/A")
-
     # Timestamps - show both weekly and daily for full freshness visibility
     generated_at = report.get("generated_at", report.get("timestamp", "N/A"))
     report_file = report.get("_file", "N/A")
     weekly_ts = weekly.get("generated_at", "N/A") if weekly else "N/A"
-    daily_ts = daily.get("timestamp", "N/A") if daily else "N/A"
+    daily_ts = daily.get("generated_at", daily.get("timestamp", "N/A")) if daily else "N/A"
 
     # Status icons
     def status_icon(status):
