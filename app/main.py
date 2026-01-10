@@ -2926,6 +2926,60 @@ def _render_pit_dashboard_html(data: dict) -> str:
             background: rgba(59, 130, 246, 0.18);
             border-color: rgba(59, 130, 246, 0.45);
         }}
+        .json-dropdown {{
+            position: relative;
+            display: inline-block;
+        }}
+        .json-dropdown-btn {{
+            display: inline-flex;
+            align-items: center;
+            padding: 0.35rem 0.6rem;
+            border-radius: 0.6rem;
+            color: var(--muted);
+            font-size: 0.8rem;
+            text-decoration: none;
+            border: 1px solid transparent;
+            cursor: pointer;
+            background: transparent;
+        }}
+        .json-dropdown-btn:hover {{
+            color: var(--text);
+            border-color: rgba(59, 130, 246, 0.35);
+            background: rgba(59, 130, 246, 0.12);
+        }}
+        .json-dropdown-content {{
+            display: none;
+            position: absolute;
+            right: 0;
+            top: 100%;
+            margin-top: 0.25rem;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 0.5rem;
+            min-width: 180px;
+            z-index: 100;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }}
+        .json-dropdown:hover .json-dropdown-content {{
+            display: block;
+        }}
+        .json-dropdown-content a {{
+            display: block;
+            padding: 0.5rem 0.75rem;
+            color: var(--muted);
+            text-decoration: none;
+            font-size: 0.75rem;
+        }}
+        .json-dropdown-content a:hover {{
+            background: rgba(59, 130, 246, 0.12);
+            color: var(--text);
+        }}
+        .json-dropdown-content a:first-child {{
+            border-radius: 0.5rem 0.5rem 0 0;
+        }}
+        .json-dropdown-content a:last-child {{
+            border-radius: 0 0 0.5rem 0.5rem;
+        }}
     </style>
 </head>
 <body>
@@ -2941,7 +2995,15 @@ def _render_pit_dashboard_html(data: dict) -> str:
                     <a class="nav-link" data-path="/dashboard/ops" href="/dashboard/ops">Ops</a>
                     <a class="nav-link active" data-path="/dashboard/pit" href="/dashboard/pit">PIT</a>
                     <a class="nav-link" data-path="/dashboard/ops/logs" href="/dashboard/ops/logs">Logs</a>
-                    <a class="nav-link" data-path="/dashboard/pit.json" href="/dashboard/pit.json">JSON</a>
+                    <div class="json-dropdown">
+                        <span class="json-dropdown-btn">JSON ▾</span>
+                        <div class="json-dropdown-content">
+                            <a data-path="/dashboard/ops.json" href="/dashboard/ops.json">Ops JSON</a>
+                            <a data-path="/dashboard/pit.json" href="/dashboard/pit.json">PIT JSON</a>
+                            <a data-path="/dashboard/ops/history.json?days=30" href="/dashboard/ops/history.json?days=30">History JSON</a>
+                            <a data-path="/dashboard/ops/logs.json?limit=200" href="/dashboard/ops/logs.json?limit=200">Logs JSON</a>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -3007,10 +3069,11 @@ def _render_pit_dashboard_html(data: dict) -> str:
         const params = new URLSearchParams(window.location.search);
         const token = params.get('token');
         if (!token) return;
-        document.querySelectorAll('a.nav-link').forEach(a => {{
+        document.querySelectorAll('a.nav-link, .json-dropdown-content a').forEach(a => {{
           const path = a.getAttribute('data-path');
           if (!path) return;
-          a.setAttribute('href', path + '?token=' + encodeURIComponent(token));
+          const joiner = path.includes('?') ? '&' : '?';
+          a.setAttribute('href', path + joiner + 'token=' + encodeURIComponent(token));
         }});
       }})();
     </script>
@@ -3903,6 +3966,59 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
       visibility: visible;
       opacity: 1;
     }}
+    /* JSON Dropdown Menu */
+    .json-dropdown {{
+      position: relative;
+      display: inline-block;
+    }}
+    .json-dropdown-btn {{
+      display: inline-flex;
+      align-items: center;
+      padding: 0.35rem 0.6rem;
+      border-radius: 0.6rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }}
+    .json-dropdown-btn:hover {{
+      color: var(--text);
+      border-color: rgba(59, 130, 246, 0.35);
+      background: rgba(59, 130, 246, 0.12);
+    }}
+    .json-dropdown-content {{
+      display: none;
+      position: absolute;
+      right: 0;
+      top: 100%;
+      min-width: 140px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      z-index: 100;
+    }}
+    .json-dropdown:hover .json-dropdown-content {{
+      display: block;
+    }}
+    .json-dropdown-content a {{
+      display: block;
+      padding: 0.5rem 0.75rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-decoration: none;
+      border: none;
+    }}
+    .json-dropdown-content a:hover {{
+      background: rgba(59, 130, 246, 0.12);
+      color: var(--text);
+    }}
+    .json-dropdown-content a:first-child {{
+      border-radius: 0.5rem 0.5rem 0 0;
+    }}
+    .json-dropdown-content a:last-child {{
+      border-radius: 0 0 0.5rem 0.5rem;
+    }}
   </style>
 </head>
 <body>
@@ -3923,7 +4039,15 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
           <a class="nav-link" data-path="/dashboard/pit" href="/dashboard/pit">PIT</a>
           <a class="nav-link" data-path="/dashboard/ops/history" href="/dashboard/ops/history">History</a>
           <a class="nav-link" data-path="/dashboard/ops/logs" href="/dashboard/ops/logs">Logs (debug)</a>
-          <a class="nav-link" data-path="/dashboard/ops.json" href="/dashboard/ops.json">JSON</a>
+          <div class="json-dropdown">
+            <span class="json-dropdown-btn">JSON ▾</span>
+            <div class="json-dropdown-content">
+              <a data-path="/dashboard/ops.json" href="/dashboard/ops.json">Ops JSON</a>
+              <a data-path="/dashboard/pit.json" href="/dashboard/pit.json">PIT JSON</a>
+              <a data-path="/dashboard/ops/history.json?days=30" href="/dashboard/ops/history.json?days=30">History JSON</a>
+              <a data-path="/dashboard/ops/logs.json?limit=200" href="/dashboard/ops/logs.json?limit=200">Logs JSON</a>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -4053,10 +4177,11 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
       const params = new URLSearchParams(window.location.search);
       const token = params.get('token');
       if (!token) return;
-      document.querySelectorAll('a.nav-link').forEach(a => {{
+      document.querySelectorAll('a.nav-link, .json-dropdown-content a').forEach(a => {{
         const path = a.getAttribute('data-path');
         if (!path) return;
-        a.setAttribute('href', path + '?token=' + encodeURIComponent(token));
+        const joiner = path.includes('?') ? '&' : '?';
+        a.setAttribute('href', path + joiner + 'token=' + encodeURIComponent(token));
       }});
     }})();
   </script>
@@ -4221,6 +4346,59 @@ async def ops_dashboard_logs_html(
       background: rgba(59, 130, 246, 0.18);
       border-color: rgba(59, 130, 246, 0.45);
     }}
+    /* JSON Dropdown Menu */
+    .json-dropdown {{
+      position: relative;
+      display: inline-block;
+    }}
+    .json-dropdown-btn {{
+      display: inline-flex;
+      align-items: center;
+      padding: 0.35rem 0.6rem;
+      border-radius: 0.6rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }}
+    .json-dropdown-btn:hover {{
+      color: var(--text);
+      border-color: rgba(59, 130, 246, 0.35);
+      background: rgba(59, 130, 246, 0.12);
+    }}
+    .json-dropdown-content {{
+      display: none;
+      position: absolute;
+      right: 0;
+      top: 100%;
+      min-width: 140px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      z-index: 100;
+    }}
+    .json-dropdown:hover .json-dropdown-content {{
+      display: block;
+    }}
+    .json-dropdown-content a {{
+      display: block;
+      padding: 0.5rem 0.75rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-decoration: none;
+      border: none;
+    }}
+    .json-dropdown-content a:hover {{
+      background: rgba(59, 130, 246, 0.12);
+      color: var(--text);
+    }}
+    .json-dropdown-content a:first-child {{
+      border-radius: 0.5rem 0.5rem 0 0;
+    }}
+    .json-dropdown-content a:last-child {{
+      border-radius: 0 0 0.5rem 0.5rem;
+    }}
   </style>
 </head>
 <body>
@@ -4236,7 +4414,15 @@ async def ops_dashboard_logs_html(
           <a class="nav-link" data-path="/dashboard/ops" href="/dashboard/ops">Ops</a>
           <a class="nav-link" data-path="/dashboard/pit" href="/dashboard/pit">PIT</a>
           <a class="nav-link active" data-path="/dashboard/ops/logs" href="/dashboard/ops/logs">Logs</a>
-          <a class="nav-link" data-path="{json_link}" href="{json_link}">JSON</a>
+          <div class="json-dropdown">
+            <span class="json-dropdown-btn">JSON ▾</span>
+            <div class="json-dropdown-content">
+              <a data-path="/dashboard/ops.json" href="/dashboard/ops.json">Ops JSON</a>
+              <a data-path="/dashboard/pit.json" href="/dashboard/pit.json">PIT JSON</a>
+              <a data-path="/dashboard/ops/history.json?days=30" href="/dashboard/ops/history.json?days=30">History JSON</a>
+              <a data-path="/dashboard/ops/logs.json?limit=200" href="/dashboard/ops/logs.json?limit=200">Logs JSON</a>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -4270,7 +4456,7 @@ async def ops_dashboard_logs_html(
       const params = new URLSearchParams(window.location.search);
       const token = params.get('token');
       if (!token) return;
-      document.querySelectorAll('a.nav-link').forEach(a => {{
+      document.querySelectorAll('a.nav-link, .json-dropdown-content a').forEach(a => {{
         const path = a.getAttribute('data-path');
         if (!path) return;
         // If data-path already has query params, append with &
@@ -4463,6 +4649,59 @@ async def ops_history_html(request: Request, days: int = 30):
       border-color: rgba(59, 130, 246, 0.45);
     }}
     .hint {{ color: var(--muted); font-size: 0.85rem; }}
+    /* JSON Dropdown Menu */
+    .json-dropdown {{
+      position: relative;
+      display: inline-block;
+    }}
+    .json-dropdown-btn {{
+      display: inline-flex;
+      align-items: center;
+      padding: 0.35rem 0.6rem;
+      border-radius: 0.6rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }}
+    .json-dropdown-btn:hover {{
+      color: var(--text);
+      border-color: rgba(59, 130, 246, 0.35);
+      background: rgba(59, 130, 246, 0.12);
+    }}
+    .json-dropdown-content {{
+      display: none;
+      position: absolute;
+      right: 0;
+      top: 100%;
+      min-width: 140px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      z-index: 100;
+    }}
+    .json-dropdown:hover .json-dropdown-content {{
+      display: block;
+    }}
+    .json-dropdown-content a {{
+      display: block;
+      padding: 0.5rem 0.75rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-decoration: none;
+      border: none;
+    }}
+    .json-dropdown-content a:hover {{
+      background: rgba(59, 130, 246, 0.12);
+      color: var(--text);
+    }}
+    .json-dropdown-content a:first-child {{
+      border-radius: 0.5rem 0.5rem 0 0;
+    }}
+    .json-dropdown-content a:last-child {{
+      border-radius: 0 0 0.5rem 0.5rem;
+    }}
   </style>
 </head>
 <body>
@@ -4479,7 +4718,15 @@ async def ops_history_html(request: Request, days: int = 30):
           <a class="nav-link" data-path="/dashboard/pit" href="/dashboard/pit">PIT</a>
           <a class="nav-link active" data-path="/dashboard/ops/history" href="/dashboard/ops/history">History</a>
           <a class="nav-link" data-path="/dashboard/ops/logs" href="/dashboard/ops/logs">Logs</a>
-          <a class="nav-link" data-path="/dashboard/ops/history.json?days={days}" href="/dashboard/ops/history.json?days={days}">JSON</a>
+          <div class="json-dropdown">
+            <span class="json-dropdown-btn">JSON ▾</span>
+            <div class="json-dropdown-content">
+              <a data-path="/dashboard/ops.json" href="/dashboard/ops.json">Ops JSON</a>
+              <a data-path="/dashboard/pit.json" href="/dashboard/pit.json">PIT JSON</a>
+              <a data-path="/dashboard/ops/history.json?days=30" href="/dashboard/ops/history.json?days=30">History JSON</a>
+              <a data-path="/dashboard/ops/logs.json?limit=200" href="/dashboard/ops/logs.json?limit=200">Logs JSON</a>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -4511,7 +4758,7 @@ async def ops_history_html(request: Request, days: int = 30):
       const params = new URLSearchParams(window.location.search);
       const token = params.get('token');
       if (!token) return;
-      document.querySelectorAll('a.nav-link').forEach(a => {{
+      document.querySelectorAll('a.nav-link, .json-dropdown-content a').forEach(a => {{
         const path = a.getAttribute('data-path');
         if (!path) return;
         const joiner = path.includes('?') ? '&' : '?';
