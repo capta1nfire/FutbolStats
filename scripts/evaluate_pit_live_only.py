@@ -196,7 +196,7 @@ def get_pit_safe_prediction(predictions_list: list, match_id: int, snapshot_at) 
         if hasattr(pred_created, 'tzinfo') and pred_created.tzinfo is not None:
             pred_created = pred_created.replace(tzinfo=None)
 
-        if pred_created <= snapshot_at_naive:
+        if pred_created < snapshot_at_naive:
             return pred
 
     # No prediction exists before snapshot_at
@@ -661,7 +661,7 @@ async def run_evaluation() -> dict:
             'phase': phase,
             'interpretation': interpretation,
             'prediction_integrity': pred_metadata,
-            'notes': 'read-only evaluation; no writes to DB; probs normalized; PIT integrity enforced (pred.created_at <= snapshot_at)',
+            'notes': 'read-only evaluation; no writes to DB; probs normalized; PIT integrity enforced (pred.created_at < snapshot_at)',
         }
 
         return report

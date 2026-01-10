@@ -1886,22 +1886,27 @@ async def _save_pit_report_to_db(report_type: str, payload: dict, source: str = 
     today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
     async with AsyncSessionLocal() as session:
-        # UPSERT: insert or update if exists for same type+date
-        await session.execute(text("""
-            INSERT INTO pit_reports (report_type, report_date, payload, source, created_at, updated_at)
-            VALUES (:report_type, :report_date, CAST(:payload AS JSON), :source, NOW(), NOW())
-            ON CONFLICT (report_type, report_date) DO UPDATE SET
-                payload = CAST(EXCLUDED.payload AS JSON),
-                source = EXCLUDED.source,
-                updated_at = NOW()
-        """), {
-            "report_type": report_type,
-            "report_date": today,
-            "payload": json.dumps(payload),
-            "source": source,
-        })
-        await session.commit()
-        logger.info(f"Saved {report_type} PIT report to DB for {today.date()}")
+        try:
+            # UPSERT: insert or update if exists for same type+date
+            await session.execute(text("""
+                INSERT INTO pit_reports (report_type, report_date, payload, source, created_at, updated_at)
+                VALUES (:report_type, :report_date, CAST(:payload AS JSON), :source, NOW(), NOW())
+                ON CONFLICT (report_type, report_date) DO UPDATE SET
+                    payload = CAST(EXCLUDED.payload AS JSON),
+                    source = EXCLUDED.source,
+                    updated_at = NOW()
+            """), {
+                "report_type": report_type,
+                "report_date": today,
+                "payload": json.dumps(payload, default=str),
+                "source": source,
+            })
+            await session.commit()
+            logger.info(f"Saved {report_type} PIT report to DB for {today.date()}")
+        except Exception as e:
+            logger.error(f"Failed to save {report_type} PIT report for {today.date()}: {e}")
+            await session.rollback()
+            raise
 
 
 async def weekly_pit_report():
@@ -1934,8 +1939,7 @@ async def weekly_pit_report():
 
         from sqlalchemy import text
 
-        from app.db import async_engine
-        from app.database import AsyncSessionLocal
+        from app.database import async_engine, AsyncSessionLocal
 
         # =====================================================================
         # Get capture metrics BEFORE resetting (for this week's report)
@@ -2092,15 +2096,61 @@ async def weekly_pit_report():
             logger.warning(f"Could not query full capture visibility: {db_err}")
 
         # Extract key metrics for weekly report
-        checkpoints = latest.get("checkpoints", {})
-        edge_decay = latest.get("edge_decay_diagnostic", {})
-        data_quality = latest.get("data_quality", {})
+        # Support both:
+        # - legacy weekly/daily schema (checkpoints/data_quality/edge_decay_diagnostic)
+        # - daily live_only schema from scripts/evaluate_pit_live_only.py (counts/brier/betting/phase)
+        is_daily_live_only = (
+            latest.get("protocol_version") is not None or
+            latest.get("counts", {}).get("n_pit_valid_10_90") is not None
+        )
 
-        principal_n = checkpoints.get("principal", {}).get("n", 0)
-        principal_status = checkpoints.get("principal", {}).get("status", "insufficient")
-        ideal_n = checkpoints.get("ideal", {}).get("n", 0)
-        ideal_status = checkpoints.get("ideal", {}).get("status", "insufficient")
-        edge_diagnostic = edge_decay.get("diagnostic", "UNKNOWN")
+        data_quality = latest.get("data_quality", {}) or {}
+        checkpoints = latest.get("checkpoints", {}) or {}
+        edge_decay = latest.get("edge_decay_diagnostic", {}) or {}
+
+        if is_daily_live_only:
+            counts_daily = latest.get("counts", {}) or {}
+            principal_n = int(counts_daily.get("n_pit_valid_10_90", 0) or 0)
+            ideal_n = int(counts_daily.get("n_pit_valid_ideal_45_75", 0) or 0)
+
+            phase = (latest.get("phase") or "unknown").strip().lower()
+            phase_to_status = {
+                "formal": "formal",
+                "preliminar": "preliminary",
+                "piloto": "piloto",
+                "insufficient": "insufficient",
+            }
+            principal_status = phase_to_status.get(phase, phase)
+            ideal_status = principal_status
+
+            # Derive an "edge diagnostic" proxy from skill_vs_market when available
+            brier = latest.get("brier", {}) or {}
+            skill = brier.get("skill_vs_market")
+            if skill is None:
+                edge_diagnostic = "INSUFFICIENT_DATA"
+            else:
+                try:
+                    skill_f = float(skill)
+                except Exception:
+                    skill_f = 0.0
+                if skill_f > 0.05:
+                    edge_diagnostic = "EDGE_PERSISTS"
+                elif skill_f > -0.05:
+                    edge_diagnostic = "INCONCLUSIVE"
+                else:
+                    edge_diagnostic = "NO_ALPHA"
+
+            # Proxy quality score for weekly summary: % captures in ideal window
+            if principal_n > 0:
+                data_quality = {"quality_score": round((ideal_n / principal_n) * 100, 1)}
+            else:
+                data_quality = {"quality_score": None}
+        else:
+            principal_n = checkpoints.get("principal", {}).get("n", 0)
+            principal_status = checkpoints.get("principal", {}).get("status", "insufficient")
+            ideal_n = checkpoints.get("ideal", {}).get("n", 0)
+            ideal_status = checkpoints.get("ideal", {}).get("status", "insufficient")
+            edge_diagnostic = edge_decay.get("diagnostic", "UNKNOWN")
 
         # Determine operational recommendation
         if principal_status == "formal" and edge_diagnostic == "EDGE_PERSISTS":
@@ -2115,7 +2165,14 @@ async def weekly_pit_report():
             recommendation = f"ACCUMULATING - Need more data (current: {principal_n})"
 
         # Check if capturing in target window
-        counts = latest.get("counts", {}).get("by_bin", {})
+        # For live_only daily schema, synthesize a minimal bin distribution.
+        if is_daily_live_only:
+            counts = {
+                "valid_10_90": int(principal_n or 0),
+                "ideal_45_75": int(ideal_n or 0),
+            }
+        else:
+            counts = latest.get("counts", {}).get("by_bin", {}) or {}
         ideal_45_75 = counts.get("ideal_45_75", 0)
         late_10_30 = counts.get("late_10_30", 0)
 
@@ -2175,6 +2232,14 @@ async def weekly_pit_report():
             "generated_at": datetime.utcnow().isoformat(),
             "evaluations_analyzed": len(daily_reports),
             "latest_evaluation": latest_ref,
+            # Carry latest evaluation metrics for auditing (Brier vs market/uniform, ROI/EV + CI when available)
+            "latest_metrics": {
+                "phase": latest.get("phase"),
+                "brier": latest.get("brier"),
+                "betting": latest.get("betting"),
+                "interpretation": latest.get("interpretation"),
+                "prediction_integrity": latest.get("prediction_integrity"),
+            },
             "summary": {
                 "principal_n": principal_n,
                 "principal_status": principal_status,
