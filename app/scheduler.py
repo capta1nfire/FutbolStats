@@ -63,6 +63,14 @@ EXTENDED_LEAGUES = [
     281,  # Peru Primera Division
     299,  # Venezuela Primera Division
     344,  # Bolivia Primera Division
+    # WC 2026 Qualifiers (fixtures/teams ingested) - enable extended live monitoring
+    34,   # World Cup - Qualification South America (CONMEBOL)
+    30,   # World Cup - Qualification Asia (AFC)
+    31,   # World Cup - Qualification CONCACAF
+    33,   # World Cup - Qualification Oceania (OFC)
+    32,   # World Cup - Qualification Europe (UEFA)
+    29,   # World Cup - Qualification Africa (CAF) (season may be pending)
+    37,   # World Cup - Qualification Intercontinental Play-offs (fixtures may be pending)
 ]
 
 # League scopes (dynamic via LEAGUE_MODE env var):
