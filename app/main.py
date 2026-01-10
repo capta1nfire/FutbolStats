@@ -2649,11 +2649,22 @@ def _render_pit_dashboard_html(data: dict) -> str:
         this_week = weekly.get("capture_delta", {}).get("this_week_ideal", 0)
         live_pct = 90  # Assume high if we have data (actual comes from freshness)
 
-    # Timestamps - show both weekly and daily for full freshness visibility
-    generated_at = report.get("generated_at", report.get("timestamp", "N/A"))
-    report_file = report.get("_file", "N/A")
-    weekly_ts = weekly.get("generated_at", "N/A") if weekly else "N/A"
-    daily_ts = daily.get("generated_at", daily.get("timestamp", "N/A")) if daily else "N/A"
+    # Timestamps - OPS style: use "—" for missing, with tooltips
+    weekly_ts = weekly.get("generated_at") if weekly else None
+    daily_ts = daily.get("generated_at", daily.get("timestamp")) if daily else None
+
+    # Format timestamps OPS-style
+    def format_ts_ops(ts, tooltip_missing):
+        if ts:
+            return f'<span>{ts[:19] if len(str(ts)) > 19 else ts}</span>'
+        return f'<span class="muted" title="{tooltip_missing}">—</span>'
+
+    weekly_display = format_ts_ops(weekly_ts, "Not generated yet. Runs Tuesdays 10:00 UTC.")
+    daily_display = format_ts_ops(daily_ts, "Not generated yet. Runs daily 09:00 UTC.")
+
+    # Source display - hide "File:" if db-backed
+    source_is_db = source and source.startswith("db_")
+    source_display = f"Source: {source}" if source else "Source: —"
 
     # Status icons
     def status_icon(status):
@@ -2729,22 +2740,61 @@ def _render_pit_dashboard_html(data: dict) -> str:
     # Get diagnostic context based on sample size
     diag_context_icon, diag_tooltip = get_diagnostic_context(principal_n, principal_status, edge_diagnostic)
 
-    # Bin data
+    # Bin data - OPS style empty state
     bins_html = ""
     for label, count in captures_by_range.items():
         pct = round(count / total_live * 100, 1) if total_live > 0 else 0
         highlight = 'class="highlight"' if "ideal" in label else ""
         display_label = format_bin_label(label)
         bins_html += f"<tr {highlight}><td>{display_label}</td><td>{count}</td><td>{pct}%</td></tr>"
+    if not bins_html:
+        bins_html = '<tr><td colspan="3" class="muted" style="text-align:center;">— No data yet —</td></tr>'
 
-    # Exclusions table
+    # Exclusions table - OPS style empty state
     exclusions_html = ""
     sorted_excl = sorted(exclusions.items(), key=lambda x: x[1], reverse=True)
     for reason, count in sorted_excl[:5]:
         if count > 0:
             exclusions_html += f"<tr><td>{reason}</td><td>{count}</td></tr>"
     if not exclusions_html:
-        exclusions_html = "<tr><td colspan='2'>No exclusions</td></tr>"
+        exclusions_html = '<tr><td colspan="2" class="muted" style="text-align:center;">— No exclusions —</td></tr>'
+
+    # Card color logic - OPS style (no alarm colors when no data)
+    def card_color_ideal_pct(val):
+        if val is None or val == 0:
+            return ""  # No color when no data
+        if val >= 60:
+            return "green"
+        if val >= 30:
+            return "yellow"
+        return "red"
+
+    def card_color_quality(val):
+        if val is None or val == 0:
+            return ""  # No color when no data
+        if val >= 60:
+            return "green"
+        if val >= 30:
+            return "yellow"
+        return "red"
+
+    # Card values - OPS style "—" for missing
+    def format_card_value(val, suffix=""):
+        if val is None or (isinstance(val, (int, float)) and val == 0):
+            return "—"
+        return f"{val}{suffix}"
+
+    live_snapshots_display = format_card_value(total_live) if total_live else "—"
+    ideal_pct_display = format_card_value(ideal_pct, "%") if principal_n > 0 else "—"
+    quality_score_display = format_card_value(quality_score, "%") if principal_n > 0 else "—"
+    checkpoints_display = f"{status_icon(principal_status)} {principal_n}" if principal_n else "—"
+    ideal_display = f"{status_icon(ideal_status)} {ideal_n} ideal" if ideal_n else "— ideal"
+
+    # Subtitles - OPS style
+    live_sub = "Total pre-kickoff" if total_live else "No data yet"
+    ideal_pct_sub = f"[45-75] min: {ideal_captures} captures" if ideal_captures else "No data yet"
+    quality_sub = "% ideal window (proxy)" if quality_score else "No data yet"
+    checkpoints_sub = f"Principal [{ideal_display}]" if principal_n else "No data yet"
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -2844,7 +2894,9 @@ def _render_pit_dashboard_html(data: dict) -> str:
         .tooltip-hint:hover, .context-icon:hover {{
             color: var(--blue);
         }}
+        .muted {{ color: var(--muted); }}
         .error {{ background: rgba(239, 68, 68, 0.1); border-color: var(--red); padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem; }}
+        .no-data {{ color: var(--muted); }}
         .footer {{ margin-top: 2rem; text-align: center; color: var(--muted); font-size: 0.75rem; }}
         .nav-tabs {{
             display: inline-flex;
@@ -2880,10 +2932,10 @@ def _render_pit_dashboard_html(data: dict) -> str:
     <div class="header">
         <div>
             <h1>📊 PIT Dashboard</h1>
-            <div class="meta">Source: {source} | File: {report_file}</div>
+            <div class="meta">{source_display}</div>
         </div>
         <div class="meta" style="text-align:right;">
-            <div>Weekly: {weekly_ts} | Daily: {daily_ts}</div>
+            <div>Weekly: {weekly_display} | Daily: {daily_display}</div>
             <div style="margin-top: 0.35rem;">
                 <div class="nav-tabs">
                     <a class="nav-link" data-path="/dashboard/ops" href="/dashboard/ops">Ops</a>
@@ -2898,25 +2950,25 @@ def _render_pit_dashboard_html(data: dict) -> str:
     {"<div class='error'>⚠️ " + error + "</div>" if error else ""}
 
     <div class="cards">
-        <div class="card blue">
+        <div class="card {'blue' if total_live else ''}">
             <div class="card-label">Live Snapshots</div>
-            <div class="card-value">{total_live}</div>
-            <div class="card-sub">Total pre-kickoff</div>
+            <div class="card-value {'no-data' if not total_live else ''}">{live_snapshots_display}</div>
+            <div class="card-sub">{live_sub}</div>
         </div>
-        <div class="card {'green' if ideal_pct >= 40 else 'yellow' if ideal_pct >= 20 else 'red'}">
+        <div class="card {card_color_ideal_pct(ideal_pct) if principal_n > 0 else ''}">
             <div class="card-label">% Ideal Window</div>
-            <div class="card-value">{ideal_pct}%</div>
-            <div class="card-sub">[45-75] min: {ideal_captures} captures</div>
+            <div class="card-value {'no-data' if principal_n == 0 else ''}">{ideal_pct_display}</div>
+            <div class="card-sub">{ideal_pct_sub}</div>
         </div>
-        <div class="card {'green' if quality_score >= 80 else 'yellow' if quality_score >= 50 else 'red'}">
+        <div class="card {card_color_quality(quality_score) if principal_n > 0 else ''}" title="Using % ideal window as proxy when no data_quality available">
             <div class="card-label">Quality Score</div>
-            <div class="card-value">{quality_score}%</div>
-            <div class="card-sub">Data quality gate</div>
+            <div class="card-value {'no-data' if principal_n == 0 else ''}">{quality_score_display}</div>
+            <div class="card-sub">{quality_sub}</div>
         </div>
         <div class="card">
             <div class="card-label">Checkpoints</div>
-            <div class="card-value">{status_icon(principal_status)} {principal_n}</div>
-            <div class="card-sub">Principal [{status_icon(ideal_status)} {ideal_n} ideal]</div>
+            <div class="card-value {'no-data' if not principal_n else ''}">{checkpoints_display}</div>
+            <div class="card-sub">{checkpoints_sub}</div>
         </div>
     </div>
 
@@ -2925,7 +2977,7 @@ def _render_pit_dashboard_html(data: dict) -> str:
             <h3>📍 Timing Distribution (Bins)</h3>
             <table>
                 <thead><tr><th>Bin</th><th>Count</th><th>%</th></tr></thead>
-                <tbody>{bins_html if bins_html else "<tr><td colspan='3'>No data</td></tr>"}</tbody>
+                <tbody>{bins_html}</tbody>
             </table>
         </div>
         <div class="table-card">
@@ -2939,9 +2991,9 @@ def _render_pit_dashboard_html(data: dict) -> str:
 
     <div class="decision-box">
         <h3>Edge Decay Diagnostic <span class="context-icon" title="{diag_tooltip}">{diag_context_icon}</span></h3>
-        <div class="decision">{edge_icon(edge_diagnostic)} {format_edge_label(edge_diagnostic)}</div>
-        <div class="tooltip-hint" title="{diag_tooltip}">N={principal_n} &bull; {principal_status}</div>
-        <div style="margin-top: 1rem; color: var(--muted);">{recommendation}</div>
+        <div class="decision">{edge_icon(edge_diagnostic) + " " + format_edge_label(edge_diagnostic) if edge_diagnostic and edge_diagnostic != "N/A" else '<span class="no-data">—</span>'}</div>
+        <div class="tooltip-hint" title="{diag_tooltip}">N={principal_n if principal_n else "—"} &bull; {principal_status if principal_status else "—"}</div>
+        <div style="margin-top: 1rem; color: var(--muted);">{recommendation if recommendation and recommendation != "N/A" else "No recommendation yet"}</div>
     </div>
 
     <div class="footer">
