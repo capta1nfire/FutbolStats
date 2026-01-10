@@ -2674,12 +2674,37 @@ def _render_pit_dashboard_html(data: dict) -> str:
         }
         return icons.get(diag, "❓")
 
+    def format_edge_label(diag):
+        """Format edge diagnostic for display (friendly labels)."""
+        labels = {
+            "EDGE_PERSISTS": "Edge Persists",
+            "EDGE_DECAYS": "Edge Decays",
+            "NO_ALPHA": "No Alpha",
+            "INCONCLUSIVE": "Inconclusive",
+            "INSUFFICIENT_DATA": "Insufficient Data",
+        }
+        return labels.get(diag, diag.replace("_", " ").title() if diag else "N/A")
+
+    def format_bin_label(label):
+        """Format bin label for display (friendly labels)."""
+        labels = {
+            "ideal_45_75": "Ideal [45-75]",
+            "valid_10_90": "Valid [10-90]",
+            "very_early_90plus": "Very Early [90+]",
+            "early_75_90": "Early [75-90]",
+            "late_30_45": "Late [30-45]",
+            "very_late_10_30": "Very Late [10-30]",
+            "too_late_under_10": "Too Late [<10]",
+        }
+        return labels.get(label, label.replace("_", " ").title())
+
     # Bin data
     bins_html = ""
     for label, count in captures_by_range.items():
         pct = round(count / total_live * 100, 1) if total_live > 0 else 0
         highlight = 'class="highlight"' if "ideal" in label else ""
-        bins_html += f"<tr {highlight}><td>{label}</td><td>{count}</td><td>{pct}%</td></tr>"
+        display_label = format_bin_label(label)
+        bins_html += f"<tr {highlight}><td>{display_label}</td><td>{count}</td><td>{pct}%</td></tr>"
 
     # Exclusions table
     exclusions_html = ""
@@ -2872,7 +2897,7 @@ def _render_pit_dashboard_html(data: dict) -> str:
 
     <div class="decision-box">
         <h3>Edge Decay Diagnostic</h3>
-        <div class="decision">{edge_icon(edge_diagnostic)} {edge_diagnostic}</div>
+        <div class="decision">{edge_icon(edge_diagnostic)} {format_edge_label(edge_diagnostic)}</div>
         <div style="margin-top: 1rem; color: var(--muted);">{recommendation}</div>
     </div>
 
