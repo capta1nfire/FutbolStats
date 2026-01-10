@@ -3614,34 +3614,45 @@ def _render_progress_bar_pct(label: str, current_pct: float, target_pct: int, wi
 def _render_history_rows(history: list) -> str:
     """Render history table rows for the ops dashboard."""
     if not history:
-        return "<tr><td colspan='6' style='text-align:center; color:var(--muted);'>No hay datos históricos aún. El rollup diario corre a las 09:05 UTC.</td></tr>"
+        return "<tr><td colspan='6' style='text-align:center; color:var(--muted);'>— No historical data yet. Daily rollup runs at 09:05 UTC. —</td></tr>"
+
+    def fmt(val, suffix=""):
+        """Format value: show '—' for None/0, otherwise value with optional suffix."""
+        if val is None:
+            return "—"
+        if isinstance(val, (int, float)) and val == 0:
+            return "0" + suffix  # Show 0 explicitly (it's valid data)
+        return f"{val}{suffix}"
 
     rows = ""
     for entry in history:
-        day = entry.get("day", "")
+        day = entry.get("day", "—")
         p = entry.get("payload") or {}
 
-        pit_live = p.get("pit_snapshots_live", 0)
-        bets_eval = p.get("pit_bets_evaluable", 0)
-        baseline_pct = p.get("baseline_coverage", {}).get("baseline_pct", 0)
-        market_total = p.get("market_movement", {}).get("total", 0)
+        pit_live = p.get("pit_snapshots_live")
+        bets_eval = p.get("pit_bets_evaluable")
+        baseline_pct = p.get("baseline_coverage", {}).get("baseline_pct")
+        market_total = p.get("market_movement", {}).get("total")
         note = p.get("note")
 
         bins = p.get("delta_ko_bins", {})
-        bin_10_45 = bins.get("10-45", 0)
-        bin_45_90 = bins.get("45-90", 0)
+        bin_10_45 = bins.get("10-45")
+        bin_45_90 = bins.get("45-90")
 
         # Show note indicator if present
         note_indicator = f' <span class="info-icon" style="font-size:0.7em;">i<span class="tooltip">{note}</span></span>' if note else ""
 
+        # Format bins display
+        bins_display = f"{fmt(bin_10_45)} / {fmt(bin_45_90)}" if bin_10_45 is not None or bin_45_90 is not None else "—"
+
         rows += f"""
         <tr>
             <td style="font-weight:500;">{day}{note_indicator}</td>
-            <td style="text-align:center;">{pit_live}</td>
-            <td style="text-align:center;">{bets_eval}</td>
-            <td style="text-align:center;">{baseline_pct}%</td>
-            <td style="text-align:center;">{bin_10_45} / {bin_45_90}</td>
-            <td style="text-align:center;">{market_total}</td>
+            <td style="text-align:center;">{fmt(pit_live)}</td>
+            <td style="text-align:center;">{fmt(bets_eval)}</td>
+            <td style="text-align:center;">{fmt(baseline_pct, '%')}</td>
+            <td style="text-align:center;">{bins_display}</td>
+            <td style="text-align:center;">{fmt(market_total)}</td>
         </tr>"""
 
     return rows
@@ -4010,7 +4021,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
   <div class="history-section" style="margin-top: 1.5rem;">
     <h2 style="font-size: 1.1rem; margin-bottom: 0.75rem; color: var(--text);">
       KPI Histórico (últimos 14 días)
-      <span class="info-icon">i<span class="tooltip">Métricas diarias persistentes. Rollup generado a las 09:05 UTC cada día. Ver pestaña History para más detalles.</span></span>
+      <span class="info-icon">i<span class="tooltip">Métricas diarias persistentes (día UTC 00:00-23:59). Rollup generado a las 09:05 UTC. Nota: los valores del día actual pueden diferir del "PIT Live 24h" que cuenta últimas 24 horas móviles.</span></span>
     </h2>
     <div class="table-card">
       <table>
@@ -4374,10 +4385,15 @@ async def ops_history_html(request: Request, days: int = 30):
         bin_10_45 = bins.get("10-45", 0)
         bin_45_90 = bins.get("45-90", 0)
 
-        # Errors
+        # Errors - handle None/missing values with "—"
         errors = p.get("errors_summary", {})
-        err_429 = errors.get("api_429_critical", 0) + errors.get("api_429_full", 0)
-        budget_pct = errors.get("budget_pct", "-")
+        err_429_critical = errors.get("api_429_critical") or 0
+        err_429_full = errors.get("api_429_full") or 0
+        err_429 = err_429_critical + err_429_full
+        budget_pct = errors.get("budget_pct")
+
+        # Format budget_pct: show "—" if None or missing
+        budget_pct_display = f"{budget_pct}%" if budget_pct is not None else "—"
 
         rows_html += f"""
         <tr>
@@ -4387,8 +4403,8 @@ async def ops_history_html(request: Request, days: int = 30):
             <td>{baseline_pct}%</td>
             <td>{bin_10_45} / {bin_45_90}</td>
             <td>{market_total}</td>
-            <td>{err_429 if err_429 > 0 else '-'}</td>
-            <td>{budget_pct}%</td>
+            <td>{err_429 if err_429 > 0 else '—'}</td>
+            <td>{budget_pct_display}</td>
         </tr>"""
 
     if not rows_html:
