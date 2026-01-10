@@ -344,6 +344,59 @@ def bootstrap_ci(values: list[float], n_iterations: int = BOOTSTRAP_ITERATIONS, 
     return (bootstrap_means[lower_idx], bootstrap_means[upper_idx], "ok")
 
 
+def generate_interpretation(phase: str, brier: dict, betting: dict) -> dict:
+    """
+    Generate interpretation block based on explicit rules.
+
+    Rules:
+    1. If phase=insufficient OR betting.roi_ci_status=insufficient_n => confidence='low', verdict='HOLD'
+    2. If brier.skill_vs_market < 0 => add note 'model worse than market (early signal)'
+    3. If ROI CI95 lower bound > 0 => confidence='high', verdict='GO (alpha)'
+
+    Returns:
+        {confidence: str, verdict: str, bullet_notes: list[str]}
+    """
+    confidence = "medium"  # default
+    verdict = "HOLD"  # default (conservative)
+    bullet_notes = []
+
+    n_bets = betting.get('n_bets', 0)
+    roi_ci_status = betting.get('roi_ci_status', 'no_bets')
+    roi_ci95_low = betting.get('roi_ci95_low')
+    skill_vs_market = brier.get('skill_vs_market')
+
+    # Rule 1: insufficient data => low confidence, HOLD
+    if phase == 'insufficient' or roi_ci_status == 'insufficient_n':
+        confidence = "low"
+        verdict = "HOLD"
+        bullet_notes.append(f"insufficient_n: phase={phase}, n_bets={n_bets}, min=50 for CI")
+
+    # Rule 2: model worse than market => add warning note
+    if skill_vs_market is not None and skill_vs_market < 0:
+        bullet_notes.append(f"model worse than market (early signal): skill_vs_market={skill_vs_market:.2%}")
+
+    # Rule 3: ROI CI95 lower bound > 0 => high confidence, GO
+    # Only applies if we have sufficient data (not insufficient phase)
+    if roi_ci95_low is not None and roi_ci95_low > 0 and phase != 'insufficient':
+        confidence = "high"
+        verdict = "GO (alpha)"
+        bullet_notes.append(f"ROI CI95 lower bound positive: {roi_ci95_low:.2%}")
+
+    # Additional context notes
+    if roi_ci_status == 'no_bets':
+        bullet_notes.append("no_bets: edge threshold not met by any prediction")
+    elif roi_ci_status == 'ok' and confidence != "high":
+        # Sufficient data but CI includes 0 => medium confidence
+        if roi_ci95_low is not None and roi_ci95_low <= 0:
+            bullet_notes.append(f"ROI CI95 includes zero: [{roi_ci95_low:.2%}, {betting.get('roi_ci95_high', 0):.2%}]")
+
+    return {
+        "confidence": confidence,
+        "verdict": verdict,
+        "bullet_notes": bullet_notes,
+    }
+
+
 async def run_evaluation() -> dict:
     """Main evaluation logic."""
     database_url = os.environ.get('DATABASE_URL', '')
@@ -560,6 +613,17 @@ async def run_evaluation() -> dict:
             betting_metrics['ev_ci_status'] = 'no_bets'
             betting_metrics['win_rate'] = None
 
+        # Determine phase first (needed for interpretation)
+        phase = (
+            'insufficient' if n_valid_10_90 < 50 else
+            'piloto' if n_valid_10_90 < 200 else
+            'preliminar' if n_valid_10_90 < 500 else
+            'formal'
+        )
+
+        # Generate interpretation based on rules
+        interpretation = generate_interpretation(phase, brier_results, betting_metrics)
+
         # Build report
         report = {
             'generated_at': datetime.now().isoformat(),
@@ -585,12 +649,8 @@ async def run_evaluation() -> dict:
             'breakdown_by_bookmaker': [{'bookmaker': bm, 'n': n} for bm, n in top_bookmakers],
             'brier': brier_results,
             'betting': betting_metrics,
-            'phase': (
-                'insufficient' if n_valid_10_90 < 50 else
-                'piloto' if n_valid_10_90 < 200 else
-                'preliminar' if n_valid_10_90 < 500 else
-                'formal'
-            ),
+            'phase': phase,
+            'interpretation': interpretation,
             'prediction_integrity': pred_metadata,
             'notes': 'read-only evaluation; no writes to DB; probs normalized; PIT integrity enforced (pred.created_at <= snapshot_at)',
         }
@@ -639,6 +699,14 @@ def print_summary(report: dict):
         print(f"  Win rate:            {betting.get('win_rate', 0):.2%}")
 
     print(f"\nPhase: {report.get('phase', 'unknown')}")
+
+    interpretation = report.get('interpretation', {})
+    if interpretation:
+        print(f"\nInterpretation:")
+        print(f"  Confidence:          {interpretation.get('confidence', 'unknown')}")
+        print(f"  Verdict:             {interpretation.get('verdict', 'unknown')}")
+        for note in interpretation.get('bullet_notes', []):
+            print(f"  • {note}")
     print("=" * 60)
 
 
