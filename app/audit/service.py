@@ -24,8 +24,18 @@ from app.models import (
     PredictionOutcome,
     PostMatchAudit,
 )
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _get_llm_enabled() -> bool:
+    """Check if LLM narrative is enabled."""
+    try:
+        settings = get_settings()
+        return settings.NARRATIVE_LLM_ENABLED and bool(settings.RUNPOD_API_KEY)
+    except Exception:
+        return False
 
 
 # Confidence tier thresholds
@@ -410,6 +420,30 @@ class PostMatchAuditService:
             momentum_analysis=narrative_result.get("momentum_analysis"),
         )
 
+        # Generate LLM narrative (best-effort, doesn't block audit)
+        if _get_llm_enabled():
+            try:
+                llm_result = await self._generate_llm_narrative(
+                    match=match,
+                    prediction=prediction,
+                    stats=stats or {},
+                    events=events,
+                    is_correct=is_correct,
+                )
+                audit.llm_narrative_status = llm_result.status
+                audit.llm_narrative_json = llm_result.narrative_json
+                audit.llm_narrative_generated_at = datetime.utcnow()
+                audit.llm_narrative_model = llm_result.model
+                audit.llm_narrative_delay_ms = llm_result.delay_ms
+                audit.llm_narrative_exec_ms = llm_result.exec_ms
+                audit.llm_narrative_tokens_in = llm_result.tokens_in
+                audit.llm_narrative_tokens_out = llm_result.tokens_out
+                audit.llm_narrative_worker_id = llm_result.worker_id
+                logger.info(f"LLM narrative for match {match.id}: {llm_result.status}")
+            except Exception as e:
+                logger.warning(f"LLM narrative failed for match {match.id}: {e}")
+                audit.llm_narrative_status = "error"
+
         self.session.add(audit)
         logger.info(
             f"Audited match {match.id}: {predicted_result} vs {actual_result} "
@@ -443,6 +477,74 @@ class PostMatchAuditService:
             return int(value)
         except (ValueError, TypeError):
             return None
+
+    # =========================================================================
+    # LLM NARRATIVE GENERATION
+    # =========================================================================
+
+    async def _generate_llm_narrative(
+        self,
+        match: Match,
+        prediction: Prediction,
+        stats: dict,
+        events: list,
+        is_correct: bool,
+    ):
+        """
+        Generate LLM narrative for a match using RunPod/Qwen.
+
+        Args:
+            match: The Match object with team relationships loaded.
+            prediction: The Prediction object.
+            stats: Match statistics dict.
+            events: Match events list.
+            is_correct: Whether prediction was correct.
+
+        Returns:
+            NarrativeResult from the LLM generator.
+        """
+        from app.llm.narrative_generator import NarrativeGenerator
+
+        # Build compact match data for prompt
+        home_team_name = match.home_team.name if match.home_team else "Local"
+        away_team_name = match.away_team.name if match.away_team else "Visitante"
+
+        predicted_result, confidence = self._get_predicted_result(prediction)
+
+        match_data = {
+            "match_id": match.id,
+            "home_team": home_team_name,
+            "away_team": away_team_name,
+            "league_name": f"Liga {match.league_id}",
+            "date": match.date.isoformat() if match.date else "",
+            "home_goals": match.home_goals or 0,
+            "away_goals": match.away_goals or 0,
+            "stats": stats,
+            "prediction": {
+                "probabilities": {
+                    "home": prediction.home_prob,
+                    "draw": prediction.draw_prob,
+                    "away": prediction.away_prob,
+                },
+                "predicted_result": predicted_result,
+                "confidence": confidence,
+                "correct": is_correct,
+            },
+            "events": [
+                {
+                    "minute": e.get("time", {}).get("elapsed"),
+                    "type": e.get("type", ""),
+                    "detail": e.get("detail", ""),
+                }
+                for e in (events or [])[:5]  # Cap at 5 events
+            ],
+        }
+
+        generator = NarrativeGenerator()
+        try:
+            return await generator.generate(match_data)
+        finally:
+            await generator.close()
 
     # =========================================================================
     # NARRATIVE REASONING ENGINE

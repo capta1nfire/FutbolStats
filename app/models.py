@@ -268,6 +268,48 @@ class PostMatchAudit(SQLModel, table=True):
         description="Momentum analysis object with type, icon, message"
     )
 
+    # LLM-generated narrative (RunPod/Qwen)
+    llm_narrative_json: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="Full LLM-generated narrative JSON"
+    )
+    llm_narrative_status: Optional[str] = Field(
+        default=None,
+        max_length=20,
+        description="ok, error, or disabled"
+    )
+    llm_narrative_generated_at: Optional[datetime] = Field(
+        default=None,
+        description="When the LLM narrative was generated"
+    )
+    llm_narrative_model: Optional[str] = Field(
+        default=None,
+        max_length=50,
+        description="Model used (e.g., qwen-vllm)"
+    )
+    llm_narrative_delay_ms: Optional[int] = Field(
+        default=None,
+        description="RunPod queue delay in milliseconds"
+    )
+    llm_narrative_exec_ms: Optional[int] = Field(
+        default=None,
+        description="RunPod execution time in milliseconds"
+    )
+    llm_narrative_tokens_in: Optional[int] = Field(
+        default=None,
+        description="Input tokens used"
+    )
+    llm_narrative_tokens_out: Optional[int] = Field(
+        default=None,
+        description="Output tokens generated"
+    )
+    llm_narrative_worker_id: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="RunPod worker ID"
+    )
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     # Relationships

@@ -1470,7 +1470,7 @@ async def get_match_insights(
 
     outcome, audit = row
 
-    return {
+    response = {
         "match_id": match_id,
         "prediction_correct": outcome.prediction_correct,
         "predicted_result": outcome.predicted_result,
@@ -1480,6 +1480,15 @@ async def get_match_insights(
         "insights": audit.narrative_insights or [],
         "momentum_analysis": audit.momentum_analysis,
     }
+
+    # Include LLM narrative if available
+    if audit.llm_narrative_status == "ok" and audit.llm_narrative_json:
+        response["llm_narrative"] = audit.llm_narrative_json
+        response["llm_narrative_status"] = "ok"
+    elif audit.llm_narrative_status:
+        response["llm_narrative_status"] = audit.llm_narrative_status
+
+    return response
 
 
 @app.get("/matches/{match_id}/timeline")

@@ -42,6 +42,17 @@ class Settings(BaseSettings):
     STATS_BACKFILL_LOOKBACK_HOURS: int = 72
     STATS_BACKFILL_MAX_CALLS_PER_RUN: int = 200
 
+    # RunPod LLM Narrative Configuration
+    RUNPOD_API_KEY: str = ""
+    RUNPOD_ENDPOINT_ID: str = "a49n0iddpgsv7r"
+    RUNPOD_BASE_URL: str = "https://api.runpod.ai/v2"
+    NARRATIVE_LLM_ENABLED: bool = False
+    NARRATIVE_LLM_MAX_TOKENS: int = 700
+    NARRATIVE_LLM_TIMEOUT_SECONDS: int = 60
+    NARRATIVE_LLM_POLL_INTERVAL_SECONDS: float = 1.5
+    NARRATIVE_LLM_TEMPERATURE: float = 0.3
+    NARRATIVE_LLM_TOP_P: float = 0.9
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
