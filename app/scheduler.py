@@ -2831,6 +2831,7 @@ async def fast_postmatch_narratives() -> dict:
         _fastpath_metrics["last_tick_result"] = {"status": "disabled"}
         return {"status": "disabled"}
 
+    logger.info("[FASTPATH] Job started")
     try:
         async with AsyncSessionLocal() as session:
             service = FastPathService(session)
@@ -2866,11 +2867,11 @@ async def fast_postmatch_narratives() -> dict:
                             "duration_ms": duration_ms,
                         }
                     )
+                    await session.commit()
                 except Exception as db_err:
-                    # Table may not exist yet, don't fail the tick
-                    logger.debug(f"[FASTPATH] Could not persist tick to DB: {db_err}")
-
-                await session.commit()
+                    # Log error visibly and rollback to clean session state
+                    logger.error(f"[FASTPATH] Persist tick failed: {db_err}", exc_info=True)
+                    await session.rollback()
 
                 # Log summary if there was activity
                 if result.get("selected", 0) > 0 or result.get("enqueued", 0) > 0:
