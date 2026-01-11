@@ -206,10 +206,13 @@ REGLAS CRÍTICAS v4 (OBLIGATORIAS):
 
 3) NO REPITAS EL MARCADOR en narrative.body. El usuario ya ve el resultado en la UI. Enfócate en el "por qué", no en el "qué".
 
-4) NOMBRES DE EQUIPOS - REGLA ESTRICTA:
+4) NOMBRES DE EQUIPOS - REGLA ESTRICTA (CRÍTICA):
    - Menciona cada nombre de equipo MÁXIMO 1 vez en todo el body.
-   - Después usa SOLO aliases de team_aliases (proporcionados abajo).
-   - NO inventes apodos. Solo puedes usar: {home_aliases_json} para local, {away_aliases_json} para visitante.
+   - Después usa SOLO aliases de la lista team_aliases proporcionada abajo.
+   - PROHIBIDO inventar apodos/sobrenombres que no estén en team_aliases.
+   - Aliases permitidos para LOCAL: {home_aliases_json}
+   - Aliases permitidos para VISITANTE: {away_aliases_json}
+   - Si usas un alias que NO está en estas listas, tu respuesta será RECHAZADA.
 
 5) Usa SOLO los datos proporcionados en "DATOS". NO inventes jugadores, lesiones, alineaciones, tácticas, xG, tarjetas, ni nada que no esté explícitamente en el JSON.
 
@@ -228,7 +231,9 @@ REGLAS CRÍTICAS v4 (OBLIGATORIAS):
 11) key_factors NO DUPLICA el body:
     - Cada evidence máx 120 caracteres.
     - Debe contener al menos 1 cifra (stats) o 1 minuto (events).
-    - Si events está vacío: direction="neutral", evidence="Eventos no disponibles".
+    - REGLA EVENTS VACÍO: Si el array events está vacío ([]), en key_factors[label="Events"] usa:
+      * direction: "neutral"
+      * evidence: "Eventos no disponibles" (EXACTAMENTE este texto, no "No hubo eventos")
 
 12) Tono según resultado de predicción:
     - Si prediction.correct = true: refuerza con 2-3 evidencias numéricas.
