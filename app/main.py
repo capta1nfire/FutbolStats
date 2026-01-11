@@ -3785,6 +3785,74 @@ async def _calculate_fastpath_health(session) -> dict:
     }
 
 
+@app.get("/dashboard/ops/fastpath_debug.json")
+async def fastpath_debug_endpoint(
+    token: str = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Debug endpoint to see skipped audits and their reasons."""
+    if token != OPS_DASHBOARD_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    try:
+        # Get skipped audits from last 60 min
+        res = await session.execute(
+            text("""
+                SELECT
+                    pma.id as audit_id,
+                    po.match_id,
+                    pma.llm_narrative_status,
+                    pma.llm_narrative_error_code,
+                    pma.llm_narrative_error_detail,
+                    pma.created_at,
+                    m.home_goals,
+                    m.away_goals,
+                    m.stats IS NOT NULL as has_stats,
+                    m.stats_ready_at IS NOT NULL as stats_ready
+                FROM post_match_audits pma
+                JOIN prediction_outcomes po ON po.id = pma.outcome_id
+                JOIN matches m ON m.id = po.match_id
+                WHERE pma.created_at > NOW() - INTERVAL '60 minutes'
+                  AND pma.llm_narrative_status = 'skipped'
+                ORDER BY pma.created_at DESC
+                LIMIT 20
+            """)
+        )
+        skipped = []
+        for r in res.fetchall():
+            skipped.append({
+                "audit_id": r[0],
+                "match_id": r[1],
+                "status": r[2],
+                "error_code": r[3],
+                "error_detail": r[4],
+                "created_at": r[5].isoformat() if r[5] else None,
+                "goals": f"{r[6]}-{r[7]}",
+                "has_stats": r[8],
+                "stats_ready": r[9],
+            })
+
+        # Get status breakdown
+        res2 = await session.execute(
+            text("""
+                SELECT llm_narrative_status, COUNT(*)
+                FROM post_match_audits
+                WHERE created_at > NOW() - INTERVAL '60 minutes'
+                GROUP BY llm_narrative_status
+                ORDER BY COUNT(*) DESC
+            """)
+        )
+        breakdown = {r[0]: r[1] for r in res2.fetchall()}
+
+        return {
+            "skipped_audits": skipped,
+            "status_breakdown_60m": breakdown,
+        }
+    except Exception as e:
+        logger.error(f"fastpath_debug error: {e}")
+        return {"error": str(e)}
+
+
 async def _load_ops_data() -> dict:
     """
     Ops dashboard: read-only aggregated metrics from DB + in-process state.
