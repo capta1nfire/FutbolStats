@@ -240,11 +240,12 @@ class XGBoostEngine:
         team_details = context.get("team_details", {})
 
         predictions = []
-        for i, row in df.iterrows():
+        for idx, (_, row) in enumerate(df.iterrows()):
             # Store raw probabilities before adjustments
-            raw_home_prob = float(probas[i][0])
-            raw_draw_prob = float(probas[i][1])
-            raw_away_prob = float(probas[i][2])
+            # Use enumerate index, not DataFrame index (which may be non-contiguous)
+            raw_home_prob = float(probas[idx][0])
+            raw_draw_prob = float(probas[idx][1])
+            raw_away_prob = float(probas[idx][2])
 
             home_prob = raw_home_prob
             draw_prob = raw_draw_prob
