@@ -1,0 +1,562 @@
+{
+  "generated_at": "2026-01-09T09:43:58.989774",
+  "by_league_season": [
+    {
+      "division": "D1",
+      "league": "Bundesliga",
+      "season": "2425",
+      "total": 306,
+      "with_odds": 306,
+      "pct_valid": 100.0,
+      "min_date": "2024-08-23",
+      "max_date": "2025-05-17"
+    },
+    {
+      "division": "D1",
+      "league": "Bundesliga",
+      "season": "2324",
+      "total": 306,
+      "with_odds": 306,
+      "pct_valid": 100.0,
+      "min_date": "2023-08-18",
+      "max_date": "2024-05-18"
+    },
+    {
+      "division": "D1",
+      "league": "Bundesliga",
+      "season": "2223",
+      "total": 306,
+      "with_odds": 306,
+      "pct_valid": 100.0,
+      "min_date": "2022-08-05",
+      "max_date": "2023-05-27"
+    },
+    {
+      "division": "D1",
+      "league": "Bundesliga",
+      "season": "2122",
+      "total": 306,
+      "with_odds": 306,
+      "pct_valid": 100.0,
+      "min_date": "2021-08-13",
+      "max_date": "2022-05-14"
+    },
+    {
+      "division": "D1",
+      "league": "Bundesliga",
+      "season": "2021",
+      "total": 306,
+      "with_odds": 306,
+      "pct_valid": 100.0,
+      "min_date": "2020-09-18",
+      "max_date": "2021-05-22"
+    },
+    {
+      "division": "D1",
+      "league": "Bundesliga",
+      "season": "1920",
+      "total": 306,
+      "with_odds": 306,
+      "pct_valid": 100.0,
+      "min_date": "2019-08-16",
+      "max_date": "2020-06-27"
+    },
+    {
+      "division": "D1",
+      "league": "Bundesliga",
+      "season": "1819",
+      "total": 306,
+      "with_odds": 306,
+      "pct_valid": 100.0,
+      "min_date": "2018-08-24",
+      "max_date": "2019-05-18"
+    },
+    {
+      "division": "D1",
+      "league": "Bundesliga",
+      "season": "1718",
+      "total": 306,
+      "with_odds": 306,
+      "pct_valid": 100.0,
+      "min_date": "2017-08-18",
+      "max_date": "2018-05-12"
+    },
+    {
+      "division": "D1",
+      "league": "Bundesliga",
+      "season": "1617",
+      "total": 306,
+      "with_odds": 306,
+      "pct_valid": 100.0,
+      "min_date": "2016-08-26",
+      "max_date": "2017-05-20"
+    },
+    {
+      "division": "D1",
+      "league": "Bundesliga",
+      "season": "1516",
+      "total": 306,
+      "with_odds": 306,
+      "pct_valid": 100.0,
+      "min_date": "2015-08-14",
+      "max_date": "2016-05-14"
+    },
+    {
+      "division": "E0",
+      "league": "EPL",
+      "season": "2425",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2024-08-16",
+      "max_date": "2025-05-25"
+    },
+    {
+      "division": "E0",
+      "league": "EPL",
+      "season": "2324",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2023-08-11",
+      "max_date": "2024-05-19"
+    },
+    {
+      "division": "E0",
+      "league": "EPL",
+      "season": "2223",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2022-08-05",
+      "max_date": "2023-05-28"
+    },
+    {
+      "division": "E0",
+      "league": "EPL",
+      "season": "2122",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2021-08-13",
+      "max_date": "2022-05-22"
+    },
+    {
+      "division": "E0",
+      "league": "EPL",
+      "season": "2021",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2020-09-12",
+      "max_date": "2021-05-23"
+    },
+    {
+      "division": "E0",
+      "league": "EPL",
+      "season": "1920",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2019-08-09",
+      "max_date": "2020-07-26"
+    },
+    {
+      "division": "E0",
+      "league": "EPL",
+      "season": "1819",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2018-08-10",
+      "max_date": "2019-05-12"
+    },
+    {
+      "division": "E0",
+      "league": "EPL",
+      "season": "1718",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2017-08-11",
+      "max_date": "2018-05-13"
+    },
+    {
+      "division": "E0",
+      "league": "EPL",
+      "season": "1617",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2016-08-13",
+      "max_date": "2017-05-21"
+    },
+    {
+      "division": "E0",
+      "league": "EPL",
+      "season": "1516",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2015-08-08",
+      "max_date": "2016-05-17"
+    },
+    {
+      "division": "F1",
+      "league": "Ligue1",
+      "season": "2425",
+      "total": 306,
+      "with_odds": 306,
+      "pct_valid": 100.0,
+      "min_date": "2024-08-16",
+      "max_date": "2025-05-17"
+    },
+    {
+      "division": "F1",
+      "league": "Ligue1",
+      "season": "2324",
+      "total": 306,
+      "with_odds": 306,
+      "pct_valid": 100.0,
+      "min_date": "2023-08-11",
+      "max_date": "2024-05-19"
+    },
+    {
+      "division": "F1",
+      "league": "Ligue1",
+      "season": "2223",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2022-08-05",
+      "max_date": "2023-06-03"
+    },
+    {
+      "division": "F1",
+      "league": "Ligue1",
+      "season": "2122",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2021-08-06",
+      "max_date": "2022-05-21"
+    },
+    {
+      "division": "F1",
+      "league": "Ligue1",
+      "season": "2021",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2020-08-21",
+      "max_date": "2021-05-23"
+    },
+    {
+      "division": "F1",
+      "league": "Ligue1",
+      "season": "1920",
+      "total": 279,
+      "with_odds": 279,
+      "pct_valid": 100.0,
+      "min_date": "2019-08-09",
+      "max_date": "2020-03-08"
+    },
+    {
+      "division": "F1",
+      "league": "Ligue1",
+      "season": "1819",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2018-08-10",
+      "max_date": "2019-05-24"
+    },
+    {
+      "division": "F1",
+      "league": "Ligue1",
+      "season": "1718",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2017-08-04",
+      "max_date": "2018-05-19"
+    },
+    {
+      "division": "F1",
+      "league": "Ligue1",
+      "season": "1617",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2016-08-12",
+      "max_date": "2017-05-20"
+    },
+    {
+      "division": "F1",
+      "league": "Ligue1",
+      "season": "1516",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2015-08-07",
+      "max_date": "2016-05-14"
+    },
+    {
+      "division": "I1",
+      "league": "SerieA",
+      "season": "2425",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2024-08-17",
+      "max_date": "2025-05-25"
+    },
+    {
+      "division": "I1",
+      "league": "SerieA",
+      "season": "2324",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2023-08-19",
+      "max_date": "2024-06-02"
+    },
+    {
+      "division": "I1",
+      "league": "SerieA",
+      "season": "2223",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2022-08-13",
+      "max_date": "2023-06-04"
+    },
+    {
+      "division": "I1",
+      "league": "SerieA",
+      "season": "2122",
+      "total": 380,
+      "with_odds": 379,
+      "pct_valid": 99.7,
+      "min_date": "2021-08-21",
+      "max_date": "2022-05-22"
+    },
+    {
+      "division": "I1",
+      "league": "SerieA",
+      "season": "2021",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2020-09-19",
+      "max_date": "2021-05-23"
+    },
+    {
+      "division": "I1",
+      "league": "SerieA",
+      "season": "1920",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2019-08-24",
+      "max_date": "2020-08-02"
+    },
+    {
+      "division": "I1",
+      "league": "SerieA",
+      "season": "1819",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2018-08-18",
+      "max_date": "2019-05-26"
+    },
+    {
+      "division": "I1",
+      "league": "SerieA",
+      "season": "1718",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2017-08-19",
+      "max_date": "2018-05-20"
+    },
+    {
+      "division": "I1",
+      "league": "SerieA",
+      "season": "1617",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2016-08-20",
+      "max_date": "2017-05-28"
+    },
+    {
+      "division": "I1",
+      "league": "SerieA",
+      "season": "1516",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2015-08-22",
+      "max_date": "2016-05-15"
+    },
+    {
+      "division": "SP1",
+      "league": "LaLiga",
+      "season": "2425",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2024-08-15",
+      "max_date": "2025-05-25"
+    },
+    {
+      "division": "SP1",
+      "league": "LaLiga",
+      "season": "2324",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2023-08-11",
+      "max_date": "2024-05-26"
+    },
+    {
+      "division": "SP1",
+      "league": "LaLiga",
+      "season": "2223",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2022-08-12",
+      "max_date": "2023-06-04"
+    },
+    {
+      "division": "SP1",
+      "league": "LaLiga",
+      "season": "2122",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2021-08-13",
+      "max_date": "2022-05-22"
+    },
+    {
+      "division": "SP1",
+      "league": "LaLiga",
+      "season": "2021",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2020-09-12",
+      "max_date": "2021-05-23"
+    },
+    {
+      "division": "SP1",
+      "league": "LaLiga",
+      "season": "1920",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2019-08-16",
+      "max_date": "2020-07-19"
+    },
+    {
+      "division": "SP1",
+      "league": "LaLiga",
+      "season": "1819",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2018-08-17",
+      "max_date": "2019-05-19"
+    },
+    {
+      "division": "SP1",
+      "league": "LaLiga",
+      "season": "1718",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2017-08-18",
+      "max_date": "2018-05-20"
+    },
+    {
+      "division": "SP1",
+      "league": "LaLiga",
+      "season": "1617",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2016-08-19",
+      "max_date": "2017-05-21"
+    },
+    {
+      "division": "SP1",
+      "league": "LaLiga",
+      "season": "1516",
+      "total": 380,
+      "with_odds": 380,
+      "pct_valid": 100.0,
+      "min_date": "2015-08-21",
+      "max_date": "2016-05-15"
+    }
+  ],
+  "by_provider": {
+    "F1": {
+      "B365": 3548,
+      "Avg": 1,
+      "PS": 2
+    },
+    "E0": {
+      "B365": 3800
+    },
+    "I1": {
+      "Avg": 2,
+      "B365": 3797
+    },
+    "SP1": {
+      "B365": 3800
+    },
+    "D1": {
+      "B365": 3060
+    }
+  },
+  "overround_stats": {
+    "F1": {
+      "p10": 1.0463,
+      "p50": 1.0524,
+      "p90": 1.0616,
+      "count_over_1.12": 0
+    },
+    "E0": {
+      "p10": 1.024,
+      "p50": 1.0502,
+      "p90": 1.0595,
+      "count_over_1.12": 1
+    },
+    "I1": {
+      "p10": 1.047,
+      "p50": 1.0529,
+      "p90": 1.0615,
+      "count_over_1.12": 0
+    },
+    "D1": {
+      "p10": 1.0466,
+      "p50": 1.0525,
+      "p90": 1.0611,
+      "count_over_1.12": 0
+    },
+    "SP1": {
+      "p10": 1.0468,
+      "p50": 1.0529,
+      "p90": 1.0622,
+      "count_over_1.12": 1
+    }
+  },
+  "totals": {
+    "total_matches": 18011,
+    "with_odds": 18010,
+    "pct_valid": 100.0
+  }
+}

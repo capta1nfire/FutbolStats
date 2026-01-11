@@ -2774,6 +2774,64 @@ async def scheduler_heartbeat():
     _log_scheduler_jobs()
 
 
+async def fast_postmatch_narratives() -> dict:
+    """
+    Fast-path LLM narrative generation for recently finished matches.
+
+    This job runs every 2 minutes (configurable via FASTPATH_INTERVAL_SECONDS)
+    and generates LLM narratives within minutes of match completion instead
+    of waiting for the daily audit job at 08:00 UTC.
+
+    Flow:
+    1. Select matches finished in last FASTPATH_LOOKBACK_MINUTES with predictions
+    2. Refresh stats for matches that need them (with backoff)
+    3. Enqueue ready matches to RunPod (batch)
+    4. Poll completions and persist results
+
+    Guardrails:
+    - FASTPATH_ENABLED: If false, job returns immediately
+    - FASTPATH_MAX_CONCURRENT_JOBS: Cap on simultaneous RunPod jobs
+    - Respects stats gating (possession, shots required)
+    - Idempotent: skips matches that already have narratives
+    """
+    import os
+    from app.config import get_settings
+    from app.llm.fastpath import FastPathService
+
+    settings = get_settings()
+
+    # Check if job is enabled
+    enabled = os.environ.get("FASTPATH_ENABLED", str(settings.FASTPATH_ENABLED)).lower()
+    if enabled in ("false", "0", "no"):
+        return {"status": "disabled"}
+
+    try:
+        async with AsyncSessionLocal() as session:
+            service = FastPathService(session)
+            try:
+                result = await service.run_tick()
+                await session.commit()
+
+                # Log summary if there was activity
+                if result.get("candidates", 0) > 0 or result.get("enqueued", 0) > 0:
+                    logger.info(
+                        f"[FASTPATH] tick complete: "
+                        f"candidates={result.get('candidates', 0)}, "
+                        f"stats_refreshed={result.get('stats_refreshed', 0)}, "
+                        f"enqueued={result.get('enqueued', 0)}, "
+                        f"completed={result.get('completed', 0)}"
+                    )
+
+                return result
+
+            finally:
+                await service.close()
+
+    except Exception as e:
+        logger.error(f"[FASTPATH] tick failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 def start_scheduler(ml_engine):
     """
     Start the background scheduler.
@@ -2911,6 +2969,19 @@ def start_scheduler(ml_engine):
         replace_existing=True,
     )
 
+    # Fast-Path LLM Narratives: Every 2 minutes (configurable via FASTPATH_INTERVAL_SECONDS)
+    # Generates narratives within minutes of match completion instead of daily audit
+    # Guardrails: FASTPATH_ENABLED, FASTPATH_MAX_CONCURRENT_JOBS (10), lookback 90 min
+    from app.config import get_settings
+    _fp_settings = get_settings()
+    scheduler.add_job(
+        fast_postmatch_narratives,
+        trigger=IntervalTrigger(seconds=_fp_settings.FASTPATH_INTERVAL_SECONDS),
+        id="fast_postmatch_narratives",
+        name=f"Fast-Path Narratives (every {_fp_settings.FASTPATH_INTERVAL_SECONDS}s)",
+        replace_existing=True,
+    )
+
     # Weekly PIT Report: Tuesdays 10:00 AM UTC (consolidated weekly report)
     # The ONLY PIT report that gets logged/published - not daily spam
     # Tuesday chosen to include full weekend football data
@@ -2968,23 +3039,24 @@ def start_scheduler(ml_engine):
     _log_scheduler_jobs()
 
     logger.info(
-        "Scheduler started:\n"
-        "  - Live global sync: Every 60 seconds\n"
-        "  - Lineup monitoring CRITICAL: Every 60s (45-90 min window - aggressive)\n"
-        "  - Lineup monitoring FULL: Every 2 min (0-120 min window - backup)\n"
-        "  - Market movement tracking: Every 5 min (T-60/T-30/T-15/T-5 pre-kickoff)\n"
-        "  - Lineup-relative movement: Every 3 min (L-30 to L+10 around lineup)\n"
-        "  - Finished match stats backfill: Every 60 min\n"
-        "  - Daily results sync: 6:00 AM UTC\n"
-        "  - Daily save predictions: 7:00 AM UTC\n"
-        "  - Daily audit: 8:00 AM UTC\n"
-        "  - Daily PIT evaluation: 9:00 AM UTC (silent save)\n"
-        "  - Daily ops rollup: 9:05 AM UTC (KPI aggregation)\n"
-        "  - Daily Alpha Progress snapshot: 9:10 AM UTC\n"
-        "  - Weekly recalibration: Mondays 5:00 AM UTC\n"
-        "  - Weekly PIT report: Tuesdays 10:00 AM UTC\n"
-        "  - Monthly PIT retention: 1st of month 04:00 UTC\n"
-        "  - Scheduler heartbeat: Every 30 min (logs job status)"
+        f"Scheduler started:\n"
+        f"  - Live global sync: Every 60 seconds\n"
+        f"  - Lineup monitoring CRITICAL: Every 60s (45-90 min window - aggressive)\n"
+        f"  - Lineup monitoring FULL: Every 2 min (0-120 min window - backup)\n"
+        f"  - Market movement tracking: Every 5 min (T-60/T-30/T-15/T-5 pre-kickoff)\n"
+        f"  - Lineup-relative movement: Every 3 min (L-30 to L+10 around lineup)\n"
+        f"  - Finished match stats backfill: Every 60 min\n"
+        f"  - Fast-path narratives: Every {_fp_settings.FASTPATH_INTERVAL_SECONDS}s (post-match LLM)\n"
+        f"  - Daily results sync: 6:00 AM UTC\n"
+        f"  - Daily save predictions: 7:00 AM UTC\n"
+        f"  - Daily audit: 8:00 AM UTC\n"
+        f"  - Daily PIT evaluation: 9:00 AM UTC (silent save)\n"
+        f"  - Daily ops rollup: 9:05 AM UTC (KPI aggregation)\n"
+        f"  - Daily Alpha Progress snapshot: 9:10 AM UTC\n"
+        f"  - Weekly recalibration: Mondays 5:00 AM UTC\n"
+        f"  - Weekly PIT report: Tuesdays 10:00 AM UTC\n"
+        f"  - Monthly PIT retention: 1st of month 04:00 UTC\n"
+        f"  - Scheduler heartbeat: Every 30 min (logs job status)"
     )
 
 

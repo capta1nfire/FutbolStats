@@ -1,199 +1,203 @@
 import SwiftUI
 
-// MARK: - Data Models
+// MARK: - LLM Narrative View (Schema v3.2)
 
-/// Priority levels for narrative insights
-enum NarrativeInsightPriority: Int, Codable, Comparable {
-    case caution = 0      // Urgent warnings
-    case heroic = 1       // Heroic/collapse moments
-    case admission = 2    // Model admissions
-    case analysis = 3     // Statistical analysis
-    case context = 4      // Context (relegation, rivalry)
-    case summary = 5      // Match summary
+/// Main view for displaying LLM-generated match narrative
+struct LLMNarrativeView: View {
+    let narrative: LLMNarrativePayload
 
-    static func < (lhs: NarrativeInsightPriority, rhs: NarrativeInsightPriority) -> Bool {
-        lhs.rawValue < rhs.rawValue
-    }
-}
-
-/// A single narrative insight from the reasoning engine
-struct NarrativeInsight: Identifiable, Codable {
-    let id: UUID
-    let type: String
-    let icon: String
-    let message: String
-    let priority: Int
-
-    init(id: UUID = UUID(), type: String, icon: String, message: String, priority: Int) {
-        self.id = id
-        self.type = type
-        self.icon = icon
-        self.message = message
-        self.priority = priority
+    private var tone: String {
+        narrative.narrative?.tone ?? "neutral"
     }
 
-    enum CodingKeys: String, CodingKey {
-        case type, icon, message, priority
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = UUID()
-        self.type = try container.decode(String.self, forKey: .type)
-        self.icon = try container.decode(String.self, forKey: .icon)
-        self.message = try container.decode(String.self, forKey: .message)
-        self.priority = try container.decode(Int.self, forKey: .priority)
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(type, forKey: .type)
-        try container.encode(icon, forKey: .icon)
-        try container.encode(message, forKey: .message)
-        try container.encode(priority, forKey: .priority)
-    }
-
-    /// Computed color based on insight type
-    var accentColor: Color {
-        switch type {
-        case "caution", "goalkeeper_heroic":
-            return .yellow
-        case "admission", "big_team_collapse":
-            return .orange
-        case "sterile_favorite", "clinical_underdog":
-            return .cyan
-        case "urgency_relegation":
-            return .red
-        case "summary":
+    private var toneColor: Color {
+        switch tone {
+        case "reinforce_win":
             return .green
-        default:
-            return .blue
-        }
-    }
-}
-
-/// Momentum analysis from the reasoning engine
-struct MomentumAnalysis: Codable {
-    let type: String      // "collapse", "overwhelmed", "unlucky"
-    let icon: String
-    let message: String
-
-    var accentColor: Color {
-        switch type {
-        case "collapse":
+        case "mitigate_loss":
             return .orange
-        case "overwhelmed":
-            return .red
-        case "unlucky":
-            return .purple
         default:
             return .gray
         }
     }
-}
 
-/// Container for all narrative insights from API
-struct NarrativeInsightsResponse: Codable {
-    let insights: [NarrativeInsight]
-    let momentumAnalysis: MomentumAnalysis?
-
-    enum CodingKeys: String, CodingKey {
-        case insights
-        case momentumAnalysis = "momentum_analysis"
-    }
-}
-
-// MARK: - Single Insight Card
-
-struct NarrativeInsightCard: View {
-    let insight: NarrativeInsight
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            // Icon circle
-            ZStack {
-                Circle()
-                    .fill(insight.accentColor.opacity(0.2))
-                    .frame(width: 36, height: 36)
-
-                Image(systemName: insight.icon)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(insight.accentColor)
-            }
-
-            // Message
-            Text(insight.message)
-                .font(.subheadline)
-                .foregroundStyle(.white)
-                .fixedSize(horizontal: false, vertical: true)
-                .multilineTextAlignment(.leading)
-
-            Spacer(minLength: 0)
+    private var toneBadgeText: String {
+        switch tone {
+        case "reinforce_win":
+            return "Victoria confirmada"
+        case "mitigate_loss":
+            return "Derrota analizada"
+        default:
+            return "Análisis"
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(white: 0.12))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(insight.accentColor.opacity(0.3), lineWidth: 1)
-                )
-        )
     }
-}
-
-// MARK: - Momentum Analysis Card
-
-struct MomentumAnalysisCard: View {
-    let momentum: MomentumAnalysis
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: momentum.icon)
-                .font(.system(size: 20, weight: .bold))
-                .foregroundStyle(momentum.accentColor)
+        VStack(alignment: .leading, spacing: 16) {
+            // Section header with tone badge
+            HStack {
+                Image(systemName: "brain.head.profile")
+                    .foregroundStyle(.cyan)
+                Text("Análisis del Partido")
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .foregroundStyle(.white)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Momentum")
+                Spacer()
+
+                // Tone badge
+                Text(toneBadgeText)
                     .font(.caption)
                     .fontWeight(.semibold)
-                    .foregroundStyle(momentum.accentColor)
-                    .textCase(.uppercase)
-
-                Text(momentum.message)
-                    .font(.subheadline)
-                    .foregroundStyle(.white)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(toneColor.opacity(0.2))
+                    .foregroundStyle(toneColor)
+                    .clipShape(Capsule())
             }
 
-            Spacer(minLength: 0)
+            // Title (headline)
+            if let title = narrative.narrative?.title, !title.isEmpty {
+                Text(title)
+                    .font(.title3)
+                    .fontWeight(.bold)
+                    .foregroundStyle(.white)
+            }
+
+            // Body text (preserving line breaks)
+            if let body = narrative.narrative?.body, !body.isEmpty {
+                Text(body)
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.9))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
+            }
+
+            // Key factors
+            if let keyFactors = narrative.narrative?.keyFactors, !keyFactors.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Factores Clave")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.gray)
+                        .textCase(.uppercase)
+
+                    ForEach(keyFactors) { factor in
+                        LLMKeyFactorRow(factor: factor)
+                    }
+                }
+                .padding(.top, 4)
+            }
+
+            // Responsible note (caption)
+            if let note = narrative.narrative?.responsibleNote, !note.isEmpty {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.gray)
+                    .italic()
+                    .padding(.top, 8)
+            }
         }
-        .padding(14)
+        .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(momentum.accentColor.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(momentum.accentColor.opacity(0.4), lineWidth: 1.5)
-                )
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(white: 0.08))
         )
     }
 }
 
-// MARK: - Main Insights Container
+// MARK: - Key Factor Row
 
-struct MatchNarrativeInsightsView: View {
-    let insights: [NarrativeInsight]
-    let momentumAnalysis: MomentumAnalysis?
+struct LLMKeyFactorRow: View {
+    let factor: LLMKeyFactor
 
-    /// Sorted insights by priority (lowest first = most important)
-    private var sortedInsights: [NarrativeInsight] {
-        insights.sorted { $0.priority < $1.priority }
+    private var directionColor: Color {
+        switch factor.direction {
+        case "pro-pick":
+            return .green
+        case "anti-pick":
+            return .red
+        default:
+            return .gray
+        }
+    }
+
+    private var directionIcon: String {
+        switch factor.direction {
+        case "pro-pick":
+            return "arrow.up.circle.fill"
+        case "anti-pick":
+            return "arrow.down.circle.fill"
+        default:
+            return "circle.fill"
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: directionIcon)
+                .font(.system(size: 14))
+                .foregroundStyle(directionColor)
+                .frame(width: 20)
+
+            VStack(alignment: .leading, spacing: 2) {
+                if let label = factor.label {
+                    Text(label)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.white)
+                }
+
+                if let evidence = factor.evidence {
+                    Text(evidence)
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.7))
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(directionColor.opacity(0.1))
+        )
+    }
+}
+
+// MARK: - Unavailable State View
+
+struct LLMNarrativeUnavailableView: View {
+    let status: String?
+
+    private var message: String {
+        switch status {
+        case "pending":
+            return "Narrativa en proceso de generación..."
+        case "skipped":
+            return "Narrativa no disponible para este partido"
+        case "error":
+            return "Error al generar la narrativa"
+        default:
+            return "Narrativa no disponible aún"
+        }
+    }
+
+    private var icon: String {
+        switch status {
+        case "pending":
+            return "clock.fill"
+        case "skipped":
+            return "minus.circle.fill"
+        case "error":
+            return "exclamationmark.triangle.fill"
+        default:
+            return "doc.text.fill"
+        }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Section header
             HStack {
                 Image(systemName: "brain.head.profile")
                     .foregroundStyle(.cyan)
@@ -202,17 +206,17 @@ struct MatchNarrativeInsightsView: View {
                     .fontWeight(.bold)
                     .foregroundStyle(.white)
             }
-            .padding(.bottom, 4)
 
-            // Momentum card (if present) - shown first
-            if let momentum = momentumAnalysis {
-                MomentumAnalysisCard(momentum: momentum)
-            }
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 24))
+                    .foregroundStyle(.gray)
 
-            // Insight cards
-            ForEach(sortedInsights) { insight in
-                NarrativeInsightCard(insight: insight)
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(.gray)
             }
+            .padding(.vertical, 8)
         }
         .padding(16)
         .background(
@@ -224,53 +228,57 @@ struct MatchNarrativeInsightsView: View {
 
 // MARK: - Preview
 
-struct NarrativeInsightsView_Previews: PreviewProvider {
+struct LLMNarrativeView_Previews: PreviewProvider {
     static var previews: some View {
-        // Sevilla 0-3 Levante example
-        let sevillaLevanteInsights = [
-            NarrativeInsight(
-                type: "admission",
-                icon: "exclamationmark.triangle.fill",
-                message: "Nos equivocamos. Apostamos por victoria local con 58% de confianza, pero ganó el visitante.",
-                priority: 2
-            ),
-            NarrativeInsight(
-                type: "sterile_favorite",
-                icon: "target",
-                message: "Sevilla llegó mucho pero sin peligro real. De 14 intentos, solo 3 fueron al arco.",
-                priority: 3
-            ),
-            NarrativeInsight(
-                type: "big_team_collapse",
-                icon: "house.fill",
-                message: "Sevilla se bloqueó ante su gente. Perdió en casa contra Levante por 0-3. Una derrota difícil de explicar.",
-                priority: 1
-            ),
-            NarrativeInsight(
-                type: "clinical_underdog",
-                icon: "scope",
-                message: "Levante aprovechó cada oportunidad: 3 goles con solo 5 tiros al arco.",
-                priority: 3
-            ),
-            NarrativeInsight(
-                type: "summary",
-                icon: "checkmark.circle.fill",
-                message: "Levante ganó 0-3. Los números no explican todo.",
-                priority: 5
-            )
-        ]
-
-        let momentum = MomentumAnalysis(
-            type: "collapse",
-            icon: "arrow.down.right.circle.fill",
-            message: "Sevilla no reaccionó después de ir abajo. Solo 3 tiro(s) al arco en todo el partido."
-        )
-
         ScrollView {
-            MatchNarrativeInsightsView(
-                insights: sevillaLevanteInsights,
-                momentumAnalysis: momentum
-            )
+            VStack(spacing: 20) {
+                // Example with full narrative
+                LLMNarrativeView(
+                    narrative: LLMNarrativePayload(
+                        matchId: 12345,
+                        lang: "es",
+                        result: LLMResult(
+                            ftScore: "2-1",
+                            outcome: "home",
+                            betWon: true
+                        ),
+                        prediction: LLMPrediction(
+                            predictedResult: "home",
+                            confidence: 0.65,
+                            homeProb: 0.65,
+                            drawProb: 0.20,
+                            awayProb: 0.15,
+                            marketOdds: nil
+                        ),
+                        narrative: LLMNarrative(
+                            title: "El Barça cumple con lo esperado",
+                            body: "Victoria trabajada del equipo local.\n\nEl partido se decidió en los últimos 20 minutos cuando el Barcelona encontró espacios ante un rival cansado.",
+                            keyFactors: [
+                                LLMKeyFactor(
+                                    label: "Dominio territorial",
+                                    evidence: "65% de posesión y 18 tiros totales",
+                                    direction: "pro-pick"
+                                ),
+                                LLMKeyFactor(
+                                    label: "Eficacia visitante",
+                                    evidence: "1 gol con solo 3 tiros a puerta",
+                                    direction: "anti-pick"
+                                ),
+                                LLMKeyFactor(
+                                    label: "Factor campo",
+                                    evidence: "4 victorias seguidas en casa",
+                                    direction: "neutral"
+                                )
+                            ],
+                            tone: "reinforce_win",
+                            responsibleNote: "Las cuotas pueden variar. Apuesta con responsabilidad."
+                        )
+                    )
+                )
+
+                // Unavailable state
+                LLMNarrativeUnavailableView(status: "pending")
+            }
             .padding()
         }
         .background(Color.black)

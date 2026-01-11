@@ -1,0 +1,5 @@
+{
+  "generated_at": "2026-01-08T22:48:48.681902",
+  "error": "unsupported operand type(s) for /: 'float' and 'decimal.Decimal'",
+  "phase": "error"
+}

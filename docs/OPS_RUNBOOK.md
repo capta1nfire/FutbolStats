@@ -132,4 +132,31 @@ SELECT
 - **Upcoming 11/13 sigue en 0**:
   - puede ser normal si aún no hay fixtures del día para temporada vigente; revisar API/fixtures del día
 
+## iOS App: Configuración del Token
+
+La app iOS requiere el `DASHBOARD_TOKEN` para acceder a los endpoints protegidos.
+
+### Para desarrollo local (Xcode)
+
+**Opción 1 - UserDefaults (recomendada para testing rápido):**
+```bash
+# En terminal con el simulador corriendo:
+xcrun simctl spawn booted defaults write com.futbolstats.app dashboard_token 'tu_token_aquí'
+
+# Para iPhone físico conectado, usar Xcode:
+# Product > Scheme > Edit Scheme > Run > Arguments > Environment Variables
+# Agregar: dashboard_token = tu_token_aquí
+```
+
+**Opción 2 - Info.plist (recomendada para builds persistentes):**
+1. En Xcode, abrir `Info.plist`
+2. Agregar key: `DASHBOARD_TOKEN`
+3. Tipo: String
+4. Valor: tu token
+
+**Prioridad de lectura** (en `AppConfiguration.swift`):
+1. UserDefaults `dashboard_token` (override para dev)
+2. Info.plist `DASHBOARD_TOKEN`
+
+**Importante**: Nunca commitear tokens al repositorio. Usar `.gitignore` para configs locales.
 

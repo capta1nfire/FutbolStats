@@ -6,6 +6,7 @@ enum APIError: Error, LocalizedError {
     case decodingError(Error)
     case serverError(Int)
     case noData
+    case emptyResponse
     case maxRetriesExceeded
 
     var errorDescription: String? {
@@ -20,6 +21,8 @@ enum APIError: Error, LocalizedError {
             return "Server error: \(code)"
         case .noData:
             return "No data received"
+        case .emptyResponse:
+            return "Empty response from server"
         case .maxRetriesExceeded:
             return "Request failed after multiple retries"
         }
@@ -156,8 +159,10 @@ actor APIClient {
                     throw error
                 }
 
-                guard !data.isEmpty else {
-                    throw APIError.noData
+                // Defensive: treat whitespace-only as empty response
+                let trimmed = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard let trimmed = trimmed, !trimmed.isEmpty else {
+                    throw APIError.emptyResponse
                 }
 
                 do {

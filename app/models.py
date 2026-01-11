@@ -70,6 +70,11 @@ class Match(SQLModel, table=True):
     odds_away: Optional[float] = Field(default=None, description="Bookmaker odds for away win")
     odds_recorded_at: Optional[datetime] = Field(default=None, description="When odds were last recorded")
 
+    # Fast-path narrative tracking
+    finished_at: Optional[datetime] = Field(default=None, description="When match finished (FT/AET/PEN detected)")
+    stats_ready_at: Optional[datetime] = Field(default=None, description="When stats passed gating requirements")
+    stats_last_checked_at: Optional[datetime] = Field(default=None, description="Last stats refresh attempt")
+
     # Relationships
     home_team: Optional[Team] = Relationship(
         back_populates="home_matches",

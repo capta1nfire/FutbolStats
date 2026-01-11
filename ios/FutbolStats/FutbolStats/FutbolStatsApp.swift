@@ -19,6 +19,11 @@ struct MainTabView: View {
                     Label("Predictions", systemImage: "chart.bar.fill")
                 }
 
+            DashboardView()
+                .tabItem {
+                    Label("Dashboard", systemImage: "gauge.with.dots.needle.33percent")
+                }
+
             TeamsView()
                 .tabItem {
                     Label("Teams", systemImage: "person.3.fill")

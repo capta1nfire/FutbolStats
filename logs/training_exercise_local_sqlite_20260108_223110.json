@@ -1,0 +1,112 @@
+{
+  "generated_at": "2026-01-08T22:31:11.486000",
+  "db_path": "/Users/inseqio/FutbolStats/futbolstat.db",
+  "n_matches_total": 3518,
+  "date_min": "2018-06-14T15:00:00",
+  "date_max": "2025-12-21T20:30:00",
+  "small_sample": false,
+  "league_counts_top10": [
+    {
+      "league_id": 10,
+      "n": 2263
+    },
+    {
+      "league_id": 4,
+      "n": 345
+    },
+    {
+      "league_id": 5,
+      "n": 339
+    },
+    {
+      "league_id": 29,
+      "n": 254
+    },
+    {
+      "league_id": 1,
+      "n": 118
+    },
+    {
+      "league_id": 22,
+      "n": 59
+    },
+    {
+      "league_id": 7,
+      "n": 46
+    },
+    {
+      "league_id": 6,
+      "n": 46
+    },
+    {
+      "league_id": 9,
+      "n": 25
+    },
+    {
+      "league_id": 28,
+      "n": 23
+    }
+  ],
+  "feature_columns": [
+    "home_goals_scored_avg",
+    "home_goals_conceded_avg",
+    "home_shots_avg",
+    "home_corners_avg",
+    "home_rest_days",
+    "home_matches_played",
+    "away_goals_scored_avg",
+    "away_goals_conceded_avg",
+    "away_shots_avg",
+    "away_corners_avg",
+    "away_rest_days",
+    "away_matches_played",
+    "goal_diff_avg",
+    "rest_diff"
+  ],
+  "training_config": {
+    "rolling_window": 5,
+    "lambda_decay": 0.01,
+    "min_date_filter": null,
+    "max_date_filter": null,
+    "limit": null,
+    "cv_splits": 3,
+    "holdout_fraction": 0.2,
+    "model_params": {
+      "objective": "multi:softprob",
+      "num_class": 3,
+      "max_depth": 4,
+      "learning_rate": 0.05,
+      "n_estimators": 100,
+      "min_child_weight": 5,
+      "subsample": 0.8,
+      "colsample_bytree": 0.8,
+      "random_state": 42,
+      "eval_metric": "mlogloss",
+      "verbosity": 0
+    }
+  },
+  "metrics": {
+    "cv_brier_scores": [
+      0.6339573191755431,
+      0.6186928549627086,
+      0.6204181864740016
+    ],
+    "cv_brier_avg": 0.6243561202040845,
+    "holdout_brier_test": 0.5849452915397919,
+    "baseline_uniform_brier_test": 0.6666666666666669,
+    "baseline_freq_brier_test": 0.6200952358996639,
+    "skill_vs_uniform": 0.12258206269031235,
+    "skill_vs_freq": 0.05668475151058805,
+    "train_size": 2815,
+    "test_size": 703,
+    "train_outcome_distribution": {
+      "home_win": 1357,
+      "draw": 647,
+      "away_win": 811
+    }
+  },
+  "data_quality": {
+    "pct_stats_null": 100.0
+  },
+  "notes": "offline/local; no PIT; no Railway; sqlite3 only"
+}

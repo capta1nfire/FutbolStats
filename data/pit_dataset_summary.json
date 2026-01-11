@@ -1,0 +1,25 @@
+{
+  "total_records": 18,
+  "with_predictions": 15,
+  "with_opening_odds": 0,
+  "with_baseline_odds": 0,
+  "baseline_source_distribution": {},
+  "by_league": {
+    "39": 9,
+    "135": 5,
+    "45": 2,
+    "78": 1,
+    "140": 1
+  },
+  "delta_ko_distribution": {
+    "aceptable (10-45)": 14,
+    "ideal (45-90)": 4
+  },
+  "date_range": {
+    "min": "2026-01-07 19:30:00",
+    "max": "2026-01-09 20:00:00"
+  },
+  "leakage_violations": 0,
+  "generated_at": "2026-01-09T22:40:41.176105",
+  "output_file": "data/pit_dataset.duckdb"
+}

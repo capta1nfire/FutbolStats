@@ -96,7 +96,8 @@ struct MatchPrediction: Codable, Identifiable {
     /// Best EV percentage for display (e.g., "+12.5%")
     var bestEvDisplay: String? {
         guard let best = bestValueBet else { return nil }
-        return String(format: "+%.1f%% EV", best.evPercentage ?? (best.edge * 100))
+        let ev = best.evPercentage ?? (best.edge.map { $0 * 100 }) ?? 0
+        return String(format: "+%.1f%% EV", ev)
     }
 
     var matchDate: Date? {
@@ -185,14 +186,14 @@ struct MarketOdds: Codable {
 
 struct ValueBet: Codable, Identifiable {
     let outcome: String
-    let ourProbability: Double
-    let impliedProbability: Double
-    let edge: Double
+    let ourProbability: Double?
+    let impliedProbability: Double?
+    let edge: Double?
     let edgePercentage: Double?
     let expectedValue: Double?
     let evPercentage: Double?
-    let marketOdds: Double
-    let fairOdds: Double
+    let marketOdds: Double?
+    let fairOdds: Double?
     let isValueBet: Bool?
 
     var id: String { outcome }
@@ -202,7 +203,10 @@ struct ValueBet: Codable, Identifiable {
         if let pct = edgePercentage {
             return String(format: "+%.1f%%", pct)
         }
-        return String(format: "+%.1f%%", edge * 100)
+        if let e = edge {
+            return String(format: "+%.1f%%", e * 100)
+        }
+        return "—"
     }
 
     /// EV display (e.g., "+12.5% EV")
@@ -218,7 +222,7 @@ struct ValueBet: Codable, Identifiable {
 
     /// Color based on EV strength
     var strengthColor: String {
-        let evValue = evPercentage ?? (expectedValue.map { $0 * 100 }) ?? (edge * 100)
+        let evValue = evPercentage ?? (expectedValue.map { $0 * 100 }) ?? (edge.map { $0 * 100 }) ?? 0
         if evValue >= 15 { return "gold" }      // Strong value
         if evValue >= 10 { return "green" }     // Good value
         return "yellow"                          // Moderate value
@@ -615,6 +619,10 @@ struct MatchInsightsResponse: Codable {
     let insights: [MatchInsightItem]
     let momentumAnalysis: MatchMomentumAnalysis?
 
+    // LLM Narrative (new system - replaces heuristic insights)
+    let llmNarrative: LLMNarrativePayload?
+    let llmNarrativeStatus: String?
+
     enum CodingKeys: String, CodingKey {
         case matchId = "match_id"
         case predictionCorrect = "prediction_correct"
@@ -624,6 +632,8 @@ struct MatchInsightsResponse: Codable {
         case deviationType = "deviation_type"
         case insights
         case momentumAnalysis = "momentum_analysis"
+        case llmNarrative = "llm_narrative"
+        case llmNarrativeStatus = "llm_narrative_status"
     }
 }
 
@@ -643,6 +653,89 @@ struct MatchMomentumAnalysis: Codable {
     let type: String
     let icon: String
     let message: String
+}
+
+// MARK: - LLM Narrative Models (Schema v3.2)
+
+/// Top-level LLM narrative payload from backend
+struct LLMNarrativePayload: Codable {
+    let matchId: Int?
+    let lang: String?
+    let result: LLMResult?
+    let prediction: LLMPrediction?
+    let narrative: LLMNarrative?
+
+    enum CodingKeys: String, CodingKey {
+        case matchId = "match_id"
+        case lang
+        case result
+        case prediction
+        case narrative
+    }
+}
+
+/// Match result info
+struct LLMResult: Codable {
+    let ftScore: String?
+    let outcome: String?  // "home", "draw", "away"
+    let betWon: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case ftScore = "ft_score"
+        case outcome
+        case betWon = "bet_won"
+    }
+}
+
+/// Prediction info
+struct LLMPrediction: Codable {
+    let predictedResult: String?
+    let confidence: Double?
+    let homeProb: Double?
+    let drawProb: Double?
+    let awayProb: Double?
+    let marketOdds: LLMMarketOdds?
+
+    enum CodingKeys: String, CodingKey {
+        case predictedResult = "predicted_result"
+        case confidence
+        case homeProb = "home_prob"
+        case drawProb = "draw_prob"
+        case awayProb = "away_prob"
+        case marketOdds = "market_odds"
+    }
+}
+
+/// Market odds at prediction time
+struct LLMMarketOdds: Codable {
+    let home: Double?
+    let draw: Double?
+    let away: Double?
+}
+
+/// The narrative content
+struct LLMNarrative: Codable {
+    let title: String?
+    let body: String?
+    let keyFactors: [LLMKeyFactor]?
+    let tone: String?  // "reinforce_win" or "mitigate_loss"
+    let responsibleNote: String?
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case body
+        case keyFactors = "key_factors"
+        case tone
+        case responsibleNote = "responsible_note"
+    }
+}
+
+/// Key factor in narrative
+struct LLMKeyFactor: Codable, Identifiable {
+    var id: String { label ?? UUID().uuidString }
+    let label: String?
+    let evidence: String?
+    let direction: String?  // "pro-pick", "anti-pick", "neutral"
 }
 
 // MARK: - Health Check

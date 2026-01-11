@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     NARRATIVE_LLM_TEMPERATURE: float = 0.15
     NARRATIVE_LLM_TOP_P: float = 0.9
 
+    # Fast-Path Narrative Configuration
+    FASTPATH_ENABLED: bool = False
+    FASTPATH_INTERVAL_SECONDS: int = 120
+    FASTPATH_LOOKBACK_MINUTES: int = 90
+    FASTPATH_MAX_CONCURRENT_JOBS: int = 10
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

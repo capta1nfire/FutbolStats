@@ -1,0 +1,32 @@
+{
+  "audit_timestamp": "2026-01-09T11:15:00Z",
+  "queries_executed": {
+    "query_1_top5_with_opening_odds": {
+      "sql": "SELECT league_id, COUNT(*) AS with_opening FROM matches WHERE league_id IN (39,140,135,78,61) AND opening_odds_home IS NOT NULL GROUP BY league_id ORDER BY league_id",
+      "results": {
+        "EPL (39)": 3998,
+        "Ligue1 (61)": 3703,
+        "Bundesliga (78)": 3195,
+        "SerieA (135)": 3975,
+        "LaLiga (140)": 3971
+      },
+      "total_top5": 18842
+    },
+    "query_2_outside_top5": {
+      "sql": "SELECT COUNT(*) FROM matches WHERE league_id NOT IN (39,140,135,78,61) AND opening_odds_home IS NOT NULL",
+      "result": 4920,
+      "note": "Pre-existing data from other leagues (LATAM Pack1, etc.) - NOT touched by FDUK backfill"
+    }
+  },
+  "backfill_summary": {
+    "processed": 18010,
+    "matched_high_conf": 18010,
+    "updated": 2134,
+    "skipped_has_odds": 15876
+  },
+  "verification_status": "PASSED",
+  "commits": [
+    "9b5f57a - fix: update FDUK team aliases with verified DB IDs (v2.0)",
+    "d883563 - fix: asyncpg date handling in FDUK backfill script"
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "generated_at": "2026-01-08T22:49:45.307955",
+  "protocol_version": "2.0",
+  "filters": {
+    "snapshot_type": "lineup_confirmed",
+    "odds_freshness": "live",
+    "timing_window_valid": "10-90 min",
+    "timing_window_ideal": "45-75 min",
+    "edge_threshold": 0.05
+  },
+  "counts": {
+    "n_total_snapshots": 14,
+    "n_live": 14,
+    "n_pre_kickoff": 14,
+    "n_pit_valid_10_90": 14,
+    "n_pit_valid_ideal_45_75": 3,
+    "n_with_predictions": 14
+  },
+  "timing_distribution": {
+    "p10": 20.675,
+    "p50": 28.174999999999997,
+    "p90": 50.858333333333334,
+    "min": 20.583333333333332,
+    "max": 59.36666666666667
+  },
+  "breakdown_by_league": [
+    {
+      "league_id": 39,
+      "n": 9
+    },
+    {
+      "league_id": 135,
+      "n": 5
+    }
+  ],
+  "breakdown_by_bookmaker": [
+    {
+      "bookmaker": "Bet365_live",
+      "n": 14
+    }
+  ],
+  "brier": {
+    "n_with_predictions": 14,
+    "brier_model": 0.7395416257142857,
+    "brier_uniform": 0.6666666666666663,
+    "brier_market": 0.7027411776208597,
+    "skill_vs_uniform": -0.10931243857142925,
+    "skill_vs_market": -0.05236700120236937
+  },
+  "betting": {
+    "n_bets": 8,
+    "roi": -0.31875,
+    "ev": 0.6434387500000001,
+    "total_staked": 8,
+    "total_returns": 5.45,
+    "roi_ci95_low": null,
+    "roi_ci95_high": null,
+    "roi_ci_status": "insufficient_n",
+    "ev_ci95_low": null,
+    "ev_ci95_high": null,
+    "ev_ci_status": "insufficient_n",
+    "win_rate": 0.25
+  },
+  "phase": "insufficient",
+  "notes": "read-only evaluation; no writes to DB"
+}

@@ -1,0 +1,54 @@
+2026-01-09 14:02:42,688 - INFO - Loading PIT dataset from: data/pit_dataset.duckdb
+2026-01-09 14:02:47,886 - INFO - Evaluating 15 PIT records with valid predictions
+2026-01-09 14:02:48,027 - INFO - Benchmarking 15 records with complete odds
+2026-01-09 14:02:48,090 - INFO - Report saved to: data/pit_dataset_evaluation.json
+
+======================================================================
+PIT DATASET EVALUATION REPORT
+======================================================================
+
+Parameters:
+  EV threshold: 5.0%
+  Delta KO window: 10-90 min
+  Odds range: 1.20-5.00
+
+Dataset:
+  Total matches: 15
+  No-bet (no edge): 8
+
+Betting Results:
+----------------------------------------------------------------------
+Type         Bets   Wins     Win%          Win% CI      ROI           ROI CI      P&L
+----------------------------------------------------------------------
+HOME            6      2   33.3%    [9.7%, 70.0%]   -9.2% [-100.0%, 110.8%]    -0.55
+DRAW            1      0    0.0%    [0.0%, 79.3%] -100.0% [-100.0%, -100.0%]    -1.00
+TOTAL           7      2   28.6%    [8.2%, 64.1%]  -22.1% [-100.0%, 80.7%]    -1.55
+----------------------------------------------------------------------
+
+Statistical Significance (95% CI):
+  ✗ ROI is NOT significantly positive (CI includes 0)
+  Sample size: 7 bets
+
+======================================================================
+MODEL vs MARKET BENCHMARK
+======================================================================
+
+Dataset: 15 matches with complete odds
+Overround: mean=105.58%, range=[104.59%, 106.49%]
+
+Brier Score (lower is better):
+  Model:  0.7288
+  Market: 0.6930
+  Delta:  -0.0358 (market is better)
+
+ROI Comparison (EV threshold applied):
+----------------------------------------------------------------------
+Source       Bets   Wins     Win%          Win% CI      ROI           ROI CI      P&L
+----------------------------------------------------------------------
+MODEL           7      2   28.6%    [8.2%, 64.1%]  -22.1% [-100.0%, 80.7%]    -1.55
+MARKET        N/A (no bets above threshold)
+----------------------------------------------------------------------
+
+Delta ROI: -22.14% (market outperforms model)
+
+======================================================================

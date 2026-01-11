@@ -1,0 +1,108 @@
+{
+  "report_type": "WC 2026 Qualifiers Ingestion",
+  "generated_at": "2026-01-10T03:34:49.999952",
+  "gate_europa": {
+    "status": "GO",
+    "ucl": {
+      "pct": 100.0,
+      "status": "GO"
+    },
+    "uel": {
+      "pct": 99.88,
+      "status": "GO"
+    },
+    "uecl": {
+      "pct": 100.0,
+      "status": "GO"
+    }
+  },
+  "ingestion": {
+    "leagues": [
+      {
+        "league_id": 34,
+        "name": "CONMEBOL",
+        "season": 2026,
+        "matches": 90,
+        "finished": 90,
+        "not_started": 0,
+        "date_range": "2023-09-07 22:30:00 to 2025-09-09 23:30:00"
+      },
+      {
+        "league_id": 30,
+        "name": "AFC",
+        "season": 2026,
+        "matches": 226,
+        "finished": 225,
+        "not_started": 0,
+        "date_range": "2023-10-12 09:30:00 to 2025-11-18 16:00:00"
+      },
+      {
+        "league_id": 31,
+        "name": "CONCACAF",
+        "season": 2026,
+        "matches": 100,
+        "finished": 98,
+        "not_started": 0,
+        "date_range": "2024-03-22 19:00:00 to 2025-11-19 01:00:00"
+      },
+      {
+        "league_id": 33,
+        "name": "OFC",
+        "season": 2026,
+        "matches": 18,
+        "finished": 17,
+        "not_started": 0,
+        "date_range": "2024-09-05 22:00:00 to 2025-03-24 06:00:00"
+      },
+      {
+        "league_id": 32,
+        "name": "UEFA",
+        "season": 2024,
+        "matches": 200,
+        "finished": 192,
+        "not_started": 8,
+        "date_range": "2025-03-21 17:00:00 to 2026-03-26 19:45:00"
+      }
+    ],
+    "total_matches_ingested": 634
+  },
+  "anti_contamination": {
+    "status": "PASS",
+    "tables": {
+      "odds_snapshots": {
+        "baseline": 35751,
+        "after": 35751,
+        "status": "OK"
+      },
+      "market_movement_snapshots": {
+        "baseline": 6,
+        "after": 6,
+        "status": "OK"
+      },
+      "lineup_movement_snapshots": {
+        "baseline": 28,
+        "after": 28,
+        "status": "OK"
+      },
+      "odds_history": {
+        "baseline": 0,
+        "after": 0,
+        "status": "OK"
+      }
+    }
+  },
+  "db_state": {
+    "matches_before": 65392,
+    "matches_after": 66026,
+    "matches_delta": 634,
+    "teams_before": 2317,
+    "teams_after": 2322,
+    "teams_delta": 5,
+    "leagues": 43
+  },
+  "pending": {
+    "competitions_py_pr": "IDs incorrectos en competitions.py - requiere PR separado",
+    "caf_29": "HOLD - season pendiente de confirmar",
+    "intercontinental_37": "HOLD - season pendiente de confirmar"
+  }
+}

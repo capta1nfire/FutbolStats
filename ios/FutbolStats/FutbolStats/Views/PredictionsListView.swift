@@ -536,7 +536,7 @@ struct MatchRowView: View {
     }
 
     private func evColor(for bet: ValueBet) -> Color {
-        let ev = bet.evPercentage ?? (bet.expectedValue.map { $0 * 100 }) ?? (bet.edge * 100)
+        let ev = bet.evPercentage ?? (bet.expectedValue.map { $0 * 100 }) ?? (bet.edge.map { $0 * 100 }) ?? 0
         if ev >= 15 { return .yellow }
         if ev >= 10 { return .green }
         return .mint

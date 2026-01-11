@@ -1,0 +1,112 @@
+{
+  "generated_at": "2026-01-08T22:38:27.447996",
+  "db_path": "/Users/inseqio/FutbolStats/futbolstat_railway.db",
+  "n_matches_total": 47105,
+  "date_min": "2015-08-07T18:30:00",
+  "date_max": "2024-12-30T20:15:00",
+  "small_sample": false,
+  "league_counts_top10": [
+    {
+      "league_id": 45,
+      "n": 3871
+    },
+    {
+      "league_id": 39,
+      "n": 3608
+    },
+    {
+      "league_id": 140,
+      "n": 3601
+    },
+    {
+      "league_id": 135,
+      "n": 3599
+    },
+    {
+      "league_id": 61,
+      "n": 3385
+    },
+    {
+      "league_id": 78,
+      "n": 2900
+    },
+    {
+      "league_id": 203,
+      "n": 2898
+    },
+    {
+      "league_id": 94,
+      "n": 2599
+    },
+    {
+      "league_id": 88,
+      "n": 2595
+    },
+    {
+      "league_id": 239,
+      "n": 2424
+    }
+  ],
+  "feature_columns": [
+    "home_goals_scored_avg",
+    "home_goals_conceded_avg",
+    "home_shots_avg",
+    "home_corners_avg",
+    "home_rest_days",
+    "home_matches_played",
+    "away_goals_scored_avg",
+    "away_goals_conceded_avg",
+    "away_shots_avg",
+    "away_corners_avg",
+    "away_rest_days",
+    "away_matches_played",
+    "goal_diff_avg",
+    "rest_diff"
+  ],
+  "training_config": {
+    "rolling_window": 5,
+    "lambda_decay": 0.01,
+    "min_date_filter": null,
+    "max_date_filter": "2024-12-31",
+    "limit": null,
+    "cv_splits": 3,
+    "holdout_fraction": 0.2,
+    "model_params": {
+      "objective": "multi:softprob",
+      "num_class": 3,
+      "max_depth": 4,
+      "learning_rate": 0.05,
+      "n_estimators": 100,
+      "min_child_weight": 5,
+      "subsample": 0.8,
+      "colsample_bytree": 0.8,
+      "random_state": 42,
+      "eval_metric": "mlogloss",
+      "verbosity": 0
+    }
+  },
+  "metrics": {
+    "cv_brier_scores": [
+      0.6288122667390975,
+      0.6296516256624403,
+      0.6191210784264223
+    ],
+    "cv_brier_avg": 0.6258616569426534,
+    "holdout_brier_test": 0.6129783680259046,
+    "baseline_uniform_brier_test": 0.6666666666666667,
+    "baseline_freq_brier_test": 0.6421492731905265,
+    "skill_vs_uniform": 0.08053244796114323,
+    "skill_vs_freq": 0.04542698463191586,
+    "train_size": 37684,
+    "test_size": 9421,
+    "train_outcome_distribution": {
+      "home_win": 17138,
+      "draw": 9314,
+      "away_win": 11232
+    }
+  },
+  "data_quality": {
+    "pct_stats_null": 100.0
+  },
+  "notes": "offline/local; no PIT; no Railway; sqlite3 only"
+}

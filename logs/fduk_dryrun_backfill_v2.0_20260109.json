@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-01-09T10:08:26.691571",
+  "config": {
+    "min_confidence": 0.9,
+    "fuzzy_threshold": 0.85
+  },
+  "stats": {
+    "processed": 18010,
+    "matched_high_conf": 18010,
+    "matched_fuzzy": 0,
+    "unmatched": 0,
+    "skipped_has_odds": 15876,
+    "would_update": 2134
+  },
+  "match_rate_pct": 100.0,
+  "unmatch_rate_pct": 0.0,
+  "top_unmatched": []
+}

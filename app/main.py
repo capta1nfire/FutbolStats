@@ -5697,3 +5697,55 @@ async def migrate_llm_error_fields(
         "migrations": results,
         "verified_columns": columns,
     }
+
+
+@app.post("/dashboard/ops/migrate_fastpath_fields")
+async def migrate_fastpath_fields(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    One-time migration to add fast-path tracking fields to matches.
+    Safe to run multiple times (uses IF NOT EXISTS).
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    migrations = [
+        "ALTER TABLE matches ADD COLUMN IF NOT EXISTS finished_at TIMESTAMP",
+        "ALTER TABLE matches ADD COLUMN IF NOT EXISTS stats_ready_at TIMESTAMP",
+        "ALTER TABLE matches ADD COLUMN IF NOT EXISTS stats_last_checked_at TIMESTAMP",
+        """CREATE INDEX IF NOT EXISTS idx_matches_fastpath_candidates
+           ON matches(finished_at, stats_ready_at)
+           WHERE finished_at IS NOT NULL AND stats_ready_at IS NULL""",
+        """CREATE INDEX IF NOT EXISTS idx_matches_finished_at
+           ON matches(finished_at)
+           WHERE finished_at IS NOT NULL""",
+    ]
+
+    results = []
+    for sql in migrations:
+        try:
+            await session.execute(text(sql))
+            results.append({"sql": sql[:60] + "...", "status": "ok"})
+        except Exception as e:
+            results.append({"sql": sql[:60] + "...", "status": "error", "error": str(e)})
+
+    await session.commit()
+
+    # Verify columns exist
+    verify = await session.execute(
+        text("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name='matches'
+            AND column_name IN ('finished_at', 'stats_ready_at', 'stats_last_checked_at')
+            ORDER BY column_name
+        """)
+    )
+    columns = [row[0] for row in verify.all()]
+
+    return {
+        "status": "ok",
+        "migrations": results,
+        "verified_columns": columns,
+    }

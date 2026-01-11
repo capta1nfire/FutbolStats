@@ -60,10 +60,13 @@ class MatchDetailViewModel: ObservableObject {
     @Published var primaryInsight: MatchInsight?
     @Published var homeTeamForm: TeamFormData?
     @Published var awayTeamForm: TeamFormData?
-    @Published var narrativeInsights: [NarrativeInsight] = []
-    @Published var momentumAnalysis: MomentumAnalysis?
     @Published var timeline: MatchTimelineResponse?
     @Published var timelineError: String?
+
+    // LLM Narrative (replaces old heuristic insights)
+    @Published var llmNarrative: LLMNarrativePayload?
+    @Published var llmNarrativeStatus: String?
+    @Published var llmNarrativeError: String?
 
     init(prediction: MatchPrediction) {
         self.prediction = prediction
@@ -111,27 +114,21 @@ class MatchDetailViewModel: ObservableObject {
     private func loadNarrativeInsights(matchId: Int) async {
         do {
             let response = try await APIClient.shared.getMatchInsights(matchId: matchId)
-            // Convert MatchInsightItem to NarrativeInsight
-            narrativeInsights = response.insights.map { item in
-                NarrativeInsight(
-                    type: item.type,
-                    icon: item.icon,
-                    message: item.message,
-                    priority: item.priority
-                )
+
+            // Use LLM narrative if available (new system)
+            if let narrative = response.llmNarrative {
+                llmNarrative = narrative
+                llmNarrativeStatus = response.llmNarrativeStatus
+                print("LLM narrative loaded: \(narrative.narrative?.title ?? "no title")")
+            } else {
+                // No LLM narrative available
+                llmNarrativeStatus = response.llmNarrativeStatus ?? "pending"
+                print("LLM narrative not available, status: \(llmNarrativeStatus ?? "unknown")")
             }
-            // Convert MatchMomentumAnalysis to MomentumAnalysis
-            if let momentum = response.momentumAnalysis {
-                momentumAnalysis = MomentumAnalysis(
-                    type: momentum.type,
-                    icon: momentum.icon,
-                    message: momentum.message
-                )
-            }
-            print("Narrative insights loaded: \(narrativeInsights.count) insights")
         } catch {
             // Insights are optional - don't fail the whole view
-            print("Insights error: \(error.localizedDescription)")
+            llmNarrativeError = error.localizedDescription
+            print("LLM narrative error: \(error.localizedDescription)")
         }
     }
 
@@ -343,12 +340,12 @@ struct MatchDetailView: View {
                     formTable
                 }
 
-                // Narrative Insights (post-match analysis)
-                if !viewModel.narrativeInsights.isEmpty {
-                    MatchNarrativeInsightsView(
-                        insights: viewModel.narrativeInsights,
-                        momentumAnalysis: viewModel.momentumAnalysis
-                    )
+                // LLM Narrative (post-match analysis)
+                if let narrative = viewModel.llmNarrative {
+                    LLMNarrativeView(narrative: narrative)
+                } else if prediction.isFinished && viewModel.llmNarrativeStatus != nil {
+                    // Show unavailable state for finished matches without narrative
+                    LLMNarrativeUnavailableView(status: viewModel.llmNarrativeStatus)
                 }
 
                 if let insight = viewModel.primaryInsight {

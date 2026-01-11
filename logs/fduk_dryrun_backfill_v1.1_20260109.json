@@ -1,0 +1,59 @@
+{
+  "timestamp": "2026-01-09T10:05:06.575904",
+  "config": {
+    "min_confidence": 0.9,
+    "fuzzy_threshold": 0.85
+  },
+  "stats": {
+    "processed": 18010,
+    "matched_high_conf": 10865,
+    "matched_fuzzy": 4704,
+    "unmatched": 2441,
+    "skipped_has_odds": 13761,
+    "would_update": 1808
+  },
+  "match_rate_pct": 86.45,
+  "unmatch_rate_pct": 13.55,
+  "top_unmatched": [
+    [
+      "Villarreal vs Ath Madrid",
+      10
+    ],
+    [
+      "Barcelona vs Ath Bilbao",
+      10
+    ],
+    [
+      "Ath Bilbao vs Valencia",
+      10
+    ],
+    [
+      "Ath Bilbao vs Ath Madrid",
+      10
+    ],
+    [
+      "Ath Madrid vs Valencia",
+      10
+    ],
+    [
+      "Ath Bilbao vs Celta",
+      10
+    ],
+    [
+      "Celta vs Ath Madrid",
+      10
+    ],
+    [
+      "Ath Bilbao vs Sevilla",
+      10
+    ],
+    [
+      "Ath Madrid vs Real Madrid",
+      10
+    ],
+    [
+      "Sociedad vs Ath Madrid",
+      10
+    ]
+  ]
+}
