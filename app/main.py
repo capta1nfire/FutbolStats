@@ -1353,7 +1353,7 @@ async def get_match_insights(
             detail=f"Insights only available for finished matches. Status: {match.status}"
         )
 
-    # Get prediction outcome and audit for this match
+    # Get prediction outcome and audit for this match (canonical path)
     result = await session.execute(
         select(PredictionOutcome, PostMatchAudit)
         .join(PostMatchAudit, PredictionOutcome.id == PostMatchAudit.outcome_id)
@@ -1362,10 +1362,111 @@ async def get_match_insights(
     row = result.first()
 
     if not row:
-        raise HTTPException(
-            status_code=404,
-            detail="Match has not been audited yet. Insights will be available after the daily audit."
+        # Fallback: generate narrative insights on-demand (non-canonical) so iOS can display something
+        # even if the daily audit has not run yet or failed.
+        #
+        # Important: Keep response shape identical to MatchInsightsResponse in iOS (no optionals).
+        from app.audit.service import PostMatchAuditService
+
+        # Prefer a frozen prediction if available; otherwise use latest prediction.
+        pred = None
+        pred_res = await session.execute(
+            select(Prediction)
+            .where(Prediction.match_id == match_id)
+            .where(Prediction.is_frozen == True)  # noqa: E712
+            .order_by(Prediction.frozen_at.desc().nullslast(), Prediction.created_at.desc())
+            .limit(1)
         )
+        pred = pred_res.scalar_one_or_none()
+
+        if pred is None:
+            pred_res = await session.execute(
+                select(Prediction)
+                .where(Prediction.match_id == match_id)
+                .order_by(Prediction.created_at.desc())
+                .limit(1)
+            )
+            pred = pred_res.scalar_one_or_none()
+
+        # If no saved prediction exists, compute one from features (best-effort).
+        if pred is None:
+            try:
+                # Load team names for context
+                home_team = await session.get(Team, match.home_team_id)
+                away_team = await session.get(Team, match.away_team_id)
+                feature_engineer = FeatureEngineer(session=session)
+                features = await feature_engineer.get_match_features(match)
+                features["home_team_name"] = home_team.name if home_team else "Local"
+                features["away_team_name"] = away_team.name if away_team else "Visitante"
+
+                import pandas as pd
+
+                df = pd.DataFrame([features])
+                preds = ml_engine.predict(df)
+                p0 = preds[0] if preds else None
+                probs = (p0 or {}).get("probabilities") or {}
+                hp = float(probs.get("home") or 0.0)
+                dp = float(probs.get("draw") or 0.0)
+                ap = float(probs.get("away") or 0.0)
+                pred = Prediction(
+                    match_id=match_id,
+                    model_version=ml_engine.model_version,
+                    home_prob=hp,
+                    draw_prob=dp,
+                    away_prob=ap,
+                )
+            except Exception:
+                # No prediction available; return empty insights but keep schema stable.
+                pred = Prediction(
+                    match_id=match_id,
+                    model_version=ml_engine.model_version,
+                    home_prob=0.0,
+                    draw_prob=0.0,
+                    away_prob=0.0,
+                )
+
+        service = PostMatchAuditService(session)
+        try:
+            predicted_result, confidence = service._get_predicted_result(pred)
+        except Exception:
+            predicted_result, confidence = ("draw", 0.0)
+
+        actual_result = "draw"
+        if match.home_goals is not None and match.away_goals is not None:
+            if match.home_goals > match.away_goals:
+                actual_result = "home"
+            elif match.home_goals < match.away_goals:
+                actual_result = "away"
+
+        prediction_correct = predicted_result == actual_result
+
+        home_team = await session.get(Team, match.home_team_id)
+        away_team = await session.get(Team, match.away_team_id)
+
+        narrative_result = service.generate_narrative_insights(
+            prediction=pred,
+            actual_result=actual_result,
+            home_goals=match.home_goals or 0,
+            away_goals=match.away_goals or 0,
+            stats=match.stats or {},
+            home_team_name=home_team.name if home_team else "Local",
+            away_team_name=away_team.name if away_team else "Visitante",
+            home_position=None,
+            away_position=None,
+        )
+
+        await service.close()
+
+        return {
+            "match_id": match_id,
+            "prediction_correct": prediction_correct,
+            "predicted_result": predicted_result,
+            "actual_result": actual_result,
+            "confidence": confidence,
+            "deviation_type": "pending_audit",
+            "insights": narrative_result.get("insights") or [],
+            "momentum_analysis": narrative_result.get("momentum_analysis"),
+        }
 
     outcome, audit = row
 

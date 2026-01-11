@@ -240,9 +240,18 @@ class PostMatchAuditService:
             logger.debug(f"Match {match.id} already audited")
             return None
 
-        # Fetch detailed stats from API
-        stats = await self.provider.get_fixture_statistics(match.external_id)
-        events = await self._fetch_events(match.external_id)
+        # Fetch detailed stats from API (best-effort; do NOT fail the audit if API is unavailable/budget-limited)
+        try:
+            stats = await self.provider.get_fixture_statistics(match.external_id)
+        except Exception as e:
+            logger.warning(f"Audit stats fetch failed for fixture {match.external_id}: {e}")
+            stats = {}
+
+        try:
+            events = await self._fetch_events(match.external_id)
+        except Exception as e:
+            logger.warning(f"Audit events fetch failed for fixture {match.external_id}: {e}")
+            events = []
 
         # Parse stats
         xg_home = None
@@ -900,7 +909,7 @@ class PostMatchAuditService:
             )
             .where(
                 and_(
-                    Match.status == "FT",
+                    Match.status.in_(("FT", "AET", "PEN")),
                     Match.date >= cutoff_date,
                     Match.home_goals.isnot(None),
                     Match.away_goals.isnot(None),
