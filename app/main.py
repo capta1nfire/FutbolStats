@@ -3614,12 +3614,50 @@ async def _calculate_fastpath_health(session) -> dict:
     settings = get_settings()
     now = datetime.utcnow()
 
-    # Get in-memory metrics from scheduler
-    metrics = get_fastpath_metrics()
-    last_tick_at = metrics.get("last_tick_at")
-    last_tick_result = metrics.get("last_tick_result") or {}
-    ticks_total = metrics.get("ticks_total", 0)
-    ticks_with_activity = metrics.get("ticks_with_activity", 0)
+    # Try to get last tick from DB first (survives restarts), fallback to in-memory
+    last_tick_at = None
+    last_tick_result = {}
+    ticks_total = 0
+    ticks_with_activity = 0
+
+    try:
+        # Get most recent tick from DB
+        res = await session.execute(
+            text("""
+                SELECT tick_at, selected, refreshed, ready, enqueued, completed, errors, skipped
+                FROM fastpath_ticks
+                ORDER BY tick_at DESC
+                LIMIT 1
+            """)
+        )
+        row = res.fetchone()
+        if row:
+            last_tick_at = row[0]
+            last_tick_result = {
+                "selected": row[1], "refreshed": row[2], "stats_ready": row[3],
+                "enqueued": row[4], "completed": row[5], "errors": row[6], "skipped": row[7]
+            }
+
+        # Get tick counts from last hour
+        res = await session.execute(
+            text("""
+                SELECT COUNT(*), COUNT(*) FILTER (WHERE selected > 0 OR enqueued > 0 OR completed > 0)
+                FROM fastpath_ticks
+                WHERE tick_at > NOW() - INTERVAL '1 hour'
+            """)
+        )
+        counts = res.fetchone()
+        if counts:
+            ticks_total = counts[0] or 0
+            ticks_with_activity = counts[1] or 0
+    except Exception as db_err:
+        # Table may not exist, fallback to in-memory
+        logger.debug(f"Could not read fastpath_ticks from DB: {db_err}")
+        metrics = get_fastpath_metrics()
+        last_tick_at = metrics.get("last_tick_at")
+        last_tick_result = metrics.get("last_tick_result") or {}
+        ticks_total = metrics.get("ticks_total", 0)
+        ticks_with_activity = metrics.get("ticks_with_activity", 0)
 
     # Check if fast-path is enabled
     enabled = os.environ.get("FASTPATH_ENABLED", str(settings.FASTPATH_ENABLED)).lower()

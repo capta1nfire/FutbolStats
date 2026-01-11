@@ -165,11 +165,12 @@ class FastPathService:
         """
         Select matches that:
         - Status is FT/AET/PEN
-        - Finished within lookback window
+        - Finished within lookback window (using finished_at if available, else kickoff date)
         - Have a prediction
         - Don't have a successful LLM narrative yet
         """
-        # Get matches with predictions that finished recently
+        # Get matches that finished recently
+        # Use finished_at if available (accurate), otherwise fall back to date (kickoff) for bootstrap
         result = await self.session.execute(
             select(Match)
             .options(selectinload(Match.predictions))
@@ -178,8 +179,21 @@ class FastPathService:
             .where(
                 and_(
                     Match.status.in_(["FT", "AET", "PEN"]),
-                    Match.date >= lookback,
-                    Match.date <= now,
+                    or_(
+                        # Primary: use finished_at timestamp (accurate)
+                        and_(
+                            Match.finished_at.isnot(None),
+                            Match.finished_at >= lookback,
+                            Match.finished_at <= now,
+                        ),
+                        # Fallback for bootstrap: finished_at not set yet, use kickoff date
+                        # (kickoff within last 24h covers most matches that finished recently)
+                        and_(
+                            Match.finished_at.is_(None),
+                            Match.date >= now - timedelta(hours=24),
+                            Match.date <= now,
+                        ),
+                    ),
                 )
             )
             .order_by(Match.date.desc())

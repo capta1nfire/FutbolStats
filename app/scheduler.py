@@ -2810,10 +2810,12 @@ async def fast_postmatch_narratives() -> dict:
     """
     global _fastpath_metrics
     import os
+    import time
     from app.config import get_settings
     from app.llm.fastpath import FastPathService
 
     settings = get_settings()
+    start_time = time.time()
 
     # Check if job is enabled
     enabled = os.environ.get("FASTPATH_ENABLED", str(settings.FASTPATH_ENABLED)).lower()
@@ -2827,14 +2829,41 @@ async def fast_postmatch_narratives() -> dict:
             service = FastPathService(session)
             try:
                 result = await service.run_tick()
-                await session.commit()
+                duration_ms = int((time.time() - start_time) * 1000)
 
-                # Update metrics
-                _fastpath_metrics["last_tick_at"] = datetime.utcnow()
+                # Update in-memory metrics
+                now = datetime.utcnow()
+                _fastpath_metrics["last_tick_at"] = now
                 _fastpath_metrics["last_tick_result"] = result
                 _fastpath_metrics["ticks_total"] += 1
                 if result.get("selected", 0) > 0 or result.get("enqueued", 0) > 0 or result.get("completed", 0) > 0:
                     _fastpath_metrics["ticks_with_activity"] += 1
+
+                # Persist tick to DB for ops dashboard (survives restarts)
+                try:
+                    await session.execute(
+                        text("""
+                            INSERT INTO fastpath_ticks
+                            (tick_at, selected, refreshed, ready, enqueued, completed, errors, skipped, duration_ms)
+                            VALUES (:tick_at, :selected, :refreshed, :ready, :enqueued, :completed, :errors, :skipped, :duration_ms)
+                        """),
+                        {
+                            "tick_at": now,
+                            "selected": result.get("selected", 0),
+                            "refreshed": result.get("refreshed", 0),
+                            "ready": result.get("stats_ready", 0),
+                            "enqueued": result.get("enqueued", 0),
+                            "completed": result.get("completed", 0),
+                            "errors": result.get("errors", 0),
+                            "skipped": result.get("skipped", 0),
+                            "duration_ms": duration_ms,
+                        }
+                    )
+                except Exception as db_err:
+                    # Table may not exist yet, don't fail the tick
+                    logger.debug(f"[FASTPATH] Could not persist tick to DB: {db_err}")
+
+                await session.commit()
 
                 # Log summary if there was activity
                 if result.get("selected", 0) > 0 or result.get("enqueued", 0) > 0:
