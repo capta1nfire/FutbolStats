@@ -2891,9 +2891,27 @@ async def fast_postmatch_narratives() -> dict:
                 await service.close()
 
     except Exception as e:
-        logger.error(f"[FASTPATH] tick failed: {e}")
-        _fastpath_metrics["last_tick_at"] = datetime.utcnow()
+        logger.error(f"[FASTPATH] tick failed: {e}", exc_info=True)
+        now = datetime.utcnow()
+        duration_ms = int((time.time() - start_time) * 1000)
+        _fastpath_metrics["last_tick_at"] = now
         _fastpath_metrics["last_tick_result"] = {"status": "error", "error": str(e)}
+
+        # Persist error tick to DB (separate session to avoid state issues)
+        try:
+            async with AsyncSessionLocal() as err_session:
+                await err_session.execute(
+                    text("""
+                        INSERT INTO fastpath_ticks
+                        (tick_at, selected, refreshed, ready, enqueued, completed, errors, skipped, duration_ms, error_detail)
+                        VALUES (:tick_at, 0, 0, 0, 0, 0, 1, 0, :duration_ms, :error_detail)
+                    """),
+                    {"tick_at": now, "duration_ms": duration_ms, "error_detail": str(e)[:500]}
+                )
+                await err_session.commit()
+        except Exception as db_err:
+            logger.error(f"[FASTPATH] Failed to persist error tick: {db_err}")
+
         return {"status": "error", "error": str(e)}
 
 

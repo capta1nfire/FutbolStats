@@ -129,22 +129,30 @@ class FastPathService:
         metrics["refreshed"] = refreshed
 
         # 3. Check which matches are now ready (stats gating passed)
+        logger.debug(f"[FASTPATH] Checking stats gating for {len(candidates)} candidates")
         ready_matches = []
         for match in candidates:
-            if match.stats_ready_at:
-                ready_matches.append(match)
-            else:
-                # Check if stats now pass gating
-                stats_data = {"stats": match.stats or {}}
-                passes, _ = check_stats_gating(stats_data)
-                if passes:
-                    match.stats_ready_at = now
+            try:
+                if match.stats_ready_at:
                     ready_matches.append(match)
+                else:
+                    # Check if stats now pass gating
+                    stats_data = {"stats": match.stats or {}}
+                    passes, _ = check_stats_gating(stats_data)
+                    if passes:
+                        match.stats_ready_at = now
+                        ready_matches.append(match)
+            except Exception as loop_err:
+                logger.error(f"[FASTPATH] Error checking match {match.id}: {loop_err}")
+                continue
+        logger.debug(f"[FASTPATH] Stats gating complete, {len(ready_matches)} ready")
 
         metrics["stats_ready"] = len(ready_matches)
-        await self.session.commit()
+        # Note: commit deferred to _enqueue_narratives to avoid greenlet issues
 
         if not ready_matches:
+            # Commit any finished_at/stats_ready_at changes
+            await self.session.commit()
             logger.info(f"[FASTPATH] No matches ready (stats gating). Refreshed {refreshed} stats.")
             return metrics
 
