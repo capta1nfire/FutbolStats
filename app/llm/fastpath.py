@@ -313,7 +313,9 @@ class FastPathService:
                         "away": away_stats,
                     }
                     refreshed += 1
-                    logger.debug(f"[FASTPATH] Refreshed stats for match {match.id}")
+                    logger.info(f"[FASTPATH] Refreshed stats for match {match.id}: home_keys={list(home_stats.keys())[:3]}")
+                else:
+                    logger.warning(f"[FASTPATH] No stats in API response for match {match.id} (response len={len(response)})")
 
                 match.stats_last_checked_at = now
 
