@@ -3375,7 +3375,6 @@ async def predictions_trigger_save(request: Request):
 
     from app.db_utils import upsert
     from app.features import FeatureEngineer
-    from app.ml import XGBoostEngine
 
     diagnostics = {
         "status": "unknown",
@@ -3389,14 +3388,13 @@ async def predictions_trigger_save(request: Request):
 
     try:
         async with AsyncSessionLocal() as session:
-            # Step 1: Load model
-            engine = XGBoostEngine()
-            if not engine.load_model():
+            # Step 1: Use global ml_engine (already loaded at startup)
+            if not ml_engine.is_loaded:
                 diagnostics["status"] = "error"
-                diagnostics["errors"].append("Could not load ML model")
+                diagnostics["errors"].append("Global ML model not loaded")
                 return diagnostics
             diagnostics["model_loaded"] = True
-            diagnostics["model_version"] = engine.model_version
+            diagnostics["model_version"] = ml_engine.model_version
 
             # Step 2: Get features
             feature_engineer = FeatureEngineer(session=session)
@@ -3418,7 +3416,7 @@ async def predictions_trigger_save(request: Request):
                 return diagnostics
 
             # Step 3: Generate predictions
-            predictions = engine.predict(df_ns)
+            predictions = ml_engine.predict(df_ns)
             diagnostics["predictions_generated"] = len(predictions)
 
             # Step 4: Save to database
@@ -3435,7 +3433,7 @@ async def predictions_trigger_save(request: Request):
                         Prediction,
                         values={
                             "match_id": match_id,
-                            "model_version": engine.model_version,
+                            "model_version": ml_engine.model_version,
                             "home_prob": probs["home"],
                             "draw_prob": probs["draw"],
                             "away_prob": probs["away"],
