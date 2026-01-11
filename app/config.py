@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     NARRATIVE_LLM_MAX_TOKENS: int = 700
     NARRATIVE_LLM_TIMEOUT_SECONDS: int = 60
     NARRATIVE_LLM_POLL_INTERVAL_SECONDS: float = 1.5
-    NARRATIVE_LLM_TEMPERATURE: float = 0.3
+    NARRATIVE_LLM_TEMPERATURE: float = 0.15
     NARRATIVE_LLM_TOP_P: float = 0.9
 
     class Config:
