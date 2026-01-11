@@ -173,8 +173,22 @@ class FastPathService:
         - Have a prediction
         - Don't have a successful LLM narrative yet
         """
-        # Get matches that finished recently
-        # Use finished_at if available (accurate), otherwise fall back to date (kickoff) for bootstrap
+        # Subquery: match IDs that already have successful LLM narrative
+        matches_with_narrative = (
+            select(PredictionOutcome.match_id)
+            .join(PostMatchAudit, PredictionOutcome.id == PostMatchAudit.outcome_id)
+            .where(PostMatchAudit.llm_narrative_status == "ok")
+            .scalar_subquery()
+        )
+
+        # Subquery: match IDs that have predictions
+        matches_with_predictions = (
+            select(Prediction.match_id)
+            .distinct()
+            .scalar_subquery()
+        )
+
+        # Main query: finished matches that have predictions but no successful narrative
         result = await self.session.execute(
             select(Match)
             .options(selectinload(Match.predictions))
@@ -183,6 +197,8 @@ class FastPathService:
             .where(
                 and_(
                     Match.status.in_(["FT", "AET", "PEN"]),
+                    Match.id.in_(matches_with_predictions),
+                    ~Match.id.in_(matches_with_narrative),
                     or_(
                         # Primary: use finished_at timestamp (accurate)
                         and_(
@@ -204,33 +220,12 @@ class FastPathService:
         )
         matches = result.scalars().all()
 
-        # Filter to matches with predictions and without successful narrative
-        candidates = []
+        # Set finished_at for matches that don't have it (bootstrap)
         for match in matches:
-            if not match.predictions:
-                continue
-
-            # Check if already has successful narrative via outcome/audit
-            outcome_result = await self.session.execute(
-                select(PredictionOutcome)
-                .join(PostMatchAudit, PredictionOutcome.id == PostMatchAudit.outcome_id)
-                .where(
-                    and_(
-                        PredictionOutcome.match_id == match.id,
-                        PostMatchAudit.llm_narrative_status == "ok",
-                    )
-                )
-            )
-            if outcome_result.scalar_one_or_none():
-                continue  # Already has narrative
-
-            # Set finished_at if not set
             if not match.finished_at:
                 match.finished_at = now
 
-            candidates.append(match)
-
-        return candidates
+        return matches
 
     async def _refresh_stats_batch(self, matches: list[Match], now: datetime) -> int:
         """Refresh stats for matches that need it. Returns count of refreshed."""
