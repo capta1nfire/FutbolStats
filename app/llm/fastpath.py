@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
-from app.models import Match, Prediction, PostMatchAudit, PredictionOutcome
+from app.models import Match, Prediction, PostMatchAudit, PredictionOutcome, Team
 from app.llm.narrative_generator import (
     NarrativeGenerator,
     NarrativeResult,
@@ -127,11 +127,13 @@ class FastPathService:
             return metrics
 
         # 2. Refresh stats for matches that need it
-        # NOTE: Disabled due to greenlet/async context issue with HTTP calls
-        # Stats should already be populated by the regular backfill job
-        # TODO: Fix async context issue to re-enable stats refresh
-        # refreshed = await self._refresh_stats_batch(candidates, now)
-        refreshed = 0
+        logger.info(f"[FASTPATH] Refreshing stats for candidates without stats")
+        try:
+            refreshed = await self._refresh_stats_batch(candidates, now)
+            logger.info(f"[FASTPATH] Refreshed stats for {refreshed} matches")
+        except Exception as stats_err:
+            logger.error(f"[FASTPATH] Stats refresh failed: {stats_err}", exc_info=True)
+            refreshed = 0
         metrics["refreshed"] = refreshed
 
         # 3. Check which matches are now ready (stats gating passed)
@@ -352,8 +354,28 @@ class FastPathService:
         enqueued = 0
         generator = NarrativeGenerator()
 
+        # Pre-load team names to avoid lazy loading issues
+        team_ids = set()
+        for match in matches[:self.settings.FASTPATH_MAX_CONCURRENT_JOBS]:
+            if match.home_team_id:
+                team_ids.add(match.home_team_id)
+            if match.away_team_id:
+                team_ids.add(match.away_team_id)
+
+        team_names = {}
+        if team_ids:
+            result = await self.session.execute(
+                select(Team.id, Team.name).where(Team.id.in_(team_ids))
+            )
+            for team_id, team_name in result.all():
+                team_names[team_id] = team_name
+
         try:
             for match in matches[:self.settings.FASTPATH_MAX_CONCURRENT_JOBS]:
+                # Get team names from pre-loaded cache
+                home_team_name = team_names.get(match.home_team_id, "Local")
+                away_team_name = team_names.get(match.away_team_id, "Visitante")
+
                 # Get or create outcome/audit
                 outcome, audit = await self._get_or_create_audit(match)
                 if not outcome or not audit:
@@ -369,7 +391,7 @@ class FastPathService:
                     continue
 
                 # Build match data for prompt
-                match_data = self._build_match_data(match, prediction)
+                match_data = self._build_match_data(match, prediction, home_team_name, away_team_name)
 
                 # Check gating
                 passes, reason = check_stats_gating(match_data)
@@ -406,78 +428,91 @@ class FastPathService:
         return enqueued
 
     async def _get_or_create_audit(self, match: Match) -> tuple:
-        """Get or create PredictionOutcome and PostMatchAudit for a match."""
-        # Check for existing outcome
+        """Get or create PredictionOutcome and PostMatchAudit for a match.
+
+        Uses explicit queries to avoid lazy loading / greenlet issues.
+        """
+        # Query outcome and audit with explicit JOIN (no lazy loading)
         result = await self.session.execute(
-            select(PredictionOutcome)
-            .options(selectinload(PredictionOutcome.audit))
+            select(PredictionOutcome, PostMatchAudit)
+            .outerjoin(PostMatchAudit, PredictionOutcome.id == PostMatchAudit.outcome_id)
             .where(PredictionOutcome.match_id == match.id)
         )
-        outcome = result.scalar_one_or_none()
+        row = result.first()
 
-        if outcome and outcome.audit:
-            return outcome, outcome.audit
+        if row:
+            outcome, audit = row
+            if outcome and audit:
+                return outcome, audit
+            # Have outcome but no audit - will create audit below
+            if outcome:
+                audit = PostMatchAudit(
+                    outcome_id=outcome.id,
+                    deviation_type="pending_fastpath",
+                    deviation_score=0.0,
+                    xg_result_aligned=False,
+                    xg_prediction_aligned=False,
+                )
+                self.session.add(audit)
+                await self.session.flush()
+                return outcome, audit
 
-        # Need to create - get prediction first
+        # No outcome exists - need to create both
         prediction = await self._get_best_prediction(match.id)
         if not prediction:
             return None, None
 
-        # Create outcome if needed
-        if not outcome:
-            # Determine actual result
-            home_goals = match.home_goals or 0
-            away_goals = match.away_goals or 0
-            if home_goals > away_goals:
-                actual = "home"
-            elif away_goals > home_goals:
-                actual = "away"
-            else:
-                actual = "draw"
+        # Determine actual result
+        home_goals = match.home_goals or 0
+        away_goals = match.away_goals or 0
+        if home_goals > away_goals:
+            actual = "home"
+        elif away_goals > home_goals:
+            actual = "away"
+        else:
+            actual = "draw"
 
-            # Determine predicted result
-            probs = {
-                "home": prediction.home_prob,
-                "draw": prediction.draw_prob,
-                "away": prediction.away_prob,
-            }
-            predicted = max(probs, key=probs.get)
-            confidence = probs[predicted]
+        # Determine predicted result
+        probs = {
+            "home": prediction.home_prob,
+            "draw": prediction.draw_prob,
+            "away": prediction.away_prob,
+        }
+        predicted = max(probs, key=probs.get)
+        confidence = probs[predicted]
 
-            # Determine confidence tier
-            if confidence >= 0.50:
-                tier = "gold"
-            elif confidence >= 0.40:
-                tier = "silver"
-            else:
-                tier = "copper"
+        # Determine confidence tier
+        if confidence >= 0.50:
+            tier = "gold"
+        elif confidence >= 0.40:
+            tier = "silver"
+        else:
+            tier = "copper"
 
-            outcome = PredictionOutcome(
-                match_id=match.id,
-                prediction_id=prediction.id,
-                predicted_result=predicted,
-                actual_result=actual,
-                actual_home_goals=home_goals,
-                actual_away_goals=away_goals,
-                confidence=confidence,
-                confidence_tier=tier,
-                prediction_correct=(predicted == actual),
-            )
-            self.session.add(outcome)
-            await self.session.flush()
+        outcome = PredictionOutcome(
+            match_id=match.id,
+            prediction_id=prediction.id,
+            predicted_result=predicted,
+            actual_result=actual,
+            actual_home_goals=home_goals,
+            actual_away_goals=away_goals,
+            confidence=confidence,
+            confidence_tier=tier,
+            prediction_correct=(predicted == actual),
+        )
+        self.session.add(outcome)
+        await self.session.flush()
 
-        # Create audit if needed
-        audit = outcome.audit if outcome.audit else None
-        if not audit:
-            audit = PostMatchAudit(
-                outcome_id=outcome.id,
-                deviation_type="pending_fastpath",
-                deviation_score=0.0,
-                xg_result_aligned=False,
-                xg_prediction_aligned=False,
-            )
-            self.session.add(audit)
-            await self.session.flush()
+        # Create audit
+        audit = PostMatchAudit(
+            outcome_id=outcome.id,
+            deviation_type="pending_fastpath",
+            deviation_score=0.0,
+            xg_result_aligned=False,
+            xg_prediction_aligned=False,
+        )
+        self.session.add(audit)
+        await self.session.flush()
 
         return outcome, audit
 
@@ -508,27 +543,55 @@ class FastPathService:
         )
         return result.scalar_one_or_none()
 
-    def _build_match_data(self, match: Match, prediction: Prediction) -> dict:
-        """Build match_data dict for narrative prompt."""
+    def _build_match_data(
+        self,
+        match: Match,
+        prediction: Prediction,
+        home_team_name: str,
+        away_team_name: str,
+    ) -> dict:
+        """Build match_data dict for narrative prompt.
+
+        Team names passed explicitly to avoid lazy loading issues.
+        """
+        # Determine predicted result and if correct
+        probs = {
+            "home": prediction.home_prob,
+            "draw": prediction.draw_prob,
+            "away": prediction.away_prob,
+        }
+        predicted_result = max(probs, key=probs.get)
+        confidence = probs[predicted_result]
+
+        # Determine actual result
+        home_goals = match.home_goals or 0
+        away_goals = match.away_goals or 0
+        if home_goals > away_goals:
+            actual_result = "home"
+        elif away_goals > home_goals:
+            actual_result = "away"
+        else:
+            actual_result = "draw"
+
         return {
             "match_id": match.id,
-            "home_team": match.home_team.name if match.home_team else "Local",
-            "away_team": match.away_team.name if match.away_team else "Visitante",
+            "home_team": home_team_name,
+            "away_team": away_team_name,
             "league_name": "",  # Could add league lookup if needed
             "date": match.date.isoformat() if match.date else "",
-            "home_goals": match.home_goals or 0,
-            "away_goals": match.away_goals or 0,
+            "home_goals": home_goals,
+            "away_goals": away_goals,
             "stats": match.stats or {},
             "events": [],  # Could fetch events if needed
             "prediction": {
-                "predicted_result": max(
-                    [("home", prediction.home_prob), ("draw", prediction.draw_prob), ("away", prediction.away_prob)],
-                    key=lambda x: x[1]
-                )[0].upper(),
-                "confidence": max(prediction.home_prob, prediction.draw_prob, prediction.away_prob),
-                "home_prob": prediction.home_prob,
-                "draw_prob": prediction.draw_prob,
-                "away_prob": prediction.away_prob,
+                "probabilities": {
+                    "home": prediction.home_prob,
+                    "draw": prediction.draw_prob,
+                    "away": prediction.away_prob,
+                },
+                "predicted_result": predicted_result,
+                "confidence": confidence,
+                "correct": predicted_result == actual_result,
             },
             "market_odds": {
                 "home": match.odds_home,
