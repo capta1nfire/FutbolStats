@@ -3791,7 +3791,7 @@ async def fastpath_debug_endpoint(
     session: AsyncSession = Depends(get_async_session),
 ):
     """Debug endpoint to see skipped audits and their reasons."""
-    if token != OPS_DASHBOARD_TOKEN:
+    if token != settings.DASHBOARD_TOKEN:
         raise HTTPException(status_code=401, detail="Invalid token")
 
     try:
@@ -3860,7 +3860,7 @@ async def match_data_debug_endpoint(
     session: AsyncSession = Depends(get_async_session),
 ):
     """Debug endpoint to see exact match_data sent to LLM."""
-    if token != OPS_DASHBOARD_TOKEN:
+    if token != settings.DASHBOARD_TOKEN:
         raise HTTPException(status_code=401, detail="Invalid token")
 
     try:
