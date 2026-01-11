@@ -432,7 +432,7 @@ class XGBoostEngine:
                     "away": odds_away,
                 }
                 value_bets = self._find_value_bets(
-                    probas[i],
+                    probas[idx],
                     [odds_home, odds_draw, odds_away],
                 )
                 pred["value_bets"] = value_bets
