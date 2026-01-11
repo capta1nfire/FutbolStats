@@ -4075,6 +4075,83 @@ async def stats_rca_endpoint(
         return result
 
 
+@app.get("/dashboard/ops/fetch_events.json")
+async def fetch_events_endpoint(
+    token: str = Query(...),
+    match_id: int = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Fetch events from API-Football for a specific match and persist.
+    Used for testing/verification.
+    """
+    if token != settings.DASHBOARD_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    from app.etl.api_football import APIFootballProvider
+    from app.llm.fastpath import FastPathService
+
+    result = {
+        "match_id": match_id,
+        "events_before": None,
+        "events_after": None,
+        "api_response_count": 0,
+        "diagnosis": None,
+    }
+
+    try:
+        match = await session.get(Match, match_id)
+        if not match:
+            return {"error": f"Match {match_id} not found"}
+
+        result["events_before"] = match.events
+        result["external_id"] = match.external_id
+
+        if not match.external_id:
+            result["diagnosis"] = "NO_EXTERNAL_ID"
+            return result
+
+        # Fetch events from API-Football
+        provider = APIFootballProvider()
+        try:
+            events_data = await provider._rate_limited_request(
+                "fixtures/events",
+                {"fixture": match.external_id}
+            )
+            await provider.close()
+        except Exception as api_err:
+            result["diagnosis"] = f"API_CALL_FAILED: {api_err}"
+            return result
+
+        events_response = events_data.get("response", [])
+        result["api_response_count"] = len(events_response)
+
+        if not events_response:
+            result["diagnosis"] = "API_RESPONSE_EMPTY"
+            return result
+
+        # Parse events using FastPathService method
+        fastpath = FastPathService(session)
+        parsed_events = fastpath._parse_events(events_response)
+        result["parsed_events_count"] = len(parsed_events)
+        result["parsed_events"] = parsed_events
+
+        # Persist
+        match.events = parsed_events
+        await session.commit()
+        await session.refresh(match)
+
+        result["events_after"] = match.events
+        result["diagnosis"] = "SUCCESS" if match.events else "PERSISTENCE_FAILED"
+
+        return result
+
+    except Exception as e:
+        logger.error(f"fetch_events error: {e}", exc_info=True)
+        result["diagnosis"] = f"EXCEPTION: {str(e)}"
+        return result
+
+
 async def _load_ops_data() -> dict:
     """
     Ops dashboard: read-only aggregated metrics from DB + in-process state.
