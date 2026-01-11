@@ -348,7 +348,10 @@ struct MatchDetailView: View {
                     LLMNarrativeUnavailableView(status: viewModel.llmNarrativeStatus)
                 }
 
-                if let insight = viewModel.primaryInsight {
+                // Only show insight footer if no narrative and match not finished
+                if let insight = viewModel.primaryInsight,
+                   viewModel.llmNarrative == nil,
+                   !prediction.isFinished {
                     insightFooter(insight)
                 }
             }

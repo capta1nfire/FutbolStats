@@ -77,7 +77,7 @@ class RunPodClient:
 
     async def run_job(self, prompt: str) -> str:
         """
-        Submit a job to RunPod.
+        Submit a job to RunPod with retries for transient errors.
 
         Args:
             prompt: The prompt to send to the LLM.
@@ -100,19 +100,51 @@ class RunPodClient:
         }
         logger.debug(f"RunPod payload: max_tokens={self.max_tokens}")
 
-        try:
-            response = await client.post(url, json=payload)
-            response.raise_for_status()
-            data = response.json()
-            job_id = data.get("id")
-            if not job_id:
-                raise RunPodError(f"No job ID in response: {data}")
-            logger.info(f"RunPod job submitted: {job_id}")
-            return job_id
-        except httpx.HTTPStatusError as e:
-            raise RunPodError(f"RunPod API error: {e.response.status_code} - {e.response.text}")
-        except Exception as e:
-            raise RunPodError(f"RunPod request failed: {e}")
+        # Retry with exponential backoff for transient errors
+        max_retries = 2
+        backoff_delays = [2, 6]  # seconds
+        last_error = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                data = response.json()
+                job_id = data.get("id")
+                if not job_id:
+                    raise RunPodError(f"No job ID in response: {data}")
+                logger.info(f"RunPod job submitted: {job_id}")
+                return job_id
+            except httpx.HTTPStatusError as e:
+                status_code = e.response.status_code
+                # Retry on 5xx server errors
+                if status_code >= 500 and attempt < max_retries:
+                    delay = backoff_delays[attempt]
+                    logger.warning(f"RunPod server error {status_code}, retrying in {delay}s (attempt {attempt + 1}/{max_retries + 1})")
+                    await asyncio.sleep(delay)
+                    last_error = e
+                    continue
+                raise RunPodError(f"RunPod API error: {status_code} - {e.response.text}")
+            except httpx.TimeoutException as e:
+                # Retry on timeouts
+                if attempt < max_retries:
+                    delay = backoff_delays[attempt]
+                    logger.warning(f"RunPod timeout, retrying in {delay}s (attempt {attempt + 1}/{max_retries + 1})")
+                    await asyncio.sleep(delay)
+                    last_error = e
+                    continue
+                raise RunPodError(f"RunPod request timed out after {max_retries + 1} attempts")
+            except Exception as e:
+                # Retry on connection errors
+                if attempt < max_retries:
+                    delay = backoff_delays[attempt]
+                    logger.warning(f"RunPod error: {e}, retrying in {delay}s (attempt {attempt + 1}/{max_retries + 1})")
+                    await asyncio.sleep(delay)
+                    last_error = e
+                    continue
+                raise RunPodError(f"RunPod request failed: {e}")
+
+        raise RunPodError(f"RunPod request failed after {max_retries + 1} attempts: {last_error}")
 
     async def poll_job(self, job_id: str) -> dict:
         """
@@ -156,11 +188,24 @@ class RunPodClient:
                     await asyncio.sleep(self.poll_interval)
 
             except httpx.HTTPStatusError as e:
-                raise RunPodError(f"Poll failed: {e.response.status_code}")
+                status_code = e.response.status_code
+                # Transient 5xx errors - continue polling (don't mark as error)
+                if status_code >= 500:
+                    logger.warning(f"Poll transient error {status_code} for job {job_id}, will retry")
+                    await asyncio.sleep(self.poll_interval)
+                    continue
+                # 4xx errors are permanent failures
+                raise RunPodError(f"Poll failed: {status_code} - {e.response.text}")
             except RunPodError:
                 raise
+            except httpx.TimeoutException:
+                # Transient timeout - continue polling
+                logger.warning(f"Poll timeout for job {job_id}, will retry")
+                await asyncio.sleep(self.poll_interval)
+                continue
             except Exception as e:
-                logger.warning(f"Poll error (will retry): {e}")
+                # Other transient errors (connection, etc) - continue polling
+                logger.warning(f"Poll error for job {job_id} (will retry): {e}")
                 await asyncio.sleep(self.poll_interval)
 
     def extract_text(self, completed_json: dict) -> str:

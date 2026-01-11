@@ -3608,17 +3608,17 @@ async def _calculate_fastpath_health(session) -> dict:
 
     Returns status: ok/warn/red based on tick recency and error rates.
     """
-    from app.scheduler import get_fastpath_metrics
     from app.config import get_settings
 
     settings = get_settings()
     now = datetime.utcnow()
 
-    # Try to get last tick from DB first (survives restarts), fallback to in-memory
+    # Read ticks from DB (canonical source - survives restarts/multi-process)
     last_tick_at = None
     last_tick_result = {}
     ticks_total = 0
     ticks_with_activity = 0
+    db_unavailable = False
 
     try:
         # Get most recent tick from DB
@@ -3651,13 +3651,9 @@ async def _calculate_fastpath_health(session) -> dict:
             ticks_total = counts[0] or 0
             ticks_with_activity = counts[1] or 0
     except Exception as db_err:
-        # Table may not exist, fallback to in-memory
-        logger.debug(f"Could not read fastpath_ticks from DB: {db_err}")
-        metrics = get_fastpath_metrics()
-        last_tick_at = metrics.get("last_tick_at")
-        last_tick_result = metrics.get("last_tick_result") or {}
-        ticks_total = metrics.get("ticks_total", 0)
-        ticks_with_activity = metrics.get("ticks_with_activity", 0)
+        # DB unavailable - mark as red status (don't use in-memory fallback in prod)
+        logger.warning(f"fastpath_ticks DB unavailable: {db_err}")
+        db_unavailable = True
 
     # Check if fast-path is enabled
     enabled = os.environ.get("FASTPATH_ENABLED", str(settings.FASTPATH_ENABLED)).lower()
@@ -3704,13 +3700,14 @@ async def _calculate_fastpath_health(session) -> dict:
         for row in res.fetchall():
             error_codes_60m[row[0]] = int(row[1])
 
-        # Pending ready: FT matches in last 90 min with stats_ready but no successful narrative
+        # Pending ready: FT matches with stats_ready but no successful narrative
+        # Use COALESCE(finished_at, date) to align with fast-path selector logic
         res = await session.execute(
             text("""
                 SELECT COUNT(*)
                 FROM matches m
                 WHERE m.status IN ('FT', 'AET', 'PEN')
-                  AND m.date > NOW() - INTERVAL '90 minutes'
+                  AND COALESCE(m.finished_at, m.date) > NOW() - INTERVAL '180 minutes'
                   AND m.stats_ready_at IS NOT NULL
                   AND NOT EXISTS (
                       SELECT 1 FROM prediction_outcomes po
@@ -3737,7 +3734,10 @@ async def _calculate_fastpath_health(session) -> dict:
     status = "ok"
     status_reason = None
 
-    if not is_enabled:
+    if db_unavailable:
+        status = "red"
+        status_reason = "fastpath_ticks table unavailable"
+    elif not is_enabled:
         status = "disabled"
         status_reason = "FASTPATH_ENABLED=false"
     elif minutes_since_tick is None:

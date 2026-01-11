@@ -1404,11 +1404,18 @@ async def daily_save_predictions():
             # Make predictions
             predictions = engine.predict(df)
 
-            # Save to database using generic upsert
+            # Save to database using generic upsert (only NS matches)
             saved = 0
+            skipped = 0
             for pred in predictions:
                 match_id = pred.get("match_id")
                 if not match_id:
+                    continue
+
+                # Only save predictions for NS (not started) matches
+                match_status = pred.get("status", "")
+                if match_status != "NS":
+                    skipped += 1
                     continue
 
                 probs = pred["probabilities"]
@@ -1431,7 +1438,7 @@ async def daily_save_predictions():
                     logger.warning(f"Error saving prediction: {e}")
 
             await session.commit()
-            logger.info(f"Daily prediction save complete: {saved} predictions saved")
+            logger.info(f"Daily prediction save complete: {saved} saved, {skipped} skipped (non-NS)")
 
     except Exception as e:
         logger.error(f"Daily prediction save failed: {e}")

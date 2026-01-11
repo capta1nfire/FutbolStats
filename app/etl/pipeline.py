@@ -95,6 +95,16 @@ class ETLPipeline:
             existing_match.home_goals = match_data.home_goals
             existing_match.away_goals = match_data.away_goals
             existing_match.stats = match_data.stats
+
+            # Set finished_at when status transitions to FT/AET/PEN (canonical)
+            old_status = existing_match.status
+            new_status = match_data.status
+            finished_statuses = ("FT", "AET", "PEN")
+            if new_status in finished_statuses and old_status not in finished_statuses:
+                if existing_match.finished_at is None:
+                    existing_match.finished_at = datetime.utcnow()
+                    logger.info(f"Match {existing_match.id} finished: {old_status} -> {new_status}")
+
             existing_match.status = match_data.status
 
             # Check if odds have changed and save to history
