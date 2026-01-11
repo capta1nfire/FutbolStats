@@ -5597,7 +5597,8 @@ async def ops_daily_counts(
                 pma.llm_narrative_worker_id,
                 pma.llm_narrative_model,
                 pma.llm_narrative_generated_at,
-                CASE WHEN pma.llm_narrative_json IS NULL THEN true ELSE false END as json_is_null
+                CASE WHEN pma.llm_narrative_json IS NULL THEN true ELSE false END as json_is_null,
+                SUBSTRING(pma.llm_narrative_json::text, 1, 500) as json_preview
             FROM post_match_audits pma
             JOIN prediction_outcomes po ON pma.outcome_id = po.id
             JOIN matches m ON po.match_id = m.id
@@ -5620,6 +5621,7 @@ async def ops_daily_counts(
             "model": row[8],
             "generated_at": str(row[9]) if row[9] else None,
             "json_is_null": row[10],
+            "json_preview": row[11],
         })
 
     return {
