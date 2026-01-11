@@ -622,6 +622,33 @@ class FastPathService:
             )
         )
         pending_audits = result.scalars().all()
+        logger.info(f"[FASTPATH] Found {len(pending_audits)} audits to poll for completions")
+
+        # Debug: check for orphaned audits (in_queue but no request_id)
+        orphan_result = await self.session.execute(
+            select(PostMatchAudit.id, PostMatchAudit.llm_narrative_status)
+            .where(
+                and_(
+                    PostMatchAudit.llm_narrative_status.in_(["in_queue", "running"]),
+                    or_(
+                        PostMatchAudit.llm_narrative_request_id.is_(None),
+                        PostMatchAudit.llm_narrative_request_id == "",
+                    ),
+                )
+            )
+        )
+        orphans = orphan_result.all()
+        if orphans:
+            orphan_ids = [o[0] for o in orphans]
+            logger.warning(f"[FASTPATH] Found {len(orphans)} orphaned audits (in_queue/running but no request_id): {orphan_ids}")
+            # Reset orphaned audits so they can be re-enqueued
+            for orphan_id in orphan_ids:
+                orphan_audit = await self.session.get(PostMatchAudit, orphan_id)
+                if orphan_audit:
+                    orphan_audit.llm_narrative_status = None
+                    orphan_audit.llm_narrative_error_code = None
+                    orphan_audit.llm_narrative_error_detail = None
+                    logger.info(f"[FASTPATH] Reset orphaned audit {orphan_id} for re-enqueue")
 
         for audit in pending_audits:
             try:
