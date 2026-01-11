@@ -5585,7 +5585,7 @@ async def ops_daily_counts(
         """),
         {"d": target_date},
     )
-    breakdown = {row[0] or "null": row[1] for row in llm_breakdown.fetchall()}
+    breakdown = {row[0] or "null": row[1] for row in llm_breakdown.all()}
 
     return {
         "date": target_date,
