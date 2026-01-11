@@ -5584,6 +5584,8 @@ async def ops_daily_counts(
     breakdown = {row[0] or "null": row[1] for row in llm_breakdown.all()}
 
     # D) LLM Error Details (for debugging)
+    # Note: New columns (error_code, error_detail, request_id, attempts) are optional
+    # and will be NULL until migration is run
     llm_error_details = await session.execute(
         text(f"""
             SELECT
@@ -5598,11 +5600,7 @@ async def ops_daily_counts(
                 pma.llm_narrative_model,
                 pma.llm_narrative_generated_at,
                 CASE WHEN pma.llm_narrative_json IS NULL THEN true ELSE false END as json_is_null,
-                SUBSTRING(pma.llm_narrative_json::text, 1, 500) as json_preview,
-                pma.llm_narrative_error_code,
-                pma.llm_narrative_error_detail,
-                pma.llm_narrative_request_id,
-                pma.llm_narrative_attempts
+                SUBSTRING(pma.llm_narrative_json::text, 1, 500) as json_preview
             FROM post_match_audits pma
             JOIN prediction_outcomes po ON pma.outcome_id = po.id
             JOIN matches m ON po.match_id = m.id
@@ -5626,10 +5624,6 @@ async def ops_daily_counts(
             "generated_at": str(row[9]) if row[9] else None,
             "json_is_null": row[10],
             "json_preview": row[11],
-            "error_code": row[12],
-            "error_detail": row[13],
-            "request_id": row[14],
-            "attempts": row[15],
         })
 
     return {
