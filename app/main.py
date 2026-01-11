@@ -3362,6 +3362,25 @@ async def pit_trigger_evaluation(request: Request):
         return {"status": "error", "message": str(e)}
 
 
+@app.post("/dashboard/predictions/trigger")
+async def predictions_trigger_save(request: Request):
+    """
+    Manually trigger daily_save_predictions (for recovery).
+    Protected by dashboard token.
+    Use when predictions_health is RED/WARN.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from app.scheduler import daily_save_predictions
+
+    try:
+        await daily_save_predictions()
+        return {"status": "ok", "message": "Predictions save triggered"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 # =============================================================================
 # OPS DASHBOARD (DB-backed, cached)
 # =============================================================================
