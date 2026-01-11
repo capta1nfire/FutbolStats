@@ -309,6 +309,25 @@ class PostMatchAudit(SQLModel, table=True):
         max_length=100,
         description="RunPod worker ID"
     )
+    llm_narrative_error_code: Optional[str] = Field(
+        default=None,
+        max_length=50,
+        description="Error code: runpod_http_error, runpod_timeout, schema_invalid, json_parse_error, gating_skipped, empty_output, unknown"
+    )
+    llm_narrative_error_detail: Optional[str] = Field(
+        default=None,
+        max_length=500,
+        description="Error detail/exception message (truncated)"
+    )
+    llm_narrative_request_id: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="RunPod job ID for correlation"
+    )
+    llm_narrative_attempts: Optional[int] = Field(
+        default=None,
+        description="Number of generation attempts (1 or 2)"
+    )
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
 

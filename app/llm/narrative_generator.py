@@ -31,7 +31,7 @@ REQUIRED_STATS_KEYS = {"ball_possession", "total_shots", "shots_on_goal"}
 class NarrativeResult:
     """Result from narrative generation."""
 
-    status: str  # ok, error, disabled
+    status: str  # ok, ok_retry, error, disabled, skipped
     narrative_json: Optional[dict] = None
     model: str = "qwen-vllm"
     delay_ms: int = 0
@@ -40,6 +40,9 @@ class NarrativeResult:
     tokens_out: int = 0
     worker_id: str = ""
     error: Optional[str] = None
+    error_code: Optional[str] = None  # runpod_http_error, runpod_timeout, schema_invalid, json_parse_error, gating_skipped, empty_output, unknown
+    request_id: str = ""  # RunPod job ID
+    attempts: int = 1  # Number of attempts (1 or 2)
 
 
 def _determine_outcome(home_goals: int, away_goals: int) -> str:
@@ -404,10 +407,10 @@ class NarrativeGenerator:
             NarrativeResult with status and data.
         """
         if not self.enabled:
-            return NarrativeResult(status="disabled")
+            return NarrativeResult(status="disabled", error_code="disabled")
 
         if not self.settings.RUNPOD_API_KEY:
-            return NarrativeResult(status="error", error="RUNPOD_API_KEY not configured")
+            return NarrativeResult(status="error", error="RUNPOD_API_KEY not configured", error_code="runpod_auth")
 
         match_id = match_data.get("match_id", 0)
 
@@ -415,7 +418,7 @@ class NarrativeGenerator:
         passes_gating, gating_reason = check_stats_gating(match_data)
         if not passes_gating:
             logger.info(f"[LLM_SKIP] match_id={match_id}: {gating_reason}")
-            return NarrativeResult(status="skipped", error=gating_reason)
+            return NarrativeResult(status="skipped", error=gating_reason, error_code="gating_skipped")
 
         # Extract bet_won for logging
         prediction = match_data.get("prediction", {})
@@ -457,6 +460,8 @@ class NarrativeGenerator:
                     tokens_in=result.tokens_in,
                     tokens_out=result.tokens_out,
                     worker_id=result.worker_id,
+                    request_id=result.job_id,
+                    attempts=1,
                 )
 
             # Retry with stricter prompt
@@ -500,6 +505,8 @@ IMPORTANTE: Responde ÚNICAMENTE con JSON válido. Nada más."""
                     tokens_in=result2.tokens_in,
                     tokens_out=result2.tokens_out,
                     worker_id=result2.worker_id,
+                    request_id=result2.job_id,
+                    attempts=2,
                 )
 
             # Both attempts failed
@@ -519,14 +526,28 @@ IMPORTANTE: Responde ÚNICAMENTE con JSON válido. Nada más."""
             return NarrativeResult(
                 status="error",
                 error=error_msg,
+                error_code="schema_invalid",
                 delay_ms=result2.delay_ms,
                 exec_ms=result2.exec_ms,
                 tokens_in=result2.tokens_in,
                 tokens_out=result2.tokens_out,
                 worker_id=result2.worker_id,
+                request_id=result2.job_id,
+                attempts=2,
             )
 
         except RunPodError as e:
+            error_str = str(e)
+            # Classify RunPod errors
+            if "timed out" in error_str.lower():
+                error_code = "runpod_timeout"
+            elif "401" in error_str or "403" in error_str or "auth" in error_str.lower():
+                error_code = "runpod_auth"
+            elif "Missing output" in error_str or "empty" in error_str.lower():
+                error_code = "empty_output"
+            else:
+                error_code = "runpod_http_error"
+
             logger.error(f"RunPod error for match {match_id}: {e}")
             log_llm_evaluation(
                 match_id=match_id,
@@ -537,10 +558,11 @@ IMPORTANTE: Responde ÚNICAMENTE con JSON válido. Nada más."""
                 exec_ms=0,
                 schema_valid=False,
                 status="runpod_error",
-                error=str(e),
+                error=error_str,
             )
-            return NarrativeResult(status="error", error=str(e))
+            return NarrativeResult(status="error", error=error_str[:500], error_code=error_code)
         except Exception as e:
+            error_str = str(e)
             logger.error(f"Unexpected error for match {match_id}: {e}")
             log_llm_evaluation(
                 match_id=match_id,
@@ -551,6 +573,6 @@ IMPORTANTE: Responde ÚNICAMENTE con JSON válido. Nada más."""
                 exec_ms=0,
                 schema_valid=False,
                 status="unexpected_error",
-                error=str(e),
+                error=error_str,
             )
-            return NarrativeResult(status="error", error=str(e))
+            return NarrativeResult(status="error", error=error_str[:500], error_code="unknown")

@@ -439,10 +439,16 @@ class PostMatchAuditService:
                 audit.llm_narrative_tokens_in = llm_result.tokens_in
                 audit.llm_narrative_tokens_out = llm_result.tokens_out
                 audit.llm_narrative_worker_id = llm_result.worker_id
-                logger.info(f"LLM narrative for match {match.id}: {llm_result.status}")
+                audit.llm_narrative_error_code = llm_result.error_code
+                audit.llm_narrative_error_detail = llm_result.error[:500] if llm_result.error else None
+                audit.llm_narrative_request_id = llm_result.request_id or None
+                audit.llm_narrative_attempts = llm_result.attempts
+                logger.info(f"LLM narrative for match {match.id}: {llm_result.status} (error_code={llm_result.error_code})")
             except Exception as e:
                 logger.warning(f"LLM narrative failed for match {match.id}: {e}")
                 audit.llm_narrative_status = "error"
+                audit.llm_narrative_error_code = "exception"
+                audit.llm_narrative_error_detail = str(e)[:500]
 
         self.session.add(audit)
         logger.info(
