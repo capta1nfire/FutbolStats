@@ -3599,6 +3599,154 @@ async def _calculate_predictions_health(session) -> dict:
     }
 
 
+async def _calculate_fastpath_health(session) -> dict:
+    """
+    Calculate fast-path LLM narrative health metrics.
+
+    Monitors the fast-path job that generates narratives within minutes
+    of match completion instead of waiting for daily audit.
+
+    Returns status: ok/warn/red based on tick recency and error rates.
+    """
+    from app.scheduler import get_fastpath_metrics
+    from app.config import get_settings
+
+    settings = get_settings()
+    now = datetime.utcnow()
+
+    # Get in-memory metrics from scheduler
+    metrics = get_fastpath_metrics()
+    last_tick_at = metrics.get("last_tick_at")
+    last_tick_result = metrics.get("last_tick_result") or {}
+    ticks_total = metrics.get("ticks_total", 0)
+    ticks_with_activity = metrics.get("ticks_with_activity", 0)
+
+    # Check if fast-path is enabled
+    enabled = os.environ.get("FASTPATH_ENABLED", str(settings.FASTPATH_ENABLED)).lower()
+    is_enabled = enabled not in ("false", "0", "no")
+
+    # Calculate minutes since last tick
+    minutes_since_tick = None
+    if last_tick_at:
+        delta = now - last_tick_at
+        minutes_since_tick = round(delta.total_seconds() / 60, 1)
+
+    # Query DB for LLM stats in last 60 minutes
+    llm_60m = {"ok": 0, "ok_retry": 0, "error": 0, "skipped": 0, "in_queue": 0, "running": 0}
+    error_codes_60m = {}
+    pending_ready = 0
+
+    try:
+        # LLM status breakdown (last 60 min)
+        res = await session.execute(
+            text("""
+                SELECT llm_narrative_status, COUNT(*) as cnt
+                FROM post_match_audits
+                WHERE created_at > NOW() - INTERVAL '60 minutes'
+                  AND llm_narrative_status IS NOT NULL
+                GROUP BY llm_narrative_status
+            """)
+        )
+        for row in res.fetchall():
+            status_key = row[0] or "unknown"
+            llm_60m[status_key] = int(row[1])
+
+        # Error codes breakdown (last 60 min)
+        res = await session.execute(
+            text("""
+                SELECT llm_narrative_error_code, COUNT(*) as cnt
+                FROM post_match_audits
+                WHERE created_at > NOW() - INTERVAL '60 minutes'
+                  AND llm_narrative_error_code IS NOT NULL
+                GROUP BY llm_narrative_error_code
+                ORDER BY cnt DESC
+                LIMIT 5
+            """)
+        )
+        for row in res.fetchall():
+            error_codes_60m[row[0]] = int(row[1])
+
+        # Pending ready: FT matches in last 90 min with stats_ready but no successful narrative
+        res = await session.execute(
+            text("""
+                SELECT COUNT(*)
+                FROM matches m
+                WHERE m.status IN ('FT', 'AET', 'PEN')
+                  AND m.date > NOW() - INTERVAL '90 minutes'
+                  AND m.stats_ready_at IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM prediction_outcomes po
+                      JOIN post_match_audits pma ON pma.outcome_id = po.id
+                      WHERE po.match_id = m.id
+                        AND pma.llm_narrative_status = 'ok'
+                  )
+            """)
+        )
+        pending_ready = int(res.scalar() or 0)
+
+    except Exception as e:
+        logger.warning(f"Error calculating fastpath_health DB metrics: {e}")
+
+    # Calculate total errors and success
+    total_ok = llm_60m.get("ok", 0) + llm_60m.get("ok_retry", 0)
+    total_errors = llm_60m.get("error", 0)
+    total_processed = total_ok + total_errors + llm_60m.get("skipped", 0)
+    error_rate_60m = 0.0
+    if total_processed > 0:
+        error_rate_60m = round((total_errors / total_processed) * 100, 1)
+
+    # Determine status
+    status = "ok"
+    status_reason = None
+
+    if not is_enabled:
+        status = "disabled"
+        status_reason = "FASTPATH_ENABLED=false"
+    elif minutes_since_tick is None:
+        status = "warn"
+        status_reason = "No tick recorded yet (job may not have run)"
+    elif minutes_since_tick > 10:
+        status = "red"
+        status_reason = f"No tick in {minutes_since_tick:.0f} min (>10 min threshold)"
+    elif error_rate_60m > 50:
+        status = "red"
+        status_reason = f"Error rate {error_rate_60m}% > 50% threshold"
+    elif error_rate_60m > 20:
+        status = "warn"
+        status_reason = f"Error rate {error_rate_60m}% > 20% threshold"
+    elif total_ok == 0 and llm_60m.get("skipped", 0) > 5:
+        status = "warn"
+        status_reason = f"0 ok, {llm_60m.get('skipped', 0)} skipped (gating issues?)"
+
+    return {
+        "status": status,
+        "status_reason": status_reason,
+        "enabled": is_enabled,
+        "last_tick_at": last_tick_at.isoformat() if last_tick_at else None,
+        "minutes_since_tick": minutes_since_tick,
+        "last_tick_result": last_tick_result,
+        "ticks_total": ticks_total,
+        "ticks_with_activity": ticks_with_activity,
+        "last_60m": {
+            "ok": llm_60m.get("ok", 0),
+            "ok_retry": llm_60m.get("ok_retry", 0),
+            "error": llm_60m.get("error", 0),
+            "skipped": llm_60m.get("skipped", 0),
+            "in_queue": llm_60m.get("in_queue", 0),
+            "running": llm_60m.get("running", 0),
+            "total_processed": total_processed,
+            "error_rate_pct": error_rate_60m,
+        },
+        "top_error_codes_60m": error_codes_60m,
+        "pending_ready": pending_ready,
+        "config": {
+            "interval_seconds": settings.FASTPATH_INTERVAL_SECONDS,
+            "lookback_minutes": settings.FASTPATH_LOOKBACK_MINUTES,
+            "max_concurrent_jobs": settings.FASTPATH_MAX_CONCURRENT_JOBS,
+        },
+    }
+
+
 async def _load_ops_data() -> dict:
     """
     Ops dashboard: read-only aggregated metrics from DB + in-process state.
@@ -3906,6 +4054,11 @@ async def _load_ops_data() -> dict:
         # =============================================================
         predictions_health = await _calculate_predictions_health(session)
 
+        # =============================================================
+        # FAST-PATH HEALTH (LLM narrative generation monitoring)
+        # =============================================================
+        fastpath_health = await _calculate_fastpath_health(session)
+
     # League names - comprehensive fallback for all known leagues
     # Includes EXTENDED_LEAGUES and other common leagues from API-Football
     LEAGUE_NAMES_FALLBACK: dict[int, str] = {
@@ -4002,6 +4155,7 @@ async def _load_ops_data() -> dict:
         },
         "progress": progress_metrics,
         "predictions_health": predictions_health,
+        "fastpath_health": fastpath_health,
     }
 
 
@@ -4167,6 +4321,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
     history = history or []
     progress = data.get("progress") or {}
     pred_health = data.get("predictions_health") or {}
+    fp_health = data.get("fastpath_health") or {}
 
     def budget_color() -> str:
         if budget_status in ("unavailable", "error"):
@@ -4190,6 +4345,18 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
             return "yellow"
         if status == "ok":
             return "green"
+        return "blue"
+
+    def fastpath_health_color() -> str:
+        status = fp_health.get("status", "unknown")
+        if status == "red":
+            return "red"
+        if status == "warn":
+            return "yellow"
+        if status == "ok":
+            return "green"
+        if status == "disabled":
+            return "blue"
         return "blue"
 
     # Tables HTML
@@ -4547,6 +4714,16 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
         Coverage 48h: {pred_health.get("coverage_last_48h_pct", 0)}%
         {f"<br/>Missing FT: {pred_health.get('ft_matches_last_48h_missing_prediction', 0)}/{pred_health.get('ft_matches_last_48h', 0)}" if pred_health.get("status") != "ok" else ""}
         {f"<br/><small style='color:var(--red)'>{pred_health.get('status_reason', '')}</small>" if pred_health.get("status_reason") else ""}
+      </div>
+    </div>
+    <div class="card {fastpath_health_color()}">
+      <div class="card-label">LLM Fast-Path<span class="info-icon">i<span class="tooltip">Genera narrativas LLM minutos despues de FT (no espera daily audit 08:00 UTC). ROJO: Sin tick en &gt;10 min o error_rate &gt;50%. AMARILLO: error_rate &gt;20% o muchos skipped. VERDE: OK. DISABLED: FASTPATH_ENABLED=false.</span></span></div>
+      <div class="card-value">{fp_health.get("status", "?").upper()}</div>
+      <div class="card-sub">
+        {f"Last tick: {fp_health.get('minutes_since_tick', '?'):.1f} min ago" if fp_health.get('minutes_since_tick') else "No tick yet"}
+        <br/>60m: {fp_health.get('last_60m', {{}}).get('ok', 0)} ok, {fp_health.get('last_60m', {{}}).get('error', 0)} err, {fp_health.get('last_60m', {{}}).get('skipped', 0)} skip
+        {f"<br/>Pending: {fp_health.get('pending_ready', 0)}" if fp_health.get('pending_ready', 0) > 0 else ""}
+        {f"<br/><small style='color:var(--red)'>{fp_health.get('status_reason', '')}</small>" if fp_health.get("status_reason") else ""}
       </div>
     </div>
   </div>

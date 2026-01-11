@@ -101,6 +101,20 @@ scheduler = AsyncIOScheduler()
 # Global state for live sync tracking
 _last_live_sync: Optional[datetime] = None
 
+# Global state for fast-path metrics (for ops dashboard)
+_fastpath_metrics: dict = {
+    "last_tick_at": None,
+    "last_tick_result": None,
+    "ticks_total": 0,
+    "ticks_with_activity": 0,
+}
+
+
+def get_fastpath_metrics() -> dict:
+    """Get current fast-path metrics for ops dashboard."""
+    return _fastpath_metrics.copy()
+
+
 # Global state: tracked leagues cache (to support "all leagues" without hardcoding)
 _tracked_leagues_cache: Optional[list[int]] = None
 _tracked_leagues_cache_at: Optional[datetime] = None
@@ -2794,6 +2808,7 @@ async def fast_postmatch_narratives() -> dict:
     - Respects stats gating (possession, shots required)
     - Idempotent: skips matches that already have narratives
     """
+    global _fastpath_metrics
     import os
     from app.config import get_settings
     from app.llm.fastpath import FastPathService
@@ -2803,6 +2818,8 @@ async def fast_postmatch_narratives() -> dict:
     # Check if job is enabled
     enabled = os.environ.get("FASTPATH_ENABLED", str(settings.FASTPATH_ENABLED)).lower()
     if enabled in ("false", "0", "no"):
+        _fastpath_metrics["last_tick_at"] = datetime.utcnow()
+        _fastpath_metrics["last_tick_result"] = {"status": "disabled"}
         return {"status": "disabled"}
 
     try:
@@ -2812,14 +2829,23 @@ async def fast_postmatch_narratives() -> dict:
                 result = await service.run_tick()
                 await session.commit()
 
+                # Update metrics
+                _fastpath_metrics["last_tick_at"] = datetime.utcnow()
+                _fastpath_metrics["last_tick_result"] = result
+                _fastpath_metrics["ticks_total"] += 1
+                if result.get("selected", 0) > 0 or result.get("enqueued", 0) > 0 or result.get("completed", 0) > 0:
+                    _fastpath_metrics["ticks_with_activity"] += 1
+
                 # Log summary if there was activity
-                if result.get("candidates", 0) > 0 or result.get("enqueued", 0) > 0:
+                if result.get("selected", 0) > 0 or result.get("enqueued", 0) > 0:
                     logger.info(
                         f"[FASTPATH] tick complete: "
-                        f"candidates={result.get('candidates', 0)}, "
-                        f"stats_refreshed={result.get('stats_refreshed', 0)}, "
+                        f"selected={result.get('selected', 0)}, "
+                        f"stats_refreshed={result.get('refreshed', 0)}, "
+                        f"ready={result.get('stats_ready', 0)}, "
                         f"enqueued={result.get('enqueued', 0)}, "
-                        f"completed={result.get('completed', 0)}"
+                        f"completed={result.get('completed', 0)}, "
+                        f"errors={result.get('errors', 0)}"
                     )
 
                 return result
@@ -2829,6 +2855,8 @@ async def fast_postmatch_narratives() -> dict:
 
     except Exception as e:
         logger.error(f"[FASTPATH] tick failed: {e}")
+        _fastpath_metrics["last_tick_at"] = datetime.utcnow()
+        _fastpath_metrics["last_tick_result"] = {"status": "error", "error": str(e)}
         return {"status": "error", "error": str(e)}
 
 
