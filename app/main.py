@@ -24,7 +24,7 @@ from app.features import FeatureEngineer
 from app.ml import XGBoostEngine
 from app.ml.persistence import load_active_model, persist_model_snapshot
 from app.models import Match, OddsHistory, PITReport, PostMatchAudit, Prediction, PredictionOutcome, Team, TeamAdjustment
-from app.scheduler import start_scheduler, stop_scheduler, get_last_sync_time, SYNC_LEAGUES
+from app.scheduler import start_scheduler, stop_scheduler, get_last_sync_time, get_sync_leagues, SYNC_LEAGUES
 from app.security import limiter, verify_api_key
 
 # Configure logging
@@ -476,7 +476,7 @@ async def get_sync_status():
         "daily_api_calls": daily_used,
         "daily_budget": daily_budget,
         "budget_remaining_percent": remaining_pct,
-        "leagues": SYNC_LEAGUES,
+        "leagues": get_sync_leagues(),
         "api_account_status": api_account_status,  # optional debug visibility for iOS
     }
 

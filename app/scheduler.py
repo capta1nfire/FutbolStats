@@ -78,8 +78,20 @@ EXTENDED_LEAGUES = [
 # - extended: EXTENDED_LEAGUES
 # - top5: TOP5_LEAGUES
 #
-# SYNC_LEAGUES is intentionally kept tight for daily/weekly sync jobs.
-SYNC_LEAGUES = TOP5_LEAGUES
+# SYNC_LEAGUES now respects LEAGUE_MODE for daily sync jobs.
+# Default: EXTENDED_LEAGUES (broader coverage for predictions/audits)
+def get_sync_leagues() -> list[int]:
+    """Get leagues for daily sync based on LEAGUE_MODE env var."""
+    mode = os.environ.get("LEAGUE_MODE", "extended").strip().lower()
+    if mode == "top5":
+        return TOP5_LEAGUES
+    # extended or tracked both use EXTENDED_LEAGUES for sync
+    # (tracked uses all DB leagues for live sync, but EXTENDED for daily batch)
+    return EXTENDED_LEAGUES
+
+
+# Legacy constant for backwards compatibility
+SYNC_LEAGUES = EXTENDED_LEAGUES
 CURRENT_SEASON = 2025
 
 # Flag to prevent multiple scheduler instances (e.g., with --reload)
@@ -289,31 +301,41 @@ async def freeze_predictions_before_kickoff() -> dict:
                     else:
                         pred.frozen_confidence_tier = "copper"
 
-                    # Calculate and freeze value bets
+                    # Calculate and freeze value bets (normalized format matching engine.py)
                     value_bets = []
                     ev_threshold = 0.05  # 5% EV minimum for value bet
 
-                    if pred.frozen_ev_home and pred.frozen_ev_home >= ev_threshold:
-                        value_bets.append({
-                            "outcome": "home",
-                            "odds": match.odds_home,
-                            "model_prob": pred.home_prob,
-                            "ev": pred.frozen_ev_home,
-                        })
-                    if pred.frozen_ev_draw and pred.frozen_ev_draw >= ev_threshold:
-                        value_bets.append({
-                            "outcome": "draw",
-                            "odds": match.odds_draw,
-                            "model_prob": pred.draw_prob,
-                            "ev": pred.frozen_ev_draw,
-                        })
-                    if pred.frozen_ev_away and pred.frozen_ev_away >= ev_threshold:
-                        value_bets.append({
-                            "outcome": "away",
-                            "odds": match.odds_away,
-                            "model_prob": pred.away_prob,
-                            "ev": pred.frozen_ev_away,
-                        })
+                    def _build_value_bet(outcome: str, prob: float, odds: float, ev: float) -> dict:
+                        """Build a normalized value_bet dict matching engine.py format."""
+                        if not prob or not odds or odds <= 0:
+                            return None
+                        implied_prob = 1 / odds
+                        edge = prob - implied_prob
+                        return {
+                            "outcome": outcome,
+                            "our_probability": round(prob, 4),
+                            "implied_probability": round(implied_prob, 4),
+                            "edge": round(edge, 4),
+                            "edge_percentage": round(edge * 100, 1),
+                            "expected_value": round(ev, 4),
+                            "ev_percentage": round(ev * 100, 1),
+                            "market_odds": float(odds),
+                            "fair_odds": round(1 / prob, 2) if prob > 0 else None,
+                            "is_value_bet": True,
+                        }
+
+                    if pred.frozen_ev_home and pred.frozen_ev_home >= ev_threshold and match.odds_home:
+                        vb = _build_value_bet("home", pred.home_prob, match.odds_home, pred.frozen_ev_home)
+                        if vb:
+                            value_bets.append(vb)
+                    if pred.frozen_ev_draw and pred.frozen_ev_draw >= ev_threshold and match.odds_draw:
+                        vb = _build_value_bet("draw", pred.draw_prob, match.odds_draw, pred.frozen_ev_draw)
+                        if vb:
+                            value_bets.append(vb)
+                    if pred.frozen_ev_away and pred.frozen_ev_away >= ev_threshold and match.odds_away:
+                        vb = _build_value_bet("away", pred.away_prob, match.odds_away, pred.frozen_ev_away)
+                        if vb:
+                            value_bets.append(vb)
 
                     pred.frozen_value_bets = value_bets if value_bets else None
 
@@ -1410,19 +1432,21 @@ async def daily_sync_results():
     - Yesterday's completed matches
     - Matches that finished after the last sync
     """
-    logger.info("Starting daily results sync job...")
+    sync_leagues = get_sync_leagues()
+    logger.info(f"Starting daily results sync job for {len(sync_leagues)} leagues...")
 
     try:
         async with AsyncSessionLocal() as session:
             pipeline = await create_etl_pipeline(session)
             result = await pipeline.sync_multiple_leagues(
-                league_ids=SYNC_LEAGUES,
+                league_ids=sync_leagues,
                 season=CURRENT_SEASON,
                 fetch_odds=False,  # Only sync results, not odds
             )
 
             logger.info(
-                f"Daily sync complete: {result['total_matches_synced']} matches synced"
+                f"Daily sync complete: {result['total_matches_synced']} matches synced "
+                f"from {len(sync_leagues)} leagues"
             )
 
     except Exception as e:
@@ -1534,10 +1558,11 @@ async def weekly_recalibration(ml_engine):
             recalibrator = RecalibrationEngine(session)
 
             # Step 1: Sync latest fixtures/results
-            logger.info(f"Syncing leagues: {SYNC_LEAGUES}")
+            sync_leagues = get_sync_leagues()
+            logger.info(f"Syncing {len(sync_leagues)} leagues...")
             pipeline = await create_etl_pipeline(session)
             sync_result = await pipeline.sync_multiple_leagues(
-                league_ids=SYNC_LEAGUES,
+                league_ids=sync_leagues,
                 season=CURRENT_SEASON,
                 # Guardrail: weekly recalibration must not write odds history.
                 # PIT odds capture is handled by lineup jobs into odds_snapshots.
@@ -2725,6 +2750,30 @@ async def daily_ops_rollup() -> dict:
         return {"status": "error", "error": str(e)}
 
 
+def _log_scheduler_jobs():
+    """Log all registered scheduler jobs and their next run times."""
+    jobs = scheduler.get_jobs()
+    if not jobs:
+        logger.warning("SCHEDULER HEARTBEAT: No jobs registered!")
+        return
+
+    job_info = []
+    for job in jobs:
+        next_run = job.next_run_time
+        next_str = next_run.strftime("%Y-%m-%d %H:%M:%S UTC") if next_run else "None"
+        job_info.append(f"  - {job.id}: next={next_str}")
+
+    logger.info(
+        f"SCHEDULER HEARTBEAT: {len(jobs)} jobs registered:\n" +
+        "\n".join(job_info)
+    )
+
+
+async def scheduler_heartbeat():
+    """Periodic heartbeat to confirm scheduler is running and log job status."""
+    _log_scheduler_jobs()
+
+
 def start_scheduler(ml_engine):
     """
     Start the background scheduler.
@@ -2903,8 +2952,21 @@ def start_scheduler(ml_engine):
         replace_existing=True,
     )
 
+    # Scheduler Heartbeat: Every 30 minutes, log registered jobs and next run times
+    scheduler.add_job(
+        scheduler_heartbeat,
+        trigger=IntervalTrigger(minutes=30),
+        id="scheduler_heartbeat",
+        name="Scheduler Heartbeat (every 30 min)",
+        replace_existing=True,
+    )
+
     scheduler.start()
     _scheduler_started = True
+
+    # Log initial heartbeat immediately after start
+    _log_scheduler_jobs()
+
     logger.info(
         "Scheduler started:\n"
         "  - Live global sync: Every 60 seconds\n"
@@ -2921,7 +2983,8 @@ def start_scheduler(ml_engine):
         "  - Daily Alpha Progress snapshot: 9:10 AM UTC\n"
         "  - Weekly recalibration: Mondays 5:00 AM UTC\n"
         "  - Weekly PIT report: Tuesdays 10:00 AM UTC\n"
-        "  - Monthly PIT retention: 1st of month 04:00 UTC"
+        "  - Monthly PIT retention: 1st of month 04:00 UTC\n"
+        "  - Scheduler heartbeat: Every 30 min (logs job status)"
     )
 
 
