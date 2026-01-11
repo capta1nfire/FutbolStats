@@ -3863,75 +3863,77 @@ async def match_data_debug_endpoint(
     if token != OPS_DASHBOARD_TOKEN:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    from app.models import Match, Team, Prediction
+    try:
+        match = await session.get(Match, match_id)
+        if not match:
+            return {"error": f"Match {match_id} not found"}
 
-    match = await session.get(Match, match_id)
-    if not match:
-        return {"error": f"Match {match_id} not found"}
+        home_team = await session.get(Team, match.home_team_id)
+        away_team = await session.get(Team, match.away_team_id)
 
-    home_team = await session.get(Team, match.home_team_id)
-    away_team = await session.get(Team, match.away_team_id)
+        # Get prediction
+        pred_result = await session.execute(
+            select(Prediction)
+            .where(Prediction.match_id == match_id)
+            .order_by(Prediction.created_at.desc())
+            .limit(1)
+        )
+        prediction = pred_result.scalar_one_or_none()
 
-    # Get prediction
-    pred_result = await session.execute(
-        select(Prediction)
-        .where(Prediction.match_id == match_id)
-        .order_by(Prediction.created_at.desc())
-        .limit(1)
-    )
-    prediction = pred_result.scalar_one_or_none()
+        # Build the exact match_data that would be sent to LLM
+        probs = {}
+        predicted_result = None
+        confidence = None
+        if prediction:
+            probs = {
+                "home": prediction.home_prob,
+                "draw": prediction.draw_prob,
+                "away": prediction.away_prob,
+            }
+            predicted_result = max(probs, key=probs.get)
+            confidence = probs[predicted_result]
 
-    # Build the exact match_data that would be sent to LLM
-    probs = {}
-    predicted_result = None
-    confidence = None
-    if prediction:
-        probs = {
-            "home": prediction.home_prob,
-            "draw": prediction.draw_prob,
-            "away": prediction.away_prob,
+        home_goals = match.home_goals or 0
+        away_goals = match.away_goals or 0
+        if home_goals > away_goals:
+            actual_result = "home"
+        elif away_goals > home_goals:
+            actual_result = "away"
+        else:
+            actual_result = "draw"
+
+        match_data = {
+            "match_id": match.id,
+            "home_team": home_team.name if home_team else "Local",
+            "away_team": away_team.name if away_team else "Visitante",
+            "league_name": "",
+            "date": match.date.isoformat() if match.date else "",
+            "home_goals": home_goals,
+            "away_goals": away_goals,
+            "stats": match.stats or {},
+            "events": [],  # This is what we send - always empty currently
+            "prediction": {
+                "probabilities": probs,
+                "predicted_result": predicted_result,
+                "confidence": confidence,
+                "correct": predicted_result == actual_result if predicted_result else None,
+            },
+            "market_odds": {
+                "home": match.odds_home,
+                "draw": match.odds_draw,
+                "away": match.odds_away,
+            } if match.odds_home else {},
         }
-        predicted_result = max(probs, key=probs.get)
-        confidence = probs[predicted_result]
 
-    home_goals = match.home_goals or 0
-    away_goals = match.away_goals or 0
-    if home_goals > away_goals:
-        actual_result = "home"
-    elif away_goals > home_goals:
-        actual_result = "away"
-    else:
-        actual_result = "draw"
-
-    match_data = {
-        "match_id": match.id,
-        "home_team": home_team.name if home_team else "Local",
-        "away_team": away_team.name if away_team else "Visitante",
-        "league_name": "",
-        "date": match.date.isoformat() if match.date else "",
-        "home_goals": home_goals,
-        "away_goals": away_goals,
-        "stats": match.stats or {},
-        "events": [],  # This is what we send - always empty currently
-        "prediction": {
-            "probabilities": probs,
-            "predicted_result": predicted_result,
-            "confidence": confidence,
-            "correct": predicted_result == actual_result if predicted_result else None,
-        },
-        "market_odds": {
-            "home": match.odds_home,
-            "draw": match.odds_draw,
-            "away": match.odds_away,
-        } if match.odds_home else {},
-    }
-
-    return {
-        "match_data_sent_to_llm": match_data,
-        "raw_match_stats": match.stats,
-        "stats_ready_at": match.stats_ready_at.isoformat() if match.stats_ready_at else None,
-        "stats_last_checked_at": match.stats_last_checked_at.isoformat() if match.stats_last_checked_at else None,
-    }
+        return {
+            "match_data_sent_to_llm": match_data,
+            "raw_match_stats": match.stats,
+            "stats_ready_at": match.stats_ready_at.isoformat() if match.stats_ready_at else None,
+            "stats_last_checked_at": match.stats_last_checked_at.isoformat() if match.stats_last_checked_at else None,
+        }
+    except Exception as e:
+        logger.error(f"match_data_debug error: {e}")
+        return {"error": str(e)}
 
 
 async def _load_ops_data() -> dict:
