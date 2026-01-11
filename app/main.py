@@ -5483,3 +5483,123 @@ async def dashboard_home(request: Request):
     if token:
         target = f"{target}?token={token}"
     return RedirectResponse(url=target, status_code=307)
+
+
+# =============================================================================
+# DEBUG ENDPOINT: Daily Counts (temporary for ops monitoring)
+# =============================================================================
+
+
+@app.get("/dashboard/ops/daily_counts.json")
+async def ops_daily_counts(
+    request: Request,
+    date: str = None,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Get daily counts for predictions, audits, and LLM narratives.
+
+    Args:
+        date: Date in YYYY-MM-DD format. Defaults to today (UTC).
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from datetime import date as date_type
+
+    target_date = date or datetime.utcnow().strftime("%Y-%m-%d")
+
+    # A) Predictions
+    predictions_created_today = await session.execute(
+        text("SELECT COUNT(*) FROM predictions WHERE created_at::date = :d"),
+        {"d": target_date},
+    )
+    pred_created = predictions_created_today.scalar() or 0
+
+    predictions_for_matches_today = await session.execute(
+        text("""
+            SELECT COUNT(*) FROM predictions p
+            JOIN matches m ON p.match_id = m.id
+            WHERE m.date::date = :d
+        """),
+        {"d": target_date},
+    )
+    pred_for_matches = predictions_for_matches_today.scalar() or 0
+
+    # B) Audits
+    ft_matches_today = await session.execute(
+        text("""
+            SELECT COUNT(*) FROM matches
+            WHERE status IN ('FT', 'AET', 'PEN')
+            AND date::date = :d
+        """),
+        {"d": target_date},
+    )
+    ft_count = ft_matches_today.scalar() or 0
+
+    with_prediction_outcome = await session.execute(
+        text("""
+            SELECT COUNT(*) FROM prediction_outcomes po
+            JOIN matches m ON po.match_id = m.id
+            WHERE m.status IN ('FT', 'AET', 'PEN')
+            AND m.date::date = :d
+        """),
+        {"d": target_date},
+    )
+    po_count = with_prediction_outcome.scalar() or 0
+
+    with_post_match_audit = await session.execute(
+        text("""
+            SELECT COUNT(*) FROM post_match_audits pma
+            JOIN prediction_outcomes po ON pma.outcome_id = po.id
+            JOIN matches m ON po.match_id = m.id
+            WHERE m.status IN ('FT', 'AET', 'PEN')
+            AND m.date::date = :d
+        """),
+        {"d": target_date},
+    )
+    pma_count = with_post_match_audit.scalar() or 0
+
+    # C) LLM Narratives
+    llm_ok_today = await session.execute(
+        text("""
+            SELECT COUNT(*) FROM post_match_audits pma
+            JOIN prediction_outcomes po ON pma.outcome_id = po.id
+            JOIN matches m ON po.match_id = m.id
+            WHERE m.date::date = :d
+            AND pma.llm_narrative_status = 'ok'
+        """),
+        {"d": target_date},
+    )
+    llm_ok = llm_ok_today.scalar() or 0
+
+    llm_breakdown = await session.execute(
+        text("""
+            SELECT pma.llm_narrative_status, COUNT(*) as count
+            FROM post_match_audits pma
+            JOIN prediction_outcomes po ON pma.outcome_id = po.id
+            JOIN matches m ON po.match_id = m.id
+            WHERE m.date::date = :d
+            GROUP BY pma.llm_narrative_status
+            ORDER BY count DESC
+        """),
+        {"d": target_date},
+    )
+    breakdown = {row[0] or "null": row[1] for row in llm_breakdown.fetchall()}
+
+    return {
+        "date": target_date,
+        "predictions": {
+            "created_today": pred_created,
+            "for_matches_today": pred_for_matches,
+        },
+        "audits": {
+            "ft_matches_today": ft_count,
+            "with_prediction_outcome": po_count,
+            "with_post_match_audit": pma_count,
+        },
+        "llm_narratives": {
+            "ok_today": llm_ok,
+            "breakdown": breakdown,
+        },
+    }
