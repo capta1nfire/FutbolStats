@@ -299,44 +299,51 @@ class FastPathService:
             has_stats = match.stats is not None and match.stats != {}
             force_refresh = has_stats_ready and not has_stats
 
+            # Also need to fetch if events are missing
+            needs_events = not match.events
+
             if force_refresh:
                 logger.info(f"[FASTPATH] Force refreshing stats for orphaned match {match.id} (stats_ready_at={match.stats_ready_at}, stats={match.stats})")
 
             should_check = _should_check_stats(match, now)
-            if not force_refresh and not should_check:
-                logger.debug(f"[FASTPATH] Skipping match {match.id}: force_refresh={force_refresh}, should_check={should_check}")
+            if not force_refresh and not should_check and not needs_events:
+                logger.debug(f"[FASTPATH] Skipping match {match.id}: force_refresh={force_refresh}, should_check={should_check}, needs_events={needs_events}")
                 continue
 
             if not match.external_id:
                 logger.warning(f"[FASTPATH] Match {match.id} has no external_id, skipping stats refresh")
                 continue
 
-            logger.info(f"[FASTPATH] Fetching stats for match {match.id} (external_id={match.external_id})")
+            logger.info(f"[FASTPATH] Fetching data for match {match.id} (external_id={match.external_id}, needs_stats={should_check or force_refresh}, needs_events={needs_events})")
 
             try:
-                # Fetch stats from API-Football
-                stats_data = await provider._rate_limited_request(
-                    "fixtures/statistics",
-                    {"fixture": match.external_id}
-                )
-                response = stats_data.get("response", [])
+                # Only fetch stats if needed (not just for events)
+                needs_stats = should_check or force_refresh
+                if needs_stats:
+                    stats_data = await provider._rate_limited_request(
+                        "fixtures/statistics",
+                        {"fixture": match.external_id}
+                    )
+                    response = stats_data.get("response", [])
 
-                if response and len(response) >= 2:
-                    # Parse stats into our format
-                    home_stats = self._parse_team_stats(response[0].get("statistics", []))
-                    away_stats = self._parse_team_stats(response[1].get("statistics", []))
+                    if response and len(response) >= 2:
+                        # Parse stats into our format
+                        home_stats = self._parse_team_stats(response[0].get("statistics", []))
+                        away_stats = self._parse_team_stats(response[1].get("statistics", []))
 
-                    match.stats = {
-                        "home": home_stats,
-                        "away": away_stats,
-                    }
-                    refreshed += 1
-                    logger.info(f"[FASTPATH] Refreshed stats for match {match.id}: home_keys={list(home_stats.keys())[:3]}")
-                else:
-                    logger.warning(f"[FASTPATH] No stats in API response for match {match.id} (response len={len(response)})")
+                        match.stats = {
+                            "home": home_stats,
+                            "away": away_stats,
+                        }
+                        refreshed += 1
+                        logger.info(f"[FASTPATH] Refreshed stats for match {match.id}: home_keys={list(home_stats.keys())[:3]}")
+                    else:
+                        logger.warning(f"[FASTPATH] No stats in API response for match {match.id} (response len={len(response)})")
+
+                    match.stats_last_checked_at = now
 
                 # Fetch events if not already present
-                if not match.events:
+                if needs_events:
                     try:
                         events_data = await provider._rate_limited_request(
                             "fixtures/events",
@@ -347,14 +354,15 @@ class FastPathService:
                             parsed_events = self._parse_events(events_response)
                             match.events = parsed_events
                             logger.info(f"[FASTPATH] Fetched {len(parsed_events)} events for match {match.id}")
+                        else:
+                            logger.warning(f"[FASTPATH] No events in API response for match {match.id}")
                     except Exception as events_err:
                         logger.warning(f"[FASTPATH] Failed to fetch events for match {match.id}: {events_err}")
 
-                match.stats_last_checked_at = now
-
             except Exception as e:
-                logger.warning(f"[FASTPATH] Failed to refresh stats for match {match.id}: {e}")
-                match.stats_last_checked_at = now
+                logger.warning(f"[FASTPATH] Failed to refresh data for match {match.id}: {e}")
+                if needs_stats:
+                    match.stats_last_checked_at = now
 
         await self.session.commit()
         return refreshed
