@@ -54,6 +54,9 @@ class Match(SQLModel, table=True):
     stats: Optional[dict] = Field(
         default=None, sa_column=Column(JSON), description="Shots, corners, etc."
     )
+    events: Optional[list] = Field(
+        default=None, sa_column=Column(JSON), description="Match events (goals, cards, etc.)"
+    )
 
     status: str = Field(
         max_length=20, default="NS", description="NS, FT, LIVE, etc."

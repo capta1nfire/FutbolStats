@@ -44,6 +44,16 @@ STATS_BACKOFF_PROFILE = [
     (90, 900),    # < 90 min: every 15 min
 ]
 
+# Events configuration
+MAX_EVENTS_PER_MATCH = 10  # Cap events to avoid token bloat
+EVENT_PRIORITY = {
+    "Goal": 1,
+    "Card": 2,
+    "Var": 3,
+    "Penalty": 1,  # Same as goal
+    "subst": 4,
+}
+
 
 def _get_backoff_interval(minutes_since_ft: float) -> int:
     """Get seconds until next stats check based on time since FT."""
@@ -325,6 +335,21 @@ class FastPathService:
                 else:
                     logger.warning(f"[FASTPATH] No stats in API response for match {match.id} (response len={len(response)})")
 
+                # Fetch events if not already present
+                if not match.events:
+                    try:
+                        events_data = await provider._rate_limited_request(
+                            "fixtures/events",
+                            {"fixture": match.external_id}
+                        )
+                        events_response = events_data.get("response", [])
+                        if events_response:
+                            parsed_events = self._parse_events(events_response)
+                            match.events = parsed_events
+                            logger.info(f"[FASTPATH] Fetched {len(parsed_events)} events for match {match.id}")
+                    except Exception as events_err:
+                        logger.warning(f"[FASTPATH] Failed to fetch events for match {match.id}: {events_err}")
+
                 match.stats_last_checked_at = now
 
             except Exception as e:
@@ -367,6 +392,52 @@ class FastPathService:
                     except ValueError:
                         pass
                 result[key_map[stat_type]] = value
+        return result
+
+    def _parse_events(self, events_list: list) -> list:
+        """
+        Parse API-Football events into compact format.
+
+        Prioritizes: Goals > Cards (Red > Yellow) > VAR > Subst
+        Returns up to MAX_EVENTS_PER_MATCH events sorted by priority then minute.
+        """
+        parsed = []
+        for event in events_list:
+            event_type = event.get("type", "")
+            detail = event.get("detail", "")
+
+            # Determine priority (lower = more important)
+            if event_type == "Goal":
+                priority = 1
+            elif event_type == "Card":
+                priority = 2 if detail == "Red Card" else 3  # Red before Yellow
+            elif event_type == "Var":
+                priority = 4
+            elif event_type == "subst":
+                priority = 5
+            else:
+                priority = 6  # Other events
+
+            parsed.append({
+                "minute": event.get("time", {}).get("elapsed"),
+                "extra_minute": event.get("time", {}).get("extra"),
+                "type": event_type,
+                "detail": detail,
+                "team": event.get("team", {}).get("name"),
+                "player": event.get("player", {}).get("name"),
+                "assist": event.get("assist", {}).get("name"),
+                "_priority": priority,
+            })
+
+        # Sort by priority (ascending), then by minute (ascending)
+        parsed.sort(key=lambda x: (x.get("_priority", 99), x.get("minute") or 0))
+
+        # Take top events and remove internal priority field
+        result = []
+        for e in parsed[:MAX_EVENTS_PER_MATCH]:
+            event_clean = {k: v for k, v in e.items() if k != "_priority" and v is not None}
+            result.append(event_clean)
+
         return result
 
     async def _enqueue_narratives(self, matches: list[Match], now: datetime) -> int:
@@ -606,7 +677,7 @@ class FastPathService:
             "home_goals": home_goals,
             "away_goals": away_goals,
             "stats": match.stats or {},
-            "events": [],  # Could fetch events if needed
+            "events": match.events or [],
             "prediction": {
                 "probabilities": {
                     "home": prediction.home_prob,

@@ -3911,7 +3911,7 @@ async def match_data_debug_endpoint(
             "home_goals": home_goals,
             "away_goals": away_goals,
             "stats": match.stats or {},
-            "events": [],  # This is what we send - always empty currently
+            "events": match.events or [],
             "prediction": {
                 "probabilities": probs,
                 "predicted_result": predicted_result,
@@ -6221,6 +6221,7 @@ async def migrate_fastpath_fields(
         "ALTER TABLE matches ADD COLUMN IF NOT EXISTS finished_at TIMESTAMP",
         "ALTER TABLE matches ADD COLUMN IF NOT EXISTS stats_ready_at TIMESTAMP",
         "ALTER TABLE matches ADD COLUMN IF NOT EXISTS stats_last_checked_at TIMESTAMP",
+        "ALTER TABLE matches ADD COLUMN IF NOT EXISTS events JSON",
         """CREATE INDEX IF NOT EXISTS idx_matches_fastpath_candidates
            ON matches(finished_at, stats_ready_at)
            WHERE finished_at IS NOT NULL AND stats_ready_at IS NULL""",
