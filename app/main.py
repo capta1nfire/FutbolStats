@@ -3391,6 +3391,10 @@ _ops_dashboard_cache = {
     "ttl": 45,  # seconds
 }
 
+# Rate-limit OPS_ALERT logging (once per 5 minutes max)
+_predictions_health_alert_last: float = 0
+_PREDICTIONS_HEALTH_ALERT_COOLDOWN = 300  # 5 minutes
+
 
 async def _calculate_predictions_health(session) -> dict:
     """
@@ -3479,18 +3483,24 @@ async def _calculate_predictions_health(session) -> dict:
         status = "warn"
         status_reason = f"Coverage {coverage_48h_pct}% < 80% threshold"
 
-    # Log OPS_ALERT if red
-    if status == "red":
-        logger.error(
-            f"[OPS_ALERT] predictions_health=RED: {status_reason}. "
-            f"last_pred={last_pred_at}, preds_24h={preds_last_24h}, "
-            f"ft_48h={ft_48h}, missing={ft_48h_missing}"
-        )
-    elif status == "warn":
-        logger.warning(
-            f"[OPS_ALERT] predictions_health=WARN: {status_reason}. "
-            f"last_pred={last_pred_at}, preds_24h={preds_last_24h}"
-        )
+    # Log OPS_ALERT if red/warn (rate-limited to avoid spam)
+    global _predictions_health_alert_last
+    import time as _time
+    now_ts = _time.time()
+
+    if status in ("red", "warn") and (now_ts - _predictions_health_alert_last) > _PREDICTIONS_HEALTH_ALERT_COOLDOWN:
+        _predictions_health_alert_last = now_ts
+        if status == "red":
+            logger.error(
+                f"[OPS_ALERT] predictions_health=RED: {status_reason}. "
+                f"last_pred={last_pred_at}, preds_24h={preds_last_24h}, "
+                f"ft_48h={ft_48h}, missing={ft_48h_missing}"
+            )
+        else:
+            logger.warning(
+                f"[OPS_ALERT] predictions_health=WARN: {status_reason}. "
+                f"last_pred={last_pred_at}, preds_24h={preds_last_24h}"
+            )
 
     return {
         "status": status,
