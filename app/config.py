@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     RUNPOD_ENDPOINT_ID: str = "a49n0iddpgsv7r"
     RUNPOD_BASE_URL: str = "https://api.runpod.ai/v2"
     NARRATIVE_LLM_ENABLED: bool = False
-    NARRATIVE_LLM_MAX_TOKENS: int = 700
+    NARRATIVE_LLM_MAX_TOKENS: int = 1500
     NARRATIVE_LLM_TIMEOUT_SECONDS: int = 60
     NARRATIVE_LLM_POLL_INTERVAL_SECONDS: float = 1.5
     NARRATIVE_LLM_TEMPERATURE: float = 0.15

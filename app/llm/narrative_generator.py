@@ -8,7 +8,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from app.config import get_settings
 from app.llm.runpod_client import RunPodClient, RunPodError, RunPodJobResult
@@ -86,14 +86,14 @@ def check_stats_gating(match_data: dict) -> tuple[bool, str]:
 
 def log_llm_evaluation(
     match_id: int,
-    bet_won: bool | None,
-    tone: str | None,
+    bet_won: Optional[bool],
+    tone: Optional[str],
     tokens_in: int,
     tokens_out: int,
     exec_ms: int,
     schema_valid: bool,
     status: str,
-    error: str | None = None,
+    error: Optional[str] = None,
 ) -> None:
     """
     Log LLM call evaluation for monitoring.
@@ -299,14 +299,35 @@ def parse_json_response(text: str) -> Optional[dict]:
 
     # Try to find JSON object
     start = text.find("{")
-    end = text.rfind("}") + 1
-    if start >= 0 and end > start:
-        text = text[start:end]
+    if start < 0:
+        logger.warning("No JSON object found in response")
+        return None
+
+    # Find the matching closing brace (handle nested objects)
+    depth = 0
+    end = start
+    for i, char in enumerate(text[start:], start):
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+
+    if depth != 0:
+        # Fallback to rfind if depth doesn't balance
+        end = text.rfind("}") + 1
+
+    json_text = text[start:end]
 
     try:
-        return json.loads(text)
+        return json.loads(json_text)
     except json.JSONDecodeError as e:
         logger.warning(f"JSON parse failed: {e}")
+        # Log full text length and content for debugging
+        logger.warning(f"Raw text length: {len(json_text)}")
+        logger.warning(f"Raw text (first 500 chars): {json_text[:500]}")
         return None
 
 
@@ -406,6 +427,12 @@ class NarrativeGenerator:
             # First attempt
             prompt = build_narrative_prompt(match_data)
             result = await self.client.generate(prompt)
+
+            # Debug: log token usage and raw output
+            logger.info(f"LLM response: tokens_in={result.tokens_in}, tokens_out={result.tokens_out}, text_len={len(result.text)}")
+            logger.info(f"LLM raw_output keys: {list(result.raw_output.keys())}")
+            if "output" in result.raw_output:
+                logger.info(f"LLM output structure: {result.raw_output['output'][:1] if result.raw_output['output'] else 'empty'}")
 
             parsed = parse_json_response(result.text)
             schema_valid = parsed is not None and validate_narrative_json(parsed, match_id)

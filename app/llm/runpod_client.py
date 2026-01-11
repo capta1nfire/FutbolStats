@@ -91,11 +91,14 @@ class RunPodClient:
         payload = {
             "input": {
                 "prompt": prompt,
-                "max_tokens": self.max_tokens,
-                "temperature": self.temperature,
-                "top_p": self.top_p,
+                "sampling_params": {
+                    "max_tokens": self.max_tokens,
+                    "temperature": self.temperature,
+                    "top_p": self.top_p,
+                }
             }
         }
+        logger.debug(f"RunPod payload: max_tokens={self.max_tokens}")
 
         try:
             response = await client.post(url, json=payload)
