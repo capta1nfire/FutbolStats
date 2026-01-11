@@ -4322,6 +4322,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
     progress = data.get("progress") or {}
     pred_health = data.get("predictions_health") or {}
     fp_health = data.get("fastpath_health") or {}
+    fp_60m = fp_health.get("last_60m") or {}
 
     def budget_color() -> str:
         if budget_status in ("unavailable", "error"):
@@ -4721,7 +4722,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
       <div class="card-value">{fp_health.get("status", "?").upper()}</div>
       <div class="card-sub">
         {f"Last tick: {fp_health.get('minutes_since_tick', '?'):.1f} min ago" if fp_health.get('minutes_since_tick') else "No tick yet"}
-        <br/>60m: {fp_health.get('last_60m', {{}}).get('ok', 0)} ok, {fp_health.get('last_60m', {{}}).get('error', 0)} err, {fp_health.get('last_60m', {{}}).get('skipped', 0)} skip
+        <br/>60m: {fp_60m.get('ok', 0)} ok, {fp_60m.get('error', 0)} err, {fp_60m.get('skipped', 0)} skip
         {f"<br/>Pending: {fp_health.get('pending_ready', 0)}" if fp_health.get('pending_ready', 0) > 0 else ""}
         {f"<br/><small style='color:var(--red)'>{fp_health.get('status_reason', '')}</small>" if fp_health.get("status_reason") else ""}
       </div>
