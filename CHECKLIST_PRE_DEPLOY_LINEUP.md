@@ -123,7 +123,24 @@ echo $API_KEY  # Debe estar configurado en Railway
 # Verificar logs: "Scheduler started: ... Lineup monitoring: Every 5 minutes"
 ```
 
-### 3. Post-Deploy Monitoring (Primeras 24h)
+### 3. Verificar Predictions Health (NUEVO - P0)
+```bash
+# Verificar que predictions_health = OK en el dashboard
+curl -s https://web-production-f2de9.up.railway.app/dashboard/ops.json | jq '.predictions_health'
+
+# Debe mostrar:
+# - status: "ok"
+# - coverage_last_48h_pct: >= 80%
+# - predictions_saved_last_24h: > 0
+
+# Si status = "red" o "warn":
+# 1. Revisar Railway logs buscando "[OPS_ALERT]"
+# 2. Verificar que daily_save_predictions corre a las 7 AM UTC
+# 3. Ejecutar backfill manual si es necesario:
+#    DATABASE_URL=<url> python3 scripts/backfill_predictions.py --days 3 --sync
+```
+
+### 4. Post-Deploy Monitoring (Primeras 24h)
 ```bash
 # Verificar que el job corre cada 5 minutos
 # Revisar logs para:
@@ -142,12 +159,12 @@ psql $DATABASE_URL -c "
 "
 ```
 
-### 4. Acumulación de Datos (2-4 semanas)
+### 5. Acumulación de Datos (2-4 semanas)
 - [ ] Esperar acumulación de 200+ snapshots con `odds_freshness='live'`
 - [ ] Monitorear distribución de timing (p50/p90 de `delta_to_kickoff`)
 - [ ] Verificar tasa de éxito de captura (>95% target)
 
-### 5. Evaluación Final
+### 6. Evaluación Final
 ```bash
 # Ejecutar evaluación con CI 95%
 python scripts/evaluate_lineup_arbitrage.py \
@@ -184,6 +201,7 @@ python scripts/evaluate_lineup_arbitrage.py \
 ## 🐛 MONITOREO Y ALERTAS
 
 ### Alertas Críticas
+- [ ] **predictions_health = RED** en `/dashboard/ops` (scheduler no guarda predicciones)
 - [ ] Tasa de fallos de API > 10% por hora
 - [ ] Snapshots con `delta_to_kickoff < 0` (después de kickoff)
 - [ ] Duplicados en `odds_snapshots` con mismo `(match_id, snapshot_type, bookmaker)`

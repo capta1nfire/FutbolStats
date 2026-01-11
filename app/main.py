@@ -3373,6 +3373,125 @@ _ops_dashboard_cache = {
 }
 
 
+async def _calculate_predictions_health(session) -> dict:
+    """
+    Calculate predictions health metrics for P0 observability.
+
+    Detects when daily_save_predictions isn't running/persisting.
+    Returns status: ok/warn/red based on recency and coverage.
+    """
+    now = datetime.utcnow()
+
+    # 1) Last prediction saved
+    res = await session.execute(
+        text("SELECT MAX(created_at) FROM predictions")
+    )
+    last_pred_at = res.scalar()
+
+    # 2) Predictions saved in last 24h
+    res = await session.execute(
+        text("""
+            SELECT COUNT(*) FROM predictions
+            WHERE created_at > NOW() - INTERVAL '24 hours'
+        """)
+    )
+    preds_last_24h = int(res.scalar() or 0)
+
+    # 3) Predictions saved today (UTC)
+    res = await session.execute(
+        text("""
+            SELECT COUNT(*) FROM predictions
+            WHERE created_at::date = CURRENT_DATE
+        """)
+    )
+    preds_today = int(res.scalar() or 0)
+
+    # 4) FT matches in last 48h
+    res = await session.execute(
+        text("""
+            SELECT COUNT(*) FROM matches
+            WHERE status IN ('FT', 'AET', 'PEN')
+              AND date > NOW() - INTERVAL '48 hours'
+        """)
+    )
+    ft_48h = int(res.scalar() or 0)
+
+    # 5) FT matches in last 48h MISSING prediction
+    res = await session.execute(
+        text("""
+            SELECT COUNT(*) FROM matches m
+            WHERE m.status IN ('FT', 'AET', 'PEN')
+              AND m.date > NOW() - INTERVAL '48 hours'
+              AND NOT EXISTS (
+                  SELECT 1 FROM predictions p WHERE p.match_id = m.id
+              )
+        """)
+    )
+    ft_48h_missing = int(res.scalar() or 0)
+
+    # 6) Coverage percentage
+    coverage_48h_pct = 0.0
+    if ft_48h > 0:
+        coverage_48h_pct = round(((ft_48h - ft_48h_missing) / ft_48h) * 100, 1)
+
+    # Calculate hours since last prediction
+    hours_since_last = None
+    if last_pred_at:
+        delta = now - last_pred_at
+        hours_since_last = round(delta.total_seconds() / 3600, 1)
+
+    # Determine status
+    # - ok: last_pred <= 24h AND coverage >= 80%
+    # - warn: last_pred > 24h OR coverage < 80%
+    # - red: last_pred > 48h OR coverage < 50%
+    status = "ok"
+    status_reason = None
+
+    if hours_since_last is None or hours_since_last > 48:
+        status = "red"
+        status_reason = f"No predictions in {hours_since_last or 'unknown'}h (>48h threshold)"
+    elif coverage_48h_pct < 50:
+        status = "red"
+        status_reason = f"Coverage {coverage_48h_pct}% < 50% threshold"
+    elif hours_since_last > 24:
+        status = "warn"
+        status_reason = f"No predictions in {hours_since_last}h (>24h threshold)"
+    elif coverage_48h_pct < 80:
+        status = "warn"
+        status_reason = f"Coverage {coverage_48h_pct}% < 80% threshold"
+
+    # Log OPS_ALERT if red
+    if status == "red":
+        logger.error(
+            f"[OPS_ALERT] predictions_health=RED: {status_reason}. "
+            f"last_pred={last_pred_at}, preds_24h={preds_last_24h}, "
+            f"ft_48h={ft_48h}, missing={ft_48h_missing}"
+        )
+    elif status == "warn":
+        logger.warning(
+            f"[OPS_ALERT] predictions_health=WARN: {status_reason}. "
+            f"last_pred={last_pred_at}, preds_24h={preds_last_24h}"
+        )
+
+    return {
+        "status": status,
+        "status_reason": status_reason,
+        "last_prediction_saved_at": last_pred_at.isoformat() if last_pred_at else None,
+        "hours_since_last_prediction": hours_since_last,
+        "predictions_saved_last_24h": preds_last_24h,
+        "predictions_saved_today_utc": preds_today,
+        "ft_matches_last_48h": ft_48h,
+        "ft_matches_last_48h_missing_prediction": ft_48h_missing,
+        "coverage_last_48h_pct": coverage_48h_pct,
+        "thresholds": {
+            "hours_warn": 24,
+            "hours_red": 48,
+            "coverage_warn_pct": 80,
+            "coverage_red_pct": 50,
+        },
+    }
+
+
 async def _load_ops_data() -> dict:
     """
     Ops dashboard: read-only aggregated metrics from DB + in-process state.
@@ -3675,6 +3794,11 @@ async def _load_ops_data() -> dict:
             ),
         }
 
+        # =============================================================
+        # PREDICTIONS HEALTH (P0 observability - detect scheduler issues)
+        # =============================================================
+        predictions_health = await _calculate_predictions_health(session)
+
     # League names - comprehensive fallback for all known leagues
     # Includes EXTENDED_LEAGUES and other common leagues from API-Football
     LEAGUE_NAMES_FALLBACK: dict[int, str] = {
@@ -3770,6 +3894,7 @@ async def _load_ops_data() -> dict:
             "by_league_24h": upcoming_by_league,
         },
         "progress": progress_metrics,
+        "predictions_health": predictions_health,
     }
 
 
@@ -3934,6 +4059,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
     stats = data.get("stats_backfill") or {}
     history = history or []
     progress = data.get("progress") or {}
+    pred_health = data.get("predictions_health") or {}
 
     def budget_color() -> str:
         if budget_status in ("unavailable", "error"):
@@ -3946,6 +4072,16 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
                 return "red"
             if pct >= 0.7:
                 return "yellow"
+            return "green"
+        return "blue"
+
+    def pred_health_color() -> str:
+        status = pred_health.get("status", "unknown")
+        if status == "red":
+            return "red"
+        if status == "warn":
+            return "yellow"
+        if status == "ok":
             return "green"
         return "blue"
 
@@ -4295,6 +4431,16 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
       <div class="card-label">Stats FT (72 h)<span class="info-icon">i<span class="tooltip">Partidos finalizados (FT) en las últimas 72 horas que tienen estadísticas completas vs los que faltan. El backfill automático rellena los faltantes.</span></span></div>
       <div class="card-value">{stats.get("finished_72h_with_stats")}</div>
       <div class="card-sub">Faltan: {stats.get("finished_72h_missing_stats")}</div>
+    </div>
+    <div class="card {pred_health_color()}">
+      <div class="card-label">Predictions Health<span class="info-icon">i<span class="tooltip">Estado del scheduler de predicciones. ROJO: No se guardan predicciones en &gt;48h o cobertura &lt;50%. AMARILLO: &gt;24h o cobertura &lt;80%. VERDE: OK. Si se pone rojo, el scheduler no está funcionando y se rompe audit/LLM.</span></span></div>
+      <div class="card-value">{pred_health.get("status", "?").upper()}</div>
+      <div class="card-sub">
+        Preds 24h: {pred_health.get("predictions_saved_last_24h", 0)} |
+        Coverage 48h: {pred_health.get("coverage_last_48h_pct", 0)}%
+        {f"<br/>Missing FT: {pred_health.get('ft_matches_last_48h_missing_prediction', 0)}/{pred_health.get('ft_matches_last_48h', 0)}" if pred_health.get("status") != "ok" else ""}
+        {f"<br/><small style='color:var(--red)'>{pred_health.get('status_reason', '')}</small>" if pred_health.get("status_reason") else ""}
+      </div>
     </div>
   </div>
 
