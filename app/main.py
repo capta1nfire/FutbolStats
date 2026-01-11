@@ -3936,6 +3936,145 @@ async def match_data_debug_endpoint(
         return {"error": str(e)}
 
 
+@app.get("/dashboard/ops/stats_rca.json")
+async def stats_rca_endpoint(
+    token: str = Query(...),
+    match_id: int = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    RCA endpoint: fetch stats from API-Football and show full diagnostic.
+    Tests: API response, parsing, persistence.
+    """
+    if token != settings.DASHBOARD_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    from app.etl.api_football import APIFootballProvider
+
+    result = {
+        "match_id": match_id,
+        "steps": {},
+        "diagnosis": None,
+    }
+
+    try:
+        # Step 1: Get match from DB
+        match = await session.get(Match, match_id)
+        if not match:
+            return {"error": f"Match {match_id} not found"}
+
+        result["steps"]["1_match_info"] = {
+            "id": match.id,
+            "external_id": match.external_id,
+            "stats_before": match.stats,
+            "stats_ready_at": str(match.stats_ready_at) if match.stats_ready_at else None,
+        }
+
+        if not match.external_id:
+            result["diagnosis"] = "NO_EXTERNAL_ID"
+            return result
+
+        # Step 2: Fetch from API-Football
+        provider = APIFootballProvider()
+        try:
+            stats_data = await provider._rate_limited_request(
+                "fixtures/statistics",
+                {"fixture": match.external_id}
+            )
+            await provider.close()
+        except Exception as api_err:
+            result["steps"]["2_api_call"] = {"error": str(api_err)}
+            result["diagnosis"] = "API_CALL_FAILED"
+            return result
+
+        response = stats_data.get("response", [])
+        result["steps"]["2_api_call"] = {
+            "raw_response_keys": list(stats_data.keys()),
+            "response_len": len(response),
+            "response_teams": [r.get("team", {}).get("name") for r in response] if response else [],
+        }
+
+        if len(response) < 2:
+            result["diagnosis"] = "API_RESPONSE_EMPTY_OR_INCOMPLETE"
+            result["steps"]["2_api_call"]["raw_response"] = stats_data
+            return result
+
+        # Step 3: Show raw statistics structure
+        result["steps"]["3_raw_stats_structure"] = {
+            "team_0_name": response[0].get("team", {}).get("name"),
+            "team_0_statistics_count": len(response[0].get("statistics", [])),
+            "team_0_statistics_sample": response[0].get("statistics", [])[:5],
+            "team_1_name": response[1].get("team", {}).get("name"),
+            "team_1_statistics_count": len(response[1].get("statistics", [])),
+            "team_1_statistics_sample": response[1].get("statistics", [])[:5],
+        }
+
+        # Step 4: Parse stats using our key_map
+        key_map = {
+            "Ball Possession": "ball_possession",
+            "Total Shots": "total_shots",
+            "Shots on Goal": "shots_on_goal",
+            "Shots off Goal": "shots_off_goal",
+            "Blocked Shots": "blocked_shots",
+            "Shots insidebox": "shots_insidebox",
+            "Shots outsidebox": "shots_outsidebox",
+            "Fouls": "fouls",
+            "Corner Kicks": "corner_kicks",
+            "Offsides": "offsides",
+            "Yellow Cards": "yellow_cards",
+            "Red Cards": "red_cards",
+            "Goalkeeper Saves": "goalkeeper_saves",
+            "Total passes": "total_passes",
+            "Passes accurate": "passes_accurate",
+            "Passes %": "passes_pct",
+            "expected_goals": "expected_goals",
+        }
+
+        def parse_team_stats(stats_list):
+            parsed = {}
+            for stat in stats_list:
+                stat_type = stat.get("type")
+                stat_value = stat.get("value")
+                if stat_type in key_map:
+                    parsed[key_map[stat_type]] = stat_value
+            return parsed
+
+        home_stats = parse_team_stats(response[0].get("statistics", []))
+        away_stats = parse_team_stats(response[1].get("statistics", []))
+
+        result["steps"]["4_parsed_stats"] = {
+            "home_stats": home_stats,
+            "away_stats": away_stats,
+            "home_keys": list(home_stats.keys()),
+            "away_keys": list(away_stats.keys()),
+        }
+
+        # Step 5: Test persistence
+        new_stats = {"home": home_stats, "away": away_stats}
+        match.stats = new_stats
+        await session.flush()
+        await session.commit()
+
+        # Step 6: Re-query to verify persistence
+        await session.refresh(match)
+        result["steps"]["5_persistence"] = {
+            "stats_after_commit": match.stats,
+            "persisted_successfully": match.stats is not None and match.stats != {},
+        }
+
+        if match.stats and match.stats != {}:
+            result["diagnosis"] = "SUCCESS - Stats fetched, parsed, and persisted"
+        else:
+            result["diagnosis"] = "PERSISTENCE_FAILED - Stats were set but did not persist"
+
+        return result
+
+    except Exception as e:
+        logger.error(f"stats_rca error: {e}", exc_info=True)
+        result["diagnosis"] = f"EXCEPTION: {str(e)}"
+        return result
+
+
 async def _load_ops_data() -> dict:
     """
     Ops dashboard: read-only aggregated metrics from DB + in-process state.
