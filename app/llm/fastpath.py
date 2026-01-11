@@ -121,7 +121,11 @@ class FastPathService:
             return metrics
 
         # 2. Refresh stats for matches that need it
-        refreshed = await self._refresh_stats_batch(candidates, now)
+        # NOTE: Disabled due to greenlet/async context issue with HTTP calls
+        # Stats should already be populated by the regular backfill job
+        # TODO: Fix async context issue to re-enable stats refresh
+        # refreshed = await self._refresh_stats_batch(candidates, now)
+        refreshed = 0
         metrics["refreshed"] = refreshed
 
         # 3. Check which matches are now ready (stats gating passed)
