@@ -46,9 +46,10 @@ class RunPodClient:
 
     def __init__(self):
         settings = get_settings()
-        self.api_key = settings.RUNPOD_API_KEY
-        self.endpoint_id = settings.RUNPOD_ENDPOINT_ID
-        self.base_url = settings.RUNPOD_BASE_URL
+        # Strip whitespace/newlines from URL components to avoid httpx errors
+        self.api_key = (settings.RUNPOD_API_KEY or "").strip()
+        self.endpoint_id = (settings.RUNPOD_ENDPOINT_ID or "").strip()
+        self.base_url = (settings.RUNPOD_BASE_URL or "").strip().rstrip("/")
         self.timeout = settings.NARRATIVE_LLM_TIMEOUT_SECONDS
         self.poll_interval = settings.NARRATIVE_LLM_POLL_INTERVAL_SECONDS
         self.max_tokens = settings.NARRATIVE_LLM_MAX_TOKENS
