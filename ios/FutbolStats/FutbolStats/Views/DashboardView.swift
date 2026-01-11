@@ -110,6 +110,9 @@ struct DashboardView: View {
 
             if let budget = ops.budget {
                 metricPill(label: "Budget", value: budget.status ?? "unavailable")
+                if let resetTime = budget.tokensResetLocalTime, let resetTz = budget.tokensResetTz {
+                    metricPill(label: "Budget resets", value: "\(resetTime) (\(resetTz))")
+                }
             }
         }
         .padding(14)

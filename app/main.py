@@ -934,8 +934,8 @@ async def _overlay_frozen_predictions(
                 pred["value_bets"] = frozen.frozen_value_bets
                 pred["has_value_bet"] = len(frozen.frozen_value_bets) > 0
                 if frozen.frozen_value_bets:
-                    # Find best value bet (highest EV)
-                    best = max(frozen.frozen_value_bets, key=lambda x: x.get("ev", 0))
+                    # Find best value bet (highest EV) - support both old "ev" and new "expected_value" keys
+                    best = max(frozen.frozen_value_bets, key=lambda x: x.get("expected_value", x.get("ev", 0)))
                     pred["best_value_bet"] = best
 
             # Add frozen metadata
@@ -3280,6 +3280,37 @@ async def _load_ops_data() -> dict:
         logger.warning(f"Could not fetch API account status: {e}")
         budget_status = {"status": "unavailable", "error": str(e)}
 
+    # Observational metadata: API-Football daily budget refresh time (approx).
+    # User-reported: ~4:00pm America/Los_Angeles. Best-effort only (ops UX).
+    try:
+        from zoneinfo import ZoneInfo
+
+        tz_name = "America/Los_Angeles"
+        reset_hour = 16
+        reset_minute = 0
+
+        now_utc = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC"))
+        now_la = now_utc.astimezone(ZoneInfo(tz_name))
+        next_reset_la = now_la.replace(hour=reset_hour, minute=reset_minute, second=0, microsecond=0)
+        if next_reset_la <= now_la:
+            next_reset_la = next_reset_la + timedelta(days=1)
+        next_reset_utc = next_reset_la.astimezone(ZoneInfo("UTC"))
+
+        if not isinstance(budget_status, dict):
+            budget_status = {"status": "unavailable"}
+
+        budget_status.update(
+            {
+                "tokens_reset_tz": tz_name,
+                "tokens_reset_local_time": f"{reset_hour:02d}:{reset_minute:02d}",
+                "tokens_reset_at_la": next_reset_la.isoformat(),
+                "tokens_reset_at_utc": next_reset_utc.isoformat(),
+                "tokens_reset_note": "Observed daily refresh around 4:00pm America/Los_Angeles",
+            }
+        )
+    except Exception:
+        pass
+
     league_mode = os.environ.get("LEAGUE_MODE", "tracked").strip().lower()
     last_sync = get_last_sync_time()
 
@@ -3778,6 +3809,9 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
     budget_plan = budget.get("plan", "")
     budget_plan_end = budget.get("plan_end", "")
     budget_cached = budget.get("cached", False)
+    budget_reset_time = budget.get("tokens_reset_local_time")
+    budget_reset_tz = budget.get("tokens_reset_tz")
+    budget_reset_at_la = budget.get("tokens_reset_at_la")
 
     pit = data.get("pit") or {}
     pit_60m = pit.get("live_60m", 0)
@@ -4136,7 +4170,11 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
     <div class="card {budget_color()}">
       <div class="card-label">API Budget{f" ({budget_plan})" if budget_plan else ""}<span class="info-icon">i<span class="tooltip">Consumo de la API de API-Football. Muestra requests usados hoy vs límite diario. Verde: &lt;70%, Amarillo: 70-90%, Rojo: &gt;90%.</span></span></div>
       <div class="card-value">{f"{budget_used:,}" if budget_used is not None else "?"} / {f"{budget_limit:,}" if budget_limit is not None else "?"}</div>
-      <div class="card-sub">{f"{budget_remaining:,} remaining" if budget_remaining is not None else budget_status}{" (cached)" if budget_cached else ""}</div>
+      <div class="card-sub">
+        {f"{budget_remaining:,} remaining" if budget_remaining is not None else budget_status}{" (cached)" if budget_cached else ""}
+        {f"<br/>Resets: {budget_reset_time} ({budget_reset_tz})" if budget_reset_time and budget_reset_tz else ""}
+        {f"<br/>Next reset (LA): {budget_reset_at_la}" if budget_reset_at_la else ""}
+      </div>
     </div>
     <div class="card">
       <div class="card-label">Movimiento (24 h)<span class="info-icon">i<span class="tooltip">Snapshots de movimiento de odds capturados. Lineup Movement: cambios cerca del anuncio de alineaciones. Market Movement: cambios pre-partido (T-60 a T-5 min).</span></span></div>

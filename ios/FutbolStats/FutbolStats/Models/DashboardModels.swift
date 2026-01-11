@@ -44,6 +44,11 @@ struct BudgetStatus: Decodable {
     let plan: String?
     let requestsToday: Int?
     let requestsLimit: Int?
+    let tokensResetTz: String?
+    let tokensResetLocalTime: String?
+    let tokensResetAtLA: String?
+    let tokensResetAtUTC: String?
+    let tokensResetNote: String?
     let error: String?
 
     enum CodingKeys: String, CodingKey {
@@ -51,6 +56,11 @@ struct BudgetStatus: Decodable {
         case plan
         case requestsToday = "requests_today"
         case requestsLimit = "requests_limit"
+        case tokensResetTz = "tokens_reset_tz"
+        case tokensResetLocalTime = "tokens_reset_local_time"
+        case tokensResetAtLA = "tokens_reset_at_la"
+        case tokensResetAtUTC = "tokens_reset_at_utc"
+        case tokensResetNote = "tokens_reset_note"
         case error
     }
 }
