@@ -68,6 +68,10 @@ class MatchDetailViewModel: ObservableObject {
     @Published var llmNarrativeStatus: String?
     @Published var llmNarrativeError: String?
 
+    // Match stats for stats table (independent of narrative)
+    @Published var matchStats: MatchStats?
+    @Published var matchEvents: [MatchEvent]?
+
     init(prediction: MatchPrediction) {
         self.prediction = prediction
         calculateEV()
@@ -124,6 +128,13 @@ class MatchDetailViewModel: ObservableObject {
                 // No LLM narrative available
                 llmNarrativeStatus = response.llmNarrativeStatus ?? "pending"
                 print("LLM narrative not available, status: \(llmNarrativeStatus ?? "unknown")")
+            }
+
+            // Load match stats for stats table (always, independent of narrative)
+            matchStats = response.matchStats
+            matchEvents = response.matchEvents
+            if matchStats != nil {
+                print("Match stats loaded for stats table")
             }
         } catch {
             // Insights are optional - don't fail the whole view
@@ -346,6 +357,15 @@ struct MatchDetailView: View {
                 } else if prediction.isFinished && viewModel.llmNarrativeStatus != nil {
                     // Show unavailable state for finished matches without narrative
                     LLMNarrativeUnavailableView(status: viewModel.llmNarrativeStatus)
+                }
+
+                // Match Stats Table (below narrative, for finished matches)
+                if let stats = viewModel.matchStats {
+                    MatchStatsTableView(
+                        stats: stats,
+                        homeTeam: prediction.homeTeam,
+                        awayTeam: prediction.awayTeam
+                    )
                 }
 
                 // Only show insight footer if no narrative and match not finished

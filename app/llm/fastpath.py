@@ -457,7 +457,7 @@ class FastPathService:
         enqueued = 0
         generator = NarrativeGenerator()
 
-        # Pre-load team names to avoid lazy loading issues
+        # Pre-load team info to avoid lazy loading issues
         team_ids = set()
         for match in matches[:self.settings.FASTPATH_MAX_CONCURRENT_JOBS]:
             if match.home_team_id:
@@ -465,19 +465,19 @@ class FastPathService:
             if match.away_team_id:
                 team_ids.add(match.away_team_id)
 
-        team_names = {}
+        team_info = {}  # team_id -> {"name": str, "external_id": int}
         if team_ids:
             result = await self.session.execute(
-                select(Team.id, Team.name).where(Team.id.in_(team_ids))
+                select(Team.id, Team.name, Team.external_id).where(Team.id.in_(team_ids))
             )
-            for team_id, team_name in result.all():
-                team_names[team_id] = team_name
+            for team_id, team_name, external_id in result.all():
+                team_info[team_id] = {"name": team_name, "external_id": external_id}
 
         try:
             for match in matches[:self.settings.FASTPATH_MAX_CONCURRENT_JOBS]:
-                # Get team names from pre-loaded cache
-                home_team_name = team_names.get(match.home_team_id, "Local")
-                away_team_name = team_names.get(match.away_team_id, "Visitante")
+                # Get team info from pre-loaded cache
+                home_info = team_info.get(match.home_team_id, {"name": "Local", "external_id": None})
+                away_info = team_info.get(match.away_team_id, {"name": "Visitante", "external_id": None})
 
                 # Get or create outcome/audit
                 outcome, audit = await self._get_or_create_audit(match)
@@ -493,8 +493,8 @@ class FastPathService:
                 if not prediction:
                     continue
 
-                # Build match data for prompt
-                match_data = self._build_match_data(match, prediction, home_team_name, away_team_name)
+                # Build match data for prompt (with team aliases)
+                match_data = self._build_match_data(match, prediction, home_info, away_info)
 
                 # Check gating
                 passes, reason = check_stats_gating(match_data)
@@ -650,13 +650,21 @@ class FastPathService:
         self,
         match: Match,
         prediction: Prediction,
-        home_team_name: str,
-        away_team_name: str,
+        home_info: dict,
+        away_info: dict,
     ) -> dict:
         """Build match_data dict for narrative prompt.
 
-        Team names passed explicitly to avoid lazy loading issues.
+        Team info passed explicitly to avoid lazy loading issues.
+        Includes team_aliases for LLM to use (prevents hallucinated nicknames).
         """
+        from app.llm.team_aliases import get_team_aliases
+
+        home_team_name = home_info.get("name", "Local")
+        away_team_name = away_info.get("name", "Visitante")
+        home_external_id = home_info.get("external_id")
+        away_external_id = away_info.get("external_id")
+
         # Determine predicted result and if correct
         probs = {
             "home": prediction.home_prob,
@@ -676,10 +684,17 @@ class FastPathService:
         else:
             actual_result = "draw"
 
+        # Build team aliases (only these can be used by LLM)
+        team_aliases = {
+            "home": get_team_aliases(home_external_id, home_team_name, is_home=True),
+            "away": get_team_aliases(away_external_id, away_team_name, is_home=False),
+        }
+
         return {
             "match_id": match.id,
             "home_team": home_team_name,
             "away_team": away_team_name,
+            "team_aliases": team_aliases,
             "league_name": "",  # Could add league lookup if needed
             "date": match.date.isoformat() if match.date else "",
             "home_goals": home_goals,

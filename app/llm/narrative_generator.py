@@ -131,16 +131,18 @@ def _determine_bet_won(prediction: dict, home_goals: int, away_goals: int) -> bo
 
 def build_narrative_prompt(match_data: dict) -> str:
     """
-    Build prompt v3.2 for post-match narrative generation.
+    Build prompt v4 for post-match narrative generation.
 
-    Features:
-    - Tone bias based on prediction correctness
-    - Strict JSON output with robustness rules
-    - Paragraph breaks as \\n\\n
-    - Probability normalization requirements
+    v4 improvements:
+    - Only digits for numbers (never "uno/dos/tres")
+    - No score repetition in body (user sees it in UI)
+    - Team names max 1x each, then use aliases from team_aliases only
+    - key_factors ultra-short (max 120 chars each)
+    - Shorter body (140-240 words)
+    - team_aliases provided to prevent hallucinated nicknames
 
     Args:
-        match_data: Dict with match info (teams, score, stats, prediction, etc.)
+        match_data: Dict with match info (teams, score, stats, prediction, team_aliases, etc.)
 
     Returns:
         Prompt string for LLM.
@@ -153,6 +155,13 @@ def build_narrative_prompt(match_data: dict) -> str:
     match_date = match_data.get("date", "")
     home_goals = match_data.get("home_goals", 0) or 0
     away_goals = match_data.get("away_goals", 0) or 0
+
+    # Team aliases (curated, safe to use)
+    team_aliases = match_data.get("team_aliases", {})
+    home_aliases = team_aliases.get("home", [home_team, "los locales"])
+    away_aliases = team_aliases.get("away", [away_team, "los visitantes"])
+    home_aliases_json = json.dumps(home_aliases, ensure_ascii=False)
+    away_aliases_json = json.dumps(away_aliases, ensure_ascii=False)
 
     # Stats as JSON (only include non-null values)
     stats = match_data.get("stats", {})
@@ -176,8 +185,8 @@ def build_narrative_prompt(match_data: dict) -> str:
     else:
         prediction_json = "null"
 
-    # Events (max 5) as JSON
-    events = match_data.get("events", [])[:5]
+    # Events (max 10) as JSON
+    events = match_data.get("events", [])[:10]
     events_json = json.dumps(events, ensure_ascii=False) if events else "[]"
 
     # Market odds as JSON
@@ -189,37 +198,46 @@ def build_narrative_prompt(match_data: dict) -> str:
 
     prompt = f"""Eres un analista de fútbol profesional. Escribes en español neutral, serio, sin hype y sin emojis.
 
-REGLAS CRÍTICAS (OBLIGATORIAS):
+REGLAS CRÍTICAS v4 (OBLIGATORIAS):
+
 1) DEVUELVE SOLO JSON VÁLIDO. No incluyas texto antes ni después.
-2) Usa SOLO los datos proporcionados en "DATOS". NO inventes jugadores, lesiones, alineaciones, tácticas, xG, tarjetas, ni nada que no esté explícitamente en el JSON de entrada.
-3) match_id debe ser EXACTAMENTE el match_id recibido en DATOS (mismo número, no string).
-4) Si un dato no existe (por ejemplo expected_goals o ball_possession), NO lo menciones.
-5) En narrative.body usa saltos de párrafo como "\\n\\n" (dos saltos).
-6) Redondeo:
+
+2) SOLO DÍGITOS PARA NÚMEROS: Escribe "1", "2", "54%", nunca "uno", "dos", "cincuenta y cuatro por ciento".
+
+3) NO REPITAS EL MARCADOR en narrative.body. El usuario ya ve el resultado en la UI. Enfócate en el "por qué", no en el "qué".
+
+4) NOMBRES DE EQUIPOS - REGLA ESTRICTA:
+   - Menciona cada nombre de equipo MÁXIMO 1 vez en todo el body.
+   - Después usa SOLO aliases de team_aliases (proporcionados abajo).
+   - NO inventes apodos. Solo puedes usar: {home_aliases_json} para local, {away_aliases_json} para visitante.
+
+5) Usa SOLO los datos proporcionados en "DATOS". NO inventes jugadores, lesiones, alineaciones, tácticas, xG, tarjetas, ni nada que no esté explícitamente en el JSON.
+
+6) match_id debe ser EXACTAMENTE el número recibido en DATOS.
+
+7) Si un dato no existe (ej. expected_goals, ball_possession), NO lo menciones.
+
+8) En narrative.body usa saltos de párrafo como "\\n\\n".
+
+9) Redondeo:
    - prediction.confidence y prediction.probabilities a 2 decimales.
-   - probabilities debe sumar 1 ± 0.01. Si no suma, renormaliza y vuelve a redondear.
-7) Longitud: narrative.body debe tener 2–4 párrafos y ser conciso (aprox 180–320 palabras). No uses listas largas.
-8) Tono sesgado por resultado de nuestra predicción (pero siempre basado en datos):
-   - Si prediction.correct = true:
-     - Refuerza el acierto con firmeza ("la lectura era sólida / el guion era coherente").
-     - Cita 2–4 evidencias numéricas del apartado stats (posesión, tiros, tiros a puerta, xG si está) y/o eventos (penal/roja/minuto de gol) para justificar.
-   - Si prediction.correct = false:
-     - Matiza el fallo. Enfatiza que la lectura era razonable SOLO si los datos lo respaldan.
-     - Luego explica el cambio del resultado por 1–2 factores presentes en los datos.
-       Penal/roja/VAR SOLO si en events existe un type o detail que lo indique explícitamente.
-       Gol tardío si existe un evento de gol con minute >= 80.
-       Efectividad: si un equipo tuvo más tiros a puerta pero no ganó => "falta de eficacia" (inferible).
-       "Varianza/suerte" SOLO si expected_goals existe y hay diferencia clara entre xG y goles, o si hay muchos tiros a puerta y marcador adverso.
-     - Si los datos NO respaldan "éramos favoritos", NO lo afirmes; di que "la predicción no se reflejó en las estadísticas del partido" y susténtalo con evidencias.
-9) Nunca uses "suerte/varianza" sin evidencia cuantitativa (xG vs goles o tiros a puerta vs goles).
-10) title:
-   - Máx 8 palabras
-   - NO uses comillas internas
-   - NO uses saltos de línea
-11) Si detectas que tu salida NO es JSON válido, reinténtalo internamente y entrega JSON válido.
+   - probabilities debe sumar 1 ± 0.01. Si no suma, renormaliza.
+
+10) LONGITUD REDUCIDA: narrative.body debe tener 2-3 párrafos, 140-240 palabras. Sé conciso.
+
+11) key_factors NO DUPLICA el body:
+    - Cada evidence máx 120 caracteres.
+    - Debe contener al menos 1 cifra (stats) o 1 minuto (events).
+    - Si events está vacío: direction="neutral", evidence="Eventos no disponibles".
+
+12) Tono según resultado de predicción:
+    - Si prediction.correct = true: refuerza con 2-3 evidencias numéricas.
+    - Si prediction.correct = false: matiza con 1-2 factores de los datos.
+    - Nunca uses "suerte/varianza" sin evidencia cuantitativa (xG vs goles).
+
+13) title: máx 8 palabras, sin comillas, sin \\n.
 
 FORMATO DE SALIDA (SCHEMA OBLIGATORIO):
-Devuelve SIEMPRE un JSON con esta forma exacta:
 
 {{
   "match_id": <int>,
@@ -236,28 +254,24 @@ Devuelve SIEMPRE un JSON con esta forma exacta:
   }},
   "market_odds": {{"home": number|null, "draw": number|null, "away": number|null}},
   "narrative": {{
-    "title": "string corto (máx 8 palabras, sin comillas, sin \\n)",
-    "body": "2–4 párrafos con \\n\\n",
+    "title": "string corto (máx 8 palabras)",
+    "body": "2-3 párrafos con \\n\\n (140-240 palabras)",
     "key_factors": [
-      {{"label": "Stats", "evidence": "frase con números", "direction": "pro-pick|anti-pick|neutral"}},
-      {{"label": "Events", "evidence": "frase con minuto si aplica", "direction": "pro-pick|anti-pick|neutral"}},
-      {{"label": "Efficiency/Variance", "evidence": "frase (solo si aplica)", "direction": "pro-pick|anti-pick|neutral"}}
+      {{"label": "Stats", "evidence": "máx 120 chars con cifras", "direction": "pro-pick|anti-pick|neutral"}},
+      {{"label": "Events", "evidence": "máx 120 chars con minuto", "direction": "pro-pick|anti-pick|neutral"}},
+      {{"label": "Efficiency", "evidence": "máx 120 chars", "direction": "pro-pick|anti-pick|neutral"}}
     ],
     "tone": "reinforce_win|mitigate_loss",
-    "responsible_note": "1 frase corta, responsable"
+    "responsible_note": "1 frase corta"
   }}
 }}
-
-REGLA PARA key_factors:
-- Debes devolver SIEMPRE 3 objetos (Stats/Events/Efficiency/Variance).
-- Si NO aplica (p.ej. no hay eventos relevantes o no hay evidencia de varianza), usa:
-  - direction: "neutral"
-  - evidence: "No aplica con los datos disponibles."
 
 DATOS (usa SOLO esto):
 match_id: {match_id}
 home_team: {home_team}
 away_team: {away_team}
+team_aliases.home: {home_aliases_json}
+team_aliases.away: {away_aliases_json}
 league_name: {league}
 date: {match_date}
 final_score: {home_goals}-{away_goals}
@@ -267,11 +281,11 @@ stats.away: {away_stats_json}
 
 prediction: {prediction_json}
 
-events (máx 5): {events_json}
+events: {events_json}
 
 market_odds: {market_odds_json}
 
-RECUERDA: Devuelve SOLO el JSON. No agregues explicaciones fuera del JSON."""
+RECUERDA: JSON válido, sin marcador en body, solo aliases permitidos, key_factors cortos y distintos del body."""
 
     return prompt
 

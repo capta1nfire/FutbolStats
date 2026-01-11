@@ -1457,7 +1457,7 @@ async def get_match_insights(
 
         await service.close()
 
-        return {
+        fallback_response = {
             "match_id": match_id,
             "prediction_correct": prediction_correct,
             "predicted_result": predicted_result,
@@ -1467,6 +1467,12 @@ async def get_match_insights(
             "insights": narrative_result.get("insights") or [],
             "momentum_analysis": narrative_result.get("momentum_analysis"),
         }
+        # Include match stats for UI stats table
+        if match.stats:
+            fallback_response["match_stats"] = match.stats
+        if match.events:
+            fallback_response["match_events"] = match.events
+        return fallback_response
 
     outcome, audit = row
 
@@ -1487,6 +1493,14 @@ async def get_match_insights(
         response["llm_narrative_status"] = "ok"
     elif audit.llm_narrative_status:
         response["llm_narrative_status"] = audit.llm_narrative_status
+
+    # Include match stats for UI stats table (renders independently of narrative)
+    if match.stats:
+        response["match_stats"] = match.stats
+
+    # Include events for UI
+    if match.events:
+        response["match_events"] = match.events
 
     return response
 

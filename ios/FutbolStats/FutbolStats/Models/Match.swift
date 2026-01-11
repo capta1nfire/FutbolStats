@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 // MARK: - API Response Models
 
@@ -623,6 +624,10 @@ struct MatchInsightsResponse: Codable {
     let llmNarrative: LLMNarrativePayload?
     let llmNarrativeStatus: String?
 
+    // Match stats for UI table (independent of narrative)
+    let matchStats: MatchStats?
+    let matchEvents: [MatchEvent]?
+
     enum CodingKeys: String, CodingKey {
         case matchId = "match_id"
         case predictionCorrect = "prediction_correct"
@@ -634,6 +639,109 @@ struct MatchInsightsResponse: Codable {
         case momentumAnalysis = "momentum_analysis"
         case llmNarrative = "llm_narrative"
         case llmNarrativeStatus = "llm_narrative_status"
+        case matchStats = "match_stats"
+        case matchEvents = "match_events"
+    }
+}
+
+// MARK: - Match Stats (from API-Football)
+
+struct MatchStats: Codable {
+    let home: TeamStats?
+    let away: TeamStats?
+}
+
+struct TeamStats: Codable {
+    let ballPossession: String?
+    let totalShots: Int?
+    let shotsOnGoal: Int?
+    let shotsOffGoal: Int?
+    let blockedShots: Int?
+    let shotsInsidebox: Int?
+    let shotsOutsidebox: Int?
+    let fouls: Int?
+    let cornerKicks: Int?
+    let offsides: Int?
+    let yellowCards: Int?
+    let redCards: Int?
+    let goalkeeperSaves: Int?
+    let totalPasses: Int?
+    let passesAccurate: Int?
+    let passesPct: String?
+    let expectedGoals: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ballPossession = "ball_possession"
+        case totalShots = "total_shots"
+        case shotsOnGoal = "shots_on_goal"
+        case shotsOffGoal = "shots_off_goal"
+        case blockedShots = "blocked_shots"
+        case shotsInsidebox = "shots_insidebox"
+        case shotsOutsidebox = "shots_outsidebox"
+        case fouls
+        case cornerKicks = "corner_kicks"
+        case offsides
+        case yellowCards = "yellow_cards"
+        case redCards = "red_cards"
+        case goalkeeperSaves = "goalkeeper_saves"
+        case totalPasses = "total_passes"
+        case passesAccurate = "passes_accurate"
+        case passesPct = "passes_pct"
+        case expectedGoals = "expected_goals"
+    }
+}
+
+// MARK: - Match Events
+
+struct MatchEvent: Codable, Identifiable {
+    var id: String { "\(minute ?? 0)-\(type ?? "")-\(player ?? "")" }
+    let minute: Int?
+    let extraMinute: Int?
+    let type: String?
+    let detail: String?
+    let team: String?
+    let player: String?
+    let assist: String?
+
+    enum CodingKeys: String, CodingKey {
+        case minute
+        case extraMinute = "extra_minute"
+        case type
+        case detail
+        case team
+        case player
+        case assist
+    }
+
+    var displayMinute: String {
+        if let extra = extraMinute, extra > 0 {
+            return "\(minute ?? 0)+\(extra)'"
+        }
+        return "\(minute ?? 0)'"
+    }
+
+    var typeIcon: String {
+        switch type {
+        case "Goal": return "soccerball"
+        case "Card":
+            if detail == "Red Card" { return "rectangle.fill" }
+            return "rectangle.fill"
+        case "subst": return "arrow.left.arrow.right"
+        case "Var": return "tv"
+        default: return "circle.fill"
+        }
+    }
+
+    var typeColor: Color {
+        switch type {
+        case "Goal": return .green
+        case "Card":
+            if detail == "Red Card" { return .red }
+            return .yellow
+        case "subst": return .blue
+        case "Var": return .purple
+        default: return .gray
+        }
     }
 }
 
