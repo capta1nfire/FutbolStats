@@ -3368,17 +3368,97 @@ async def predictions_trigger_save(request: Request):
     Manually trigger daily_save_predictions (for recovery).
     Protected by dashboard token.
     Use when predictions_health is RED/WARN.
+    Returns detailed diagnostics for debugging.
     """
     if not _verify_dashboard_token(request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
-    from app.scheduler import daily_save_predictions
+    from app.db_utils import upsert
+    from app.features import FeatureEngineer
+    from app.ml import XGBoostEngine
+
+    diagnostics = {
+        "status": "unknown",
+        "model_loaded": False,
+        "matches_found": 0,
+        "ns_matches": 0,
+        "predictions_generated": 0,
+        "predictions_saved": 0,
+        "errors": [],
+    }
 
     try:
-        await daily_save_predictions()
-        return {"status": "ok", "message": "Predictions save triggered"}
+        async with AsyncSessionLocal() as session:
+            # Step 1: Load model
+            engine = XGBoostEngine()
+            if not engine.load_model():
+                diagnostics["status"] = "error"
+                diagnostics["errors"].append("Could not load ML model")
+                return diagnostics
+            diagnostics["model_loaded"] = True
+            diagnostics["model_version"] = engine.model_version
+
+            # Step 2: Get features
+            feature_engineer = FeatureEngineer(session=session)
+            df = await feature_engineer.get_upcoming_matches_features()
+            diagnostics["matches_found"] = len(df)
+
+            if len(df) == 0:
+                diagnostics["status"] = "ok"
+                diagnostics["errors"].append("No upcoming matches found")
+                return diagnostics
+
+            # Filter to NS only
+            df_ns = df[df["status"] == "NS"].copy()
+            diagnostics["ns_matches"] = len(df_ns)
+
+            if len(df_ns) == 0:
+                diagnostics["status"] = "ok"
+                diagnostics["errors"].append("No NS matches to predict")
+                return diagnostics
+
+            # Step 3: Generate predictions
+            predictions = engine.predict(df_ns)
+            diagnostics["predictions_generated"] = len(predictions)
+
+            # Step 4: Save to database
+            saved = 0
+            for pred in predictions:
+                match_id = pred.get("match_id")
+                if not match_id:
+                    continue
+
+                probs = pred["probabilities"]
+                try:
+                    await upsert(
+                        session,
+                        Prediction,
+                        values={
+                            "match_id": match_id,
+                            "model_version": engine.model_version,
+                            "home_prob": probs["home"],
+                            "draw_prob": probs["draw"],
+                            "away_prob": probs["away"],
+                        },
+                        conflict_columns=["match_id", "model_version"],
+                        update_columns=["home_prob", "draw_prob", "away_prob"],
+                    )
+                    saved += 1
+                except Exception as e:
+                    diagnostics["errors"].append(f"Match {match_id}: {str(e)[:50]}")
+
+            await session.commit()
+            diagnostics["predictions_saved"] = saved
+            diagnostics["status"] = "ok" if saved > 0 else "no_new_predictions"
+
+            logger.info(f"Predictions trigger complete: {saved} saved from {len(df_ns)} NS matches")
+
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        diagnostics["status"] = "error"
+        diagnostics["errors"].append(str(e))
+        logger.error(f"Predictions trigger failed: {e}")
+
+    return diagnostics
 
 
 # =============================================================================
