@@ -5643,3 +5643,51 @@ async def ops_daily_counts(
             "error_details": error_rows,
         },
     }
+
+
+@app.post("/dashboard/ops/migrate_llm_error_fields")
+async def migrate_llm_error_fields(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    One-time migration to add LLM error observability fields.
+    Safe to run multiple times (uses IF NOT EXISTS).
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    migrations = [
+        "ALTER TABLE post_match_audits ADD COLUMN IF NOT EXISTS llm_narrative_error_code VARCHAR(50)",
+        "ALTER TABLE post_match_audits ADD COLUMN IF NOT EXISTS llm_narrative_error_detail VARCHAR(500)",
+        "ALTER TABLE post_match_audits ADD COLUMN IF NOT EXISTS llm_narrative_request_id VARCHAR(100)",
+        "ALTER TABLE post_match_audits ADD COLUMN IF NOT EXISTS llm_narrative_attempts INTEGER",
+    ]
+
+    results = []
+    for sql in migrations:
+        try:
+            await session.execute(text(sql))
+            results.append({"sql": sql[:60] + "...", "status": "ok"})
+        except Exception as e:
+            results.append({"sql": sql[:60] + "...", "status": "error", "error": str(e)})
+
+    await session.commit()
+
+    # Verify columns exist
+    verify = await session.execute(
+        text("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name='post_match_audits'
+            AND column_name LIKE 'llm_narrative_error%'
+            OR column_name IN ('llm_narrative_request_id', 'llm_narrative_attempts')
+            ORDER BY column_name
+        """)
+    )
+    columns = [row[0] for row in verify.all()]
+
+    return {
+        "status": "ok",
+        "migrations": results,
+        "verified_columns": columns,
+    }
