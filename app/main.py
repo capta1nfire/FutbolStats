@@ -5505,85 +5505,81 @@ async def ops_daily_counts(
     if not _verify_dashboard_token(request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
-    from datetime import date as date_type
+    import re
 
     target_date = date or datetime.utcnow().strftime("%Y-%m-%d")
+    # Validate date format (YYYY-MM-DD) to prevent SQL injection
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", target_date):
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
 
     # A) Predictions
     predictions_created_today = await session.execute(
-        text("SELECT COUNT(*) FROM predictions WHERE created_at::date = :d"),
-        {"d": target_date},
+        text(f"SELECT COUNT(*) FROM predictions WHERE created_at::date = '{target_date}'")
     )
     pred_created = predictions_created_today.scalar() or 0
 
     predictions_for_matches_today = await session.execute(
-        text("""
+        text(f"""
             SELECT COUNT(*) FROM predictions p
             JOIN matches m ON p.match_id = m.id
-            WHERE m.date::date = :d
-        """),
-        {"d": target_date},
+            WHERE m.date::date = '{target_date}'
+        """)
     )
     pred_for_matches = predictions_for_matches_today.scalar() or 0
 
     # B) Audits
     ft_matches_today = await session.execute(
-        text("""
+        text(f"""
             SELECT COUNT(*) FROM matches
             WHERE status IN ('FT', 'AET', 'PEN')
-            AND date::date = :d
-        """),
-        {"d": target_date},
+            AND date::date = '{target_date}'
+        """)
     )
     ft_count = ft_matches_today.scalar() or 0
 
     with_prediction_outcome = await session.execute(
-        text("""
+        text(f"""
             SELECT COUNT(*) FROM prediction_outcomes po
             JOIN matches m ON po.match_id = m.id
             WHERE m.status IN ('FT', 'AET', 'PEN')
-            AND m.date::date = :d
-        """),
-        {"d": target_date},
+            AND m.date::date = '{target_date}'
+        """)
     )
     po_count = with_prediction_outcome.scalar() or 0
 
     with_post_match_audit = await session.execute(
-        text("""
+        text(f"""
             SELECT COUNT(*) FROM post_match_audits pma
             JOIN prediction_outcomes po ON pma.outcome_id = po.id
             JOIN matches m ON po.match_id = m.id
             WHERE m.status IN ('FT', 'AET', 'PEN')
-            AND m.date::date = :d
-        """),
-        {"d": target_date},
+            AND m.date::date = '{target_date}'
+        """)
     )
     pma_count = with_post_match_audit.scalar() or 0
 
     # C) LLM Narratives
     llm_ok_today = await session.execute(
-        text("""
+        text(f"""
             SELECT COUNT(*) FROM post_match_audits pma
             JOIN prediction_outcomes po ON pma.outcome_id = po.id
             JOIN matches m ON po.match_id = m.id
-            WHERE m.date::date = :d
+            WHERE m.date::date = '{target_date}'
             AND pma.llm_narrative_status = 'ok'
-        """),
-        {"d": target_date},
+        """)
     )
     llm_ok = llm_ok_today.scalar() or 0
 
     llm_breakdown = await session.execute(
-        text("""
+        text(f"""
             SELECT pma.llm_narrative_status, COUNT(*) as count
             FROM post_match_audits pma
             JOIN prediction_outcomes po ON pma.outcome_id = po.id
             JOIN matches m ON po.match_id = m.id
-            WHERE m.date::date = :d
+            WHERE m.date::date = '{target_date}'
             GROUP BY pma.llm_narrative_status
             ORDER BY count DESC
-        """),
-        {"d": target_date},
+        """)
     )
     breakdown = {row[0] or "null": row[1] for row in llm_breakdown.all()}
 
