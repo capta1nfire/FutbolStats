@@ -142,8 +142,15 @@ class FastPathService:
         gating_errors = 0
         gating_failed = 0
         already_ready = 0
+        orphan_reset = 0
         for match in candidates:
             try:
+                # Check for orphaned stats_ready_at (marked ready but stats empty)
+                if match.stats_ready_at and not match.stats:
+                    logger.warning(f"[FASTPATH] Match {match.id} has stats_ready_at but empty stats - resetting")
+                    match.stats_ready_at = None
+                    orphan_reset += 1
+
                 if match.stats_ready_at:
                     ready_matches.append(match)
                     already_ready += 1
@@ -161,6 +168,8 @@ class FastPathService:
                 logger.error(f"[FASTPATH] Error checking match {match.id}: {loop_err}", exc_info=True)
                 gating_errors += 1
                 continue
+        if orphan_reset > 0:
+            logger.warning(f"[FASTPATH] Reset {orphan_reset} orphaned stats_ready_at (stats were empty)")
         logger.info(
             f"[FASTPATH] Stats gating complete: {len(ready_matches)} ready "
             f"(already_ready={already_ready}, newly_ready={len(ready_matches)-already_ready}), "
@@ -275,7 +284,12 @@ class FastPathService:
         provider = await self._get_api_provider()
 
         for match in matches:
-            if not _should_check_stats(match, now):
+            # Force refresh if stats_ready_at is set but stats are empty (orphan recovery)
+            force_refresh = match.stats_ready_at and not match.stats
+            if force_refresh:
+                logger.info(f"[FASTPATH] Force refreshing stats for orphaned match {match.id}")
+
+            if not force_refresh and not _should_check_stats(match, now):
                 continue
 
             if not match.external_id:
