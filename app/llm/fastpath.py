@@ -285,15 +285,23 @@ class FastPathService:
 
         for match in matches:
             # Force refresh if stats_ready_at is set but stats are empty (orphan recovery)
-            force_refresh = match.stats_ready_at and not match.stats
-            if force_refresh:
-                logger.info(f"[FASTPATH] Force refreshing stats for orphaned match {match.id}")
+            has_stats_ready = match.stats_ready_at is not None
+            has_stats = match.stats is not None and match.stats != {}
+            force_refresh = has_stats_ready and not has_stats
 
-            if not force_refresh and not _should_check_stats(match, now):
+            if force_refresh:
+                logger.info(f"[FASTPATH] Force refreshing stats for orphaned match {match.id} (stats_ready_at={match.stats_ready_at}, stats={match.stats})")
+
+            should_check = _should_check_stats(match, now)
+            if not force_refresh and not should_check:
+                logger.debug(f"[FASTPATH] Skipping match {match.id}: force_refresh={force_refresh}, should_check={should_check}")
                 continue
 
             if not match.external_id:
+                logger.warning(f"[FASTPATH] Match {match.id} has no external_id, skipping stats refresh")
                 continue
+
+            logger.info(f"[FASTPATH] Fetching stats for match {match.id} (external_id={match.external_id})")
 
             try:
                 # Fetch stats from API-Football
