@@ -5583,6 +5583,45 @@ async def ops_daily_counts(
     )
     breakdown = {row[0] or "null": row[1] for row in llm_breakdown.all()}
 
+    # D) LLM Error Details (for debugging)
+    llm_error_details = await session.execute(
+        text(f"""
+            SELECT
+                po.match_id,
+                pma.id as audit_id,
+                pma.llm_narrative_status,
+                pma.llm_narrative_delay_ms,
+                pma.llm_narrative_exec_ms,
+                pma.llm_narrative_tokens_in,
+                pma.llm_narrative_tokens_out,
+                pma.llm_narrative_worker_id,
+                pma.llm_narrative_model,
+                pma.llm_narrative_generated_at,
+                CASE WHEN pma.llm_narrative_json IS NULL THEN true ELSE false END as json_is_null
+            FROM post_match_audits pma
+            JOIN prediction_outcomes po ON pma.outcome_id = po.id
+            JOIN matches m ON po.match_id = m.id
+            WHERE m.date::date = '{target_date}'
+            AND (pma.llm_narrative_status IS NULL OR pma.llm_narrative_status != 'ok')
+            ORDER BY po.match_id
+        """)
+    )
+    error_rows = []
+    for row in llm_error_details.all():
+        error_rows.append({
+            "match_id": row[0],
+            "audit_id": row[1],
+            "status": row[2],
+            "delay_ms": row[3],
+            "exec_ms": row[4],
+            "tokens_in": row[5],
+            "tokens_out": row[6],
+            "worker_id": row[7],
+            "model": row[8],
+            "generated_at": str(row[9]) if row[9] else None,
+            "json_is_null": row[10],
+        })
+
     return {
         "date": target_date,
         "predictions": {
@@ -5597,5 +5636,6 @@ async def ops_daily_counts(
         "llm_narratives": {
             "ok_today": llm_ok,
             "breakdown": breakdown,
+            "error_details": error_rows,
         },
     }
