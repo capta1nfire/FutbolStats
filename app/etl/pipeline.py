@@ -94,7 +94,9 @@ class ETLPipeline:
             existing_match.date = match_data.date
             existing_match.home_goals = match_data.home_goals
             existing_match.away_goals = match_data.away_goals
-            existing_match.stats = match_data.stats
+            # Only update stats if new data has actual content (don't overwrite with empty)
+            if match_data.stats and match_data.stats != {}:
+                existing_match.stats = match_data.stats
 
             # Set finished_at when status transitions to FT/AET/PEN (canonical)
             old_status = existing_match.status
