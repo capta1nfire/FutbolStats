@@ -113,9 +113,15 @@ class FastPathService:
         }
 
         # 1. Select recently finished matches needing narrative
-        candidates = await self._select_candidates(lookback, now)
-        metrics["selected"] = len(candidates)
-        logger.info(f"[FASTPATH] Selected {len(candidates)} candidates for narrative generation")
+        logger.info("[FASTPATH] Selecting candidates...")
+        try:
+            candidates = await self._select_candidates(lookback, now)
+            metrics["selected"] = len(candidates)
+            logger.info(f"[FASTPATH] Selected {len(candidates)} candidates for narrative generation")
+        except Exception as e:
+            logger.error(f"[FASTPATH] Failed to select candidates: {e}", exc_info=True)
+            metrics["errors"] = 1
+            return metrics
 
         if not candidates:
             return metrics
@@ -129,41 +135,67 @@ class FastPathService:
         metrics["refreshed"] = refreshed
 
         # 3. Check which matches are now ready (stats gating passed)
-        logger.debug(f"[FASTPATH] Checking stats gating for {len(candidates)} candidates")
+        logger.info(f"[FASTPATH] Checking stats gating for {len(candidates)} candidates")
         ready_matches = []
+        gating_errors = 0
+        gating_failed = 0
+        already_ready = 0
         for match in candidates:
             try:
                 if match.stats_ready_at:
                     ready_matches.append(match)
+                    already_ready += 1
                 else:
                     # Check if stats now pass gating
                     stats_data = {"stats": match.stats or {}}
-                    passes, _ = check_stats_gating(stats_data)
+                    passes, reason = check_stats_gating(stats_data)
                     if passes:
                         match.stats_ready_at = now
                         ready_matches.append(match)
+                    else:
+                        gating_failed += 1
+                        logger.debug(f"[FASTPATH] Match {match.id} gating failed: {reason}")
             except Exception as loop_err:
-                logger.error(f"[FASTPATH] Error checking match {match.id}: {loop_err}")
+                logger.error(f"[FASTPATH] Error checking match {match.id}: {loop_err}", exc_info=True)
+                gating_errors += 1
                 continue
-        logger.debug(f"[FASTPATH] Stats gating complete, {len(ready_matches)} ready")
+        logger.info(
+            f"[FASTPATH] Stats gating complete: {len(ready_matches)} ready "
+            f"(already_ready={already_ready}, newly_ready={len(ready_matches)-already_ready}), "
+            f"gating_failed={gating_failed}, errors={gating_errors}"
+        )
 
         metrics["stats_ready"] = len(ready_matches)
         # Note: commit deferred to _enqueue_narratives to avoid greenlet issues
 
         if not ready_matches:
             # Commit any finished_at/stats_ready_at changes
-            await self.session.commit()
+            try:
+                await self.session.commit()
+            except Exception as commit_err:
+                logger.error(f"[FASTPATH] Commit failed: {commit_err}", exc_info=True)
             logger.info(f"[FASTPATH] No matches ready (stats gating). Refreshed {refreshed} stats.")
             return metrics
 
         # 4. Enqueue narratives for ready matches
-        enqueued = await self._enqueue_narratives(ready_matches, now)
-        metrics["enqueued"] = enqueued
+        logger.info(f"[FASTPATH] Enqueuing {len(ready_matches)} ready matches")
+        try:
+            enqueued = await self._enqueue_narratives(ready_matches, now)
+            metrics["enqueued"] = enqueued
+        except Exception as enqueue_err:
+            logger.error(f"[FASTPATH] Enqueue failed: {enqueue_err}", exc_info=True)
+            metrics["errors"] += 1
+            return metrics
 
         # 5. Poll for completions
-        completed, errors = await self._poll_completions()
-        metrics["completed"] = completed
-        metrics["errors"] = errors
+        logger.info("[FASTPATH] Polling for completions")
+        try:
+            completed, errors = await self._poll_completions()
+            metrics["completed"] = completed
+            metrics["errors"] = errors
+        except Exception as poll_err:
+            logger.error(f"[FASTPATH] Poll failed: {poll_err}", exc_info=True)
+            metrics["errors"] += 1
 
         logger.info(
             f"[FASTPATH] Tick complete: selected={metrics['selected']}, "
