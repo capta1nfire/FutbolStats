@@ -462,7 +462,7 @@ class PostMatchAuditService:
     async def _fetch_events(self, fixture_id: int) -> list:
         """Fetch match events from API."""
         data = await self.provider._rate_limited_request(
-            "fixtures/events", {"fixture": fixture_id}
+            "fixtures/events", {"fixture": fixture_id}, entity="events"
         )
         return data.get("response", [])
 

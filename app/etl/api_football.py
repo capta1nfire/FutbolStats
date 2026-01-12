@@ -449,7 +449,7 @@ class APIFootballProvider(DataProvider):
 
     async def get_team(self, team_id: int) -> Optional[TeamData]:
         """Fetch team information by ID."""
-        data = await self._rate_limited_request("teams", {"id": team_id})
+        data = await self._rate_limited_request("teams", {"id": team_id}, entity="team")
         teams = data.get("response", [])
 
         if not teams:
@@ -491,7 +491,7 @@ class APIFootballProvider(DataProvider):
         Prioritizes major bookmakers (Bet365, Pinnacle) for reliable odds.
         Returns odds with bookmaker source for transparency.
         """
-        data = await self._rate_limited_request("odds", {"fixture": fixture_id})
+        data = await self._rate_limited_request("odds", {"fixture": fixture_id}, entity="odds")
         odds_data = data.get("response", [])
 
         if not odds_data:
@@ -537,7 +537,7 @@ class APIFootballProvider(DataProvider):
     async def get_fixture_statistics(self, fixture_id: int) -> Optional[dict]:
         """Fetch detailed statistics for a fixture."""
         data = await self._rate_limited_request(
-            "fixtures/statistics", {"fixture": fixture_id}
+            "fixtures/statistics", {"fixture": fixture_id}, entity="stats"
         )
         stats_data = data.get("response", [])
 
@@ -553,7 +553,7 @@ class APIFootballProvider(DataProvider):
         Returns list of team standings with position, points, etc.
         """
         data = await self._rate_limited_request(
-            "standings", {"league": league_id, "season": season}
+            "standings", {"league": league_id, "season": season}, entity="standings"
         )
         standings_data = data.get("response", [])
 
@@ -607,7 +607,7 @@ class APIFootballProvider(DataProvider):
             - starting_xi: List of player dicts with id, name, number, pos
             - substitutes: List of substitute player dicts
         """
-        data = await self._rate_limited_request("fixtures/lineups", {"fixture": fixture_id})
+        data = await self._rate_limited_request("fixtures/lineups", {"fixture": fixture_id}, entity="lineup")
         lineups_data = data.get("response", [])
 
         if not lineups_data:
@@ -670,7 +670,7 @@ class APIFootballProvider(DataProvider):
         Returns all registered players with their market value and position.
         Used to determine the "Equipo de Gala" (best XI).
         """
-        data = await self._rate_limited_request("players/squads", {"team": team_id})
+        data = await self._rate_limited_request("players/squads", {"team": team_id}, entity="player")
         squad_data = data.get("response", [])
 
         if not squad_data:
@@ -702,7 +702,7 @@ class APIFootballProvider(DataProvider):
         Returns:
             List of event dicts with type, minute, team, player info.
         """
-        data = await self._rate_limited_request("fixtures/events", {"fixture": fixture_id})
+        data = await self._rate_limited_request("fixtures/events", {"fixture": fixture_id}, entity="events")
         events_data = data.get("response", [])
 
         events = []

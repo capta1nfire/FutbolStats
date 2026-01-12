@@ -4020,7 +4020,8 @@ async def stats_rca_endpoint(
         try:
             stats_data = await provider._rate_limited_request(
                 "fixtures/statistics",
-                {"fixture": match.external_id}
+                {"fixture": match.external_id},
+                entity="stats"
             )
             await provider.close()
         except Exception as api_err:
@@ -4220,7 +4221,8 @@ async def bulk_stats_backfill_endpoint(
             try:
                 stats_data = await provider._rate_limited_request(
                     "fixtures/statistics",
-                    {"fixture": external_id}
+                    {"fixture": external_id},
+                    entity="stats"
                 )
                 response = stats_data.get("response", [])
 
@@ -4295,7 +4297,8 @@ async def fetch_events_endpoint(
         try:
             events_data = await provider._rate_limited_request(
                 "fixtures/events",
-                {"fixture": match.external_id}
+                {"fixture": match.external_id},
+                entity="events"
             )
             await provider.close()
         except Exception as api_err:

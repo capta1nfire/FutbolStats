@@ -322,7 +322,8 @@ class FastPathService:
                 if needs_stats:
                     stats_data = await provider._rate_limited_request(
                         "fixtures/statistics",
-                        {"fixture": match.external_id}
+                        {"fixture": match.external_id},
+                        entity="stats"
                     )
                     response = stats_data.get("response", [])
 
@@ -347,7 +348,8 @@ class FastPathService:
                     try:
                         events_data = await provider._rate_limited_request(
                             "fixtures/events",
-                            {"fixture": match.external_id}
+                            {"fixture": match.external_id},
+                            entity="events"
                         )
                         events_response = events_data.get("response", [])
                         if events_response:
