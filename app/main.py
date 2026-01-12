@@ -5229,6 +5229,8 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
     pred_health = data.get("predictions_health") or {}
     fp_health = data.get("fastpath_health") or {}
     fp_60m = fp_health.get("last_60m") or {}
+    telemetry = data.get("telemetry") or {}
+    telemetry_summary = telemetry.get("summary") or {}
 
     def budget_color() -> str:
         if budget_status in ("unavailable", "error"):
@@ -5264,6 +5266,16 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
             return "green"
         if status == "disabled":
             return "blue"
+        return "blue"
+
+    def telemetry_color() -> str:
+        status = telemetry.get("status", "OK").upper()
+        if status == "RED":
+            return "red"
+        if status == "WARN":
+            return "yellow"
+        if status == "OK":
+            return "green"
         return "blue"
 
     # Tables HTML
@@ -5630,6 +5642,16 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
         <br/>60m: {fp_60m.get('ok', 0)} ok, {fp_60m.get('error', 0)} err, {fp_60m.get('skipped', 0)} skip
         {f"<br/>Pending: {fp_health.get('pending_ready', 0)}" if fp_health.get('pending_ready', 0) > 0 else ""}
         {f"<br/><small style='color:var(--red)'>{fp_health.get('status_reason', '')}</small>" if fp_health.get("status_reason") else ""}
+      </div>
+    </div>
+    <div class="card {telemetry_color()}">
+      <div class="card-label">Data Quality<span class="info-icon">i<span class="tooltip">Telemetría de calidad de datos. ROJO: Hay odds en cuarentena o partidos tainted (datos no confiables). AMARILLO: Hay entidades sin mapear. VERDE: Todo OK. Los datos cuarentenados/tainted son excluidos del training.</span></span></div>
+      <div class="card-value">{telemetry.get("status", "?").upper()}</div>
+      <div class="card-sub">
+        Quarantine: {telemetry_summary.get("quarantined_odds_24h", 0)} |
+        Tainted: {telemetry_summary.get("tainted_matches_24h", 0)} |
+        Unmapped: {telemetry_summary.get("unmapped_entities_24h", 0)}
+        {f'<br/><a href="{telemetry.get("links", [{}])[0].get("url", "#")}" target="_blank" style="font-size:0.75rem;">Grafana →</a>' if telemetry.get("links") else ""}
       </div>
     </div>
   </div>
