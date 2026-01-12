@@ -4106,6 +4106,7 @@ async def bulk_stats_backfill_endpoint(
 
     from app.etl.api_football import APIFootballProvider
     from datetime import datetime
+    import json as json_lib
 
     result = {
         "since_date": since_date,
@@ -4208,7 +4209,7 @@ async def bulk_stats_backfill_endpoint(
                 # Update in DB
                 await session.execute(
                     text("UPDATE matches SET stats = :stats, stats_ready_at = NOW() WHERE id = :id"),
-                    {"stats": json.dumps(new_stats), "id": match_id}
+                    {"stats": json_lib.dumps(new_stats), "id": match_id}
                 )
                 result["successes"].append({"id": match_id, "external_id": external_id})
                 result["matches_processed"] += 1
