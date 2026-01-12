@@ -76,6 +76,13 @@ struct PredictionsListView: View {
 
     // MARK: - Date Selector
 
+    // UTC calendar for consistent date handling (backend sends UTC dates)
+    private var utcCalendar: Calendar {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        return cal
+    }
+
     private var dateSelector: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
@@ -83,7 +90,7 @@ struct PredictionsListView: View {
                     ForEach(dateRange, id: \.self) { date in
                         DateCell(
                             date: date,
-                            isSelected: Calendar.current.isDate(date, inSameDayAs: viewModel.selectedDate),
+                            isSelected: utcCalendar.isDate(date, inSameDayAs: viewModel.selectedDate),
                             matchCount: viewModel.matchCount(for: date)
                         )
                         .id(date)
@@ -97,18 +104,17 @@ struct PredictionsListView: View {
                 .padding(.horizontal, 16)
             }
             .onAppear {
-                // Scroll to today
-                proxy.scrollTo(Calendar.current.startOfDay(for: Date()), anchor: .center)
+                // Scroll to today (UTC)
+                proxy.scrollTo(utcCalendar.startOfDay(for: Date()), anchor: .center)
             }
         }
         .padding(.bottom, 12)
     }
 
-    // 2 days before + today + 7 days ahead = 10 days total
+    // 2 days before + today + 7 days ahead = 10 days total (UTC-based)
     private var dateRange: [Date] {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        return (-2..<8).compactMap { calendar.date(byAdding: .day, value: $0, to: today) }
+        let today = utcCalendar.startOfDay(for: Date())
+        return (-2..<8).compactMap { utcCalendar.date(byAdding: .day, value: $0, to: today) }
     }
 
     // MARK: - No Matches View

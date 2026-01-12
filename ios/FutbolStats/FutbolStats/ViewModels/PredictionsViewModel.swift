@@ -13,6 +13,13 @@ class PredictionsViewModel: ObservableObject {
 
     private let apiClient = APIClient.shared
 
+    // UTC calendar for consistent date comparisons (backend sends UTC dates)
+    private var utcCalendar: Calendar {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        return cal
+    }
+
     // MARK: - Load Predictions
 
     func loadPredictions(days: Int = 7) async {
@@ -68,10 +75,9 @@ class PredictionsViewModel: ObservableObject {
     // MARK: - Filtered Predictions
 
     var predictionsForSelectedDate: [MatchPrediction] {
-        let calendar = Calendar.current
         return predictions.filter { prediction in
             guard let matchDate = prediction.matchDate else { return false }
-            return calendar.isDate(matchDate, inSameDayAs: selectedDate)
+            return utcCalendar.isDate(matchDate, inSameDayAs: selectedDate)
         }.sorted { (p1, p2) in
             guard let d1 = p1.matchDate, let d2 = p2.matchDate else { return false }
             return d1 < d2
@@ -101,10 +107,9 @@ class PredictionsViewModel: ObservableObject {
     // MARK: - Date Helpers
 
     func matchCount(for date: Date) -> Int {
-        let calendar = Calendar.current
         return predictions.filter { prediction in
             guard let matchDate = prediction.matchDate else { return false }
-            return calendar.isDate(matchDate, inSameDayAs: date)
+            return utcCalendar.isDate(matchDate, inSameDayAs: date)
         }.count
     }
 }
