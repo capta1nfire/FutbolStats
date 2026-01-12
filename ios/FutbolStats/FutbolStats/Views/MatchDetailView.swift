@@ -137,7 +137,7 @@ class MatchDetailViewModel: ObservableObject {
             print("DEBUG: matchStats = \(String(describing: response.matchStats))")
             print("DEBUG: matchEvents count = \(response.matchEvents?.count ?? 0)")
             if let stats = matchStats {
-                print("Match stats loaded: possession=\(stats.home?.ballPossession ?? "nil")")
+                print("Match stats loaded: possession=\(stats.home?.ballPossession.map { "\($0)%" } ?? "nil")")
             } else {
                 print("Match stats is nil")
             }

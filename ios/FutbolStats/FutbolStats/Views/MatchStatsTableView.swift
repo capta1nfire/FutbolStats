@@ -24,7 +24,7 @@ struct MatchStatsTableView: View {
                 // Possession (special: bar visualization)
                 if let homePoss = stats.home?.ballPossession,
                    let awayPoss = stats.away?.ballPossession {
-                    possessionRow(home: homePoss, away: awayPoss)
+                    possessionRow(homePercent: homePoss, awayPercent: awayPoss)
                 }
 
                 // xG (Expected Goals)
@@ -129,13 +129,13 @@ struct MatchStatsTableView: View {
 
     // MARK: - Possession Row (with bar)
 
-    private func possessionRow(home: String, away: String) -> some View {
-        let homePercent = parsePercent(home)
-        let awayPercent = parsePercent(away)
+    private func possessionRow(homePercent: Double, awayPercent: Double) -> some View {
+        let homeRatio = homePercent / 100.0
+        let awayRatio = awayPercent / 100.0
 
         return VStack(spacing: 8) {
             HStack {
-                Text(home)
+                Text("\(Int(homePercent))%")
                     .font(.subheadline)
                     .fontWeight(.bold)
                     .foregroundStyle(.blue)
@@ -153,7 +153,7 @@ struct MatchStatsTableView: View {
 
                 Spacer()
 
-                Text(away)
+                Text("\(Int(awayPercent))%")
                     .font(.subheadline)
                     .fontWeight(.bold)
                     .foregroundStyle(.red)
@@ -164,11 +164,11 @@ struct MatchStatsTableView: View {
                 HStack(spacing: 0) {
                     Rectangle()
                         .fill(Color.blue)
-                        .frame(width: geo.size.width * homePercent)
+                        .frame(width: geo.size.width * homeRatio)
 
                     Rectangle()
                         .fill(Color.red)
-                        .frame(width: geo.size.width * awayPercent)
+                        .frame(width: geo.size.width * awayRatio)
                 }
                 .frame(height: 8)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -214,16 +214,6 @@ struct MatchStatsTableView: View {
         }
     }
 
-    // MARK: - Helpers
-
-    private func parsePercent(_ value: String) -> Double {
-        // "50%" -> 0.50
-        let cleaned = value.replacingOccurrences(of: "%", with: "")
-        if let percent = Double(cleaned) {
-            return percent / 100.0
-        }
-        return 0.5
-    }
 }
 
 // MARK: - Preview
@@ -233,7 +223,7 @@ struct MatchStatsTableView: View {
         MatchStatsTableView(
             stats: MatchStats(
                 home: TeamStats(
-                    ballPossession: "54%",
+                    ballPossession: 54.0,
                     totalShots: 15,
                     shotsOnGoal: 6,
                     shotsOffGoal: 5,
@@ -248,11 +238,11 @@ struct MatchStatsTableView: View {
                     goalkeeperSaves: 3,
                     totalPasses: 450,
                     passesAccurate: 380,
-                    passesPct: "84%",
+                    passesPct: 84.0,
                     expectedGoals: "1.85"
                 ),
                 away: TeamStats(
-                    ballPossession: "46%",
+                    ballPossession: 46.0,
                     totalShots: 8,
                     shotsOnGoal: 3,
                     shotsOffGoal: 3,
@@ -267,7 +257,7 @@ struct MatchStatsTableView: View {
                     goalkeeperSaves: 4,
                     totalPasses: 320,
                     passesAccurate: 250,
-                    passesPct: "78%",
+                    passesPct: 78.0,
                     expectedGoals: "0.72"
                 )
             ),

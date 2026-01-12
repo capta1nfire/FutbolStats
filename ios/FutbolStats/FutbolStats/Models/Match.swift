@@ -652,7 +652,7 @@ struct MatchStats: Codable {
 }
 
 struct TeamStats: Codable {
-    let ballPossession: String?
+    let ballPossession: Double?  // Backend sends as float (e.g., 43.0)
     let totalShots: Int?
     let shotsOnGoal: Int?
     let shotsOffGoal: Int?
@@ -667,8 +667,20 @@ struct TeamStats: Codable {
     let goalkeeperSaves: Int?
     let totalPasses: Int?
     let passesAccurate: Int?
-    let passesPct: String?
+    let passesPct: Double?  // Backend sends as float (e.g., 82.0)
     let expectedGoals: String?
+
+    /// Formatted possession for display (e.g., "43%")
+    var possessionDisplay: String {
+        guard let poss = ballPossession else { return "-" }
+        return "\(Int(poss))%"
+    }
+
+    /// Formatted pass accuracy for display (e.g., "82%")
+    var passAccuracyDisplay: String {
+        guard let pct = passesPct else { return "-" }
+        return "\(Int(pct))%"
+    }
 
     enum CodingKeys: String, CodingKey {
         case ballPossession = "ball_possession"
