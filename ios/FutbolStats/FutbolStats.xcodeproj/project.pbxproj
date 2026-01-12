@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		719D7CFA2F146E7500F0D8C5 /* MatchStatsTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 719D7CF92F146E7500F0D8C5 /* MatchStatsTableView.swift */; };
 		71DFDAFE2F0A0F3000B3351D /* CachedAsyncImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71DFDAFD2F0A0F3000B3351D /* CachedAsyncImage.swift */; };
 		A1000001233456780000001 /* FutbolStatsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001233456780000011 /* FutbolStatsApp.swift */; };
 		A1000001233456780000002 /* PredictionsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001233456780000012 /* PredictionsListView.swift */; };
@@ -27,6 +28,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		719D7CF92F146E7500F0D8C5 /* MatchStatsTableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatchStatsTableView.swift; sourceTree = "<group>"; };
 		71DFDAFD2F0A0F3000B3351D /* CachedAsyncImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CachedAsyncImage.swift; sourceTree = "<group>"; };
 		A1000001233456780000010 /* FutbolStats.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FutbolStats.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000001233456780000011 /* FutbolStatsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FutbolStatsApp.swift; sourceTree = "<group>"; };
@@ -45,7 +47,6 @@
 		B1000001233456780000012 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
 		B1000001233456780000013 /* AppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfiguration.swift; sourceTree = "<group>"; };
 		B1000001233456780000014 /* AlphaStatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlphaStatusBadge.swift; sourceTree = "<group>"; };
-		B1000001233456780000015 /* Components */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Components; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -89,20 +90,13 @@
 				A1000001233456780000013 /* MatchDetailView.swift */,
 				A1000001233456780000018 /* TeamsView.swift */,
 				A1000001233456780000019 /* CompetitionsView.swift */,
+				719D7CF92F146E7500F0D8C5 /* MatchStatsTableView.swift */,
 				A100000123345678000001B /* LeagueStandingsView.swift */,
 				A100000123345678000001D /* NarrativeInsightsView.swift */,
 				A100000123345678000001F /* PredictionTimelineView.swift */,
 				B1000001233456780000012 /* DashboardView.swift */,
 			);
 			path = Views;
-			sourceTree = "<group>";
-		};
-		B1000001233456780000020 /* Components */ = {
-			isa = PBXGroup;
-			children = (
-				B1000001233456780000014 /* AlphaStatusBadge.swift */,
-			);
-			path = Components;
 			sourceTree = "<group>";
 		};
 		A1000001233456780000023 /* ViewModels */ = {
@@ -137,6 +131,14 @@
 				A1000001233456780000010 /* FutbolStats.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		B1000001233456780000020 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				B1000001233456780000014 /* AlphaStatusBadge.swift */,
+			);
+			path = Components;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -223,6 +225,7 @@
 				A100000123345678000001E /* PredictionTimelineView.swift in Sources */,
 				B1000001233456780000001 /* DashboardModels.swift in Sources */,
 				B1000001233456780000002 /* DashboardView.swift in Sources */,
+				719D7CFA2F146E7500F0D8C5 /* MatchStatsTableView.swift in Sources */,
 				B1000001233456780000003 /* AppConfiguration.swift in Sources */,
 				B1000001233456780000004 /* AlphaStatusBadge.swift in Sources */,
 			);

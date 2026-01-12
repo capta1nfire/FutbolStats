@@ -133,8 +133,12 @@ class MatchDetailViewModel: ObservableObject {
             // Load match stats for stats table (always, independent of narrative)
             matchStats = response.matchStats
             matchEvents = response.matchEvents
-            if matchStats != nil {
-                print("Match stats loaded for stats table")
+            print("DEBUG: matchStats = \(String(describing: response.matchStats))")
+            print("DEBUG: matchEvents count = \(response.matchEvents?.count ?? 0)")
+            if let stats = matchStats {
+                print("Match stats loaded: possession=\(stats.home?.ballPossession ?? "nil")")
+            } else {
+                print("Match stats is nil")
             }
         } catch {
             // Insights are optional - don't fail the whole view

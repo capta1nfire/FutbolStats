@@ -3542,6 +3542,96 @@ _predictions_health_alert_last: float = 0
 _PREDICTIONS_HEALTH_ALERT_COOLDOWN = 300  # 5 minutes
 
 
+async def _calculate_telemetry_summary(session) -> dict:
+    """
+    Calculate Data Quality Telemetry summary for ops dashboard.
+
+    Queries DB for quarantine/taint/unmapped counts (24h window).
+    Returns status: OK/WARN/RED based on data quality flags.
+
+    Thresholds (conservative, protecting training/backtest/value):
+    - RED: tainted_matches > 0 OR quarantined_odds > 0
+    - WARN: unmapped_entities > 0 (and tainted/quarantined == 0)
+    - OK: all counters == 0
+    """
+    now = datetime.utcnow()
+
+    # 1) Quarantined odds in last 24h
+    quarantined_odds_24h = 0
+    try:
+        res = await session.execute(
+            text("""
+                SELECT COUNT(*) FROM odds_history
+                WHERE quarantined = true
+                  AND captured_at > NOW() - INTERVAL '24 hours'
+            """)
+        )
+        quarantined_odds_24h = int(res.scalar() or 0)
+    except Exception:
+        pass  # Table may not exist yet
+
+    # 2) Tainted matches in last 24h (matches marked tainted recently)
+    tainted_matches_24h = 0
+    try:
+        res = await session.execute(
+            text("""
+                SELECT COUNT(*) FROM matches
+                WHERE tainted = true
+                  AND updated_at > NOW() - INTERVAL '24 hours'
+            """)
+        )
+        tainted_matches_24h = int(res.scalar() or 0)
+    except Exception:
+        pass  # Column may not exist yet
+
+    # 3) Unmapped entities (teams without internal mapping, first seen in last 24h)
+    # This checks for external teams that were seen but not yet mapped
+    unmapped_entities_24h = 0
+    try:
+        # Check for teams referenced in matches but missing logo_url (proxy for unmapped)
+        res = await session.execute(
+            text("""
+                SELECT COUNT(DISTINCT t.id) FROM teams t
+                WHERE t.logo_url IS NULL
+                  AND t.created_at > NOW() - INTERVAL '24 hours'
+            """)
+        )
+        unmapped_entities_24h = int(res.scalar() or 0)
+    except Exception:
+        pass
+
+    # Determine status
+    if tainted_matches_24h > 0 or quarantined_odds_24h > 0:
+        status = "RED"
+    elif unmapped_entities_24h > 0:
+        status = "WARN"
+    else:
+        status = "OK"
+
+    # Build Grafana links from env vars (only if configured)
+    links = []
+    grafana_urls = {
+        "Availability": os.environ.get("GRAFANA_DQ_AVAIL_URL"),
+        "Freshness/Lag": os.environ.get("GRAFANA_DQ_LAG_URL"),
+        "Market Integrity": os.environ.get("GRAFANA_DQ_MARKET_URL"),
+        "Mapping Coverage": os.environ.get("GRAFANA_DQ_MAPPING_URL"),
+    }
+    for title, url in grafana_urls.items():
+        if url:
+            links.append({"title": f"Grafana: {title}", "url": url})
+
+    return {
+        "status": status,
+        "updated_at": now.isoformat(),
+        "summary": {
+            "quarantined_odds_24h": quarantined_odds_24h,
+            "tainted_matches_24h": tainted_matches_24h,
+            "unmapped_entities_24h": unmapped_entities_24h,
+        },
+        "links": links,
+    }
+
+
 async def _calculate_predictions_health(session) -> dict:
     """
     Calculate predictions health metrics for P0 observability.
@@ -4869,6 +4959,11 @@ async def _load_ops_data() -> dict:
         # =============================================================
         fastpath_health = await _calculate_fastpath_health(session)
 
+        # =============================================================
+        # DATA QUALITY TELEMETRY (quarantine/taint/unmapped summary)
+        # =============================================================
+        telemetry_data = await _calculate_telemetry_summary(session)
+
     # League names - comprehensive fallback for all known leagues
     # Includes EXTENDED_LEAGUES and other common leagues from API-Football
     LEAGUE_NAMES_FALLBACK: dict[int, str] = {
@@ -4966,6 +5061,7 @@ async def _load_ops_data() -> dict:
         "progress": progress_metrics,
         "predictions_health": predictions_health,
         "fastpath_health": fastpath_health,
+        "telemetry": telemetry_data,
     }
 
 

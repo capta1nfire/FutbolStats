@@ -24,6 +24,7 @@ struct OpsDashboardResponse: Decodable {
     let statsBackfill: OpsStatsBackfill?
     let upcoming: OpsUpcoming?
     let progress: OpsProgress?
+    let telemetry: OpsTelemetry?
 
     enum CodingKeys: String, CodingKey {
         case generatedAt = "generated_at"
@@ -36,6 +37,7 @@ struct OpsDashboardResponse: Decodable {
         case statsBackfill = "stats_backfill"
         case upcoming
         case progress
+        case telemetry
     }
 }
 
@@ -365,6 +367,41 @@ struct PITWeeklyLatestMetrics: Decodable {
     let brier: PITBrier?
     let betting: PITBetting?
     let interpretation: PITInterpretation?
+}
+
+// MARK: - Telemetry (Data Quality)
+
+struct OpsTelemetry: Decodable {
+    let status: String?
+    let updatedAt: String?
+    let summary: OpsTelemetrySummary?
+    let links: [OpsTelemetryLink]?
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case updatedAt = "updated_at"
+        case summary
+        case links
+    }
+}
+
+struct OpsTelemetrySummary: Decodable {
+    let quarantinedOdds24h: Int?
+    let taintedMatches24h: Int?
+    let unmappedEntities24h: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case quarantinedOdds24h = "quarantined_odds_24h"
+        case taintedMatches24h = "tainted_matches_24h"
+        case unmappedEntities24h = "unmapped_entities_24h"
+    }
+}
+
+struct OpsTelemetryLink: Decodable, Identifiable {
+    let title: String
+    let url: String
+
+    var id: String { url }
 }
 
 

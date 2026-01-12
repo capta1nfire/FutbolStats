@@ -52,6 +52,9 @@ struct DashboardView: View {
             VStack(spacing: 16) {
                 if let ops = ops {
                     opsCard(ops)
+                    if let telemetry = ops.telemetry {
+                        telemetryCard(telemetry)
+                    }
                 }
                 if let pit = pit {
                     pitCard(pit)
@@ -165,6 +168,104 @@ struct DashboardView: View {
         .padding(14)
         .background(Color(white: 0.1))
         .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func telemetryCard(_ telemetry: OpsTelemetry) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Header with status indicator
+            HStack {
+                Text("Telemetry (Data Quality)")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Spacer()
+                telemetryStatusBadge(telemetry.status ?? "OK")
+            }
+
+            // Summary pills
+            if let summary = telemetry.summary {
+                HStack(spacing: 8) {
+                    telemetryPill(
+                        label: "Quarantine 24h",
+                        value: summary.quarantinedOdds24h ?? 0,
+                        isRed: (summary.quarantinedOdds24h ?? 0) > 0
+                    )
+                    telemetryPill(
+                        label: "Tainted 24h",
+                        value: summary.taintedMatches24h ?? 0,
+                        isRed: (summary.taintedMatches24h ?? 0) > 0
+                    )
+                    telemetryPill(
+                        label: "Unmapped 24h",
+                        value: summary.unmappedEntities24h ?? 0,
+                        isRed: false
+                    )
+                }
+            }
+
+            // Grafana links (if available)
+            if let links = telemetry.links, !links.isEmpty {
+                Divider().background(Color.gray.opacity(0.25))
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(links) { link in
+                        if let url = URL(string: link.url) {
+                            Link(destination: url) {
+                                HStack {
+                                    Image(systemName: "chart.bar.xaxis")
+                                        .font(.caption)
+                                    Text(link.title)
+                                        .font(.caption)
+                                    Spacer()
+                                    Image(systemName: "arrow.up.right.square")
+                                        .font(.caption2)
+                                }
+                                .foregroundStyle(.blue)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(Color(white: 0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func telemetryStatusBadge(_ status: String) -> some View {
+        let color: Color = {
+            switch status.uppercased() {
+            case "OK": return .green
+            case "WARN": return .yellow
+            case "RED": return .red
+            default: return .gray
+            }
+        }()
+
+        return Text(status)
+            .font(.caption2)
+            .fontWeight(.semibold)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(color.opacity(0.2))
+            .foregroundStyle(color)
+            .clipShape(Capsule())
+    }
+
+    private func telemetryPill(label: String, value: Int, isRed: Bool) -> some View {
+        VStack(alignment: .center, spacing: 2) {
+            Text("\(value)")
+                .font(.title3)
+                .fontWeight(.bold)
+                .foregroundStyle(isRed ? .red : .white)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.gray)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(8)
+        .background(Color(white: 0.14))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     private func headerRow(title: String, subtitle: String?) -> some View {

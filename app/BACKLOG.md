@@ -37,7 +37,16 @@
 - [ ] Auditar sesion de trabajo de la tarde noche de ayer.
 
 - [ ] crear un checklist y mapa (ayer datos iban a pasar por fuera de "ML Engine")
-- [ ] _
+
+- [ ] verificar que cada equipo de cada liga esta recibiendo predicciones, odds, estadisticas, etc.
+- [ ] Reestructura xgboots y features basado en analisis de Google (pineado)
+
+- [ ] Crear "sobrenombres a los equipos para que en la narrativa dinamicamente/aleatoriamente sean utilizados, por ejemplo para referirse al "Real Madrid" use "Los Merengues", Atletico de Madrid "Los Colchoneros", deben ser "apodos" no peyorativos o despectivos.
+
+
+- [ ] Pandas vs Polars
+
+- [ ] Mejorar narrativa, qwen intercambia numeros (1) con palabras (Uno). Que diga el resultado 1-1, 2-2, 2-1, etc es irrelevante ya el usuario sabe que el equipo/gano/empato/perdio y lo que realmente quiere entender es el porque, perdemos palabras (tokens) diciendo el marcador cuando podemos usarlo para explicar mas el contexto del match. En los factores clave se repite la misma informacion de la narrativa, estamos duplicando info.
 - [ ] _
 - [ ] _
 - [ ] _

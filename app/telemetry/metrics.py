@@ -5,6 +5,55 @@ Design principles:
 - Multi-provider ready (provider label on all metrics)
 - Low cardinality (controlled labels)
 - Best-effort (never block main flow)
+
+=============================================================================
+CARDINALITY CONTROL (CRITICAL)
+=============================================================================
+
+Labels are restricted to LOW-CARDINALITY values only. High-cardinality
+identifiers will cause metric explosion and must NEVER be used as labels.
+
+ALLOWED LABELS (bounded sets):
+- provider:     "api_football", "football_data_uk", "betfair" (max ~10)
+- entity:       "fixture", "odds", "lineup", "stats", "events" (max ~10)
+- endpoint:     "fixtures", "fixtures/statistics", "odds", etc. (max ~20)
+- status_code:  "200", "400", "404", "429", "500", "0" (max ~10)
+- error_code:   "timeout", "rate_limit", "api_error", "http_4xx" (max ~15)
+- book:         "bet365", "pinnacle", "betfair", "api_football" (max ~20)
+- market:       "1x2", "over_under", "asian_handicap", "btts" (max ~10)
+- rule:         "overround_low", "overround_high", "sanity" (max ~10)
+- entity_type:  "team", "league", "match", "player" (max ~5)
+- league:       Use league_id buckets or "top5", "other" (max ~50)
+- reason:       "lag_exceeded", "stale_data", "validation_fail" (max ~15)
+
+FORBIDDEN AS LABELS (will cause cardinality explosion):
+- match_id, fixture_id, external_id
+- team names, player names
+- URLs, full paths
+- Timestamps, dates
+- Raw payloads, error messages
+- Any unbounded identifier
+
+For debugging specific matches/teams, use logs with structured fields,
+NOT metric labels. Metrics are for aggregated observability.
+
+Example of CORRECT instrumentation:
+    record_provider_request(
+        provider="api_football",
+        entity="fixture",
+        endpoint="fixtures",
+        status_code=200,
+        ...
+    )
+
+Example of WRONG instrumentation (DO NOT DO THIS):
+    record_provider_request(
+        provider="api_football",
+        entity=f"match_{match_id}",  # WRONG: unbounded
+        endpoint=f"/fixtures/{fixture_id}",  # WRONG: unbounded
+        ...
+    )
+=============================================================================
 """
 
 import time
