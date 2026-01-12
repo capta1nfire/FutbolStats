@@ -4302,12 +4302,12 @@ async def audit_metrics_endpoint(
 
     # P1.2: stats_backfill verification
     try:
-        # Matches 72h with stats
+        # Matches 72h with stats (stats is JSON, cast to text for comparison)
         res = await session.execute(text("""
             SELECT COUNT(*) FROM matches
             WHERE status IN ('FT', 'AET', 'PEN')
               AND COALESCE(finished_at, date) > NOW() - INTERVAL '72 hours'
-              AND stats IS NOT NULL AND stats != '{}'::jsonb
+              AND stats IS NOT NULL AND stats::text != '{}'
         """))
         with_stats = res.scalar()
         result["audits"]["finished_72h_with_stats"] = with_stats
@@ -4317,7 +4317,7 @@ async def audit_metrics_endpoint(
             SELECT COUNT(*) FROM matches
             WHERE status IN ('FT', 'AET', 'PEN')
               AND COALESCE(finished_at, date) > NOW() - INTERVAL '72 hours'
-              AND (stats IS NULL OR stats = '{}'::jsonb)
+              AND (stats IS NULL OR stats::text = '{}')
         """))
         missing_stats = res.scalar()
         result["audits"]["finished_72h_missing_stats"] = missing_stats
@@ -4328,7 +4328,7 @@ async def audit_metrics_endpoint(
             FROM matches
             WHERE status IN ('FT', 'AET', 'PEN')
               AND COALESCE(finished_at, date) > NOW() - INTERVAL '72 hours'
-              AND (stats IS NULL OR stats = '{}'::jsonb)
+              AND (stats IS NULL OR stats::text = '{}')
             LIMIT 10
         """))
         missing_sample = [{"match_id": r[0], "status": r[1], "date": str(r[2]) if r[2] else None,
@@ -4345,7 +4345,7 @@ async def audit_metrics_endpoint(
             FROM matches
             WHERE status IN ('FT', 'AET', 'PEN')
               AND stats_ready_at IS NOT NULL
-              AND stats IS NOT NULL AND stats != '{}'::jsonb
+              AND stats IS NOT NULL AND stats::text != '{}'
             ORDER BY stats_ready_at DESC
             LIMIT 5
         """))
