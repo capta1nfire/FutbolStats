@@ -772,6 +772,7 @@ struct LLMNarrativePayload: Codable {
     let result: LLMResult?
     let prediction: LLMPrediction?
     let narrative: LLMNarrative?
+    let marketOdds: LLMMarketOdds?  // Market odds at prediction time
 
     enum CodingKeys: String, CodingKey {
         case matchId = "match_id"
@@ -779,6 +780,7 @@ struct LLMNarrativePayload: Codable {
         case result
         case prediction
         case narrative
+        case marketOdds = "market_odds"
     }
 }
 
@@ -797,21 +799,24 @@ struct LLMResult: Codable {
 
 /// Prediction info
 struct LLMPrediction: Codable {
-    let predictedResult: String?
+    let selection: String?  // "HOME", "DRAW", "AWAY"
     let confidence: Double?
-    let homeProb: Double?
-    let drawProb: Double?
-    let awayProb: Double?
-    let marketOdds: LLMMarketOdds?
+    let probabilities: LLMProbabilities?
+    let marketOdds: LLMMarketOdds?  // Note: backend uses "market_odds" at narrative level, not here
 
     enum CodingKeys: String, CodingKey {
-        case predictedResult = "predicted_result"
+        case selection
         case confidence
-        case homeProb = "home_prob"
-        case drawProb = "draw_prob"
-        case awayProb = "away_prob"
+        case probabilities
         case marketOdds = "market_odds"
     }
+}
+
+/// Probabilities from LLM prediction
+struct LLMProbabilities: Codable {
+    let home: Double?
+    let draw: Double?
+    let away: Double?
 }
 
 /// Market odds at prediction time

@@ -243,12 +243,10 @@ struct LLMNarrativeView_Previews: PreviewProvider {
                             betWon: true
                         ),
                         prediction: LLMPrediction(
-                            predictedResult: "home",
+                            selection: "HOME",
                             confidence: 0.65,
-                            homeProb: 0.65,
-                            drawProb: 0.20,
-                            awayProb: 0.15,
-                            marketOdds: nil
+                            probabilities: LLMProbabilities(home: 0.65, draw: 0.20, away: 0.15),
+                            marketOdds: LLMMarketOdds(home: 1.80, draw: 3.50, away: 4.50)
                         ),
                         narrative: LLMNarrative(
                             title: "El Barça cumple con lo esperado",
@@ -272,7 +270,8 @@ struct LLMNarrativeView_Previews: PreviewProvider {
                             ],
                             tone: "reinforce_win",
                             responsibleNote: "Las cuotas pueden variar. Apuesta con responsabilidad."
-                        )
+                        ),
+                        marketOdds: LLMMarketOdds(home: 1.80, draw: 3.50, away: 4.50)
                     )
                 )
 

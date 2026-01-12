@@ -227,6 +227,27 @@ _predictions_cache = {
     "ttl": 300,  # 5 minutes cache
 }
 
+# Standings cache: keyed by (league_id, season), stores standings list
+# TTL 30 minutes - standings don't change frequently during a match detail view
+_standings_cache = {}  # type: dict  # {(league_id, season): {"data": list, "timestamp": float}}
+_STANDINGS_CACHE_TTL = 1800  # 30 minutes
+
+
+def _get_cached_standings(league_id: int, season: int) -> Optional[list]:
+    """Get standings from cache if still valid."""
+    key = (league_id, season)
+    if key in _standings_cache:
+        entry = _standings_cache[key]
+        if time.time() - entry["timestamp"] < _STANDINGS_CACHE_TTL:
+            return entry["data"]
+    return None
+
+
+def _set_cached_standings(league_id: int, season: int, data: list) -> None:
+    """Store standings in cache."""
+    key = (league_id, season)
+    _standings_cache[key] = {"data": data, "timestamp": time.time()}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -1323,13 +1344,17 @@ async def get_match_details(
     # Only fetch standings for club leagues (not national teams)
     if home_team and home_team.team_type == "club" and match.league_id:
         try:
-            provider = APIFootballProvider()
             # Determine season (current year or previous if early in year)
             current_date = match.date or datetime.now()
             season = current_date.year if current_date.month >= 7 else current_date.year - 1
 
-            standings = await provider.get_standings(match.league_id, season)
-            await provider.close()
+            # Check cache first (avoids ~2s external API call)
+            standings = _get_cached_standings(match.league_id, season)
+            if standings is None:
+                provider = APIFootballProvider()
+                standings = await provider.get_standings(match.league_id, season)
+                await provider.close()
+                _set_cached_standings(match.league_id, season, standings)
 
             # Find positions for both teams
             for standing in standings:

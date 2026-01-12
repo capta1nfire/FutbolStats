@@ -89,11 +89,12 @@ class MatchDetailViewModel: ObservableObject {
             processTeamHistory()
             generateInsights()
 
-            // Load timeline and narrative insights for finished matches
+            // Load timeline and narrative insights for finished matches (in parallel)
             if prediction.isFinished {
-                print("Match \(matchId) is finished, loading timeline and insights...")
-                await loadTimeline(matchId: matchId)
-                await loadNarrativeInsights(matchId: matchId)
+                print("Match \(matchId) is finished, loading timeline and insights in parallel...")
+                async let timelineTask: () = loadTimeline(matchId: matchId)
+                async let narrativeTask: () = loadNarrativeInsights(matchId: matchId)
+                _ = await (timelineTask, narrativeTask)
             } else {
                 print("Match \(matchId) status: \(prediction.status ?? "nil") - not loading timeline/insights")
             }
