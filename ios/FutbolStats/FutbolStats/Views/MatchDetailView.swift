@@ -144,7 +144,22 @@ class MatchDetailViewModel: ObservableObject {
         } catch {
             // Insights are optional - don't fail the whole view
             llmNarrativeError = error.localizedDescription
-            print("LLM narrative error: \(error.localizedDescription)")
+            // Log full error for debugging schema mismatches
+            print("LLM narrative error: \(error)")
+            if let decodingError = error as? DecodingError {
+                switch decodingError {
+                case .keyNotFound(let key, let context):
+                    print("  DecodingError: keyNotFound '\(key.stringValue)' at \(context.codingPath.map { $0.stringValue }.joined(separator: "."))")
+                case .typeMismatch(let type, let context):
+                    print("  DecodingError: typeMismatch expected \(type) at \(context.codingPath.map { $0.stringValue }.joined(separator: "."))")
+                case .valueNotFound(let type, let context):
+                    print("  DecodingError: valueNotFound \(type) at \(context.codingPath.map { $0.stringValue }.joined(separator: "."))")
+                case .dataCorrupted(let context):
+                    print("  DecodingError: dataCorrupted at \(context.codingPath.map { $0.stringValue }.joined(separator: "."))")
+                @unknown default:
+                    print("  DecodingError: unknown")
+                }
+            }
         }
     }
 
