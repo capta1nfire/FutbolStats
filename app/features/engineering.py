@@ -411,7 +411,7 @@ class FeatureEngineer:
     async def get_upcoming_matches_features(
         self,
         league_ids: Optional[list[int]] = None,
-        include_recent_days: int = 2,
+        include_recent_days: int = 7,
     ) -> pd.DataFrame:
         """
         Get features for upcoming and recent matches.
@@ -419,6 +419,7 @@ class FeatureEngineer:
         Args:
             league_ids: Optional list of league IDs to filter.
             include_recent_days: Include finished matches from last N days (for showing scores).
+                                 Default 7 to preserve history for iOS date selector.
 
         Returns:
             DataFrame with features for matches (upcoming + recent finished).

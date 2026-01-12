@@ -740,8 +740,13 @@ async def get_predictions(
         league_id_list = [int(x.strip()) for x in league_ids.split(",")]
 
     # Get features for upcoming matches
+    # Use 'days' parameter to control how many days of history to include
+    # iOS shows 2 days back + 7 ahead, so we match that window
     feature_engineer = FeatureEngineer(session=session)
-    df = await feature_engineer.get_upcoming_matches_features(league_ids=league_id_list)
+    df = await feature_engineer.get_upcoming_matches_features(
+        league_ids=league_id_list,
+        include_recent_days=days,  # Honor the 'days' parameter for history retention
+    )
 
     if len(df) == 0:
         return PredictionsResponse(
