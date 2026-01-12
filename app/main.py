@@ -728,8 +728,8 @@ async def get_predictions(
     cache_key = f"{league_ids or 'all'}_{days}_{with_context}"
     now = time.time()
 
-    # Check cache (only for default requests without league filter and not saving)
-    if league_ids is None and not save and with_context and _predictions_cache["data"] is not None:
+    # Check cache (only for default requests without league filter, default days, and not saving)
+    if league_ids is None and days == 7 and not save and with_context and _predictions_cache["data"] is not None:
         if now - _predictions_cache["timestamp"] < _predictions_cache["ttl"]:
             logger.info("Returning cached predictions")
             return _predictions_cache["data"]

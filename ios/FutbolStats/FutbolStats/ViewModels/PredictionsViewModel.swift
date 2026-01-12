@@ -8,7 +8,7 @@ class PredictionsViewModel: ObservableObject {
     @Published var error: String?
     @Published var modelLoaded = false
     @Published var lastUpdated: Date?
-    @Published var selectedDate: Date = Date()
+    @Published var selectedDate: Date
     @Published var opsProgress: OpsProgress?
 
     private let apiClient = APIClient.shared
@@ -18,6 +18,13 @@ class PredictionsViewModel: ObservableObject {
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(identifier: "UTC")!
         return cal
+    }
+
+    init() {
+        // Initialize selectedDate to today in UTC to match dateRange and backend dates
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        self.selectedDate = cal.startOfDay(for: Date())
     }
 
     // MARK: - Load Predictions
