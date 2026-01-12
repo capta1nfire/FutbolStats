@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     FASTPATH_LOOKBACK_MINUTES: int = 90
     FASTPATH_MAX_CONCURRENT_JOBS: int = 10
 
+    # Telemetry / Observability
+    METRICS_BEARER_TOKEN: str = ""  # Bearer token for /metrics endpoint (Grafana Cloud scraping)
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

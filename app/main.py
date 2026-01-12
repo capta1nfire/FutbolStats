@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from slowapi import _rate_limit_exceeded_handler
@@ -429,7 +429,9 @@ async def health_check(request: Request):
 
 
 @app.get("/metrics")
-async def prometheus_metrics():
+async def prometheus_metrics(
+    authorization: str = Header(None, alias="Authorization"),
+):
     """
     Prometheus metrics endpoint for Data Quality Telemetry.
 
@@ -440,8 +442,33 @@ async def prometheus_metrics():
     - Entity mapping coverage
 
     Scrape this endpoint from Grafana Cloud or Prometheus.
+    Requires Bearer token authentication via METRICS_BEARER_TOKEN env var.
     """
     from fastapi.responses import PlainTextResponse
+
+    # Validate Bearer token if configured
+    expected_token = getattr(settings, "METRICS_BEARER_TOKEN", None)
+    if expected_token:
+        if not authorization:
+            return PlainTextResponse(
+                content="# Unauthorized: Missing Authorization header\n",
+                status_code=401,
+                media_type="text/plain",
+            )
+        # Extract token from "Bearer <token>"
+        parts = authorization.split(" ", 1)
+        if len(parts) != 2 or parts[0].lower() != "bearer":
+            return PlainTextResponse(
+                content="# Unauthorized: Invalid Authorization format\n",
+                status_code=401,
+                media_type="text/plain",
+            )
+        if parts[1] != expected_token:
+            return PlainTextResponse(
+                content="# Unauthorized: Invalid token\n",
+                status_code=401,
+                media_type="text/plain",
+            )
 
     try:
         from app.telemetry import get_metrics_text
