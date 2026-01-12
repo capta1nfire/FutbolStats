@@ -4089,6 +4089,139 @@ async def stats_rca_endpoint(
         return result
 
 
+@app.get("/dashboard/ops/bulk_stats_backfill.json")
+async def bulk_stats_backfill_endpoint(
+    token: str = Query(...),
+    since_date: str = Query("2026-01-03", description="Start date YYYY-MM-DD"),
+    limit: int = Query(50, description="Max matches to process per call"),
+    dry_run: bool = Query(True, description="If true, only list matches without fetching"),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Bulk backfill stats for all FT matches since a given date that are missing stats.
+    Use dry_run=true first to see how many matches need backfill.
+    """
+    if token != settings.DASHBOARD_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    from app.etl.api_football import APIFootballProvider
+    from datetime import datetime
+
+    result = {
+        "since_date": since_date,
+        "dry_run": dry_run,
+        "limit": limit,
+        "matches_found": 0,
+        "matches_processed": 0,
+        "successes": [],
+        "failures": [],
+    }
+
+    try:
+        # Find all FT matches since date with missing stats
+        res = await session.execute(text("""
+            SELECT id, external_id, date, home_team_id, away_team_id
+            FROM matches
+            WHERE status IN ('FT', 'AET', 'PEN')
+              AND date >= :since_date
+              AND (stats IS NULL OR stats::text = '{}' OR stats::text = 'null')
+            ORDER BY date ASC
+            LIMIT :limit
+        """), {"since_date": since_date, "limit": limit})
+
+        matches = res.fetchall()
+        result["matches_found"] = len(matches)
+
+        if dry_run:
+            result["matches_to_process"] = [
+                {"id": m[0], "external_id": m[1], "date": str(m[2])}
+                for m in matches
+            ]
+            # Also count total
+            res_total = await session.execute(text("""
+                SELECT COUNT(*) FROM matches
+                WHERE status IN ('FT', 'AET', 'PEN')
+                  AND date >= :since_date
+                  AND (stats IS NULL OR stats::text = '{}' OR stats::text = 'null')
+            """), {"since_date": since_date})
+            result["total_missing"] = res_total.scalar()
+            return result
+
+        # Process matches
+        provider = APIFootballProvider()
+        key_map = {
+            "Ball Possession": "ball_possession",
+            "Total Shots": "total_shots",
+            "Shots on Goal": "shots_on_goal",
+            "Shots off Goal": "shots_off_goal",
+            "Blocked Shots": "blocked_shots",
+            "Shots insidebox": "shots_insidebox",
+            "Shots outsidebox": "shots_outsidebox",
+            "Fouls": "fouls",
+            "Corner Kicks": "corner_kicks",
+            "Offsides": "offsides",
+            "Yellow Cards": "yellow_cards",
+            "Red Cards": "red_cards",
+            "Goalkeeper Saves": "goalkeeper_saves",
+            "Total passes": "total_passes",
+            "Passes accurate": "passes_accurate",
+            "Passes %": "passes_pct",
+            "expected_goals": "expected_goals",
+        }
+
+        def parse_team_stats(stats_list):
+            parsed = {}
+            for stat in stats_list:
+                stat_type = stat.get("type")
+                stat_value = stat.get("value")
+                if stat_type in key_map:
+                    parsed[key_map[stat_type]] = stat_value
+            return parsed
+
+        for match_row in matches:
+            match_id, external_id, match_date, home_id, away_id = match_row
+
+            if not external_id:
+                result["failures"].append({"id": match_id, "reason": "NO_EXTERNAL_ID"})
+                continue
+
+            try:
+                stats_data = await provider._rate_limited_request(
+                    "fixtures/statistics",
+                    {"fixture": external_id}
+                )
+                response = stats_data.get("response", [])
+
+                if len(response) < 2:
+                    result["failures"].append({"id": match_id, "external_id": external_id, "reason": "API_EMPTY"})
+                    continue
+
+                home_stats = parse_team_stats(response[0].get("statistics", []))
+                away_stats = parse_team_stats(response[1].get("statistics", []))
+
+                new_stats = {"home": home_stats, "away": away_stats}
+
+                # Update in DB
+                await session.execute(
+                    text("UPDATE matches SET stats = :stats, stats_ready_at = NOW() WHERE id = :id"),
+                    {"stats": json.dumps(new_stats), "id": match_id}
+                )
+                result["successes"].append({"id": match_id, "external_id": external_id})
+                result["matches_processed"] += 1
+
+            except Exception as e:
+                result["failures"].append({"id": match_id, "external_id": external_id, "reason": str(e)})
+
+        await provider.close()
+        await session.commit()
+
+        return result
+
+    except Exception as e:
+        logger.error(f"bulk_stats_backfill error: {e}", exc_info=True)
+        return {"error": str(e)}
+
+
 @app.get("/dashboard/ops/fetch_events.json")
 async def fetch_events_endpoint(
     token: str = Query(...),
