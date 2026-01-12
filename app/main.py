@@ -4166,6 +4166,198 @@ async def fetch_events_endpoint(
         return result
 
 
+@app.get("/dashboard/ops/audit_metrics.json")
+async def audit_metrics_endpoint(
+    token: str = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Audit endpoint: cross-check dashboard metrics with direct DB queries.
+    Returns raw query results for manual verification.
+    """
+    if token != settings.DASHBOARD_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    from sqlalchemy import text
+
+    result = {
+        "generated_at": datetime.utcnow().isoformat(),
+        "audits": {},
+    }
+
+    # P0.1: fastpath_ticks verification
+    try:
+        # Last 5 ticks
+        res = await session.execute(text("""
+            SELECT tick_at, selected, refreshed, ready, enqueued, completed, errors, skipped
+            FROM fastpath_ticks
+            ORDER BY tick_at DESC
+            LIMIT 5
+        """))
+        ticks = [{"tick_at": str(r[0]), "selected": r[1], "refreshed": r[2], "ready": r[3],
+                  "enqueued": r[4], "completed": r[5], "errors": r[6], "skipped": r[7]}
+                 for r in res.fetchall()]
+        result["audits"]["fastpath_ticks_last_5"] = ticks
+
+        # Tick count last hour
+        res = await session.execute(text("""
+            SELECT COUNT(*), COUNT(*) FILTER (WHERE selected > 0 OR enqueued > 0 OR completed > 0)
+            FROM fastpath_ticks WHERE tick_at > NOW() - INTERVAL '1 hour'
+        """))
+        row = res.fetchone()
+        result["audits"]["ticks_1h"] = {"total": row[0], "with_activity": row[1]}
+    except Exception as e:
+        result["audits"]["fastpath_ticks_error"] = str(e)
+
+    # P0.1: pending_ready verification - sample 5 match_ids
+    try:
+        res = await session.execute(text("""
+            SELECT m.id, m.status, m.stats_ready_at, m.finished_at, m.date,
+                   COALESCE(m.finished_at, m.date) as effective_finished
+            FROM matches m
+            WHERE m.status IN ('FT', 'AET', 'PEN')
+              AND COALESCE(m.finished_at, m.date) > NOW() - INTERVAL '180 minutes'
+              AND m.stats_ready_at IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM prediction_outcomes po
+                  JOIN post_match_audits pma ON pma.outcome_id = po.id
+                  WHERE po.match_id = m.id AND pma.llm_narrative_status = 'ok'
+              )
+            LIMIT 5
+        """))
+        pending = [{"match_id": r[0], "status": r[1], "stats_ready_at": str(r[2]) if r[2] else None,
+                    "finished_at": str(r[3]) if r[3] else None, "date": str(r[4]) if r[4] else None}
+                   for r in res.fetchall()]
+        result["audits"]["pending_ready_sample"] = pending
+        result["audits"]["pending_ready_count"] = len(pending)
+    except Exception as e:
+        result["audits"]["pending_ready_error"] = str(e)
+
+    # P0.2: LLM status breakdown last 60m - direct query
+    try:
+        res = await session.execute(text("""
+            SELECT llm_narrative_status, COUNT(*) as cnt
+            FROM post_match_audits
+            WHERE created_at > NOW() - INTERVAL '60 minutes'
+              AND llm_narrative_status IS NOT NULL
+            GROUP BY llm_narrative_status
+        """))
+        llm_breakdown = {r[0]: r[1] for r in res.fetchall()}
+        result["audits"]["llm_60m_direct"] = llm_breakdown
+
+        # Sample of audits with error
+        res = await session.execute(text("""
+            SELECT pma.id, pma.outcome_id, pma.llm_narrative_status, pma.llm_narrative_error_code, pma.created_at
+            FROM post_match_audits pma
+            WHERE pma.created_at > NOW() - INTERVAL '60 minutes'
+              AND pma.llm_narrative_status = 'error'
+            LIMIT 5
+        """))
+        errors = [{"audit_id": r[0], "outcome_id": r[1], "status": r[2], "error_code": r[3], "created_at": str(r[4])}
+                  for r in res.fetchall()]
+        result["audits"]["llm_errors_sample"] = errors
+    except Exception as e:
+        result["audits"]["llm_60m_error"] = str(e)
+
+    # P1.1: predictions_health verification
+    try:
+        # Last prediction saved
+        res = await session.execute(text("SELECT MAX(created_at) FROM predictions"))
+        last_pred = res.scalar()
+        result["audits"]["last_prediction_saved_at"] = str(last_pred) if last_pred else None
+
+        # FT matches last 48h
+        res = await session.execute(text("""
+            SELECT COUNT(*) FROM matches
+            WHERE status IN ('FT', 'AET', 'PEN')
+              AND COALESCE(finished_at, date) > NOW() - INTERVAL '48 hours'
+        """))
+        ft_48h = res.scalar()
+        result["audits"]["ft_matches_48h"] = ft_48h
+
+        # FT matches missing prediction
+        res = await session.execute(text("""
+            SELECT COUNT(*) FROM matches m
+            WHERE m.status IN ('FT', 'AET', 'PEN')
+              AND COALESCE(m.finished_at, m.date) > NOW() - INTERVAL '48 hours'
+              AND NOT EXISTS (SELECT 1 FROM predictions p WHERE p.match_id = m.id)
+        """))
+        missing = res.scalar()
+        result["audits"]["ft_missing_prediction_48h"] = missing
+
+        # Sample of missing
+        res = await session.execute(text("""
+            SELECT m.id, m.status, m.date, m.home_team_id, m.away_team_id
+            FROM matches m
+            WHERE m.status IN ('FT', 'AET', 'PEN')
+              AND COALESCE(m.finished_at, m.date) > NOW() - INTERVAL '48 hours'
+              AND NOT EXISTS (SELECT 1 FROM predictions p WHERE p.match_id = m.id)
+            LIMIT 10
+        """))
+        missing_sample = [{"match_id": r[0], "status": r[1], "date": str(r[2]) if r[2] else None}
+                          for r in res.fetchall()]
+        result["audits"]["ft_missing_prediction_sample"] = missing_sample
+    except Exception as e:
+        result["audits"]["predictions_health_error"] = str(e)
+
+    # P1.2: stats_backfill verification
+    try:
+        # Matches 72h with stats
+        res = await session.execute(text("""
+            SELECT COUNT(*) FROM matches
+            WHERE status IN ('FT', 'AET', 'PEN')
+              AND COALESCE(finished_at, date) > NOW() - INTERVAL '72 hours'
+              AND stats IS NOT NULL AND stats != '{}'::jsonb
+        """))
+        with_stats = res.scalar()
+        result["audits"]["finished_72h_with_stats"] = with_stats
+
+        # Matches 72h missing stats
+        res = await session.execute(text("""
+            SELECT COUNT(*) FROM matches
+            WHERE status IN ('FT', 'AET', 'PEN')
+              AND COALESCE(finished_at, date) > NOW() - INTERVAL '72 hours'
+              AND (stats IS NULL OR stats = '{}'::jsonb)
+        """))
+        missing_stats = res.scalar()
+        result["audits"]["finished_72h_missing_stats"] = missing_stats
+
+        # Sample missing stats
+        res = await session.execute(text("""
+            SELECT id, status, date, stats
+            FROM matches
+            WHERE status IN ('FT', 'AET', 'PEN')
+              AND COALESCE(finished_at, date) > NOW() - INTERVAL '72 hours'
+              AND (stats IS NULL OR stats = '{}'::jsonb)
+            LIMIT 10
+        """))
+        missing_sample = [{"match_id": r[0], "status": r[1], "date": str(r[2]) if r[2] else None,
+                           "stats": r[3]} for r in res.fetchall()]
+        result["audits"]["missing_stats_sample"] = missing_sample
+    except Exception as e:
+        result["audits"]["stats_backfill_error"] = str(e)
+
+    # P0.3: Stats integrity check - matches with stats that might be overwritten
+    try:
+        res = await session.execute(text("""
+            SELECT id, status, stats_ready_at, stats IS NOT NULL as has_stats,
+                   events IS NOT NULL as has_events
+            FROM matches
+            WHERE status IN ('FT', 'AET', 'PEN')
+              AND stats_ready_at IS NOT NULL
+              AND stats IS NOT NULL AND stats != '{}'::jsonb
+            ORDER BY stats_ready_at DESC
+            LIMIT 5
+        """))
+        integrity = [{"match_id": r[0], "status": r[1], "stats_ready_at": str(r[2]) if r[2] else None,
+                      "has_stats": r[3], "has_events": r[4]} for r in res.fetchall()]
+        result["audits"]["stats_integrity_sample"] = integrity
+    except Exception as e:
+        result["audits"]["stats_integrity_error"] = str(e)
+
+    return result
+
+
 async def _load_ops_data() -> dict:
     """
     Ops dashboard: read-only aggregated metrics from DB + in-process state.
