@@ -4307,7 +4307,9 @@ async def audit_metrics_endpoint(
             SELECT COUNT(*) FROM matches
             WHERE status IN ('FT', 'AET', 'PEN')
               AND COALESCE(finished_at, date) > NOW() - INTERVAL '72 hours'
-              AND stats IS NOT NULL AND stats::text != '{}'
+              AND stats IS NOT NULL
+              AND stats::text != '{}'
+              AND stats::text != 'null'
         """))
         with_stats = res.scalar()
         result["audits"]["finished_72h_with_stats"] = with_stats
@@ -4317,7 +4319,7 @@ async def audit_metrics_endpoint(
             SELECT COUNT(*) FROM matches
             WHERE status IN ('FT', 'AET', 'PEN')
               AND COALESCE(finished_at, date) > NOW() - INTERVAL '72 hours'
-              AND (stats IS NULL OR stats::text = '{}')
+              AND (stats IS NULL OR stats::text = '{}' OR stats::text = 'null')
         """))
         missing_stats = res.scalar()
         result["audits"]["finished_72h_missing_stats"] = missing_stats
@@ -4328,7 +4330,7 @@ async def audit_metrics_endpoint(
             FROM matches
             WHERE status IN ('FT', 'AET', 'PEN')
               AND COALESCE(finished_at, date) > NOW() - INTERVAL '72 hours'
-              AND (stats IS NULL OR stats::text = '{}')
+              AND (stats IS NULL OR stats::text = '{}' OR stats::text = 'null')
             LIMIT 10
         """))
         missing_sample = [{"match_id": r[0], "status": r[1], "date": str(r[2]) if r[2] else None,
