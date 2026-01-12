@@ -4539,6 +4539,8 @@ async def _load_ops_data() -> dict:
             market_movement_24h = None
 
         # Stats backfill health (last 72h finished matches)
+        # Use COALESCE(finished_at, date) to get matches that FINISHED in last 72h
+        # not matches that STARTED in last 72h (date is kickoff time)
         res = await session.execute(
             text(
                 """
@@ -4547,7 +4549,7 @@ async def _load_ops_data() -> dict:
                     COUNT(*) FILTER (WHERE stats IS NULL OR stats::text = '{}' OR stats::text = 'null') AS missing_stats
                 FROM matches
                 WHERE status IN ('FT', 'AET', 'PEN')
-                  AND date > NOW() - INTERVAL '72 hours'
+                  AND COALESCE(finished_at, date) > NOW() - INTERVAL '72 hours'
                 """
             )
         )
