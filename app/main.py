@@ -4118,6 +4118,10 @@ async def bulk_stats_backfill_endpoint(
     }
 
     try:
+        # Parse date string to date object
+        from datetime import datetime as dt
+        since_date_parsed = dt.strptime(since_date, "%Y-%m-%d").date()
+
         # Find all FT matches since date with missing stats
         res = await session.execute(text("""
             SELECT id, external_id, date, home_team_id, away_team_id
@@ -4127,7 +4131,7 @@ async def bulk_stats_backfill_endpoint(
               AND (stats IS NULL OR stats::text = '{}' OR stats::text = 'null')
             ORDER BY date ASC
             LIMIT :limit
-        """), {"since_date": since_date, "limit": limit})
+        """), {"since_date": since_date_parsed, "limit": limit})
 
         matches = res.fetchall()
         result["matches_found"] = len(matches)
@@ -4143,7 +4147,7 @@ async def bulk_stats_backfill_endpoint(
                 WHERE status IN ('FT', 'AET', 'PEN')
                   AND date >= :since_date
                   AND (stats IS NULL OR stats::text = '{}' OR stats::text = 'null')
-            """), {"since_date": since_date})
+            """), {"since_date": since_date_parsed})
             result["total_missing"] = res_total.scalar()
             return result
 
