@@ -179,21 +179,47 @@ class ETLPipeline:
         odds_away: Optional[float],
         is_opening: bool = False,
         is_closing: bool = False,
+        source: str = "api_football",
     ) -> None:
-        """Save an odds snapshot to history."""
+        """Save an odds snapshot to history with data quality validation."""
         if odds_home is None:
             return
+
+        # Validate odds for data quality
+        quarantined = False
+        quarantine_reason = None
+        try:
+            from app.telemetry.validators import validate_odds_1x2
+            validation = validate_odds_1x2(
+                odds_home=odds_home,
+                odds_draw=odds_draw,
+                odds_away=odds_away,
+                provider=source,
+                book=source,
+                record_metrics=True,
+            )
+            if validation.quarantined:
+                quarantined = True
+                quarantine_reason = ",".join(validation.violations[:2])  # First 2 reasons
+                logger.warning(f"Odds quarantined for match {match_id}: {quarantine_reason}")
+        except Exception as e:
+            logger.warning(f"Failed to validate odds for match {match_id}: {e}")
 
         history = OddsHistory.from_odds(
             match_id=match_id,
             odds_home=odds_home,
             odds_draw=odds_draw,
             odds_away=odds_away,
+            source=source,
             is_opening=is_opening,
             is_closing=is_closing,
         )
+        # Set quarantine flags
+        history.quarantined = quarantined
+        history.quarantine_reason = quarantine_reason
+
         self.session.add(history)
-        logger.debug(f"Saved odds history for match {match_id}: H={odds_home}, D={odds_draw}, A={odds_away}")
+        logger.debug(f"Saved odds history for match {match_id}: H={odds_home}, D={odds_draw}, A={odds_away}, quarantined={quarantined}")
 
     async def sync_league(
         self,

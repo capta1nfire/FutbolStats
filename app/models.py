@@ -78,6 +78,10 @@ class Match(SQLModel, table=True):
     stats_ready_at: Optional[datetime] = Field(default=None, description="When stats passed gating requirements")
     stats_last_checked_at: Optional[datetime] = Field(default=None, description="Last stats refresh attempt")
 
+    # Data quality flags (for training/backtest exclusion)
+    tainted: bool = Field(default=False, description="Exclude from training/backtest due to data quality issues")
+    tainted_reason: Optional[str] = Field(default=None, max_length=100, description="Reason for taint flag")
+
     # Relationships
     home_team: Optional[Team] = Relationship(
         back_populates="home_matches",

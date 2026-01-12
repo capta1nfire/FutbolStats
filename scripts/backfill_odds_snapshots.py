@@ -168,12 +168,14 @@ async def backfill_odds_snapshots():
 
             if lineup_confirmed_at is not None:
                 # 2) Find the latest odds_history snapshot at or before lineup_confirmed_at
+                #    Exclude quarantined odds (data quality issues)
                 odds_hist_res = await session.execute(text("""
                     SELECT odds_home, odds_draw, odds_away, recorded_at, source
                     FROM odds_history
                     WHERE match_id = :match_id
                       AND recorded_at <= :cutoff
                       AND odds_home IS NOT NULL AND odds_draw IS NOT NULL AND odds_away IS NOT NULL
+                      AND (quarantined IS NULL OR quarantined = false)
                     ORDER BY recorded_at DESC
                     LIMIT 1
                 """), {"match_id": match_id, "cutoff": lineup_confirmed_at})

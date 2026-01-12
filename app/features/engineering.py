@@ -37,7 +37,7 @@ class TeamMatchCache:
 
         logger.info(f"Preloading match history for {len(team_ids)} teams...")
 
-        # Single query to get all relevant matches
+        # Single query to get all relevant matches (excluding tainted data)
         query = (
             select(Match)
             .where(
@@ -48,6 +48,7 @@ class TeamMatchCache:
                 Match.status == "FT",
                 Match.home_goals.isnot(None),
                 Match.away_goals.isnot(None),
+                Match.tainted == False,  # Exclude data quality issues
             )
             .order_by(Match.date.desc())
         )
@@ -148,7 +149,7 @@ class FeatureEngineer:
         if self._cache is not None:
             return self._cache.get_matches_before(team_id, before_date, limit)
 
-        # Fallback to direct query (for single predictions)
+        # Fallback to direct query (for single predictions, excluding tainted data)
         result = await self.session.execute(
             select(Match)
             .where(
@@ -157,6 +158,7 @@ class FeatureEngineer:
                 Match.status == "FT",
                 Match.home_goals.isnot(None),
                 Match.away_goals.isnot(None),
+                Match.tainted == False,  # Exclude data quality issues
             )
             .order_by(Match.date.desc())
             .limit(limit)
@@ -332,11 +334,12 @@ class FeatureEngineer:
         Returns:
             DataFrame with features and target variable.
         """
-        # Build query for completed matches
+        # Build query for completed matches (excluding tainted data)
         query = select(Match).where(
             Match.status == "FT",
             Match.home_goals.isnot(None),
             Match.away_goals.isnot(None),
+            Match.tainted == False,  # Exclude data quality issues
         )
 
         if min_date:
