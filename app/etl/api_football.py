@@ -191,13 +191,21 @@ class APIFootballProvider(DataProvider):
         self._request_count = 0
         self._last_reset = datetime.now()
 
-    async def _rate_limited_request(self, endpoint: str, params: dict = None) -> dict:
+    async def _rate_limited_request(self, endpoint: str, params: dict = None, entity: str = "fixture") -> dict:
         """
         Make a rate-limited request to the API.
 
         Respects API rate limits by adding delays between requests.
         Implements exponential backoff on 429 errors.
+        Instruments requests for telemetry.
+
+        Args:
+            endpoint: API endpoint to call
+            params: Query parameters
+            entity: Entity type for telemetry labels (fixture, odds, lineup, etc.)
         """
+        import time
+
         # Calculate delay to respect rate limit
         delay = 60 / self.requests_per_minute
 
@@ -205,30 +213,68 @@ class APIFootballProvider(DataProvider):
         max_retries = 3
         retry_delay = 5
 
+        # Telemetry helper (best-effort, never block)
+        def record_telemetry(status_code: int, latency_ms: float, is_rate_limited: bool = False, is_timeout: bool = False, error_code: str = None):
+            try:
+                from app.telemetry import record_provider_request, record_provider_error
+                record_provider_request(
+                    provider="api_football",
+                    entity=entity,
+                    endpoint=endpoint,
+                    status_code=status_code,
+                    latency_ms=latency_ms,
+                    is_rate_limited=is_rate_limited,
+                    is_timeout=is_timeout,
+                )
+                if error_code:
+                    record_provider_error(
+                        provider="api_football",
+                        entity=entity,
+                        error_code=error_code,
+                    )
+            except Exception:
+                pass  # Telemetry should never fail requests
+
         for attempt in range(max_retries):
+            start_time = time.time()
             try:
                 # Global budget guardrail (process-wide)
                 await _budget_check_and_increment(cost=1)
                 response = await self.client.get(url, params=params)
+                latency_ms = (time.time() - start_time) * 1000
 
                 if response.status_code == 429:
                     # Rate limited - exponential backoff
+                    record_telemetry(429, latency_ms, is_rate_limited=True)
                     wait_time = retry_delay * (2**attempt)
                     logger.warning(f"Rate limited. Waiting {wait_time}s before retry...")
                     await asyncio.sleep(wait_time)
                     continue
 
                 response.raise_for_status()
+                record_telemetry(response.status_code, latency_ms)
                 await asyncio.sleep(delay)  # Respect rate limit
 
                 data = response.json()
                 if data.get("errors"):
                     logger.error(f"API error: {data['errors']}")
+                    record_telemetry(response.status_code, latency_ms, error_code="api_error_response")
                     return {"response": []}
 
                 return data
 
+            except httpx.TimeoutException as e:
+                latency_ms = (time.time() - start_time) * 1000
+                record_telemetry(0, latency_ms, is_timeout=True, error_code="timeout")
+                logger.error(f"Timeout error: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay * (2**attempt))
+                    continue
+                raise
+
             except httpx.HTTPStatusError as e:
+                latency_ms = (time.time() - start_time) * 1000
+                record_telemetry(e.response.status_code if e.response else 0, latency_ms, error_code=f"http_{e.response.status_code if e.response else 'unknown'}")
                 logger.error(f"HTTP error: {e}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay * (2**attempt))
@@ -236,6 +282,8 @@ class APIFootballProvider(DataProvider):
                 raise
 
             except httpx.RequestError as e:
+                latency_ms = (time.time() - start_time) * 1000
+                record_telemetry(0, latency_ms, error_code="request_error")
                 logger.error(f"Request error: {e}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay * (2**attempt))

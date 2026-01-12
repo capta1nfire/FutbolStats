@@ -524,6 +524,16 @@ class OddsHistory(SQLModel, table=True):
     match_id: int = Field(foreign_key="matches.id", index=True)
     recorded_at: datetime = Field(default_factory=datetime.utcnow, description="When snapshot was taken")
 
+    # Anti-lookahead timestamps (P0.2 Telemetry)
+    observed_at: Optional[datetime] = Field(
+        default=None,
+        description="When odds were observed at the source (provider timestamp if available)"
+    )
+    ingested_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        description="When odds were ingested into our system"
+    )
+
     # Odds values
     odds_home: Optional[float] = Field(default=None)
     odds_draw: Optional[float] = Field(default=None)
@@ -533,6 +543,12 @@ class OddsHistory(SQLModel, table=True):
     source: str = Field(default="api_football", max_length=50, description="Bookmaker source")
     is_opening: bool = Field(default=False, description="First recorded odds for this match")
     is_closing: bool = Field(default=False, description="Last odds before kickoff")
+
+    # Data quality flags (P0 Telemetry)
+    quarantined: bool = Field(default=False, description="Excluded from training/backtest due to validation failure")
+    quarantine_reason: Optional[str] = Field(default=None, max_length=100, description="Reason for quarantine")
+    tainted: bool = Field(default=False, description="Potentially contaminated by lookahead bias")
+    taint_reason: Optional[str] = Field(default=None, max_length=100, description="Reason for taint flag")
 
     # Computed fields for quick analysis
     implied_home: Optional[float] = Field(default=None, description="1/odds_home")
@@ -631,4 +647,72 @@ class AlphaProgressSnapshot(SQLModel, table=True):
         default=None,
         max_length=40,
         description="Git SHA if available via env"
+    )
+
+
+class UnmappedEntityBacklog(SQLModel, table=True):
+    """
+    Backlog of unmapped entities from data providers.
+
+    Tracks entities (teams, leagues, matches) that couldn't be mapped
+    to our internal IDs during ingestion. Allows manual resolution
+    and measures mapping coverage.
+
+    Part of Data Quality Telemetry P0.4.
+    """
+
+    __tablename__ = "unmapped_entities_backlog"
+    __table_args__ = (
+        UniqueConstraint("provider", "entity_type", "raw_key", name="uq_unmapped_entity"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    provider: str = Field(
+        max_length=50,
+        index=True,
+        description="Data provider (e.g., 'api_football', 'football_data_uk')"
+    )
+    entity_type: str = Field(
+        max_length=50,
+        index=True,
+        description="Entity type: 'team', 'league', 'match', 'player'"
+    )
+    raw_key: str = Field(
+        max_length=255,
+        description="Raw identifier from provider (ID or name)"
+    )
+    raw_name: Optional[str] = Field(
+        default=None,
+        max_length=255,
+        description="Human-readable name if available"
+    )
+    league_context: Optional[str] = Field(
+        default=None,
+        max_length=255,
+        description="League/competition context for resolution"
+    )
+    first_seen_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        description="When this unmapped entity was first encountered"
+    )
+    last_seen_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        description="When this unmapped entity was last seen"
+    )
+    count_seen: int = Field(
+        default=1,
+        description="How many times this entity was encountered"
+    )
+    resolved: bool = Field(
+        default=False,
+        index=True,
+        description="Whether this entity has been resolved/mapped"
+    )
+    resolved_to_id: Optional[int] = Field(
+        default=None,
+        description="Internal ID it was resolved to (if resolved)"
+    )
+    resolved_at: Optional[datetime] = Field(
+        default=None,
+        description="When it was resolved"
     )

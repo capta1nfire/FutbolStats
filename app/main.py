@@ -428,6 +428,33 @@ async def health_check(request: Request):
     )
 
 
+@app.get("/metrics")
+async def prometheus_metrics():
+    """
+    Prometheus metrics endpoint for Data Quality Telemetry.
+
+    Exposes metrics for:
+    - Provider ingestion (requests, errors, latency)
+    - Anti-lookahead (event latency, tainted records)
+    - Market integrity (odds validation, overround)
+    - Entity mapping coverage
+
+    Scrape this endpoint from Grafana Cloud or Prometheus.
+    """
+    from fastapi.responses import PlainTextResponse
+
+    try:
+        from app.telemetry import get_metrics_text
+        content, content_type = get_metrics_text()
+        return PlainTextResponse(content=content, media_type=content_type)
+    except ImportError:
+        # Fallback if prometheus_client not installed
+        return PlainTextResponse(
+            content="# Telemetry module not available\n",
+            media_type="text/plain",
+        )
+
+
 @app.get("/sync/status")
 async def get_sync_status():
     """
