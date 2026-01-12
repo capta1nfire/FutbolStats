@@ -5308,8 +5308,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
       <div class="card-value">{f"{budget_used:,}" if budget_used is not None else "?"} / {f"{budget_limit:,}" if budget_limit is not None else "?"}</div>
       <div class="card-sub">
         {f"{budget_remaining:,} remaining" if budget_remaining is not None else budget_status}{" (cached)" if budget_cached else ""}
-        {f"<br/>Resets: {budget_reset_time} ({budget_reset_tz})" if budget_reset_time and budget_reset_tz else ""}
-        {f"<br/>Next reset (LA): {budget_reset_at_la}" if budget_reset_at_la else ""}
+        {f"<br/>Resets: 4:00 PM (Los Angeles)" if budget_reset_time else ""}
       </div>
     </div>
     <div class="card">
