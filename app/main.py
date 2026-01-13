@@ -582,6 +582,7 @@ class PredictionItem(BaseModel):
     home_goals: Optional[int] = None  # Final score (nil if not played)
     away_goals: Optional[int] = None  # Final score (nil if not played)
     league_id: Optional[int] = None
+    venue: Optional[dict] = None  # Stadium: {"name": str, "city": str} or None
 
     # Adjusted probabilities (after team adjustments)
     probabilities: dict
@@ -1209,6 +1210,7 @@ async def get_predictions(
             home_goals=pred.get("home_goals"),
             away_goals=pred.get("away_goals"),
             league_id=pred.get("league_id"),
+            venue=pred.get("venue"),
             probabilities=pred["probabilities"],
             raw_probabilities=pred.get("raw_probabilities"),
             fair_odds=pred["fair_odds"],
@@ -1795,6 +1797,10 @@ async def get_match_details(
             "status": match.status,
             "home_goals": match.home_goals,
             "away_goals": match.away_goals,
+            "venue": {
+                "name": match.venue_name,
+                "city": match.venue_city,
+            } if match.venue_name else None,
         },
         "home_team": {
             "id": home_team.id if home_team else None,

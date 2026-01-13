@@ -497,6 +497,9 @@ class FeatureEngineer:
                 features["status"] = match.status
                 features["home_goals"] = match.home_goals
                 features["away_goals"] = match.away_goals
+                # Include venue for LLM narrative enrichment
+                features["venue_name"] = match.venue_name
+                features["venue_city"] = match.venue_city
                 rows.append(features)
             except Exception as e:
                 logger.error(f"Error processing match {match.id}: {e}")

@@ -376,6 +376,10 @@ class XGBoostEngine:
                 "home_goals": int(row.get("home_goals")) if pd.notna(row.get("home_goals")) else None,
                 "away_goals": int(row.get("away_goals")) if pd.notna(row.get("away_goals")) else None,
                 "league_id": league_id,
+                "venue": {
+                    "name": row.get("venue_name"),
+                    "city": row.get("venue_city"),
+                } if row.get("venue_name") else None,
 
                 # Adjusted probabilities
                 "probabilities": {

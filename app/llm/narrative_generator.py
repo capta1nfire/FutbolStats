@@ -16,6 +16,7 @@ from app.llm.team_aliases import (
     get_team_alias_pack,
     get_reference_rules_for_prompt,
     validate_nickname_usage,
+    validate_venue_usage,
 )
 
 logger = logging.getLogger(__name__)
@@ -161,6 +162,11 @@ def build_narrative_prompt(match_data: dict) -> tuple[str, dict, dict]:
     home_goals = match_data.get("home_goals", 0) or 0
     away_goals = match_data.get("away_goals", 0) or 0
 
+    # Venue (stadium) - only include if available from DB
+    venue = match_data.get("venue", {}) or {}
+    venue_name = venue.get("name")
+    venue_city = venue.get("city")
+
     # Get alias packs with deterministic selection
     home_pack = get_team_alias_pack(home_team, external_id=home_team_id, match_id=match_id, is_home=True)
     away_pack = get_team_alias_pack(away_team, external_id=away_team_id, match_id=match_id, is_home=False)
@@ -215,6 +221,12 @@ def build_narrative_prompt(match_data: dict) -> tuple[str, dict, dict]:
         market_odds_json = json.dumps(odds, ensure_ascii=False)
     else:
         market_odds_json = "null"
+
+    # Venue as JSON (null if not available)
+    if venue_name:
+        venue_json = json.dumps({"name": venue_name, "city": venue_city}, ensure_ascii=False)
+    else:
+        venue_json = "null"
 
     prompt = f"""Eres un analista de fútbol profesional. Escribes en español neutral, serio, sin hype y sin emojis.
 
@@ -283,6 +295,14 @@ REGLAS CRÍTICAS v5 (OBLIGATORIAS):
 
 14) title: máx 8 palabras, sin comillas, sin \\n.
 
+15) VENUE (ESTADIO/CIUDAD) - REGLAS ESTRICTAS:
+    - SOLO mencionar el estadio si `venue.name` está presente en DATOS.
+    - NUNCA deducir el estadio por nombre del club (ej. Inter ⇒ San Siro es PROHIBIDO si venue es null).
+    - Si venue.name existe, puedes usarlo para dar contexto: "En {venue.name}, el partido se inclinó..."
+    - Si venue.city existe, puedes añadirlo: "En el {venue.name} de {venue.city}..."
+    - El venue va SIN comillas (no es apodo).
+    - PROHIBIDO: inferir afición ("el estadio quedó mudo") o inventar ambiente sin datos.
+
 FORMATO DE SALIDA (SCHEMA OBLIGATORIO):
 
 {{
@@ -321,6 +341,7 @@ team_aliases.away: {away_aliases_json}
 league_name: {league}
 date: {match_date}
 final_score: {home_goals}-{away_goals}
+venue: {venue_json}
 
 stats.home: {home_stats_json}
 stats.away: {away_stats_json}
@@ -513,6 +534,14 @@ class NarrativeGenerator:
                 if nickname_errors:
                     logger.warning(f"Nickname validation errors for match {match_id}: {nickname_errors}")
                     # Don't fail, just log - LLM might use valid aliases we don't detect
+
+                # Validate venue usage (detect deduced stadiums when payload had null)
+                venue_data = match_data.get("venue", {}) or {}
+                venue_name = venue_data.get("name")
+                venue_errors = validate_venue_usage(narrative_body, venue_name)
+                if venue_errors:
+                    logger.warning(f"Venue validation errors for match {match_id}: {venue_errors}")
+                    # Don't fail, just log - this is for monitoring deduction issues
 
                 tone = narrative_obj.get("tone") if isinstance(narrative_obj, dict) else None
                 log_llm_evaluation(

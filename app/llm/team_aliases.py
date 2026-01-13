@@ -435,3 +435,47 @@ def validate_nickname_usage(narrative: str, home_pack: dict, away_pack: dict) ->
                 )
 
     return errors
+
+
+# Common stadium names that LLMs might invent (deduction-based, not from data)
+# Only flag these if venue_name was null in payload
+DEDUCED_STADIUMS = [
+    # Spain
+    "Santiago Bernabéu", "Camp Nou", "Wanda Metropolitano", "Mestalla",
+    # England
+    "Old Trafford", "Anfield", "Stamford Bridge", "Emirates", "Etihad",
+    # Italy
+    "San Siro", "Giuseppe Meazza", "Allianz Stadium", "Stadio Olimpico",
+    # Germany
+    "Allianz Arena", "Signal Iduna Park", "Westfalenstadion",
+    # France
+    "Parc des Princes", "Stade Vélodrome",
+    # South America
+    "La Bombonera", "Monumental", "Maracanã", "Azteca",
+]
+
+
+def validate_venue_usage(narrative: str, venue_name: Optional[str]) -> list[str]:
+    """
+    Validate that narrative doesn't mention stadiums that weren't in the payload.
+
+    Args:
+        narrative: Generated narrative text
+        venue_name: Stadium name from payload (None if not provided)
+
+    Returns:
+        List of validation errors (empty if valid)
+    """
+    errors = []
+    narrative_lower = narrative.lower()
+
+    # If venue was provided, no validation needed (LLM can use it freely)
+    if venue_name:
+        return errors
+
+    # If no venue was provided, check for deduced stadium mentions
+    for stadium in DEDUCED_STADIUMS:
+        if stadium.lower() in narrative_lower:
+            errors.append(f"Stadium '{stadium}' mentioned but venue was null in payload (deduction)")
+
+    return errors
