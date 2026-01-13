@@ -14,7 +14,36 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # Current prompt version - bump when changing prompt template
-PROMPT_VERSION = "v1.0"
+PROMPT_VERSION = "v1.2"
+
+# Control tokens that should NEVER appear in narrative body
+# These are internal prompt instructions that LLM sometimes echoes
+CONTROL_TOKENS = [
+    "mitigate_loss",
+    "mitigate_win",
+    "reinforce_win",
+    "reinforce_loss",
+    "analyze_match",
+    "pro-pick",
+    "anti-pick",
+]
+
+# Patterns for detecting team attribution in narrative (Spanish)
+LOCAL_PATTERNS = [
+    r"\blocal(?:es)?\b",
+    r"\bel\s+equipo\s+local\b",
+    r"\blos\s+locales\b",
+    r"\bdel\s+local\b",
+    r"\banfitrión(?:es)?\b",
+]
+
+VISITOR_PATTERNS = [
+    r"\bvisitante(?:s)?\b",
+    r"\bel\s+equipo\s+visitante\b",
+    r"\blos\s+visitantes\b",
+    r"\bdel\s+visitante\b",
+    r"\bforáneo(?:s)?\b",
+]
 
 # Claims that require evidence in events
 RED_CARD_PATTERNS = [
@@ -214,6 +243,124 @@ def _get_goal_minutes(events: list) -> set[int]:
     return minutes
 
 
+def _get_red_card_side(events: list, match_data: dict) -> Optional[str]:
+    """
+    Determine which side (home/away) received a red card.
+
+    Returns:
+        "home", "away", or None if no red card found.
+    """
+    if not events:
+        return None
+
+    home_team = _safe_lower(match_data.get("home_team", ""))
+    away_team = _safe_lower(match_data.get("away_team", ""))
+
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        event_type = _safe_lower(event.get("type", ""))
+        detail = _safe_lower(event.get("detail", ""))
+
+        # Check if it's a red card event
+        is_red = False
+        if event_type == "card":
+            for variant in RED_CARD_EVENT_VARIANTS:
+                if variant in detail:
+                    is_red = True
+                    break
+
+        if is_red:
+            team_name = _safe_lower(event.get("team_name", ""))
+            # Match against home/away team names
+            if team_name and home_team and team_name in home_team or home_team in team_name:
+                return "home"
+            if team_name and away_team and team_name in away_team or away_team in team_name:
+                return "away"
+
+    # Fallback to stats if events don't have team_name
+    stats = match_data.get("stats", {})
+    if stats:
+        home_reds = stats.get("home", {}).get("red_cards", 0) or 0
+        away_reds = stats.get("away", {}).get("red_cards", 0) or 0
+        if home_reds > 0 and away_reds == 0:
+            return "home"
+        if away_reds > 0 and home_reds == 0:
+            return "away"
+
+    return None
+
+
+def _detect_team_mention_near_claim(narrative: str, claim_patterns: list) -> Optional[str]:
+    """
+    Detect if narrative mentions 'local' or 'visitante' near a claim pattern.
+
+    Returns:
+        "local", "visitante", or None if no clear attribution.
+    """
+    narrative_lower = narrative.lower()
+
+    # Find all claim matches
+    for pattern in claim_patterns:
+        match = re.search(pattern, narrative_lower)
+        if match:
+            # Get surrounding context (100 chars before and after)
+            start = max(0, match.start() - 100)
+            end = min(len(narrative_lower), match.end() + 100)
+            context = narrative_lower[start:end]
+
+            # Check for local/visitante in context
+            for local_pattern in LOCAL_PATTERNS:
+                if re.search(local_pattern, context):
+                    return "local"
+            for visitor_pattern in VISITOR_PATTERNS:
+                if re.search(visitor_pattern, context):
+                    return "visitante"
+
+    return None
+
+
+def sanitize_narrative_body(body: str) -> tuple[str, list[dict]]:
+    """
+    Remove control tokens from narrative body.
+
+    Args:
+        body: The raw narrative body text.
+
+    Returns:
+        Tuple of (sanitized_body, list of stripped token warnings).
+    """
+    if not body or not isinstance(body, str):
+        return body or "", []
+
+    warnings = []
+    sanitized = body
+
+    for token in CONTROL_TOKENS:
+        # Match token as standalone word or on its own line
+        patterns = [
+            rf"\b{re.escape(token)}\b",  # Word boundary
+            rf"^\s*{re.escape(token)}\s*$",  # Own line (multiline)
+        ]
+
+        for pattern in patterns:
+            if re.search(pattern, sanitized, re.IGNORECASE | re.MULTILINE):
+                sanitized = re.sub(pattern, "", sanitized, flags=re.IGNORECASE | re.MULTILINE)
+                warnings.append({
+                    "type": "control_token_stripped",
+                    "token": token,
+                })
+                logger.warning(f"[CLAIM_VALIDATOR] Stripped control token '{token}' from narrative")
+                break  # Don't double-count same token
+
+    # Clean up extra whitespace/newlines left behind
+    sanitized = re.sub(r'\n{3,}', '\n\n', sanitized)  # Max 2 consecutive newlines
+    sanitized = re.sub(r' {2,}', ' ', sanitized)  # Max 1 space
+    sanitized = sanitized.strip()
+
+    return sanitized, warnings
+
+
 def validate_narrative_claims(
     narrative_text,
     match_data: dict,
@@ -244,10 +391,12 @@ def validate_narrative_claims(
     narrative_lower = narrative_str.lower()
     events = match_data.get("events", []) if isinstance(match_data, dict) else []
 
-    # 1. Red card claims
+    # 1. Red card claims - existence check
     has_red = _has_red_card_evidence(events)
+    red_card_mentioned = False
     for pattern in RED_CARD_PATTERNS:
         if re.search(pattern, narrative_lower):
+            red_card_mentioned = True
             if not has_red:
                 errors.append({
                     "type": "unsupported_claim",
@@ -261,6 +410,30 @@ def validate_narrative_claims(
                     f"[CLAIM_VALIDATOR] Red card claim '{pattern}' without evidence in events"
                 )
             break  # One error per category is enough
+
+    # 1b. Red card claims - TEAM ATTRIBUTION check (P0 fix)
+    if has_red and red_card_mentioned:
+        red_card_side = _get_red_card_side(events, match_data)
+        mentioned_side = _detect_team_mention_near_claim(narrative_str, RED_CARD_PATTERNS)
+
+        if red_card_side and mentioned_side:
+            # Check for mismatch
+            is_mismatch = (
+                (red_card_side == "away" and mentioned_side == "local") or
+                (red_card_side == "home" and mentioned_side == "visitante")
+            )
+            if is_mismatch:
+                errors.append({
+                    "type": "wrong_team_attribution",
+                    "claim": "red_card",
+                    "expected_side": red_card_side,
+                    "mentioned": mentioned_side,
+                    "severity": "error",
+                })
+                logger.warning(
+                    f"[CLAIM_VALIDATOR] Red card attribution mismatch: "
+                    f"actual={red_card_side}, narrative says={mentioned_side}"
+                )
 
     # 2. Penalty claims
     has_penalty = _has_penalty_evidence(events)

@@ -230,7 +230,7 @@ def build_narrative_prompt(match_data: dict) -> tuple[str, dict, dict]:
 
     prompt = f"""Eres un analista de fútbol profesional. Escribes en español neutral, serio, sin hype y sin emojis.
 
-REGLAS CRÍTICAS v5 (OBLIGATORIAS):
+REGLAS CRÍTICAS v6 (OBLIGATORIAS):
 
 1) DEVUELVE SOLO JSON VÁLIDO. No incluyas texto antes ni después.
 
@@ -302,6 +302,17 @@ REGLAS CRÍTICAS v5 (OBLIGATORIAS):
     - Si venue.city existe, puedes añadirlo: "En el [estadio] de [ciudad]..."
     - El venue va SIN comillas (no es apodo).
     - PROHIBIDO: inferir afición ("el estadio quedó mudo") o inventar ambiente sin datos.
+
+16) ATRIBUCIÓN DE EVENTOS CRÍTICOS (tarjetas rojas, penales):
+    - Si mencionas una expulsión o tarjeta roja, verifica EN EVENTS qué equipo la recibió (team_name).
+    - PROHIBIDO decir "expulsión del equipo local" si events muestra que fue el visitante (o viceversa).
+    - Si no estás seguro del equipo, NO menciones quién recibió la tarjeta; solo di que "hubo una expulsión".
+    - Mismo criterio para penales: verifica team_name antes de atribuir.
+
+17) TOKENS INTERNOS PROHIBIDOS:
+    - NUNCA incluyas en narrative.body palabras como: mitigate_loss, reinforce_win, pro-pick, anti-pick.
+    - Estos son valores del campo "tone", NO van en el texto visible.
+    - El campo tone sí debe tener "reinforce_win" o "mitigate_loss" según corresponda.
 
 FORMATO DE SALIDA (SCHEMA OBLIGATORIO):
 

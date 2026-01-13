@@ -40,6 +40,7 @@ from app.llm.claim_validator import (
     validate_narrative_claims,
     should_reject_narrative,
     get_rejection_reason,
+    sanitize_narrative_body,
 )
 from app.telemetry.metrics import (
     llm_unsupported_claims_total,
@@ -825,6 +826,21 @@ class FastPathService:
                         match_id = outcome.match_id if outcome else 0
 
                         if parsed and validate_narrative_json(parsed, match_id):
+                            # Sanitize narrative body to remove control tokens (P0 fix)
+                            narrative_obj = parsed.get("narrative", {})
+                            if isinstance(narrative_obj, dict) and "body" in narrative_obj:
+                                original_body = narrative_obj.get("body", "")
+                                sanitized_body, token_warnings = sanitize_narrative_body(original_body)
+                                if sanitized_body != original_body:
+                                    narrative_obj["body"] = sanitized_body
+                                    parsed["narrative"] = narrative_obj
+                                    logger.info(
+                                        f"[FASTPATH] Sanitized {len(token_warnings)} control tokens "
+                                        f"from audit {audit.id}"
+                                    )
+                            else:
+                                token_warnings = []
+
                             # Schema is valid, now validate claims against payload
                             narrative_text = parsed.get("narrative", "")
                             payload_for_claims = audit.llm_prompt_input_json or {}
@@ -834,6 +850,11 @@ class FastPathService:
                                 payload_for_claims,
                                 strict=True
                             )
+
+                            # Add token sanitization warnings to claim_errors
+                            if token_warnings:
+                                claim_errors = claim_errors or []
+                                claim_errors.extend(token_warnings)
 
                             # Check for normalization warning from validate_narrative_json
                             normalization_warning = parsed.pop("_normalization_warning", None)
