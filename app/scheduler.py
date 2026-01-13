@@ -2410,6 +2410,35 @@ async def pit_reports_retention():
         logger.error(f"PIT reports retention failed: {e}")
 
 
+async def llm_raw_output_cleanup():
+    """
+    Weekly cleanup of llm_output_raw to prevent unbounded growth.
+
+    Retention policy:
+    - Keep llm_output_raw for 14 days (enough for debugging)
+    - After 14 days, set to NULL but keep other traceability fields
+    """
+    logger.info("Starting LLM raw output cleanup...")
+
+    try:
+        async with get_async_session_ctx() as session:
+            result = await session.execute(text("""
+                UPDATE post_match_audits
+                SET llm_output_raw = NULL
+                WHERE llm_output_raw IS NOT NULL
+                  AND llm_narrative_generated_at < (NOW() - INTERVAL '14 days')
+                RETURNING id
+            """))
+            cleaned = len(result.fetchall())
+
+            await session.commit()
+
+            logger.info(f"LLM cleanup: cleared llm_output_raw for {cleaned} audits (>14d)")
+
+    except Exception as e:
+        logger.error(f"LLM raw output cleanup failed: {e}")
+
+
 async def daily_alpha_progress_snapshot() -> dict:
     """
     Daily Alpha Progress snapshot - captures progress state for auditing.
@@ -3196,6 +3225,16 @@ def start_scheduler(ml_engine):
         trigger=CronTrigger(day=1, hour=4, minute=0),
         id="pit_reports_retention",
         name="Monthly PIT Reports Retention",
+        replace_existing=True,
+    )
+
+    # Weekly LLM Raw Output Cleanup: Sundays at 05:00 UTC
+    # Clears llm_output_raw after 14 days to save space (keeps other traceability)
+    scheduler.add_job(
+        llm_raw_output_cleanup,
+        trigger=CronTrigger(day_of_week="sun", hour=5, minute=0),
+        id="llm_raw_output_cleanup",
+        name="Weekly LLM Raw Output Cleanup (14d TTL)",
         replace_existing=True,
     )
 

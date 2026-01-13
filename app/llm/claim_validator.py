@@ -106,8 +106,29 @@ def sanitize_payload_for_storage(match_data: dict) -> dict:
     return sanitized
 
 
+# Normalized event detail variants (multilenguaje/multi-provider)
+RED_CARD_EVENT_VARIANTS = [
+    "red card",
+    "red",
+    "tarjeta roja",
+    "roja directa",
+    "second yellow card",
+    "second yellow",
+    "segunda amarilla",
+    "2nd yellow",
+]
+
+PENALTY_EVENT_VARIANTS = [
+    "penalty",
+    "penal",
+    "penalti",
+    "from the spot",
+    "desde el punto",
+]
+
+
 def _has_red_card_evidence(events: list) -> bool:
-    """Check if events contain red card evidence."""
+    """Check if events contain red card evidence (multilenguaje)."""
     if not events:
         return False
 
@@ -115,18 +136,22 @@ def _has_red_card_evidence(events: list) -> bool:
         event_type = event.get("type", "").lower()
         detail = event.get("detail", "").lower()
 
-        # Direct red card
-        if event_type == "card" and "red" in detail:
-            return True
-        # Second yellow (shown as red)
-        if "second yellow" in detail or "segunda amarilla" in detail.lower():
-            return True
+        # Check if it's a card event with red card variant
+        if event_type == "card":
+            for variant in RED_CARD_EVENT_VARIANTS:
+                if variant in detail:
+                    return True
+
+        # Also check detail directly (some providers put full info there)
+        for variant in RED_CARD_EVENT_VARIANTS:
+            if variant in detail:
+                return True
 
     return False
 
 
 def _has_penalty_evidence(events: list) -> bool:
-    """Check if events contain penalty evidence."""
+    """Check if events contain penalty evidence (multilenguaje)."""
     if not events:
         return False
 
@@ -134,10 +159,16 @@ def _has_penalty_evidence(events: list) -> bool:
         detail = event.get("detail", "").lower()
         event_type = event.get("type", "").lower()
 
-        if "penalty" in detail or "penal" in detail:
-            return True
-        if event_type == "goal" and "penalty" in detail:
-            return True
+        # Check against all penalty variants
+        for variant in PENALTY_EVENT_VARIANTS:
+            if variant in detail:
+                return True
+
+        # Goal scored from penalty
+        if event_type == "goal":
+            for variant in PENALTY_EVENT_VARIANTS:
+                if variant in detail:
+                    return True
 
     return False
 
