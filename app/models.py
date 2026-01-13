@@ -720,3 +720,45 @@ class UnmappedEntityBacklog(SQLModel, table=True):
         default=None,
         description="When it was resolved"
     )
+
+
+class LeagueStandings(SQLModel, table=True):
+    """
+    Persisted league standings for DB-first architecture.
+
+    Standings are fetched from API-Football and stored in DB.
+    The /matches/{id}/details endpoint serves from DB; provider is fallback only.
+    Refresh job updates standings every 6-24h per league.
+    """
+
+    __tablename__ = "league_standings"
+    __table_args__ = (
+        UniqueConstraint("league_id", "season", name="uq_league_season"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    league_id: int = Field(index=True, description="API-Football league ID")
+    season: int = Field(index=True, description="Season year (e.g., 2024)")
+
+    # Standings payload (list of team standings)
+    standings: list = Field(
+        sa_column=Column(JSON),
+        description="Full standings array from API-Football"
+    )
+
+    # Metadata
+    captured_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        description="When standings were fetched from provider"
+    )
+    source: str = Field(
+        default="api_football",
+        max_length=50,
+        description="Data source (api_football, manual, etc.)"
+    )
+
+    # Cache control
+    expires_at: Optional[datetime] = Field(
+        default=None,
+        description="When this data should be refreshed (TTL)"
+    )

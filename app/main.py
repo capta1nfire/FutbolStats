@@ -229,12 +229,15 @@ _predictions_cache = {
 
 # Standings cache: keyed by (league_id, season), stores standings list
 # TTL 30 minutes - standings don't change frequently during a match detail view
-_standings_cache = {}  # type: dict  # {(league_id, season): {"data": list, "timestamp": float}}
-_STANDINGS_CACHE_TTL = 1800  # 30 minutes
+# Standings: DB-first with L1 memory cache
+# Architecture: memory cache (30min TTL) -> DB (6h TTL) -> provider fallback
+_standings_cache = {}  # type: dict  # L1 cache: {(league_id, season): {"data": list, "timestamp": float}}
+_STANDINGS_CACHE_TTL = 1800  # 30 minutes (L1 memory)
+_STANDINGS_DB_TTL = 21600  # 6 hours (DB refresh threshold)
 
 
 def _get_cached_standings(league_id: int, season: int) -> Optional[list]:
-    """Get standings from cache if still valid."""
+    """Get standings from L1 memory cache if still valid."""
     key = (league_id, season)
     if key in _standings_cache:
         entry = _standings_cache[key]
@@ -244,9 +247,45 @@ def _get_cached_standings(league_id: int, season: int) -> Optional[list]:
 
 
 def _set_cached_standings(league_id: int, season: int, data: list) -> None:
-    """Store standings in cache."""
+    """Store standings in L1 memory cache."""
     key = (league_id, season)
     _standings_cache[key] = {"data": data, "timestamp": time.time()}
+
+
+async def _get_standings_from_db(session, league_id: int, season: int) -> Optional[list]:
+    """Get standings from DB (L2). Returns None if not found or expired."""
+    from datetime import timedelta
+    result = await session.execute(
+        text("""
+            SELECT standings, captured_at
+            FROM league_standings
+            WHERE league_id = :league_id AND season = :season
+        """),
+        {"league_id": league_id, "season": season}
+    )
+    row = result.fetchone()
+    if row:
+        standings, captured_at = row
+        # Check if data is stale (older than 6h)
+        if captured_at and (datetime.now() - captured_at).total_seconds() < _STANDINGS_DB_TTL:
+            return standings
+    return None
+
+
+async def _save_standings_to_db(session, league_id: int, season: int, standings: list) -> None:
+    """Persist standings to DB with upsert."""
+    from datetime import timedelta
+    expires_at = datetime.now() + timedelta(seconds=_STANDINGS_DB_TTL)
+    await session.execute(
+        text("""
+            INSERT INTO league_standings (league_id, season, standings, captured_at, expires_at)
+            VALUES (:league_id, :season, :standings, NOW(), :expires_at)
+            ON CONFLICT (league_id, season)
+            DO UPDATE SET standings = :standings, captured_at = NOW(), expires_at = :expires_at
+        """),
+        {"league_id": league_id, "season": season, "standings": json.dumps(standings), "expires_at": expires_at}
+    )
+    await session.commit()
 
 
 @asynccontextmanager
@@ -268,6 +307,25 @@ async def lifespan(app: FastAPI):
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
             )
+        """))
+        # Ensure league_standings table exists (DB-first architecture)
+        await session.execute(text("""
+            CREATE TABLE IF NOT EXISTS league_standings (
+                id SERIAL PRIMARY KEY,
+                league_id INTEGER NOT NULL,
+                season INTEGER NOT NULL,
+                standings JSONB NOT NULL,
+                captured_at TIMESTAMP DEFAULT NOW(),
+                source VARCHAR(50) DEFAULT 'api_football',
+                expires_at TIMESTAMP,
+                UNIQUE(league_id, season)
+            )
+        """))
+        await session.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_league_standings_league_id ON league_standings(league_id)
+        """))
+        await session.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_league_standings_season ON league_standings(season)
         """))
         await session.commit()
 
@@ -347,9 +405,10 @@ async def _train_model_background():
 
 
 async def _warmup_standings_cache():
-    """Pre-warm standings cache for leagues with upcoming matches.
+    """Pre-warm standings for leagues with upcoming matches.
 
-    Runs at startup to ensure most match_details requests hit cache.
+    DB-first architecture: fetches from provider and persists to DB + L1 cache.
+    Runs at startup to ensure most match_details requests hit cache/DB.
     This is fire-and-forget - failures don't affect app health.
     """
     import asyncio
@@ -388,15 +447,24 @@ async def _warmup_standings_cache():
 
             provider = APIFootballProvider()
             warmed = 0
-            skipped = 0
+            skipped_cache = 0
+            skipped_db = 0
             failed = 0
             consecutive_failures = 0
             max_consecutive_failures = 3  # Stop if API seems down
 
             for league_id in league_ids:
-                # Skip if already cached
+                # Skip if already in L1 cache
                 if _get_cached_standings(league_id, season) is not None:
-                    skipped += 1
+                    skipped_cache += 1
+                    continue
+
+                # Skip if already in DB (fresh)
+                db_standings = await _get_standings_from_db(session, league_id, season)
+                if db_standings is not None:
+                    # Populate L1 cache from DB
+                    _set_cached_standings(league_id, season, db_standings)
+                    skipped_db += 1
                     continue
 
                 # Abort if too many consecutive failures (API budget/rate limit)
@@ -406,6 +474,9 @@ async def _warmup_standings_cache():
 
                 try:
                     standings = await provider.get_standings(league_id, season)
+                    # Persist to DB (primary storage)
+                    await _save_standings_to_db(session, league_id, season, standings)
+                    # Populate L1 cache
                     _set_cached_standings(league_id, season, standings)
                     warmed += 1
                     consecutive_failures = 0  # Reset on success
@@ -421,8 +492,8 @@ async def _warmup_standings_cache():
             await provider.close()
             elapsed_ms = int((time.time() - _t_start) * 1000)
             logger.info(
-                f"[WARMUP] Complete: warmed={warmed}, skipped={skipped}, failed={failed}, "
-                f"total_leagues={len(league_ids)}, elapsed_ms={elapsed_ms}"
+                f"[WARMUP] Complete: warmed={warmed}, skipped_cache={skipped_cache}, "
+                f"skipped_db={skipped_db}, failed={failed}, total_leagues={len(league_ids)}, elapsed_ms={elapsed_ms}"
             )
 
     except Exception as e:
@@ -1554,16 +1625,32 @@ async def get_match_details(
     current_date = match.date or datetime.now()
     season = current_date.year if current_date.month >= 7 else current_date.year - 1
 
-    # NON-BLOCKING standings: only use cache, never call external API
+    # NON-BLOCKING standings: L1 cache -> DB -> skip (never call external API in hot path)
     # This ensures endpoint always responds <400ms regardless of league
     _t0 = time.time()
     standings = None
-    standings_status = "skipped"  # skipped | hit | miss
+    standings_status = "skipped"  # skipped | cache_hit | db_hit | miss
+    standings_source = None
     if match.league_id:
+        # L1: memory cache
         standings = _get_cached_standings(match.league_id, season)
-        standings_status = "hit" if standings is not None else "miss"
-    _timings["get_standings_cache"] = int((time.time() - _t0) * 1000)
+        if standings is not None:
+            standings_status = "cache_hit"
+            standings_source = "cache"
+        else:
+            # L2: database
+            standings = await _get_standings_from_db(session, match.league_id, season)
+            if standings is not None:
+                standings_status = "db_hit"
+                standings_source = "db"
+                # Populate L1 cache for next request
+                _set_cached_standings(match.league_id, season, standings)
+            else:
+                standings_status = "miss"
+    _timings["get_standings"] = int((time.time() - _t0) * 1000)
     _timings["standings_status"] = standings_status
+    if standings_source:
+        _timings["standings_source"] = standings_source
 
     # Get history for both teams (parallel)
     _t0 = time.time()
@@ -2167,30 +2254,62 @@ async def get_match_odds_history(
 
 
 @app.get("/standings/{league_id}")
-async def get_league_standings(league_id: int, season: int = None):
+async def get_league_standings(
+    league_id: int,
+    season: int = None,
+    session: AsyncSession = Depends(get_async_session),
+):
     """
     Get full league standings/table for a given league.
 
+    DB-first architecture: serves from DB, falls back to provider on miss.
     Returns all teams with position, points, matches played, goals, form, etc.
     """
-    try:
-        provider = APIFootballProvider()
+    _t_start = time.time()
+    source = None
 
+    try:
         # Determine season if not provided
         if season is None:
             current_date = datetime.now()
             season = current_date.year if current_date.month >= 7 else current_date.year - 1
 
-        standings = await provider.get_standings(league_id, season)
-        await provider.close()
+        # L1: Memory cache
+        standings = _get_cached_standings(league_id, season)
+        if standings is not None:
+            source = "cache"
+        else:
+            # L2: Database
+            standings = await _get_standings_from_db(session, league_id, season)
+            if standings is not None:
+                source = "db"
+                # Populate L1 cache
+                _set_cached_standings(league_id, season, standings)
+            else:
+                # L3: Provider fallback (and persist)
+                source = "api_fallback"
+                provider = APIFootballProvider()
+                try:
+                    standings = await provider.get_standings(league_id, season)
+                    if standings:
+                        # Persist to DB
+                        await _save_standings_to_db(session, league_id, season, standings)
+                        # Populate L1 cache
+                        _set_cached_standings(league_id, season, standings)
+                finally:
+                    await provider.close()
 
         if not standings:
             raise HTTPException(status_code=404, detail="No standings found for this league")
+
+        elapsed_ms = int((time.time() - _t_start) * 1000)
+        logger.info(f"[PERF] get_standings league_id={league_id} season={season} source={source} time_ms={elapsed_ms}")
 
         return {
             "league_id": league_id,
             "season": season,
             "standings": standings,
+            "source": source,
         }
     except HTTPException:
         raise

@@ -182,6 +182,51 @@ for pred in response.json()["predictions"]:
     print(f"  Away: {pred['probabilities']['away']:.1%}")
 ```
 
+## Architecture: DB-First + Provider Fallback
+
+The backend follows a **DB-first architecture** where data is always served from our database. External providers (API-Football) are only used as fallback on cache miss.
+
+### Principles
+
+1. **DB-First**: For historical/immutable data (events, standings, stats), always serve from DB if exists
+2. **Provider Fallback**: Only call external API on miss, then persist to DB
+3. **Match Status Rules**:
+   - `FT/AET/PEN`: Never call provider in request path (backfill only)
+   - `NS/LIVE`: Provider allowed but results should be cached/persisted
+
+### Data Flow
+
+```
+Request → L1 Cache (memory, 30min) → L2 DB → L3 Provider Fallback → Persist to DB
+```
+
+### Endpoints Compliance
+
+| Endpoint | Status | Source |
+|----------|--------|--------|
+| `/matches/{id}/details` | DB-first | cache → DB → skip (non-blocking) |
+| `/matches/{id}/timeline` | DB-first | DB → provider fallback with persist |
+| `/standings/{league_id}` | DB-first | cache → DB → provider fallback |
+| `/predictions/upcoming` | Cache | cache → compute |
+
+### Backfill Scripts
+
+- `scripts/backfill_standings.py` - Populate league_standings table
+- `scripts/backfill_events.py` - Populate match.events for timeline
+
+### Running Backfills
+
+```bash
+# Backfill standings for active leagues
+python scripts/backfill_standings.py
+
+# Backfill events for last 7 days
+python scripts/backfill_events.py --days 7
+
+# Dry run (no writes)
+python scripts/backfill_standings.py --dry-run
+```
+
 ## License
 
 MIT
