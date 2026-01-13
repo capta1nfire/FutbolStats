@@ -1345,18 +1345,28 @@ async def get_match_details(
 
     Returns match info, prediction, standings positions, and last 5 matches for each team.
     """
+    import time
+    _t_start = time.time()
+    _timings = {}
+
     # Get match
+    _t0 = time.time()
     match = await session.get(Match, match_id)
+    _timings["get_match"] = int((time.time() - _t0) * 1000)
     if not match:
         raise HTTPException(status_code=404, detail="Match not found")
 
     # Get teams
+    _t0 = time.time()
     home_team = await session.get(Team, match.home_team_id)
     away_team = await session.get(Team, match.away_team_id)
+    _timings["get_teams"] = int((time.time() - _t0) * 1000)
 
     # Get history for both teams
+    _t0 = time.time()
     home_history = await get_team_history(match.home_team_id, limit=5, session=session)
     away_history = await get_team_history(match.away_team_id, limit=5, session=session)
+    _timings["get_history"] = int((time.time() - _t0) * 1000)
 
     # Get standings for league (for club leagues only)
     home_position = None
@@ -1372,12 +1382,16 @@ async def get_match_details(
             season = current_date.year if current_date.month >= 7 else current_date.year - 1
 
             # Check cache first (avoids ~2s external API call)
+            _t0 = time.time()
             standings = _get_cached_standings(match.league_id, season)
+            _cache_hit = standings is not None
             if standings is None:
                 provider = APIFootballProvider()
                 standings = await provider.get_standings(match.league_id, season)
                 await provider.close()
                 _set_cached_standings(match.league_id, season, standings)
+            _timings["get_standings"] = int((time.time() - _t0) * 1000)
+            _timings["standings_cache_hit"] = _cache_hit
 
             # Find positions for both teams
             for standing in standings:
@@ -1394,17 +1408,25 @@ async def get_match_details(
     prediction = None
     if ml_engine.is_loaded and match.status == "NS":
         try:
+            _t0 = time.time()
             feature_engineer = FeatureEngineer(session=session)
             features = await feature_engineer.get_match_features(match)
+            _timings["get_features"] = int((time.time() - _t0) * 1000)
+
             features["home_team_name"] = home_team.name if home_team else "Unknown"
             features["away_team_name"] = away_team.name if away_team else "Unknown"
 
+            _t0 = time.time()
             import pandas as pd
             df = pd.DataFrame([features])
             predictions = ml_engine.predict(df)
             prediction = predictions[0] if predictions else None
+            _timings["ml_predict"] = int((time.time() - _t0) * 1000)
         except Exception as e:
             logger.error(f"Error getting prediction: {e}")
+
+    _timings["total"] = int((time.time() - _t_start) * 1000)
+    logger.info(f"[PERF] match_details match_id={match_id} timings={_timings}")
 
     return {
         "match": {
