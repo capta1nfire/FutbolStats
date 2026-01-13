@@ -12,6 +12,7 @@ from typing import Any, Optional, Union
 
 from app.config import get_settings
 from app.llm.runpod_client import RunPodClient, RunPodError, RunPodJobResult
+from app.llm.team_aliases import get_team_alias_pack, validate_nickname_usage
 
 logger = logging.getLogger(__name__)
 
@@ -129,39 +130,54 @@ def _determine_bet_won(prediction: dict, home_goals: int, away_goals: int) -> bo
     return predicted == actual
 
 
-def build_narrative_prompt(match_data: dict) -> str:
+def build_narrative_prompt(match_data: dict) -> tuple[str, dict, dict]:
     """
-    Build prompt v4 for post-match narrative generation.
+    Build prompt v5 for post-match narrative generation.
 
-    v4 improvements:
-    - Only digits for numbers (never "uno/dos/tres")
-    - No score repetition in body (user sees it in UI)
-    - Team names max 1x each, then use aliases from team_aliases only
-    - key_factors ultra-short (max 120 chars each)
-    - Shorter body (140-240 words)
-    - team_aliases provided to prevent hallucinated nicknames
+    v5 improvements (on top of v4):
+    - Uses get_team_alias_pack() for richer alias data
+    - Includes slogans when available
+    - Requires quotes around nicknames and slogans in narrative
+    - No markdown (plain text JSON output)
 
     Args:
-        match_data: Dict with match info (teams, score, stats, prediction, team_aliases, etc.)
+        match_data: Dict with match info (teams, score, stats, prediction, etc.)
 
     Returns:
-        Prompt string for LLM.
+        Tuple of (prompt_string, home_alias_pack, away_alias_pack)
     """
     # Extract key fields
     match_id = match_data.get("match_id", 0)
     home_team = match_data.get("home_team", "Local")
     away_team = match_data.get("away_team", "Visitante")
+    home_team_id = match_data.get("home_team_id")
+    away_team_id = match_data.get("away_team_id")
     league = match_data.get("league_name", "Liga")
     match_date = match_data.get("date", "")
     home_goals = match_data.get("home_goals", 0) or 0
     away_goals = match_data.get("away_goals", 0) or 0
 
-    # Team aliases (curated, safe to use)
-    team_aliases = match_data.get("team_aliases", {})
-    home_aliases = team_aliases.get("home", [home_team, "los locales"])
-    away_aliases = team_aliases.get("away", [away_team, "los visitantes"])
+    # Get alias packs with deterministic selection
+    home_pack = get_team_alias_pack(home_team, external_id=home_team_id, match_id=match_id)
+    away_pack = get_team_alias_pack(away_team, external_id=away_team_id, match_id=match_id)
+
+    # Build aliases lists for prompt (include team name + nicknames)
+    home_aliases = [home_team] + home_pack.get("nicknames_allowed", []) + ["los locales"]
+    away_aliases = [away_team] + away_pack.get("nicknames_allowed", []) + ["los visitantes"]
     home_aliases_json = json.dumps(home_aliases, ensure_ascii=False)
     away_aliases_json = json.dumps(away_aliases, ensure_ascii=False)
+
+    # Slogans (if available)
+    home_slogan = home_pack.get("slogan")
+    away_slogan = away_pack.get("slogan")
+    slogan_note = ""
+    if home_slogan or away_slogan:
+        slogan_parts = []
+        if home_slogan:
+            slogan_parts.append(f'LOCAL: "{home_slogan}"')
+        if away_slogan:
+            slogan_parts.append(f'VISITANTE: "{away_slogan}"')
+        slogan_note = f"\n   - Slogans permitidos (opcional): {', '.join(slogan_parts)}"
 
     # Stats as JSON (only include non-null values)
     stats = match_data.get("stats", {})
@@ -198,7 +214,7 @@ def build_narrative_prompt(match_data: dict) -> str:
 
     prompt = f"""Eres un analista de fútbol profesional. Escribes en español neutral, serio, sin hype y sin emojis.
 
-REGLAS CRÍTICAS v4 (OBLIGATORIAS):
+REGLAS CRÍTICAS v5 (OBLIGATORIAS):
 
 1) DEVUELVE SOLO JSON VÁLIDO. No incluyas texto antes ni después.
 
@@ -211,36 +227,43 @@ REGLAS CRÍTICAS v4 (OBLIGATORIAS):
    - Después usa SOLO aliases de la lista team_aliases proporcionada abajo.
    - PROHIBIDO inventar apodos/sobrenombres que no estén en team_aliases.
    - Aliases permitidos para LOCAL: {home_aliases_json}
-   - Aliases permitidos para VISITANTE: {away_aliases_json}
+   - Aliases permitidos para VISITANTE: {away_aliases_json}{slogan_note}
    - Si usas un alias que NO está en estas listas, tu respuesta será RECHAZADA.
 
-5) Usa SOLO los datos proporcionados en "DATOS". NO inventes jugadores, lesiones, alineaciones, tácticas, xG, tarjetas, ni nada que no esté explícitamente en el JSON.
+5) FORMATO DE APODOS Y SLOGANS (CRÍTICO):
+   - Cuando uses un APODO (nickname), escríbelo ENTRE COMILLAS: "Los Merengues", "La Academia".
+   - Cuando uses un SLOGAN, también entre comillas: "La Pasión de un Pueblo".
+   - NO uses negrita (**...**) ni markdown porque el texto es JSON plano.
+   - Ejemplo correcto: Los de "La Mechita" dominaron el mediocampo.
+   - Ejemplo incorrecto: Los de La Mechita dominaron el mediocampo.
 
-6) match_id debe ser EXACTAMENTE el número recibido en DATOS.
+6) Usa SOLO los datos proporcionados en "DATOS". NO inventes jugadores, lesiones, alineaciones, tácticas, xG, tarjetas, ni nada que no esté explícitamente en el JSON.
 
-7) Si un dato no existe (ej. expected_goals, ball_possession), NO lo menciones.
+7) match_id debe ser EXACTAMENTE el número recibido en DATOS.
 
-8) En narrative.body usa saltos de párrafo como "\\n\\n".
+8) Si un dato no existe (ej. expected_goals, ball_possession), NO lo menciones.
 
-9) Redondeo:
-   - prediction.confidence y prediction.probabilities a 2 decimales.
-   - probabilities debe sumar 1 ± 0.01. Si no suma, renormaliza.
+9) En narrative.body usa saltos de párrafo como "\\n\\n".
 
-10) LONGITUD REDUCIDA: narrative.body debe tener 2-3 párrafos, 140-240 palabras. Sé conciso.
+10) Redondeo:
+    - prediction.confidence y prediction.probabilities a 2 decimales.
+    - probabilities debe sumar 1 ± 0.01. Si no suma, renormaliza.
 
-11) key_factors NO DUPLICA el body:
+11) LONGITUD REDUCIDA: narrative.body debe tener 2-3 párrafos, 140-240 palabras. Sé conciso.
+
+12) key_factors NO DUPLICA el body:
     - Cada evidence máx 120 caracteres.
     - Debe contener al menos 1 cifra (stats) o 1 minuto (events).
     - REGLA EVENTS VACÍO: Si el array events está vacío ([]), en key_factors[label="Events"] usa:
       * direction: "neutral"
       * evidence: "Eventos no disponibles" (EXACTAMENTE este texto, no "No hubo eventos")
 
-12) Tono según resultado de predicción:
+13) Tono según resultado de predicción:
     - Si prediction.correct = true: refuerza con 2-3 evidencias numéricas.
     - Si prediction.correct = false: matiza con 1-2 factores de los datos.
     - Nunca uses "suerte/varianza" sin evidencia cuantitativa (xG vs goles).
 
-13) title: máx 8 palabras, sin comillas, sin \\n.
+14) title: máx 8 palabras, sin comillas, sin \\n.
 
 FORMATO DE SALIDA (SCHEMA OBLIGATORIO):
 
@@ -290,9 +313,9 @@ events: {events_json}
 
 market_odds: {market_odds_json}
 
-RECUERDA: JSON válido, sin marcador en body, solo aliases permitidos, key_factors cortos y distintos del body."""
+RECUERDA: JSON válido, sin marcador en body, solo aliases permitidos (entre comillas), key_factors cortos y distintos del body."""
 
-    return prompt
+    return prompt, home_pack, away_pack
 
 
 def parse_json_response(text: str) -> Optional[dict]:
@@ -447,7 +470,7 @@ class NarrativeGenerator:
 
         try:
             # First attempt
-            prompt = build_narrative_prompt(match_data)
+            prompt, home_pack, away_pack = build_narrative_prompt(match_data)
             result = await self.client.generate(prompt)
 
             # Debug: log token usage and raw output
@@ -459,8 +482,21 @@ class NarrativeGenerator:
             parsed = parse_json_response(result.text)
             schema_valid = parsed is not None and validate_narrative_json(parsed, match_id)
 
+            # Validate nickname usage if schema is valid
             if schema_valid and parsed:
-                tone = parsed.get("narrative", {}).get("tone") if isinstance(parsed.get("narrative"), dict) else None
+                narrative_body = ""
+                narrative_obj = parsed.get("narrative", {})
+                if isinstance(narrative_obj, dict):
+                    narrative_body = narrative_obj.get("body", "")
+                elif isinstance(narrative_obj, str):
+                    narrative_body = narrative_obj
+
+                nickname_errors = validate_nickname_usage(narrative_body, home_pack, away_pack)
+                if nickname_errors:
+                    logger.warning(f"Nickname validation errors for match {match_id}: {nickname_errors}")
+                    # Don't fail, just log - LLM might use valid aliases we don't detect
+
+                tone = narrative_obj.get("tone") if isinstance(narrative_obj, dict) else None
                 log_llm_evaluation(
                     match_id=match_id,
                     bet_won=bet_won,
