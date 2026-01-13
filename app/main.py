@@ -5223,6 +5223,50 @@ async def audit_metrics_endpoint(
     return result
 
 
+@app.get("/dashboard/ops/predictions_performance.json")
+async def predictions_performance_endpoint(
+    token: str = Query(...),
+    window_days: int = Query(default=7, ge=1, le=30),
+    regenerate: bool = Query(default=False),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Prediction performance report: proper probability metrics for model evaluation.
+
+    Returns Brier score, log loss, calibration, and market comparison.
+    Use this to distinguish variance from bugs.
+
+    Args:
+        token: Dashboard auth token
+        window_days: 7 or 14 (default 7)
+        regenerate: If True, generates fresh report instead of returning cached
+    """
+    if token != settings.DASHBOARD_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    from app.ml.performance_metrics import (
+        generate_performance_report,
+        get_latest_report,
+        save_performance_report,
+    )
+
+    if regenerate:
+        # Generate fresh report
+        report = await generate_performance_report(session, window_days)
+        await save_performance_report(session, report, window_days, source="api")
+        return report
+
+    # Try to get cached report
+    cached = await get_latest_report(session, window_days)
+    if cached:
+        return cached
+
+    # No cached report, generate one
+    report = await generate_performance_report(session, window_days)
+    await save_performance_report(session, report, window_days, source="api")
+    return report
+
+
 async def _load_ops_data() -> dict:
     """
     Ops dashboard: read-only aggregated metrics from DB + in-process state.

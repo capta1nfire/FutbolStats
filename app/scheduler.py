@@ -2788,6 +2788,71 @@ async def daily_ops_rollup() -> dict:
         return {"status": "error", "error": str(e)}
 
 
+async def daily_predictions_performance_report() -> dict:
+    """
+    Daily prediction performance report - generates 7d and 14d reports.
+
+    Runs at 09:15 UTC daily (after ops rollup).
+    Calculates proper probability metrics:
+    - Brier score (primary)
+    - Log loss (secondary)
+    - Calibration bins
+    - Market comparison
+
+    These metrics allow distinguishing variance from bugs.
+    """
+    logger.info("Daily predictions performance report starting")
+
+    try:
+        from app.ml.performance_metrics import (
+            generate_performance_report,
+            save_performance_report,
+        )
+
+        results = {}
+
+        async with AsyncSessionLocal() as session:
+            # Generate 7-day report
+            report_7d = await generate_performance_report(session, window_days=7)
+            await save_performance_report(session, report_7d, window_days=7, source="scheduler")
+            results["7d"] = {
+                "n": report_7d.get("global", {}).get("n", 0),
+                "brier": report_7d.get("global", {}).get("metrics", {}).get("brier_score"),
+                "confidence": report_7d.get("confidence"),
+            }
+
+            # Generate 14-day report
+            report_14d = await generate_performance_report(session, window_days=14)
+            await save_performance_report(session, report_14d, window_days=14, source="scheduler")
+            results["14d"] = {
+                "n": report_14d.get("global", {}).get("n", 0),
+                "brier": report_14d.get("global", {}).get("metrics", {}).get("brier_score"),
+                "confidence": report_14d.get("confidence"),
+            }
+
+        # Log diagnostic summary
+        diag_7d = report_7d.get("diagnostics", {})
+        recommendation = diag_7d.get("recommendation", "unknown")
+
+        logger.info(
+            f"Daily predictions performance report complete: "
+            f"7d_n={results['7d']['n']}, 7d_brier={results['7d']['brier']}, "
+            f"14d_n={results['14d']['n']}, 14d_brier={results['14d']['brier']}, "
+            f"recommendation={recommendation}"
+        )
+
+        return {
+            "status": "success",
+            "7d": results["7d"],
+            "14d": results["14d"],
+            "recommendation": recommendation,
+        }
+
+    except Exception as e:
+        logger.error(f"Daily predictions performance report failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 def _log_scheduler_jobs():
     """Log all registered scheduler jobs and their next run times."""
     jobs = scheduler.get_jobs()
@@ -3110,6 +3175,17 @@ def start_scheduler(ml_engine):
         trigger=CronTrigger(hour=9, minute=10),
         id="daily_alpha_progress_snapshot",
         name="Daily Alpha Progress Snapshot",
+        replace_existing=True,
+    )
+
+    # Daily Predictions Performance Report: 09:15 UTC (after alpha snapshot)
+    # Generates 7d and 14d performance reports with Brier, log loss, calibration
+    # Allows distinguishing variance from bugs
+    scheduler.add_job(
+        daily_predictions_performance_report,
+        trigger=CronTrigger(hour=9, minute=15),
+        id="daily_predictions_performance_report",
+        name="Daily Predictions Performance Report (7d/14d)",
         replace_existing=True,
     )
 
