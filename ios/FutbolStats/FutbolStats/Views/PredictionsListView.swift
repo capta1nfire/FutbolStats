@@ -159,10 +159,10 @@ struct PredictionsListView: View {
         .padding(.bottom, 12)
     }
 
-    // 2 days before + today + 7 days ahead = 10 days total (local timezone)
+    // 7 days before + today + 7 days ahead = 15 days total (matches competitor)
     private var dateRange: [Date] {
         let today = localCalendar.startOfDay(for: Date())
-        return (-2..<8).compactMap { localCalendar.date(byAdding: .day, value: $0, to: today) }
+        return (-7..<8).compactMap { localCalendar.date(byAdding: .day, value: $0, to: today) }
     }
 
     // MARK: - No Matches View

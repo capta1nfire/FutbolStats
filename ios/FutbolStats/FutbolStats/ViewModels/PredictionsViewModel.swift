@@ -172,10 +172,10 @@ class PredictionsViewModel: ObservableObject {
         // Fire-and-forget: health check runs independently, doesn't block UI
         Task { await checkHealth() }
 
-        // Phase 1: Load priority data (3 days) - BLOCKING for fast TTFC
+        // Phase 1: Load priority data (2 days) - BLOCKING for fast TTFC
         // This includes yesterday, today, tomorrow - the most relevant dates
         async let opsTask: () = loadOpsProgress()
-        await loadPredictions(days: 3, mode: "priority", requestId: requestId)
+        await loadPredictions(days: 2, mode: "priority", requestId: requestId)
 
         // Wait for ops (non-blocking on error)
         _ = await opsTask
@@ -188,8 +188,8 @@ class PredictionsViewModel: ObservableObject {
             data: ["total_ms": priorityMs, "predictions_count": predictions.count]
         )
 
-        // Phase 2: Load full data (7 days) - FIRE-AND-FORGET in background
-        // This runs detached to avoid blocking UI; uses requestId to prevent race conditions
+        // Phase 2: Load full data (7 days back + 7 ahead) - FIRE-AND-FORGET in background
+        // This matches competitor's 15-day window (Mon-Mon)
         isLoadingMore = true
         Task.detached { [weak self] in
             guard let self = self else { return }
