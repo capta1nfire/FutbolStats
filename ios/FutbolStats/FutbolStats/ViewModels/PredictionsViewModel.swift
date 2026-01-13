@@ -232,12 +232,13 @@ class PredictionsViewModel: ObservableObject {
                 return
             }
 
-            let totalMs = await self.refreshStartTime.map { Date().timeIntervalSince($0) * 1000 } ?? 0
+            let totalMs = self.refreshStartTime.map { Date().timeIntervalSince($0) * 1000 } ?? 0
+            let predictionsCount = self.predictions.count
             print("[Perf] refresh() FULL DONE - \(String(format: "%.0f", totalMs))ms")
             PerfLogger.shared.log(
                 endpoint: "refresh",
                 message: "full_done",
-                data: ["total_ms": totalMs, "predictions_count": await self.predictions.count]
+                data: ["total_ms": totalMs, "predictions_count": predictionsCount]
             )
         }
     }
