@@ -789,6 +789,10 @@ class FastPathService:
                         tokens_in, tokens_out = self.runpod.extract_usage(job_data)
                         meta = self.runpod.extract_metadata(job_data)
 
+                        # Debug: log raw response when empty or short
+                        if not text or len(text) < 50:
+                            logger.warning(f"[FASTPATH] Empty/short LLM response for audit {audit.id}: len={len(text) if text else 0}, text={text[:200] if text else 'None'}")
+
                         parsed = parse_json_response(text)
                         # Get match_id for validation
                         outcome = await self.session.get(PredictionOutcome, audit.outcome_id)
@@ -810,9 +814,15 @@ class FastPathService:
                                 f"tokens={tokens_in}/{tokens_out}, exec={meta['exec_ms']}ms"
                             )
                         else:
+                            # Log what we received for debugging
+                            logger.warning(
+                                f"[FASTPATH] Schema validation failed for audit {audit.id}: "
+                                f"text_len={len(text)}, parsed={'yes' if parsed else 'no'}, "
+                                f"first_100={text[:100] if text else 'None'}"
+                            )
                             audit.llm_narrative_status = "error"
                             audit.llm_narrative_error_code = "schema_invalid"
-                            audit.llm_narrative_error_detail = "JSON validation failed"
+                            audit.llm_narrative_error_detail = f"JSON validation failed. Text len: {len(text)}"
                             errors += 1
 
                     except RunPodError as e:
