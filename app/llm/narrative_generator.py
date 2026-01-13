@@ -298,8 +298,8 @@ REGLAS CRÍTICAS v5 (OBLIGATORIAS):
 15) VENUE (ESTADIO/CIUDAD) - REGLAS ESTRICTAS:
     - SOLO mencionar el estadio si `venue.name` está presente en DATOS.
     - NUNCA deducir el estadio por nombre del club (ej. Inter ⇒ San Siro es PROHIBIDO si venue es null).
-    - Si venue.name existe, puedes usarlo para dar contexto: "En {venue.name}, el partido se inclinó..."
-    - Si venue.city existe, puedes añadirlo: "En el {venue.name} de {venue.city}..."
+    - Si venue.name existe, puedes usarlo para dar contexto: "En [nombre del estadio], el partido se inclinó..."
+    - Si venue.city existe, puedes añadirlo: "En el [estadio] de [ciudad]..."
     - El venue va SIN comillas (no es apodo).
     - PROHIBIDO: inferir afición ("el estadio quedó mudo") o inventar ambiente sin datos.
 
