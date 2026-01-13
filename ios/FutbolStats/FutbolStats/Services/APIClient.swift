@@ -287,6 +287,30 @@ actor APIClient {
         return try await performRequest(url: url)
     }
 
+    /// Warmup the concurrent connection pool by making a lightweight request
+    /// This ensures TLS handshake is done before user navigates to match details
+    nonisolated func warmupConcurrentConnection() async {
+        let url = URL(string: "\(APIEnvironment.current.baseURL)/health")!
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        do {
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.timeoutInterval = 5
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+            let (_, response) = try await Self.sharedSession.data(for: request)
+            let ms = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+
+            if let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) {
+                print("[APIClient] warmupConcurrentConnection | ok | ms=\(String(format: "%.1f", ms))")
+            }
+        } catch {
+            let ms = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+            print("[APIClient] warmupConcurrentConnection | error | ms=\(String(format: "%.1f", ms)), error=\(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Predictions
 
     /// Fetch upcoming predictions with explicit date range control
@@ -320,9 +344,11 @@ actor APIClient {
 
     nonisolated func getMatchDetails(matchId: Int) async throws -> MatchDetailsResponse {
         let callStart = CFAbsoluteTimeGetCurrent()
-        print("[APIClient] getMatchDetails START match_id=\(matchId)")
-
+        let urlBuildStart = CFAbsoluteTimeGetCurrent()
         let url = URL(string: "\(APIEnvironment.current.baseURL)/matches/\(matchId)/details")!
+        let urlBuildMs = (CFAbsoluteTimeGetCurrent() - urlBuildStart) * 1000
+        print("[APIClient] getMatchDetails START match_id=\(matchId) url_build_ms=\(String(format: "%.1f", urlBuildMs))")
+
         let result: MatchDetailsResponse = try await Self.performConcurrentRequest(url: url, endpoint: "match_details")
 
         let callMs = (CFAbsoluteTimeGetCurrent() - callStart) * 1000

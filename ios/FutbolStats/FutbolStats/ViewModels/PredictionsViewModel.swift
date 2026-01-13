@@ -36,6 +36,14 @@ class PredictionsViewModel: ObservableObject {
     // Request tracking for race condition prevention
     private var currentRequestId: UUID?
 
+    // Throttle refreshes to avoid duplicate calls on navigation
+    // 30s is enough to navigate to details and back without re-fetching
+    private var lastRefreshTime: Date?
+    private let refreshThrottleInterval: TimeInterval = 30.0
+
+    // Cancelable task for full refresh (allows cancellation on view disappear)
+    private var fullRefreshTask: Task<Void, Never>?
+
     // MARK: - Cached Filtered Predictions (avoid recomputation on every body eval)
     @Published private(set) var cachedPredictionsForDate: [MatchPrediction] = []
     @Published private(set) var cachedValueBets: [MatchPrediction] = []
@@ -165,14 +173,25 @@ class PredictionsViewModel: ObservableObject {
     /// 1. Load priority data (yesterday/today/tomorrow) - blocking for fast TTFC
     /// 2. Load full data (7 days back + 7 ahead) - fire-and-forget in background
     func refresh() async {
+        // Throttle: skip if we refreshed recently (avoids duplicate calls on navigation)
+        if let lastRefresh = lastRefreshTime,
+           Date().timeIntervalSince(lastRefresh) < refreshThrottleInterval,
+           !predictions.isEmpty {
+            print("[Perf] refresh() THROTTLED - skipping (last refresh \(String(format: "%.1f", Date().timeIntervalSince(lastRefresh)))s ago)")
+            return
+        }
+        lastRefreshTime = Date()
+
         refreshStartTime = Date()
         let requestId = UUID()
         currentRequestId = requestId
 
         print("[Perf] refresh() START (requestId: \(requestId.uuidString.prefix(8)))")
 
-        // Fire-and-forget: health check runs independently, doesn't block UI
+        // Fire-and-forget: warmup connections in parallel (doesn't block UI)
+        // This pre-warms both the actor and concurrent connection pools
         Task { await checkHealth() }
+        Task { await apiClient.warmupConcurrentConnection() }
 
         // Phase 1: Load priority data - BLOCKING for fast TTFC
         // daysBack=1, daysAhead=1 → yesterday/today/tomorrow (3 calendar days)
@@ -190,12 +209,28 @@ class PredictionsViewModel: ObservableObject {
             data: ["total_ms": priorityMs, "predictions_count": predictions.count]
         )
 
-        // Phase 2: Load full data (7 days back + 7 ahead) - FIRE-AND-FORGET in background
+        // Phase 2: Load full data (7 days back + 7 ahead) - cancelable background task
         // This matches competitor's 15-day window (Mon-Mon)
+        // Cancel previous full refresh if still running (prevents connection competition)
+        fullRefreshTask?.cancel()
         isLoadingMore = true
-        Task.detached { [weak self] in
+
+        fullRefreshTask = Task { [weak self] in
             guard let self = self else { return }
+
+            // Check for cancellation before starting network request
+            if Task.isCancelled {
+                print("[Perf] refresh() FULL CANCELLED before start")
+                return
+            }
+
             await self.loadPredictions(daysBack: 7, daysAhead: 7, mode: "full", requestId: requestId)
+
+            // Check if cancelled during load
+            if Task.isCancelled {
+                print("[Perf] refresh() FULL CANCELLED after load")
+                return
+            }
 
             let totalMs = await self.refreshStartTime.map { Date().timeIntervalSince($0) * 1000 } ?? 0
             print("[Perf] refresh() FULL DONE - \(String(format: "%.0f", totalMs))ms")
@@ -204,6 +239,15 @@ class PredictionsViewModel: ObservableObject {
                 message: "full_done",
                 data: ["total_ms": totalMs, "predictions_count": await self.predictions.count]
             )
+        }
+    }
+
+    /// Cancel background refresh tasks (call from view's onDisappear)
+    func cancelBackgroundTasks() {
+        if fullRefreshTask != nil {
+            fullRefreshTask?.cancel()
+            fullRefreshTask = nil
+            print("[Perf] Background refresh cancelled")
         }
     }
 
