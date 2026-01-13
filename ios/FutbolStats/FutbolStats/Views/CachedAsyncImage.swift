@@ -35,7 +35,7 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
     private func loadImage() {
         guard let url = url, !isLoading else { return }
 
-        // Check cache first
+        // Check cache first (synchronous, fast)
         if let cached = ImageCache.shared.get(for: url) {
             self.image = cached
             return
@@ -43,15 +43,23 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
 
         isLoading = true
 
-        Task {
+        // Use detached task to avoid inheriting MainActor context
+        // This ensures URLSession.data and UIImage(data:) run off main thread
+        Task.detached(priority: .utility) {
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
-                if let uiImage = UIImage(data: data) {
-                    ImageCache.shared.set(uiImage, for: url)
+                // UIImage init is CPU-bound, keep it off main thread
+                guard let uiImage = UIImage(data: data) else {
                     await MainActor.run {
-                        self.image = uiImage
                         self.isLoading = false
                     }
+                    return
+                }
+                ImageCache.shared.set(uiImage, for: url)
+                // Only mutate @State on MainActor
+                await MainActor.run {
+                    self.image = uiImage
+                    self.isLoading = false
                 }
             } catch {
                 await MainActor.run {

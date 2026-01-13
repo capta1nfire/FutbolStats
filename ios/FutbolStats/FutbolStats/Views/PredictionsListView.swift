@@ -3,6 +3,16 @@ import SwiftUI
 struct PredictionsListView: View {
     @StateObject private var viewModel = PredictionsViewModel()
 
+    // Pagination: limit initial render to reduce main thread work
+    private let initialDisplayLimit = 15
+    @State private var displayLimit = 15
+
+    // Performance tracking
+    @State private var viewAppearTime: Date?
+    @State private var firstContentTime: Date?
+    @State private var hasLoggedFirstContent = false
+    @State private var dateChangeTapTime: Date?
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -71,6 +81,43 @@ struct PredictionsListView: View {
             .task {
                 await viewModel.refresh()
             }
+            .onChange(of: viewModel.selectedDate) { oldDate, newDate in
+                // Reset pagination when date changes for fast initial render
+                displayLimit = initialDisplayLimit
+
+                // Measure time from tap to state update
+                if let tapTime = dateChangeTapTime {
+                    let stateUpdateMs = Date().timeIntervalSince(tapTime) * 1000
+                    let matchCount = viewModel.predictionsForSelectedDate.count
+                    print("[Perf] DATE_CHANGE_COMPLETE: \(String(format: "%.0f", stateUpdateMs))ms, \(matchCount) matches for new date")
+                    PerfLogger.shared.log(
+                        endpoint: "dateChange",
+                        message: "complete",
+                        data: ["tap_to_update_ms": stateUpdateMs, "match_count": matchCount]
+                    )
+                    dateChangeTapTime = nil
+                }
+            }
+            .onAppear {
+                viewAppearTime = Date()
+                print("[Perf] PredictionsListView.onAppear")
+            }
+            .onChange(of: viewModel.predictions.count) { oldCount, newCount in
+                // Log when predictions first arrive (transition from 0 to N)
+                if oldCount == 0 && newCount > 0 && !hasLoggedFirstContent {
+                    hasLoggedFirstContent = true
+                    firstContentTime = Date()
+                    if let appear = viewAppearTime, let content = firstContentTime {
+                        let ttfc = content.timeIntervalSince(appear) * 1000
+                        print("[Perf] TIME_TO_FIRST_CONTENT: \(String(format: "%.0f", ttfc))ms (\(newCount) predictions)")
+                        PerfLogger.shared.log(
+                            endpoint: "PredictionsListView",
+                            message: "first_content",
+                            data: ["ttfc_ms": ttfc, "predictions_count": newCount]
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -82,7 +129,8 @@ struct PredictionsListView: View {
     }
 
     private var dateSelector: some View {
-        ScrollViewReader { proxy in
+        let _ = print("[Render] dateSelector body evaluated")
+        return ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(dateRange, id: \.self) { date in
@@ -93,6 +141,8 @@ struct PredictionsListView: View {
                         )
                         .id(date)
                         .onTapGesture {
+                            dateChangeTapTime = Date()
+                            print("[Perf] DATE_TAP: \(date)")
                             withAnimation(.easeInOut(duration: 0.2)) {
                                 viewModel.selectedDate = date
                             }
@@ -142,13 +192,23 @@ struct PredictionsListView: View {
     // MARK: - Predictions List
 
     private var predictionsList: some View {
-        ScrollView {
+        let allPredictions = viewModel.predictionsForSelectedDate
+        let valueBets = viewModel.valueBetPredictionsForSelectedDate
+        let regularMatches = viewModel.regularPredictionsForSelectedDate
+        let totalCount = allPredictions.count
+        let _ = print("[Render] predictionsList body - \(totalCount) matches, showing \(min(displayLimit, totalCount))")
+
+        // Limit regular matches to displayLimit (value bets always shown)
+        let limitedRegular = Array(regularMatches.prefix(max(0, displayLimit - valueBets.count)))
+        let hasMore = (valueBets.count + regularMatches.count) > displayLimit
+
+        return ScrollView {
             LazyVStack(spacing: 12) {
-                // Value Bets Section
-                if !viewModel.valueBetPredictionsForSelectedDate.isEmpty {
+                // Value Bets Section (always show all - typically few)
+                if !valueBets.isEmpty {
                     sectionHeader(title: "Value Bets", icon: "star.fill", color: Color(red: 0.2, green: 1.0, blue: 0.4))
 
-                    ForEach(viewModel.valueBetPredictionsForSelectedDate) { prediction in
+                    ForEach(valueBets) { prediction in
                         NavigationLink(destination: MatchDetailView(prediction: prediction)) {
                             MatchCard(prediction: prediction, showValueBadge: true)
                         }
@@ -156,17 +216,52 @@ struct PredictionsListView: View {
                     }
                 }
 
-                // All Matches Section
-                if !viewModel.regularPredictionsForSelectedDate.isEmpty {
+                // All Matches Section (paginated)
+                if !limitedRegular.isEmpty {
                     sectionHeader(title: "Matches", icon: "sportscourt", color: .gray)
-                        .padding(.top, viewModel.valueBetPredictionsForSelectedDate.isEmpty ? 0 : 8)
+                        .padding(.top, valueBets.isEmpty ? 0 : 8)
 
-                    ForEach(viewModel.regularPredictionsForSelectedDate) { prediction in
+                    ForEach(limitedRegular) { prediction in
                         NavigationLink(destination: MatchDetailView(prediction: prediction)) {
                             MatchCard(prediction: prediction, showValueBadge: false)
                         }
                         .buttonStyle(.plain)
                     }
+                }
+
+                // Load More button
+                if hasMore {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            displayLimit += 15
+                        }
+                    } label: {
+                        HStack {
+                            Text("Load more (\(totalCount - min(displayLimit, totalCount)) remaining)")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                            Image(systemName: "chevron.down")
+                                .font(.caption)
+                        }
+                        .foregroundStyle(.blue)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color(white: 0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    .padding(.top, 8)
+                }
+
+                // Progressive loading indicator (loading more dates in background)
+                if viewModel.isLoadingMore {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Loading more dates...")
+                            .font(.caption)
+                            .foregroundStyle(.gray)
+                    }
+                    .padding(.vertical, 8)
                 }
             }
             .padding(.horizontal, 16)

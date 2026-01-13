@@ -412,6 +412,7 @@ class FeatureEngineer:
         self,
         league_ids: Optional[list[int]] = None,
         include_recent_days: int = 7,
+        days_ahead: Optional[int] = None,
     ) -> pd.DataFrame:
         """
         Get features for upcoming and recent matches.
@@ -420,6 +421,7 @@ class FeatureEngineer:
             league_ids: Optional list of league IDs to filter.
             include_recent_days: Include finished matches from last N days (for showing scores).
                                  Default 7 to preserve history for iOS date selector.
+            days_ahead: Limit upcoming matches to next N days. None = no limit (all upcoming).
 
         Returns:
             DataFrame with features for matches (upcoming + recent finished).
@@ -429,12 +431,26 @@ class FeatureEngineer:
         # Calculate date range for recent matches
         recent_cutoff = datetime.utcnow() - timedelta(days=include_recent_days)
 
+        # Calculate date range for upcoming matches (if limited)
+        future_cutoff = None
+        if days_ahead is not None:
+            future_cutoff = datetime.utcnow() + timedelta(days=days_ahead)
+
+        # Build upcoming condition
+        if future_cutoff is not None:
+            upcoming_condition = and_(
+                Match.status == "NS",
+                Match.date <= future_cutoff,
+            )
+        else:
+            upcoming_condition = Match.status == "NS"
+
         # Get upcoming matches (NS) AND recent finished matches (FT, AET, PEN)
         query = (
             select(Match)
             .where(
                 or_(
-                    Match.status == "NS",  # Upcoming
+                    upcoming_condition,  # Upcoming (with optional future limit)
                     and_(
                         Match.status.in_(["FT", "AET", "PEN"]),  # Finished
                         Match.date >= recent_cutoff,  # Recent
