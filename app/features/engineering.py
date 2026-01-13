@@ -437,13 +437,19 @@ class FeatureEngineer:
             future_cutoff = datetime.utcnow() + timedelta(days=days_ahead)
 
         # Build upcoming condition
+        # Note: NS matches should only include those from recent_cutoff forward
+        # (older NS matches are stale/postponed and shouldn't be shown)
         if future_cutoff is not None:
             upcoming_condition = and_(
                 Match.status == "NS",
+                Match.date >= recent_cutoff,  # Don't show stale NS matches
                 Match.date <= future_cutoff,
             )
         else:
-            upcoming_condition = Match.status == "NS"
+            upcoming_condition = and_(
+                Match.status == "NS",
+                Match.date >= recent_cutoff,  # Don't show stale NS matches
+            )
 
         # Get upcoming matches (NS) AND recent finished matches (FT, AET, PEN)
         query = (
