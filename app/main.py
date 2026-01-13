@@ -1865,14 +1865,27 @@ async def get_match_timeline(
                 "status": status,
             })
 
+        # Determine which team scored (prefer team_id, fallback to team_name match)
+        is_home_team = False
+        is_away_team = False
+
+        if goal.get("team_id"):
+            is_home_team = goal.get("team_id") == home_external_id
+            is_away_team = goal.get("team_id") == away_external_id
+        else:
+            # Legacy fallback: match by team name
+            goal_team_name = goal.get("team_name") or goal.get("team")
+            if goal_team_name:
+                is_home_team = goal_team_name == (home_team.name if home_team else None)
+                is_away_team = goal_team_name == (away_team.name if away_team else None)
+
         # Update score
-        if goal.get("team_id") == home_external_id:
-            # Check for own goal
+        if is_home_team:
             if goal.get("detail") == "Own Goal":
                 current_away += 1
             else:
                 current_home += 1
-        elif goal.get("team_id") == away_external_id:
+        elif is_away_team:
             if goal.get("detail") == "Own Goal":
                 current_home += 1
             else:
@@ -1926,9 +1939,15 @@ async def get_match_timeline(
             {
                 "minute": g.get("minute"),
                 "extra_minute": g.get("extra_minute"),
-                "team": "home" if g.get("team_id") == home_external_id else "away",
-                "team_name": g.get("team_name"),
-                "player": g.get("player_name"),
+                # Determine team: prefer team_id match, fallback to team_name match for legacy events
+                "team": (
+                    "home" if g.get("team_id") == home_external_id
+                    else "away" if g.get("team_id") == away_external_id
+                    else "home" if g.get("team_name") == (home_team.name if home_team else None) or g.get("team") == (home_team.name if home_team else None)
+                    else "away"
+                ),
+                "team_name": g.get("team_name") or g.get("team"),  # Support legacy "team" field
+                "player": g.get("player_name") or g.get("player"),  # Support legacy "player" field
                 "is_own_goal": g.get("detail") == "Own Goal",
                 "is_penalty": g.get("detail") == "Penalty",
             }

@@ -433,8 +433,9 @@ class FastPathService:
                 "extra_minute": event.get("time", {}).get("extra"),
                 "type": event_type,
                 "detail": detail,
-                "team": event.get("team", {}).get("name"),
-                "player": event.get("player", {}).get("name"),
+                "team_id": event.get("team", {}).get("id"),  # External team ID for timeline mapping
+                "team_name": event.get("team", {}).get("name"),
+                "player_name": event.get("player", {}).get("name"),
                 "assist": event.get("assist", {}).get("name"),
                 "_priority": priority,
             })

@@ -99,8 +99,28 @@ actor APIClient {
     static let shared = APIClient()
 
     private let environment: APIEnvironment
-    private let session: URLSession
     private let retryConfig: RetryConfig
+
+    // Shared session for ALL requests - ensures connection reuse and warm TLS
+    // Static to allow nonisolated methods to access without actor hop
+    private static let sharedSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 60
+        // Enable HTTP cache: 50MB memory, 100MB disk
+        config.urlCache = URLCache(memoryCapacity: 50_000_000, diskCapacity: 100_000_000)
+        config.requestCachePolicy = .useProtocolCachePolicy
+        // Keep connections alive longer for faster subsequent requests
+        config.httpShouldSetCookies = true
+        config.httpShouldUsePipelining = true
+        config.httpMaximumConnectionsPerHost = 6
+        // Don't wait for connectivity - fail fast for better UX
+        config.waitsForConnectivity = false
+        return URLSession(configuration: config)
+    }()
+
+    // Instance reference for actor-isolated methods
+    private var session: URLSession { Self.sharedSession }
 
     private init(
         environment: APIEnvironment = .current,
@@ -108,14 +128,6 @@ actor APIClient {
     ) {
         self.environment = environment
         self.retryConfig = retryConfig
-
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 60
-        // Enable HTTP cache: 50MB memory, 100MB disk
-        config.urlCache = URLCache(memoryCapacity: 50_000_000, diskCapacity: 100_000_000)
-        config.requestCachePolicy = .useProtocolCachePolicy
-        self.session = URLSession(configuration: config)
     }
 
     // MARK: - Generic Request with Retry
@@ -197,6 +209,72 @@ actor APIClient {
         throw lastError ?? APIError.maxRetriesExceeded
     }
 
+    /// Concurrent request that bypasses actor queue - for fast, idempotent GETs
+    /// This prevents head-of-line blocking when other requests are in flight
+    /// Uses shared session to reuse TLS connections (avoids cold handshake latency)
+    nonisolated private static func performConcurrentRequest<T: Decodable>(
+        url: URL,
+        endpoint: String = "unknown"
+    ) async throws -> T {
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 10
+        // Apply auth headers (static context, read from AppConfiguration)
+        if let token = AppConfiguration.dashboardToken {
+            request.setValue(token, forHTTPHeaderField: "X-Dashboard-Token")
+        }
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        // Use shared session to reuse warm connections
+        let (data, response) = try await sharedSession.data(for: request)
+        let networkMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.noData
+        }
+
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            print("[APIClient] \(endpoint) | error | status=\(httpResponse.statusCode), network_ms=\(String(format: "%.1f", networkMs))")
+            throw APIError.serverError(httpResponse.statusCode)
+        }
+
+        // Defensive: treat whitespace-only as empty response
+        let trimmed = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trimmed = trimmed, !trimmed.isEmpty else {
+            throw APIError.emptyResponse
+        }
+
+        let decodeStart = CFAbsoluteTimeGetCurrent()
+        do {
+            let result = try JSONDecoder().decode(T.self, from: data)
+            let decodeMs = (CFAbsoluteTimeGetCurrent() - decodeStart) * 1000
+            let totalMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+
+            print("[APIClient] \(endpoint) | ok | network_ms=\(String(format: "%.1f", networkMs)), decode_ms=\(String(format: "%.1f", decodeMs)), total_ms=\(String(format: "%.1f", totalMs))")
+
+            return result
+        } catch let decodingError as DecodingError {
+            // Log detailed decoding error for debugging
+            switch decodingError {
+            case .keyNotFound(let key, let context):
+                print("[APIClient] \(endpoint) | decode_error | missing key '\(key.stringValue)' at path: \(context.codingPath.map { $0.stringValue }.joined(separator: "."))")
+            case .typeMismatch(let type, let context):
+                print("[APIClient] \(endpoint) | decode_error | type mismatch for \(type) at path: \(context.codingPath.map { $0.stringValue }.joined(separator: "."))")
+            case .valueNotFound(let type, let context):
+                print("[APIClient] \(endpoint) | decode_error | value not found for \(type) at path: \(context.codingPath.map { $0.stringValue }.joined(separator: "."))")
+            case .dataCorrupted(let context):
+                print("[APIClient] \(endpoint) | decode_error | data corrupted at path: \(context.codingPath.map { $0.stringValue }.joined(separator: "."))")
+            @unknown default:
+                print("[APIClient] \(endpoint) | decode_error | unknown: \(decodingError)")
+            }
+            throw APIError.decodingError(decodingError)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
     // MARK: - Health Check
 
     func checkHealth() async throws -> HealthResponse {
@@ -233,11 +311,19 @@ actor APIClient {
         return try await performRequest(url: url, method: "POST")
     }
 
-    // MARK: - Match Details
+    // MARK: - Match Details (concurrent - bypasses actor queue for fast response)
 
-    func getMatchDetails(matchId: Int) async throws -> MatchDetailsResponse {
-        let url = URL(string: "\(environment.baseURL)/matches/\(matchId)/details")!
-        return try await performRequest(url: url)
+    nonisolated func getMatchDetails(matchId: Int) async throws -> MatchDetailsResponse {
+        let callStart = CFAbsoluteTimeGetCurrent()
+        print("[APIClient] getMatchDetails START match_id=\(matchId)")
+
+        let url = URL(string: "\(APIEnvironment.current.baseURL)/matches/\(matchId)/details")!
+        let result: MatchDetailsResponse = try await Self.performConcurrentRequest(url: url, endpoint: "match_details")
+
+        let callMs = (CFAbsoluteTimeGetCurrent() - callStart) * 1000
+        print("[APIClient] getMatchDetails END match_id=\(matchId) total_ms=\(String(format: "%.1f", callMs))")
+
+        return result
     }
 
     // MARK: - Teams
@@ -304,18 +390,18 @@ actor APIClient {
         return try await performRequest(url: url)
     }
 
-    // MARK: - Match Timeline
+    // MARK: - Match Timeline (concurrent - bypasses actor queue)
 
-    func getMatchTimeline(matchId: Int) async throws -> MatchTimelineResponse {
-        let url = URL(string: "\(environment.baseURL)/matches/\(matchId)/timeline")!
-        return try await performRequest(url: url)
+    nonisolated func getMatchTimeline(matchId: Int) async throws -> MatchTimelineResponse {
+        let url = URL(string: "\(APIEnvironment.current.baseURL)/matches/\(matchId)/timeline")!
+        return try await Self.performConcurrentRequest(url: url, endpoint: "match_timeline")
     }
 
-    // MARK: - Match Insights (Narrative Analysis)
+    // MARK: - Match Insights (concurrent - bypasses actor queue)
 
-    func getMatchInsights(matchId: Int) async throws -> MatchInsightsResponse {
-        let url = URL(string: "\(environment.baseURL)/matches/\(matchId)/insights")!
-        return try await performRequest(url: url)
+    nonisolated func getMatchInsights(matchId: Int) async throws -> MatchInsightsResponse {
+        let url = URL(string: "\(APIEnvironment.current.baseURL)/matches/\(matchId)/insights")!
+        return try await Self.performConcurrentRequest(url: url, endpoint: "match_insights")
     }
 
     // MARK: - ETL Sync (requires API key in production)
