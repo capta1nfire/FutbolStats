@@ -1384,7 +1384,8 @@ async def daily_save_predictions():
     try:
         from app.db_utils import upsert
         from app.ml import XGBoostEngine
-        from app.models import Prediction
+        from app.models import Prediction, Match
+        from sqlalchemy import select, func
 
         async with AsyncSessionLocal() as session:
             # Load ML engine
@@ -1397,8 +1398,24 @@ async def daily_save_predictions():
             feature_engineer = FeatureEngineer(session=session)
             df = await feature_engineer.get_upcoming_matches_features()
 
+            # Enhanced logging: count NS matches and get next match date
+            total_matches = len(df)
+            ns_matches = len(df[df["status"] == "NS"]) if total_matches > 0 else 0
+
+            # Query next NS match date directly from DB for accurate logging
+            next_ns_result = await session.execute(
+                select(func.min(Match.date))
+                .where(Match.status == "NS", Match.date > datetime.utcnow())
+            )
+            next_ns_date = next_ns_result.scalar()
+
+            logger.info(
+                f"daily_save_predictions: total_matches={total_matches}, "
+                f"ns_matches={ns_matches}, next_ns_utc={next_ns_date.isoformat() if next_ns_date else 'None'}"
+            )
+
             if len(df) == 0:
-                logger.info("No upcoming matches to save predictions for")
+                logger.info("No upcoming matches to save predictions for (no scheduled matches in window)")
                 return
 
             # Make predictions

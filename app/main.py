@@ -4162,6 +4162,9 @@ async def _calculate_predictions_health(session) -> dict:
 
     Detects when daily_save_predictions isn't running/persisting.
     Returns status: ok/warn/red based on recency and coverage.
+
+    Smart logic: If there are no upcoming NS matches scheduled, we don't
+    raise WARN/RED for stale predictions (false positive in low-activity periods).
     """
     now = datetime.utcnow()
 
@@ -4217,20 +4220,42 @@ async def _calculate_predictions_health(session) -> dict:
     if ft_48h > 0:
         coverage_48h_pct = round(((ft_48h - ft_48h_missing) / ft_48h) * 100, 1)
 
+    # 7) NS matches in next 48h (for smart alerting)
+    res = await session.execute(
+        text("""
+            SELECT COUNT(*) FROM matches
+            WHERE status = 'NS'
+              AND date > NOW()
+              AND date <= NOW() + INTERVAL '48 hours'
+        """)
+    )
+    ns_next_48h = int(res.scalar() or 0)
+
+    # 8) Next NS match date (for visibility)
+    res = await session.execute(
+        text("""
+            SELECT MIN(date) FROM matches
+            WHERE status = 'NS' AND date > NOW()
+        """)
+    )
+    next_ns_date = res.scalar()
+
     # Calculate hours since last prediction
     hours_since_last = None
     if last_pred_at:
         delta = now - last_pred_at
         hours_since_last = round(delta.total_seconds() / 3600, 1)
 
-    # Determine status
-    # - ok: last_pred <= 24h AND coverage >= 80%
-    # - warn: last_pred > 24h OR coverage < 80%
-    # - red: last_pred > 48h OR coverage < 50%
+    # Determine status with smart logic
+    # If no NS matches in next 48h, don't alert on stale predictions
     status = "ok"
     status_reason = None
 
-    if hours_since_last is None or hours_since_last > 48:
+    # Smart bypass: no upcoming matches = no expectation of fresh predictions
+    if ns_next_48h == 0:
+        status = "ok"
+        status_reason = "No upcoming NS matches in 48h (low activity period)"
+    elif hours_since_last is None or hours_since_last > 48:
         status = "red"
         status_reason = f"No predictions in {hours_since_last or 'unknown'}h (>48h threshold)"
     elif coverage_48h_pct < 50:
@@ -4254,12 +4279,12 @@ async def _calculate_predictions_health(session) -> dict:
             logger.error(
                 f"[OPS_ALERT] predictions_health=RED: {status_reason}. "
                 f"last_pred={last_pred_at}, preds_24h={preds_last_24h}, "
-                f"ft_48h={ft_48h}, missing={ft_48h_missing}"
+                f"ft_48h={ft_48h}, missing={ft_48h_missing}, ns_next_48h={ns_next_48h}"
             )
         else:
             logger.warning(
                 f"[OPS_ALERT] predictions_health=WARN: {status_reason}. "
-                f"last_pred={last_pred_at}, preds_24h={preds_last_24h}"
+                f"last_pred={last_pred_at}, preds_24h={preds_last_24h}, ns_next_48h={ns_next_48h}"
             )
 
     return {
@@ -4272,6 +4297,8 @@ async def _calculate_predictions_health(session) -> dict:
         "ft_matches_last_48h": ft_48h,
         "ft_matches_last_48h_missing_prediction": ft_48h_missing,
         "coverage_last_48h_pct": coverage_48h_pct,
+        "ns_matches_next_48h": ns_next_48h,
+        "next_ns_match_utc": next_ns_date.isoformat() if next_ns_date else None,
         "thresholds": {
             "hours_warn": 24,
             "hours_red": 48,
