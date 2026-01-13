@@ -71,6 +71,17 @@ struct MatchStatsTableView: View {
                     )
                 }
 
+                // Offsides
+                if let homeOffsides = stats.home?.offsides,
+                   let awayOffsides = stats.away?.offsides {
+                    statRow(
+                        label: "Fueras de juego",
+                        homeValue: "\(homeOffsides)",
+                        awayValue: "\(awayOffsides)",
+                        icon: "arrow.up.right"
+                    )
+                }
+
                 // Fouls
                 if let homeFouls = stats.home?.fouls,
                    let awayFouls = stats.away?.fouls {
