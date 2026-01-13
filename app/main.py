@@ -1683,12 +1683,35 @@ async def get_match_timeline(
     elif prediction.draw_prob > prediction.home_prob and prediction.draw_prob > prediction.away_prob:
         predicted_outcome = "draw"
 
-    # Get goal events from API
-    provider = APIFootballProvider()
-    try:
-        events = await provider.get_fixture_events(match.external_id)
-    finally:
-        await provider.close()
+    # Get goal events - prefer DB, fallback to API
+    import time
+    _t0 = time.time()
+    events = []
+    events_source = "none"
+
+    # Try DB first (for finished matches, events should be cached)
+    if match.events and len(match.events) > 0:
+        events = match.events
+        events_source = "db"
+        logger.info(f"[PERF] timeline match_id={match_id} events_source=db count={len(events)} time_ms={int((time.time() - _t0) * 1000)}")
+    else:
+        # Fallback to API (and persist for next time)
+        logger.info(f"[PERF] timeline match_id={match_id} events_source=api_fallback (db events empty)")
+        provider = APIFootballProvider()
+        try:
+            events = await provider.get_fixture_events(match.external_id)
+            events_source = "api"
+            # Persist to DB for future requests (best-effort)
+            if events:
+                try:
+                    match.events = events
+                    await session.commit()
+                    logger.info(f"[PERF] timeline match_id={match_id} persisted {len(events)} events to DB")
+                except Exception as persist_err:
+                    logger.warning(f"[PERF] timeline match_id={match_id} failed to persist events: {persist_err}")
+        finally:
+            await provider.close()
+        logger.info(f"[PERF] timeline match_id={match_id} events_source=api count={len(events)} time_ms={int((time.time() - _t0) * 1000)}")
 
     # Filter only goals
     goals = [
@@ -1816,6 +1839,10 @@ async def get_match_timeline(
         "summary": {
             "correct_minutes": round(correct_minutes, 1),
             "correct_percentage": round(correct_percentage, 1),
+        },
+        "_meta": {
+            "events_source": events_source,
+            "events_count": len(events),
         },
     }
 
