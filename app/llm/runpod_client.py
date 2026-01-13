@@ -102,8 +102,18 @@ class RunPodClient:
         # Log prompt size and preview for debugging
         prompt_chars = len(prompt)
         prompt_words = len(prompt.split())
+        # Rough token estimate: ~4 chars per token for mixed EN/ES text
+        estimated_tokens = prompt_chars // 4
         prompt_preview = prompt[:100].replace('\n', '\\n') if prompt else 'EMPTY'
-        logger.info(f"RunPod payload: prompt_chars={prompt_chars}, prompt_words={prompt_words}, max_tokens={self.max_tokens}, preview={prompt_preview}")
+
+        # Warn if prompt is unusually large (Qwen2.5-32B has ~32K context)
+        if estimated_tokens > 8000:
+            logger.warning(
+                f"RunPod large prompt: ~{estimated_tokens} tokens (chars={prompt_chars}). "
+                f"Risk of truncation if >32K. Consider reducing payload."
+            )
+
+        logger.info(f"RunPod payload: chars={prompt_chars}, ~tokens={estimated_tokens}, max_out={self.max_tokens}")
 
         # Retry with exponential backoff for transient errors
         max_retries = 2
