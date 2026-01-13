@@ -6949,3 +6949,33 @@ async def debug_log(request: Request):
         f.write(_json.dumps(entry) + "\n")
 
     return {"status": "ok"}
+
+
+@app.get("/debug/log")
+async def get_debug_logs(request: Request, tail: int = 50):
+    """
+    Returns the last N lines of perf_debug.log for analysis.
+
+    Security: requires valid X-Dashboard-Token (always, even in debug mode)
+    """
+    token = request.headers.get("X-Dashboard-Token")
+    expected = os.getenv("DASHBOARD_TOKEN", "")
+    if not token or token != expected:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+    log_file = Path("logs") / "perf_debug.log"
+    if not log_file.exists():
+        return {"logs": [], "count": 0, "message": "No logs yet"}
+
+    import json as _json
+    lines = []
+    with open(log_file, "r") as f:
+        all_lines = f.readlines()
+        # Get last N lines
+        for line in all_lines[-tail:]:
+            try:
+                lines.append(_json.loads(line.strip()))
+            except Exception:
+                lines.append({"raw": line.strip()})
+
+    return {"logs": lines, "count": len(lines), "total": len(all_lines)}
