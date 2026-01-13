@@ -697,6 +697,8 @@ class FastPathService:
             "match_id": match.id,
             "home_team": home_team_name,
             "away_team": away_team_name,
+            "home_team_id": home_external_id,
+            "away_team_id": away_external_id,
             "team_aliases": team_aliases,
             "league_name": "",  # Could add league lookup if needed
             "date": match.date.isoformat() if match.date else "",
@@ -704,6 +706,10 @@ class FastPathService:
             "away_goals": away_goals,
             "stats": match.stats or {},
             "events": match.events or [],
+            "venue": {
+                "name": match.venue_name,
+                "city": match.venue_city,
+            } if match.venue_name else {},
             "prediction": {
                 "probabilities": {
                     "home": prediction.home_prob,

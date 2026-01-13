@@ -4335,6 +4335,84 @@ async def _calculate_predictions_health(session) -> dict:
     }
 
 
+async def _calculate_model_performance(session) -> dict:
+    """
+    Calculate model performance summary for OPS dashboard card.
+
+    Returns compact summary from the latest 7d performance report:
+    - Brier score
+    - Skill vs market
+    - Recommendation (OK/WATCH/INVESTIGATE)
+    - Status color (green/yellow/red)
+    """
+    from app.ml.performance_metrics import get_latest_report
+
+    try:
+        report = await get_latest_report(session, window_days=7)
+
+        if not report:
+            return {
+                "status": "gray",
+                "status_reason": "No report available yet",
+                "brier_score": None,
+                "skill_vs_market": None,
+                "recommendation": None,
+                "n_predictions": 0,
+                "confidence": "none",
+                "report_generated_at": None,
+            }
+
+        global_metrics = report.get("global", {})
+        metrics = global_metrics.get("metrics", {})
+        diagnostics = report.get("diagnostics", {})
+        market = metrics.get("market_comparison", {})
+
+        brier = metrics.get("brier_score")
+        skill = market.get("skill_vs_market") if market else None
+        recommendation = diagnostics.get("recommendation", "OK")
+        n = global_metrics.get("n", 0)
+        confidence = report.get("confidence", "low")
+
+        # Determine status color based on recommendation
+        if "INVESTIGATE" in recommendation:
+            status = "red"
+        elif "MONITOR" in recommendation or "WATCH" in recommendation:
+            status = "yellow"
+        else:
+            status = "green"
+
+        # Format skill for display
+        skill_display = None
+        if skill is not None:
+            skill_display = f"{skill * 100:+.1f}%"
+
+        return {
+            "status": status,
+            "status_reason": recommendation,
+            "brier_score": round(brier, 4) if brier else None,
+            "skill_vs_market": skill_display,
+            "skill_vs_market_raw": round(skill, 4) if skill is not None else None,
+            "recommendation": recommendation,
+            "n_predictions": n,
+            "confidence": confidence,
+            "report_generated_at": report.get("generated_at"),
+            "endpoint": "/dashboard/ops/predictions_performance.json?window_days=7",
+        }
+
+    except Exception as e:
+        logger.warning(f"Error calculating model performance: {e}")
+        return {
+            "status": "gray",
+            "status_reason": f"Error: {str(e)[:50]}",
+            "brier_score": None,
+            "skill_vs_market": None,
+            "recommendation": None,
+            "n_predictions": 0,
+            "confidence": "error",
+            "report_generated_at": None,
+        }
+
+
 async def _calculate_fastpath_health(session) -> dict:
     """
     Calculate fast-path LLM narrative health metrics.
@@ -5582,6 +5660,11 @@ async def _load_ops_data() -> dict:
         fastpath_health = await _calculate_fastpath_health(session)
 
         # =============================================================
+        # MODEL PERFORMANCE (7d probability metrics summary)
+        # =============================================================
+        model_performance = await _calculate_model_performance(session)
+
+        # =============================================================
         # DATA QUALITY TELEMETRY (quarantine/taint/unmapped summary)
         # =============================================================
         telemetry_data = await _calculate_telemetry_summary(session)
@@ -5683,6 +5766,7 @@ async def _load_ops_data() -> dict:
         "progress": progress_metrics,
         "predictions_health": predictions_health,
         "fastpath_health": fastpath_health,
+        "model_performance": model_performance,
         "telemetry": telemetry_data,
     }
 
