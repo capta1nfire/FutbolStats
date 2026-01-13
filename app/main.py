@@ -6885,3 +6885,67 @@ async def migrate_fastpath_fields(
         "migrations": results,
         "verified_columns": columns,
     }
+
+
+# ---------------------------------------------------------------------------
+# Debug Log Endpoint (for iOS performance instrumentation)
+# ---------------------------------------------------------------------------
+
+from pathlib import Path
+from datetime import datetime as dt
+
+# Environment flag: DEBUG_LOG_ENABLED=true allows logging without token (dev mode)
+_DEBUG_LOG_ENABLED = os.getenv("DEBUG_LOG_ENABLED", "false").lower() == "true"
+
+
+@app.post("/debug/log")
+async def debug_log(request: Request):
+    """
+    Receives performance logs from iOS instrumentation.
+
+    Security:
+    - If DEBUG_LOG_ENABLED=true: allow without token (dev/debug mode)
+    - Otherwise: require valid X-Dashboard-Token (401 if missing/invalid)
+
+    Rate limit: handled by global rate limiter
+    """
+    # Auth check (unless debug mode enabled)
+    if not _DEBUG_LOG_ENABLED:
+        token = request.headers.get("X-Dashboard-Token")
+        expected = os.getenv("DASHBOARD_TOKEN", "")
+        if not token or token != expected:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+    # Parse and validate payload
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+
+    if not isinstance(payload, dict):
+        return JSONResponse({"error": "payload must be object"}, status_code=400)
+
+    if "component" not in payload:
+        return JSONResponse({"error": "missing component field"}, status_code=400)
+
+    # Ensure logs directory exists
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    log_file = log_dir / "perf_debug.log"
+
+    # Build log entry (no token/headers logged)
+    entry = {
+        "ts": dt.utcnow().isoformat() + "Z",
+        "component": payload.get("component"),
+        "endpoint": payload.get("endpoint"),
+        "message": payload.get("message"),
+        "data": payload.get("data"),
+        "hypothesisId": payload.get("hypothesisId"),
+    }
+
+    # Append to log file
+    import json as _json
+    with open(log_file, "a") as f:
+        f.write(_json.dumps(entry) + "\n")
+
+    return {"status": "ok"}
