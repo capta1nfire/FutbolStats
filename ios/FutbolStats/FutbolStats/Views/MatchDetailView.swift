@@ -94,12 +94,22 @@ class MatchDetailViewModel: ObservableObject {
             processTeamHistory()
             generateInsights()
 
-            var timelineMs: Double = 0
-            var insightsMs: Double = 0
+            // Show UI immediately after basic data loads (progressive loading)
+            isLoading = false
 
-            // Load timeline and narrative insights for finished matches (in parallel)
+            PerfLogger.shared.log(
+                endpoint: "MatchDetail.loadDetails",
+                message: "basic_data_ready",
+                data: [
+                    "match_id": matchId,
+                    "details_ms": detailsMs,
+                    "is_finished": prediction.isFinished
+                ]
+            )
+
+            // Load timeline and narrative insights in background (non-blocking)
             if prediction.isFinished {
-                print("Match \(matchId) is finished, loading timeline and insights in parallel...")
+                print("Match \(matchId) is finished, loading timeline and insights in background...")
 
                 let timelineTimer = PerfTimer()
                 let insightsTimer = PerfTimer()
@@ -108,26 +118,22 @@ class MatchDetailViewModel: ObservableObject {
                 async let narrativeTask: () = loadNarrativeInsights(matchId: matchId)
                 _ = await (timelineTask, narrativeTask)
 
-                timelineMs = timelineTimer.elapsedMs
-                insightsMs = insightsTimer.elapsedMs
+                PerfLogger.shared.log(
+                    endpoint: "MatchDetail.loadDetails",
+                    message: "background_complete",
+                    data: [
+                        "match_id": matchId,
+                        "timeline_ms": timelineTimer.elapsedMs,
+                        "insights_ms": insightsTimer.elapsedMs,
+                        "total_ms": totalTimer.elapsedMs
+                    ]
+                )
             } else {
                 print("Match \(matchId) status: \(prediction.status ?? "nil") - not loading timeline/insights")
             }
-
-            PerfLogger.shared.log(
-                endpoint: "MatchDetail.loadDetails",
-                message: "end",
-                data: [
-                    "match_id": matchId,
-                    "details_ms": detailsMs,
-                    "timeline_ms": timelineMs,
-                    "insights_ms": insightsMs,
-                    "total_ms": totalTimer.elapsedMs,
-                    "is_finished": prediction.isFinished
-                ]
-            )
         } catch {
             self.error = error.localizedDescription
+            isLoading = false
             PerfLogger.shared.log(
                 endpoint: "MatchDetail.loadDetails",
                 message: "error",
@@ -138,8 +144,6 @@ class MatchDetailViewModel: ObservableObject {
                 ]
             )
         }
-
-        isLoading = false
     }
 
     private func loadTimeline(matchId: Int) async {
@@ -560,9 +564,9 @@ struct MatchDetailView: View {
                     .foregroundStyle(isFavorite.wrappedValue ? .yellow : .gray.opacity(0.6))
             }
 
-            // Team logo - larger
+            // Team logo - larger (cached for fast reload)
             if let logoUrl = logo, let url = URL(string: logoUrl) {
-                AsyncImage(url: url) { image in
+                CachedAsyncImage(url: url) { image in
                     image
                         .resizable()
                         .aspectRatio(contentMode: .fit)
@@ -786,9 +790,9 @@ struct MatchDetailView: View {
                 .foregroundStyle(.white.opacity(0.8))
                 .frame(width: 36, alignment: .leading)
 
-            // Team logo
+            // Team logo (cached)
             if let logoUrl = data.logoUrl, let url = URL(string: logoUrl) {
-                AsyncImage(url: url) { image in
+                CachedAsyncImage(url: url) { image in
                     image
                         .resizable()
                         .aspectRatio(contentMode: .fit)
