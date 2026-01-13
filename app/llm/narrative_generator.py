@@ -415,6 +415,39 @@ def parse_json_response(text: str) -> Optional[dict]:
         return None
 
 
+def _normalize_narrative_object(narrative: dict) -> dict:
+    """
+    Normalize malformed narrative objects from LLM.
+
+    Handles cases where LLM generates extra keys (e.g., newlines as keys)
+    by concatenating all string values into body.
+
+    Args:
+        narrative: The narrative dict from LLM response.
+
+    Returns:
+        Normalized dict with title and body.
+    """
+    title = narrative.get("title", "")
+    body = narrative.get("body", "")
+
+    # Collect extra string values (malformed keys like "\n\nMore text...")
+    extra_parts = []
+    for key, value in narrative.items():
+        if key not in ("title", "body") and isinstance(value, str) and value.strip():
+            extra_parts.append(value.strip())
+
+    # If there are extra parts, append them to body
+    if extra_parts:
+        logger.info(f"Normalizing narrative: found {len(extra_parts)} extra string keys, concatenating to body")
+        if body:
+            body = body + "\n\n" + "\n\n".join(extra_parts)
+        else:
+            body = "\n\n".join(extra_parts)
+
+    return {"title": title, "body": body}
+
+
 def validate_narrative_json(data: dict, match_id: int) -> bool:
     """
     Validate that JSON has required keys and correct structure (v2 schema).
@@ -446,10 +479,18 @@ def validate_narrative_json(data: dict, match_id: int) -> bool:
         # Legacy format (v1): result was just a string like "2-1"
         logger.info("Result is string (v1 format), accepting")
 
-    # Validate narrative sub-object
+    # Validate and normalize narrative sub-object
     narrative = data.get("narrative", {})
     if isinstance(narrative, dict):
-        missing_narrative = REQUIRED_NARRATIVE_KEYS - set(narrative.keys())
+        # Normalize malformed narrative (extra keys -> concatenate to body)
+        normalized = _normalize_narrative_object(narrative)
+        data["narrative"] = normalized  # Update in place
+
+        if not normalized.get("body"):
+            logger.warning("Narrative body is empty after normalization")
+            return False
+
+        missing_narrative = REQUIRED_NARRATIVE_KEYS - set(normalized.keys())
         if missing_narrative:
             logger.warning(f"Missing narrative keys: {missing_narrative}")
             # Don't fail, just warn
