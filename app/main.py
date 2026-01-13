@@ -4168,7 +4168,7 @@ async def _calculate_predictions_health(session) -> dict:
     """
     now = datetime.utcnow()
 
-    # 1) Last prediction saved
+    # 1) Last prediction saved (for any match)
     res = await session.execute(
         text("SELECT MAX(created_at) FROM predictions")
     )
@@ -4240,33 +4240,55 @@ async def _calculate_predictions_health(session) -> dict:
     )
     next_ns_date = res.scalar()
 
-    # Calculate hours since last prediction
+    # 9) NS matches in next 48h MISSING prediction (key metric!)
+    res = await session.execute(
+        text("""
+            SELECT COUNT(*) FROM matches m
+            WHERE m.status = 'NS'
+              AND m.date > NOW()
+              AND m.date <= NOW() + INTERVAL '48 hours'
+              AND NOT EXISTS (
+                  SELECT 1 FROM predictions p WHERE p.match_id = m.id
+              )
+        """)
+    )
+    ns_next_48h_missing = int(res.scalar() or 0)
+
+    # 10) NS coverage percentage (upcoming matches with predictions)
+    ns_coverage_pct = 100.0
+    if ns_next_48h > 0:
+        ns_coverage_pct = round(((ns_next_48h - ns_next_48h_missing) / ns_next_48h) * 100, 1)
+
+    # Calculate hours since last prediction (informational only)
     hours_since_last = None
     if last_pred_at:
         delta = now - last_pred_at
         hours_since_last = round(delta.total_seconds() / 3600, 1)
 
     # Determine status with smart logic
-    # If no NS matches in next 48h, don't alert on stale predictions
+    # Primary metric: NS coverage (do upcoming matches have predictions?)
+    # Secondary metric: FT coverage (did past matches have predictions?)
     status = "ok"
     status_reason = None
 
-    # Smart bypass: no upcoming matches = no expectation of fresh predictions
+    # Smart bypass: no upcoming matches = no expectation of predictions
     if ns_next_48h == 0:
         status = "ok"
         status_reason = "No upcoming NS matches in 48h (low activity period)"
-    elif hours_since_last is None or hours_since_last > 48:
+    # Primary check: upcoming NS matches should have predictions
+    elif ns_coverage_pct < 50:
         status = "red"
-        status_reason = f"No predictions in {hours_since_last or 'unknown'}h (>48h threshold)"
+        status_reason = f"NS coverage {ns_coverage_pct}% < 50% ({ns_next_48h_missing}/{ns_next_48h} missing)"
+    elif ns_coverage_pct < 80:
+        status = "warn"
+        status_reason = f"NS coverage {ns_coverage_pct}% < 80% ({ns_next_48h_missing}/{ns_next_48h} missing)"
+    # Secondary check: past FT matches coverage
     elif coverage_48h_pct < 50:
         status = "red"
-        status_reason = f"Coverage {coverage_48h_pct}% < 50% threshold"
-    elif hours_since_last > 24:
-        status = "warn"
-        status_reason = f"No predictions in {hours_since_last}h (>24h threshold)"
+        status_reason = f"FT coverage {coverage_48h_pct}% < 50% threshold"
     elif coverage_48h_pct < 80:
         status = "warn"
-        status_reason = f"Coverage {coverage_48h_pct}% < 80% threshold"
+        status_reason = f"FT coverage {coverage_48h_pct}% < 80% threshold"
 
     # Log OPS_ALERT if red/warn (rate-limited to avoid spam)
     global _predictions_health_alert_last
@@ -4290,20 +4312,25 @@ async def _calculate_predictions_health(session) -> dict:
     return {
         "status": status,
         "status_reason": status_reason,
+        # NS (upcoming) metrics - primary
+        "ns_matches_next_48h": ns_next_48h,
+        "ns_matches_next_48h_missing_prediction": ns_next_48h_missing,
+        "ns_coverage_pct": ns_coverage_pct,
+        "next_ns_match_utc": next_ns_date.isoformat() if next_ns_date else None,
+        # FT (past) metrics - secondary
+        "ft_matches_last_48h": ft_48h,
+        "ft_matches_last_48h_missing_prediction": ft_48h_missing,
+        "ft_coverage_pct": coverage_48h_pct,
+        # Informational (not used for status determination)
         "last_prediction_saved_at": last_pred_at.isoformat() if last_pred_at else None,
         "hours_since_last_prediction": hours_since_last,
         "predictions_saved_last_24h": preds_last_24h,
         "predictions_saved_today_utc": preds_today,
-        "ft_matches_last_48h": ft_48h,
-        "ft_matches_last_48h_missing_prediction": ft_48h_missing,
-        "coverage_last_48h_pct": coverage_48h_pct,
-        "ns_matches_next_48h": ns_next_48h,
-        "next_ns_match_utc": next_ns_date.isoformat() if next_ns_date else None,
         "thresholds": {
-            "hours_warn": 24,
-            "hours_red": 48,
-            "coverage_warn_pct": 80,
-            "coverage_red_pct": 50,
+            "ns_coverage_warn_pct": 80,
+            "ns_coverage_red_pct": 50,
+            "ft_coverage_warn_pct": 80,
+            "ft_coverage_red_pct": 50,
         },
     }
 
