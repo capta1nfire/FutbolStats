@@ -652,7 +652,7 @@ struct MatchStats: Codable {
 }
 
 struct TeamStats: Codable {
-    let ballPossession: Double?  // Backend sends as float (e.g., 43.0)
+    let ballPossession: Double?  // Backend sends as float or string (e.g., 43.0 or "43%")
     let totalShots: Int?
     let shotsOnGoal: Int?
     let shotsOffGoal: Int?
@@ -667,7 +667,7 @@ struct TeamStats: Codable {
     let goalkeeperSaves: Int?
     let totalPasses: Int?
     let passesAccurate: Int?
-    let passesPct: Double?  // Backend sends as float (e.g., 82.0)
+    let passesPct: Double?  // Backend sends as float or string (e.g., 82.0 or "82%")
     let expectedGoals: String?
 
     /// Formatted possession for display (e.g., "43%")
@@ -700,6 +700,88 @@ struct TeamStats: Codable {
         case passesAccurate = "passes_accurate"
         case passesPct = "passes_pct"
         case expectedGoals = "expected_goals"
+    }
+
+    // Memberwise initializer for previews and tests
+    init(
+        ballPossession: Double? = nil,
+        totalShots: Int? = nil,
+        shotsOnGoal: Int? = nil,
+        shotsOffGoal: Int? = nil,
+        blockedShots: Int? = nil,
+        shotsInsidebox: Int? = nil,
+        shotsOutsidebox: Int? = nil,
+        fouls: Int? = nil,
+        cornerKicks: Int? = nil,
+        offsides: Int? = nil,
+        yellowCards: Int? = nil,
+        redCards: Int? = nil,
+        goalkeeperSaves: Int? = nil,
+        totalPasses: Int? = nil,
+        passesAccurate: Int? = nil,
+        passesPct: Double? = nil,
+        expectedGoals: String? = nil
+    ) {
+        self.ballPossession = ballPossession
+        self.totalShots = totalShots
+        self.shotsOnGoal = shotsOnGoal
+        self.shotsOffGoal = shotsOffGoal
+        self.blockedShots = blockedShots
+        self.shotsInsidebox = shotsInsidebox
+        self.shotsOutsidebox = shotsOutsidebox
+        self.fouls = fouls
+        self.cornerKicks = cornerKicks
+        self.offsides = offsides
+        self.yellowCards = yellowCards
+        self.redCards = redCards
+        self.goalkeeperSaves = goalkeeperSaves
+        self.totalPasses = totalPasses
+        self.passesAccurate = passesAccurate
+        self.passesPct = passesPct
+        self.expectedGoals = expectedGoals
+    }
+
+    // Custom decoder to handle String or Double for possession/passesPct
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        // ballPossession: try Double first, then String
+        if let doubleValue = try? container.decode(Double.self, forKey: .ballPossession) {
+            ballPossession = doubleValue
+        } else if let stringValue = try? container.decode(String.self, forKey: .ballPossession) {
+            // Parse "43%" or "43" to Double
+            let cleaned = stringValue.replacingOccurrences(of: "%", with: "").trimmingCharacters(in: .whitespaces)
+            ballPossession = Double(cleaned)
+        } else {
+            ballPossession = nil
+        }
+
+        // passesPct: try Double first, then String
+        if let doubleValue = try? container.decode(Double.self, forKey: .passesPct) {
+            passesPct = doubleValue
+        } else if let stringValue = try? container.decode(String.self, forKey: .passesPct) {
+            let cleaned = stringValue.replacingOccurrences(of: "%", with: "").trimmingCharacters(in: .whitespaces)
+            passesPct = Double(cleaned)
+        } else {
+            passesPct = nil
+        }
+
+        // Standard decoding for the rest
+        totalShots = try? container.decode(Int.self, forKey: .totalShots)
+        shotsOnGoal = try? container.decode(Int.self, forKey: .shotsOnGoal)
+        shotsOffGoal = try? container.decode(Int.self, forKey: .shotsOffGoal)
+        blockedShots = try? container.decode(Int.self, forKey: .blockedShots)
+        shotsInsidebox = try? container.decode(Int.self, forKey: .shotsInsidebox)
+        shotsOutsidebox = try? container.decode(Int.self, forKey: .shotsOutsidebox)
+        fouls = try? container.decode(Int.self, forKey: .fouls)
+        cornerKicks = try? container.decode(Int.self, forKey: .cornerKicks)
+        offsides = try? container.decode(Int.self, forKey: .offsides)
+        yellowCards = try? container.decode(Int.self, forKey: .yellowCards)
+        redCards = try? container.decode(Int.self, forKey: .redCards)
+        goalkeeperSaves = try? container.decode(Int.self, forKey: .goalkeeperSaves)
+        totalPasses = try? container.decode(Int.self, forKey: .totalPasses)
+        passesAccurate = try? container.decode(Int.self, forKey: .passesAccurate)
+        expectedGoals = try? container.decode(String.self, forKey: .expectedGoals)
     }
 }
 

@@ -718,7 +718,9 @@ async def train_model(
 async def get_predictions(
     request: Request,
     league_ids: Optional[str] = None,  # comma-separated
-    days: int = 7,
+    days: int = 7,  # Legacy: applies to both back and ahead if specific params not set
+    days_back: Optional[int] = None,  # Past N days (finished matches with scores)
+    days_ahead: Optional[int] = None,  # Future N days (upcoming matches)
     save: bool = False,  # Save predictions to database
     with_context: bool = True,  # Apply contextual intelligence
     session: AsyncSession = Depends(get_async_session),
@@ -731,9 +733,14 @@ async def get_predictions(
 
     Args:
         league_ids: Comma-separated league IDs to filter
-        days: Number of days ahead to predict
+        days: Legacy param - applies to both directions if days_back/days_ahead not set
+        days_back: Past N days for finished matches (overrides 'days' for past)
+        days_ahead: Future N days for upcoming matches (overrides 'days' for future)
         save: Persist predictions to database for auditing
         with_context: Apply contextual intelligence (team adjustments, drift, odds)
+
+    Priority window example: ?days_back=1&days_ahead=1 → yesterday/today/tomorrow
+    Full window example: ?days_back=7&days_ahead=7 → 15-day range
 
     Uses in-memory caching (5 min TTL) for faster responses.
     """
@@ -745,12 +752,24 @@ async def get_predictions(
             detail="Model not loaded. Train a model first with POST /model/train",
         )
 
+    # Resolve actual days_back and days_ahead (new params override legacy 'days')
+    actual_days_back = days_back if days_back is not None else days
+    actual_days_ahead = days_ahead if days_ahead is not None else days
+    logger.info(f"Predictions params: days={days}, days_back={days_back}, days_ahead={days_ahead} -> actual_back={actual_days_back}, actual_ahead={actual_days_ahead}")
+
     # Cache key based on parameters
-    cache_key = f"{league_ids or 'all'}_{days}_{with_context}"
+    cache_key = f"{league_ids or 'all'}_{actual_days_back}_{actual_days_ahead}_{with_context}"
     now = time.time()
 
-    # Check cache (only for default requests without league filter, default days, and not saving)
-    if league_ids is None and days == 7 and not save and with_context and _predictions_cache["data"] is not None:
+    # Check cache (only for default full requests without league filter)
+    is_default_full = (
+        league_ids is None
+        and actual_days_back == 7
+        and actual_days_ahead == 7
+        and not save
+        and with_context
+    )
+    if is_default_full and _predictions_cache["data"] is not None:
         if now - _predictions_cache["timestamp"] < _predictions_cache["ttl"]:
             logger.info("Returning cached predictions")
             return _predictions_cache["data"]
@@ -761,14 +780,16 @@ async def get_predictions(
         league_id_list = [int(x.strip()) for x in league_ids.split(",")]
 
     # Get features for upcoming matches
-    # 'days' parameter controls: past days for finished matches AND future days for upcoming
-    # iOS progressive loading: days=3 for priority (yesterday/today/tomorrow), days=7 for full
+    # iOS progressive loading:
+    #   Priority: days_back=1, days_ahead=1 → yesterday/today/tomorrow (~50-100 matches)
+    #   Full: days_back=7, days_ahead=7 → 15-day window (~300 matches)
     feature_engineer = FeatureEngineer(session=session)
     df = await feature_engineer.get_upcoming_matches_features(
         league_ids=league_id_list,
-        include_recent_days=days,  # Past N days for finished matches
-        days_ahead=days,  # Future N days for upcoming matches
+        include_recent_days=actual_days_back,  # Past N days for finished matches
+        days_ahead=actual_days_ahead,  # Future N days for upcoming matches
     )
+    logger.info(f"Predictions query: days_back={actual_days_back}, days_ahead={actual_days_ahead}, matches={len(df)}")
 
     if len(df) == 0:
         return PredictionsResponse(

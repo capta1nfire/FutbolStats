@@ -428,6 +428,8 @@ class FeatureEngineer:
         """
         from datetime import timedelta
 
+        logger.info(f"get_upcoming_matches_features: include_recent_days={include_recent_days}, days_ahead={days_ahead}")
+
         # Calculate date range for recent matches
         recent_cutoff = datetime.utcnow() - timedelta(days=include_recent_days)
 
@@ -435,6 +437,8 @@ class FeatureEngineer:
         future_cutoff = None
         if days_ahead is not None:
             future_cutoff = datetime.utcnow() + timedelta(days=days_ahead)
+
+        logger.info(f"Date cutoffs: recent={recent_cutoff.isoformat()}, future={future_cutoff.isoformat() if future_cutoff else 'None'}")
 
         # Build upcoming condition
         # Note: NS matches should only include those from recent_cutoff forward

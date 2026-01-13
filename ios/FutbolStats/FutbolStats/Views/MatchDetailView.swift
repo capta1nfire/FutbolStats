@@ -84,22 +84,59 @@ class MatchDetailViewModel: ObservableObject {
             return
         }
 
+        let totalTimer = PerfTimer()
+
         do {
+            let detailsTimer = PerfTimer()
             matchDetails = try await APIClient.shared.getMatchDetails(matchId: matchId)
+            let detailsMs = detailsTimer.elapsedMs
+
             processTeamHistory()
             generateInsights()
+
+            var timelineMs: Double = 0
+            var insightsMs: Double = 0
 
             // Load timeline and narrative insights for finished matches (in parallel)
             if prediction.isFinished {
                 print("Match \(matchId) is finished, loading timeline and insights in parallel...")
+
+                let timelineTimer = PerfTimer()
+                let insightsTimer = PerfTimer()
+
                 async let timelineTask: () = loadTimeline(matchId: matchId)
                 async let narrativeTask: () = loadNarrativeInsights(matchId: matchId)
                 _ = await (timelineTask, narrativeTask)
+
+                timelineMs = timelineTimer.elapsedMs
+                insightsMs = insightsTimer.elapsedMs
             } else {
                 print("Match \(matchId) status: \(prediction.status ?? "nil") - not loading timeline/insights")
             }
+
+            PerfLogger.shared.log(
+                endpoint: "MatchDetail.loadDetails",
+                message: "end",
+                data: [
+                    "match_id": matchId,
+                    "details_ms": detailsMs,
+                    "timeline_ms": timelineMs,
+                    "insights_ms": insightsMs,
+                    "total_ms": totalTimer.elapsedMs,
+                    "is_finished": prediction.isFinished
+                ]
+            )
         } catch {
             self.error = error.localizedDescription
+            PerfLogger.shared.log(
+                endpoint: "MatchDetail.loadDetails",
+                message: "error",
+                data: [
+                    "match_id": matchId,
+                    "error": error.localizedDescription,
+                    "total_ms": totalTimer.elapsedMs
+                ]
+            )
         }
 
         isLoading = false

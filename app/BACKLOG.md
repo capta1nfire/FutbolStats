@@ -41,14 +41,19 @@
 - [ ] verificar que cada equipo de cada liga esta recibiendo predicciones, odds, estadisticas, etc.
 - [ ] Reestructura xgboots y features basado en analisis de Google (pineado)
 
-- [ ] Crear "sobrenombres a los equipos para que en la narrativa dinamicamente/aleatoriamente sean utilizados, por ejemplo para referirse al "Real Madrid" use "Los Merengues", Atletico de Madrid "Los Colchoneros", deben ser "apodos" no peyorativos o despectivos.
+- [ ] Por que desaparecen los ppartidos de la App? El sabado 10 de enero inicialmente aparecieron 35, luego aparecieron 34 y hoy solo aparecen 8? Se estan filtrando o eliminando?
 
 
 - [ ] Pandas vs Polars
 
-- [ ] Mejorar narrativa, qwen intercambia numeros (1) con palabras (Uno). Que diga el resultado 1-1, 2-2, 2-1, etc es irrelevante ya el usuario sabe que el equipo/gano/empato/perdio y lo que realmente quiere entender es el porque, perdemos palabras (tokens) diciendo el marcador cuando podemos usarlo para explicar mas el contexto del match. En los factores clave se repite la misma informacion de la narrativa, estamos duplicando info.
-- [ ] _
-- [ ] _
+- [ ] Mejorar narrativa, qwen intercambia numeros (1) con palabras (Uno). Que diga el resultado 1-1, 2-2, 2-1, etc es irrelevante ya el usuario sabe que el equipo/gano/empato/perdio y lo que realmente quiere entender es el porque, haciendonos desperdiciar palabras (tokens) diciendo el marcador cuando podemos usarlo para explicar mas el contexto del match. En la seccion inferior titulada "los factores clave" se repite la misma informacion de la narrativa, estamos duplicando la info. Evitar mencionar tanto El nombre del equipo, si ya se menciona el Inter, al nombrarlo nuevamente usar "Los Azurri" o "los locales". Implementar el uso de "sobrenombres" a los equipos para que en la narrativa se enriquezaca y dinamicamente/aleatoriamente sean utilizados, por ejemplo para referirse al "Real Madrid" use "Los Merengues", Atletico de Madrid "Los Colchoneros", Colombia "Los Cafeteros" deben ser "apodos" no peyorativos o despectivos. Tambien considero que debajo de la narrativa debe ir una seccion "Tabla" con las estadisticas del partido (como en el entretiempo de un partido), con eso podemos ajustar la narrativa para marcar puntualmente donde acertamos o perdimos la prediccion, dejando que la tabla de estadisticas que vamos a poner (mas adelante) explique por si sola los numeros.
+
+- [ ] Para el cierre formal (operacional) solo faltan los 2 pendientes y ya:
+Screenshot de 1 alerta “Firing” (prueba controlada bajando temporalmente el umbral y luego revertir).
+Confirmación de estabilidad 24h (screenshot del panel de series/requests mostrando que no hubo spikes).
+
+- [ ] Supervision de telemetria.
+
 - [ ] _
 
 ---
