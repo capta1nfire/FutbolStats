@@ -99,10 +99,11 @@ class RunPodClient:
                 }
             }
         }
-        # Log prompt size for debugging
+        # Log prompt size and preview for debugging
         prompt_chars = len(prompt)
         prompt_words = len(prompt.split())
-        logger.info(f"RunPod payload: prompt_chars={prompt_chars}, prompt_words={prompt_words}, max_tokens={self.max_tokens}")
+        prompt_preview = prompt[:100].replace('\n', '\\n') if prompt else 'EMPTY'
+        logger.info(f"RunPod payload: prompt_chars={prompt_chars}, prompt_words={prompt_words}, max_tokens={self.max_tokens}, preview={prompt_preview}")
 
         # Retry with exponential backoff for transient errors
         max_retries = 2
