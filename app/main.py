@@ -774,6 +774,36 @@ async def get_predictions(
             logger.info("Returning cached predictions")
             return _predictions_cache["data"]
 
+    # Priority optimization: serve priority requests (1+1) from cached full (7+7) data
+    # This avoids recalculating ~4s of predictions when we already have them cached
+    is_priority_request = (
+        league_ids is None
+        and actual_days_back <= 7
+        and actual_days_ahead <= 7
+        and not save
+        and with_context
+        and not is_default_full  # Don't apply to full requests
+    )
+    if is_priority_request and _predictions_cache["data"] is not None:
+        if now - _predictions_cache["timestamp"] < _predictions_cache["ttl"]:
+            # Filter cached predictions by date range
+            from datetime import timezone
+            today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+            range_start = today_start - timedelta(days=actual_days_back)
+            range_end = today_start + timedelta(days=actual_days_ahead + 1)  # +1 to include full day
+
+            cached_response: PredictionsResponse = _predictions_cache["data"]
+            filtered_predictions = [
+                p for p in cached_response.predictions
+                if range_start <= p.date.replace(tzinfo=timezone.utc) < range_end
+            ]
+            logger.info(f"Priority request served from cache: filtered {len(filtered_predictions)}/{len(cached_response.predictions)} predictions (days_back={actual_days_back}, days_ahead={actual_days_ahead})")
+            return PredictionsResponse(
+                predictions=filtered_predictions,
+                model_version=cached_response.model_version,
+                context_applied=cached_response.context_applied,
+            )
+
     # Parse league IDs
     league_id_list = None
     if league_ids:
