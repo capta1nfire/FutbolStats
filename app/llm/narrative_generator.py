@@ -415,7 +415,7 @@ def parse_json_response(text: str) -> Optional[dict]:
         return None
 
 
-def _normalize_narrative_object(narrative: dict) -> dict:
+def _normalize_narrative_object(narrative: dict) -> tuple[dict, dict | None]:
     """
     Normalize malformed narrative objects from LLM.
 
@@ -426,16 +426,20 @@ def _normalize_narrative_object(narrative: dict) -> dict:
         narrative: The narrative dict from LLM response.
 
     Returns:
-        Normalized dict with title and body.
+        Tuple of (normalized_dict, normalization_warning or None)
     """
     title = narrative.get("title", "")
     body = narrative.get("body", "")
 
     # Collect extra string values (malformed keys like "\n\nMore text...")
+    extra_keys = []
     extra_parts = []
     for key, value in narrative.items():
         if key not in ("title", "body") and isinstance(value, str) and value.strip():
+            extra_keys.append(key[:50])  # Truncate key for logging
             extra_parts.append(value.strip())
+
+    normalization_warning = None
 
     # If there are extra parts, append them to body
     if extra_parts:
@@ -445,7 +449,15 @@ def _normalize_narrative_object(narrative: dict) -> dict:
         else:
             body = "\n\n".join(extra_parts)
 
-    return {"title": title, "body": body}
+        # Create warning for tracking/monitoring
+        normalization_warning = {
+            "type": "narrative_normalized",
+            "severity": "warning",
+            "extra_keys_count": len(extra_keys),
+            "extra_keys_sample": extra_keys[:3],  # First 3 keys for debugging
+        }
+
+    return {"title": title, "body": body}, normalization_warning
 
 
 def validate_narrative_json(data: dict, match_id: int) -> bool:
@@ -483,8 +495,12 @@ def validate_narrative_json(data: dict, match_id: int) -> bool:
     narrative = data.get("narrative", {})
     if isinstance(narrative, dict):
         # Normalize malformed narrative (extra keys -> concatenate to body)
-        normalized = _normalize_narrative_object(narrative)
+        normalized, normalization_warning = _normalize_narrative_object(narrative)
         data["narrative"] = normalized  # Update in place
+
+        # Store normalization warning as metadata for tracking
+        if normalization_warning:
+            data["_normalization_warning"] = normalization_warning
 
         if not normalized.get("body"):
             logger.warning("Narrative body is empty after normalization")

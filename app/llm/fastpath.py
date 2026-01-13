@@ -834,6 +834,17 @@ class FastPathService:
                                 payload_for_claims,
                                 strict=True
                             )
+
+                            # Check for normalization warning from validate_narrative_json
+                            normalization_warning = parsed.pop("_normalization_warning", None)
+                            if normalization_warning:
+                                claim_errors = claim_errors or []
+                                claim_errors.append(normalization_warning)
+                                logger.info(
+                                    f"[FASTPATH] Narrative normalized for audit {audit.id}: "
+                                    f"{normalization_warning.get('extra_keys_count')} extra keys"
+                                )
+
                             audit.llm_validation_errors = claim_errors if claim_errors else None
 
                             if should_reject_narrative(claim_errors):

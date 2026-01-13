@@ -94,13 +94,21 @@ def sanitize_payload_for_storage(match_data: dict) -> dict:
     # Include stats summary (not full stats)
     if "stats" in match_data and match_data["stats"]:
         stats = match_data["stats"]
-        home_stats = stats.get("home", {})
-        away_stats = stats.get("away", {})
+        home_stats = stats.get("home", {}) or {}
+        away_stats = stats.get("away", {}) or {}
+
+        # Helper to get first non-None value (handles 0 correctly, unlike `or`)
+        def first_defined(*values):
+            for v in values:
+                if v is not None:
+                    return v
+            return None
+
         sanitized["stats_summary"] = {
-            "home_shots": home_stats.get("shots_on_goal") or home_stats.get("Shots on Goal"),
-            "away_shots": away_stats.get("shots_on_goal") or away_stats.get("Shots on Goal"),
-            "home_possession": home_stats.get("ball_possession") or home_stats.get("Ball Possession"),
-            "away_possession": away_stats.get("ball_possession") or away_stats.get("Ball Possession"),
+            "home_shots": first_defined(home_stats.get("shots_on_goal"), home_stats.get("Shots on Goal")),
+            "away_shots": first_defined(away_stats.get("shots_on_goal"), away_stats.get("Shots on Goal")),
+            "home_possession": first_defined(home_stats.get("ball_possession"), home_stats.get("Ball Possession")),
+            "away_possession": first_defined(away_stats.get("ball_possession"), away_stats.get("Ball Possession")),
             "home_xg": home_stats.get("expected_goals"),
             "away_xg": away_stats.get("expected_goals"),
         }
