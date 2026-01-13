@@ -178,10 +178,48 @@ TEAM_ALIASES: dict[int, TeamAliasPack] = {
 DEFAULT_HOME_ALIASES = ["los locales", "el equipo local"]
 DEFAULT_AWAY_ALIASES = ["los visitantes", "el equipo visitante"]
 
-# Probability thresholds for nickname usage
-NICKNAME_PROB_HIGH = 0.30  # 30% chance to use nickname for High confidence
-NICKNAME_PROB_MEDIUM = 0.15  # 15% for Medium
-NICKNAME_PROB_LOW = 0.05  # 5% for Low
+# Reference style probabilities (deterministic by match_id)
+# 70% team name, 20% generic reference, 10% nickname
+STYLE_PROB_TEAM_NAME = 0.70
+STYLE_PROB_GENERIC = 0.20
+STYLE_PROB_NICKNAME = 0.10
+
+# Probability thresholds for nickname usage (legacy, kept for compatibility)
+NICKNAME_PROB_HIGH = 0.30
+NICKNAME_PROB_MEDIUM = 0.15
+NICKNAME_PROB_LOW = 0.05
+
+# Generic team references (neutral, no color/adjective combinations)
+GENERIC_REFERENCES = {
+    "always": [
+        "el equipo",
+        "el conjunto",
+        "la escuadra",
+        "el once",
+    ],
+    "home_only": [
+        "el local",
+        "los locales",
+    ],
+    "away_only": [
+        "el visitante",
+        "la visita",
+    ],
+}
+
+# Forbidden patterns - these should NEVER appear in narratives
+FORBIDDEN_PATTERNS = [
+    # Generic + color/adjective combinations
+    "cuadro blanco", "cuadro rojo", "cuadro azul",
+    "once blanco", "once rojo", "once azul",
+    "onceno blanco", "onceno rojo", "onceno azul",
+    "equipo blanco", "equipo rojo", "equipo merengue",
+    "conjunto blanco", "conjunto merengue",
+    # Fan chants not in whitelist
+    "hala madrid", "visca barça", "forza juve",
+    # Invented gentilics (unless in nicknames_allowed)
+    "madridista", "barcelonista", "sevillista", "bético",
+]
 
 
 def _slugify(text: str) -> str:
@@ -223,7 +261,8 @@ def get_team_aliases(external_id: int, team_name: str, is_home: bool) -> list[st
 def get_team_alias_pack(
     team_name: str,
     external_id: Optional[int] = None,
-    match_id: Optional[int] = None
+    match_id: Optional[int] = None,
+    is_home: bool = True
 ) -> dict:
     """
     Get alias pack for LLM narrative generation.
@@ -231,14 +270,16 @@ def get_team_alias_pack(
     Args:
         team_name: Official team name
         external_id: API-Football team ID (preferred lookup)
-        match_id: Match ID for deterministic nickname selection
+        match_id: Match ID for deterministic style selection
+        is_home: Whether this is the home team (for role-specific references)
 
     Returns:
         dict with:
         - team_name: str
         - nicknames_allowed: list[str]
         - selected_nickname: str | None (deterministic selection if match_id provided)
-        - use_nickname: bool (probabilistic, based on confidence)
+        - reference_style: str (team_name | generic | nickname)
+        - generic_references: list[str] (allowed generic refs for this team's role)
         - slogan: str | None
         - confidence: str
     """
@@ -252,53 +293,93 @@ def get_team_alias_pack(
                 pack = p
                 break
 
+    # Build generic references based on role
+    role_refs = GENERIC_REFERENCES["always"].copy()
+    if is_home:
+        role_refs.extend(GENERIC_REFERENCES["home_only"])
+    else:
+        role_refs.extend(GENERIC_REFERENCES["away_only"])
+
     if not pack:
         return {
             "team_name": team_name,
             "nicknames_allowed": [],
             "selected_nickname": None,
-            "use_nickname": False,
+            "reference_style": "team_name",
+            "generic_references": role_refs,
             "slogan": None,
             "confidence": "None"
         }
 
-    # Deterministic nickname selection
+    # Deterministic style and nickname selection
     selected_nickname = None
-    use_nickname = False
+    reference_style = "team_name"
 
-    if pack.nicknames and match_id is not None:
+    if match_id is not None:
         # Create deterministic seed from match_id + team
         seed_str = f"{match_id}:{external_id or team_name}"
         seed = int(hashlib.md5(seed_str.encode()).hexdigest(), 16)
 
-        # Select nickname deterministically
-        nickname_idx = seed % len(pack.nicknames)
-        selected_nickname = pack.nicknames[nickname_idx]
-
-        # Probabilistic decision to use nickname (based on confidence)
-        prob_threshold = {
-            "High": NICKNAME_PROB_HIGH,
-            "Medium": NICKNAME_PROB_MEDIUM,
-            "Low": NICKNAME_PROB_LOW
-        }.get(pack.confidence, 0.0)
-
-        # Use lower bits of seed for probability
-        prob_value = (seed % 100) / 100.0
-        use_nickname = prob_value < prob_threshold
+        # Determine reference style (70% team_name, 20% generic, 10% nickname)
+        style_value = (seed % 100) / 100.0
+        if style_value < STYLE_PROB_TEAM_NAME:
+            reference_style = "team_name"
+        elif style_value < STYLE_PROB_TEAM_NAME + STYLE_PROB_GENERIC:
+            reference_style = "generic"
+        else:
+            # Only use nickname if available and confidence is sufficient
+            if pack.nicknames and pack.confidence in ("High", "Medium"):
+                reference_style = "nickname"
+                nickname_idx = seed % len(pack.nicknames)
+                selected_nickname = pack.nicknames[nickname_idx]
+            else:
+                reference_style = "team_name"
 
     return {
         "team_name": pack.team_name,
         "nicknames_allowed": pack.nicknames,
         "selected_nickname": selected_nickname,
-        "use_nickname": use_nickname,
+        "reference_style": reference_style,
+        "generic_references": role_refs,
         "slogan": pack.slogan,
         "confidence": pack.confidence
     }
 
 
+def get_reference_rules_for_prompt() -> str:
+    """
+    Generate the reference_rules block for the LLM prompt.
+
+    Returns:
+        Formatted string with reference rules for the prompt.
+    """
+    return """
+REGLAS DE REFERENCIAS A EQUIPOS:
+
+A) Formas permitidas para referirte a cada equipo:
+   1. NOMBRE OFICIAL: Usa el nombre del equipo directamente.
+   2. APODO (si está en nicknames_allowed): SIEMPRE entre comillas. Ej: "Los Merengues"
+   3. REFERENCIA GENÉRICA (siempre permitida, SIN comillas):
+      - "el equipo de {TEAM_NAME}" / "el conjunto de {TEAM_NAME}"
+      - "la escuadra de {TEAM_NAME}" / "el once de {TEAM_NAME}"
+      - "el local" / "los locales" (solo para equipo local)
+      - "el visitante" / "la visita" (solo para equipo visitante)
+
+B) PROHIBIDO (tu respuesta será rechazada si incluyes):
+   - Combinar genérico + color/apodo: "cuadro blanco", "once merengue", "equipo rojo"
+   - Cánticos de afición no provistos: "hala madrid", "visca barça", "forza juve"
+   - Inventar gentilicios/adjetivos: "madridista", "barcelonista", "sevillista", "bético"
+   - Usar apodos de otros equipos no participantes en el partido
+
+C) Formato de apodos y slogans:
+   - Apodos: SIEMPRE entre comillas dobles. Ej: Los de "La Mechita" dominaron.
+   - Slogans: SIEMPRE entre comillas dobles. Ej: "La Pasión de un Pueblo"
+   - Referencias genéricas: SIN comillas. Ej: El equipo de Real Madrid controló."""
+
+
 def validate_nickname_usage(narrative: str, home_pack: dict, away_pack: dict) -> list[str]:
     """
-    Validate that narrative only uses allowed nicknames.
+    Validate that narrative only uses allowed nicknames and doesn't contain forbidden patterns.
 
     Args:
         narrative: Generated narrative text
@@ -309,6 +390,12 @@ def validate_nickname_usage(narrative: str, home_pack: dict, away_pack: dict) ->
         List of validation errors (empty if valid)
     """
     errors = []
+    narrative_lower = narrative.lower()
+
+    # Check for forbidden patterns
+    for pattern in FORBIDDEN_PATTERNS:
+        if pattern.lower() in narrative_lower:
+            errors.append(f"Forbidden pattern detected: '{pattern}'")
 
     # Get all allowed nicknames for both teams
     home_allowed = set(home_pack.get("nicknames_allowed", []))

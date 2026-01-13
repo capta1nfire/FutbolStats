@@ -12,7 +12,11 @@ from typing import Any, Optional, Union
 
 from app.config import get_settings
 from app.llm.runpod_client import RunPodClient, RunPodError, RunPodJobResult
-from app.llm.team_aliases import get_team_alias_pack, validate_nickname_usage
+from app.llm.team_aliases import (
+    get_team_alias_pack,
+    get_reference_rules_for_prompt,
+    validate_nickname_usage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -158,8 +162,8 @@ def build_narrative_prompt(match_data: dict) -> tuple[str, dict, dict]:
     away_goals = match_data.get("away_goals", 0) or 0
 
     # Get alias packs with deterministic selection
-    home_pack = get_team_alias_pack(home_team, external_id=home_team_id, match_id=match_id)
-    away_pack = get_team_alias_pack(away_team, external_id=away_team_id, match_id=match_id)
+    home_pack = get_team_alias_pack(home_team, external_id=home_team_id, match_id=match_id, is_home=True)
+    away_pack = get_team_alias_pack(away_team, external_id=away_team_id, match_id=match_id, is_home=False)
 
     # Build aliases lists for prompt (include team name + nicknames)
     home_aliases = [home_team] + home_pack.get("nicknames_allowed", []) + ["los locales"]
@@ -222,20 +226,34 @@ REGLAS CRÍTICAS v5 (OBLIGATORIAS):
 
 3) NO REPITAS EL MARCADOR en narrative.body. El usuario ya ve el resultado en la UI. Enfócate en el "por qué", no en el "qué".
 
-4) NOMBRES DE EQUIPOS - REGLA ESTRICTA (CRÍTICA):
-   - Menciona cada nombre de equipo MÁXIMO 1 vez en todo el body.
-   - Después usa SOLO aliases de la lista team_aliases proporcionada abajo.
-   - PROHIBIDO inventar apodos/sobrenombres que no estén en team_aliases.
-   - Aliases permitidos para LOCAL: {home_aliases_json}
-   - Aliases permitidos para VISITANTE: {away_aliases_json}{slogan_note}
-   - Si usas un alias que NO está en estas listas, tu respuesta será RECHAZADA.
+4) REFERENCIAS A EQUIPOS - REGLAS ESTRICTAS (CRÍTICO):
+
+   A) Formas PERMITIDAS para referirte a cada equipo:
+      1. NOMBRE OFICIAL: Usa el nombre del equipo directamente.
+      2. APODO (si está en nicknames_allowed): SIEMPRE entre comillas. Ej: "Los Merengues"
+      3. REFERENCIA GENÉRICA (siempre permitida, SIN comillas):
+         - "el equipo de [NOMBRE]" / "el conjunto de [NOMBRE]"
+         - "la escuadra de [NOMBRE]" / "el once de [NOMBRE]"
+         - "el local" / "los locales" (solo para equipo local)
+         - "el visitante" / "la visita" (solo para equipo visitante)
+
+   B) PROHIBIDO (tu respuesta será RECHAZADA si incluyes):
+      - Combinar genérico + color/apodo: "cuadro blanco", "once merengue", "equipo rojo", "onceno blanco"
+      - Cánticos de afición no provistos: "hala madrid", "visca barça", "forza juve"
+      - Inventar gentilicios/adjetivos: "madridista", "barcelonista", "sevillista", "bético"
+      - Usar apodos de otros equipos no participantes en el partido
+
+   C) Datos de equipos:
+      - LOCAL: {home_team}
+        Apodos permitidos: {home_aliases_json}{slogan_note}
+      - VISITANTE: {away_team}
+        Apodos permitidos: {away_aliases_json}
 
 5) FORMATO DE APODOS Y SLOGANS (CRÍTICO):
-   - Cuando uses un APODO (nickname), escríbelo ENTRE COMILLAS: "Los Merengues", "La Academia".
-   - Cuando uses un SLOGAN, también entre comillas: "La Pasión de un Pueblo".
+   - Apodos: SIEMPRE entre comillas dobles. Ej: Los de "La Mechita" dominaron.
+   - Slogans: SIEMPRE entre comillas dobles. Ej: "La Pasión de un Pueblo"
+   - Referencias genéricas: SIN comillas. Ej: El equipo de Real Madrid controló.
    - NO uses negrita (**...**) ni markdown porque el texto es JSON plano.
-   - Ejemplo correcto: Los de "La Mechita" dominaron el mediocampo.
-   - Ejemplo incorrecto: Los de La Mechita dominaron el mediocampo.
 
 6) Usa SOLO los datos proporcionados en "DATOS". NO inventes jugadores, lesiones, alineaciones, tácticas, xG, tarjetas, ni nada que no esté explícitamente en el JSON.
 
