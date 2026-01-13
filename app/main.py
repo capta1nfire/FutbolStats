@@ -1346,6 +1346,7 @@ async def get_match_details(
     Returns match info, prediction, standings positions, and last 5 matches for each team.
     """
     import time
+    import asyncio
     _t_start = time.time()
     _timings = {}
 
@@ -1356,16 +1357,20 @@ async def get_match_details(
     if not match:
         raise HTTPException(status_code=404, detail="Match not found")
 
-    # Get teams
+    # Get teams (parallel)
     _t0 = time.time()
-    home_team = await session.get(Team, match.home_team_id)
-    away_team = await session.get(Team, match.away_team_id)
+    home_team, away_team = await asyncio.gather(
+        session.get(Team, match.home_team_id),
+        session.get(Team, match.away_team_id),
+    )
     _timings["get_teams"] = int((time.time() - _t0) * 1000)
 
-    # Get history for both teams
+    # Get history for both teams (parallel)
     _t0 = time.time()
-    home_history = await get_team_history(match.home_team_id, limit=5, session=session)
-    away_history = await get_team_history(match.away_team_id, limit=5, session=session)
+    home_history, away_history = await asyncio.gather(
+        get_team_history(match.home_team_id, limit=5, session=session),
+        get_team_history(match.away_team_id, limit=5, session=session),
+    )
     _timings["get_history"] = int((time.time() - _t0) * 1000)
 
     # Get standings for league (for club leagues only)
