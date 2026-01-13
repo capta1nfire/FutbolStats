@@ -109,6 +109,12 @@ class ETLPipeline:
 
             existing_match.status = match_data.status
 
+            # Update venue if available (backfill case)
+            if match_data.venue_name and not existing_match.venue_name:
+                existing_match.venue_name = match_data.venue_name
+            if match_data.venue_city and not existing_match.venue_city:
+                existing_match.venue_city = match_data.venue_city
+
             # Check if odds have changed and save to history
             odds_changed = False
             if match_data.odds_home is not None:
@@ -155,6 +161,8 @@ class ETLPipeline:
             odds_draw=match_data.odds_draw,
             odds_away=match_data.odds_away,
             odds_recorded_at=now if match_data.odds_home is not None else None,
+            venue_name=match_data.venue_name,
+            venue_city=match_data.venue_city,
         )
         self.session.add(new_match)
 

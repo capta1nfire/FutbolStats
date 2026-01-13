@@ -36,6 +36,8 @@ class MatchData:
     odds_home: Optional[float] = None
     odds_draw: Optional[float] = None
     odds_away: Optional[float] = None
+    venue_name: Optional[str] = None
+    venue_city: Optional[str] = None
 
 
 class DataProvider(ABC):

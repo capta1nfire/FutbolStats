@@ -298,6 +298,7 @@ class APIFootballProvider(DataProvider):
         teams = fixture.get("teams", {})
         goals = fixture.get("goals", {})
         score = fixture.get("score", {})
+        venue = fixture_info.get("venue", {})
 
         # Get competition config for match type/weight
         competition = COMPETITIONS.get(league_id)
@@ -332,6 +333,8 @@ class APIFootballProvider(DataProvider):
             status=fixture_info.get("status", {}).get("short", "NS"),
             match_type=match_type,
             match_weight=match_weight,
+            venue_name=venue.get("name"),
+            venue_city=venue.get("city"),
         )
 
     def _parse_stats(self, statistics: list) -> dict:
