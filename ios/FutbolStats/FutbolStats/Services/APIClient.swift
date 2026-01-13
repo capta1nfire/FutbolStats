@@ -206,9 +206,18 @@ actor APIClient {
 
     // MARK: - Predictions
 
-    func getUpcomingPredictions(days: Int = 7) async throws -> PredictionResponse {
+    /// Fetch upcoming predictions with explicit date range control
+    /// - Parameters:
+    ///   - daysBack: Past N days for finished matches (default 7)
+    ///   - daysAhead: Future N days for upcoming matches (default 7)
+    /// - Priority window: daysBack=1, daysAhead=1 → yesterday/today/tomorrow
+    /// - Full window: daysBack=7, daysAhead=7 → 15-day range
+    func getUpcomingPredictions(daysBack: Int = 7, daysAhead: Int = 7) async throws -> PredictionResponse {
         var components = URLComponents(string: "\(environment.baseURL)/predictions/upcoming")!
-        components.queryItems = [URLQueryItem(name: "days", value: String(days))]
+        components.queryItems = [
+            URLQueryItem(name: "days_back", value: String(daysBack)),
+            URLQueryItem(name: "days_ahead", value: String(daysAhead))
+        ]
 
         guard let url = components.url else {
             throw APIError.invalidURL

@@ -57,10 +57,11 @@ class PredictionsViewModel: ObservableObject {
 
     /// Load predictions with progressive loading support
     /// - Parameters:
-    ///   - days: Number of days to fetch
+    ///   - daysBack: Past N days for finished matches
+    ///   - daysAhead: Future N days for upcoming matches
     ///   - mode: "priority" for initial fast load, "full" for complete dataset
     ///   - requestId: UUID to track request validity (prevents race conditions)
-    func loadPredictions(days: Int = 7, mode: String = "full", requestId: UUID? = nil) async {
+    func loadPredictions(daysBack: Int = 7, daysAhead: Int = 7, mode: String = "full", requestId: UUID? = nil) async {
         // For priority mode, set loading state
         if mode == "priority" {
             isLoading = true
@@ -68,11 +69,11 @@ class PredictionsViewModel: ObservableObject {
         }
 
         let totalTimer = PerfTimer()
-        print("[Perf] loadPredictions(\(mode), days=\(days)) START")
+        print("[Perf] loadPredictions(\(mode), back=\(daysBack), ahead=\(daysAhead)) START")
 
         do {
             let networkTimer = PerfTimer()
-            let response = try await apiClient.getUpcomingPredictions(days: days)
+            let response = try await apiClient.getUpcomingPredictions(daysBack: daysBack, daysAhead: daysAhead)
             let networkMs = networkTimer.elapsedMs
             print("[Perf] loadPredictions(\(mode)) NETWORK done: \(String(format: "%.0f", networkMs))ms")
 
@@ -107,7 +108,8 @@ class PredictionsViewModel: ObservableObject {
                     "assign_ms": assignMs,
                     "total_ms": totalTimer.elapsedMs,
                     "count": predictions.count,
-                    "days": days
+                    "days_back": daysBack,
+                    "days_ahead": daysAhead
                 ]
             )
         } catch {
@@ -160,8 +162,8 @@ class PredictionsViewModel: ObservableObject {
     private var refreshStartTime: Date?
 
     /// Progressive loading refresh:
-    /// 1. Load priority data (3 days) - blocking for fast TTFC
-    /// 2. Load full data (7 days) - fire-and-forget in background
+    /// 1. Load priority data (yesterday/today/tomorrow) - blocking for fast TTFC
+    /// 2. Load full data (7 days back + 7 ahead) - fire-and-forget in background
     func refresh() async {
         refreshStartTime = Date()
         let requestId = UUID()
@@ -172,10 +174,10 @@ class PredictionsViewModel: ObservableObject {
         // Fire-and-forget: health check runs independently, doesn't block UI
         Task { await checkHealth() }
 
-        // Phase 1: Load priority data (2 days) - BLOCKING for fast TTFC
-        // This includes yesterday, today, tomorrow - the most relevant dates
+        // Phase 1: Load priority data - BLOCKING for fast TTFC
+        // daysBack=1, daysAhead=1 → yesterday/today/tomorrow (3 calendar days)
         async let opsTask: () = loadOpsProgress()
-        await loadPredictions(days: 2, mode: "priority", requestId: requestId)
+        await loadPredictions(daysBack: 1, daysAhead: 1, mode: "priority", requestId: requestId)
 
         // Wait for ops (non-blocking on error)
         _ = await opsTask
@@ -193,7 +195,7 @@ class PredictionsViewModel: ObservableObject {
         isLoadingMore = true
         Task.detached { [weak self] in
             guard let self = self else { return }
-            await self.loadPredictions(days: 7, mode: "full", requestId: requestId)
+            await self.loadPredictions(daysBack: 7, daysAhead: 7, mode: "full", requestId: requestId)
 
             let totalMs = await self.refreshStartTime.map { Date().timeIntervalSince($0) * 1000 } ?? 0
             print("[Perf] refresh() FULL DONE - \(String(format: "%.0f", totalMs))ms")
