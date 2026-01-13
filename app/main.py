@@ -295,6 +295,9 @@ async def lifespan(app: FastAPI):
     # Start background scheduler for weekly sync/train
     start_scheduler(ml_engine)
 
+    # Warm up standings cache for active leagues (non-blocking)
+    asyncio.create_task(_warmup_standings_cache())
+
     yield
 
     # Shutdown
@@ -341,6 +344,89 @@ async def _train_model_background():
             )
     except Exception as e:
         logger.error(f"Background training failed: {e}")
+
+
+async def _warmup_standings_cache():
+    """Pre-warm standings cache for leagues with upcoming matches.
+
+    Runs at startup to ensure most match_details requests hit cache.
+    This is fire-and-forget - failures don't affect app health.
+    """
+    import asyncio
+
+    # Small delay to let server fully start
+    await asyncio.sleep(2)
+    _t_start = time.time()
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Get unique league_ids from matches in the next 7 days
+            from datetime import timedelta
+            now = datetime.now()
+            week_ahead = now + timedelta(days=7)
+            season = now.year if now.month >= 7 else now.year - 1
+
+            result = await session.execute(
+                text("""
+                    SELECT DISTINCT league_id
+                    FROM matches
+                    WHERE league_id IS NOT NULL
+                      AND date >= :start_date
+                      AND date <= :end_date
+                      AND status = 'NS'
+                    LIMIT 20
+                """),
+                {"start_date": now.date(), "end_date": week_ahead.date()}
+            )
+            league_ids = [row[0] for row in result.fetchall()]
+
+            if not league_ids:
+                logger.info("[WARMUP] No upcoming leagues to warm up")
+                return
+
+            logger.info(f"[WARMUP] Warming up standings for {len(league_ids)} leagues: {league_ids}")
+
+            provider = APIFootballProvider()
+            warmed = 0
+            skipped = 0
+            failed = 0
+            consecutive_failures = 0
+            max_consecutive_failures = 3  # Stop if API seems down
+
+            for league_id in league_ids:
+                # Skip if already cached
+                if _get_cached_standings(league_id, season) is not None:
+                    skipped += 1
+                    continue
+
+                # Abort if too many consecutive failures (API budget/rate limit)
+                if consecutive_failures >= max_consecutive_failures:
+                    logger.warning(f"[WARMUP] Aborting after {consecutive_failures} consecutive failures")
+                    break
+
+                try:
+                    standings = await provider.get_standings(league_id, season)
+                    _set_cached_standings(league_id, season, standings)
+                    warmed += 1
+                    consecutive_failures = 0  # Reset on success
+                    # Rate limit: 0.5s between calls
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    failed += 1
+                    consecutive_failures += 1
+                    logger.warning(f"[WARMUP] Failed league {league_id}: {e}")
+                    # Exponential backoff on failure: 1s, 2s, 4s
+                    await asyncio.sleep(min(2 ** consecutive_failures, 4))
+
+            await provider.close()
+            elapsed_ms = int((time.time() - _t_start) * 1000)
+            logger.info(
+                f"[WARMUP] Complete: warmed={warmed}, skipped={skipped}, failed={failed}, "
+                f"total_leagues={len(league_ids)}, elapsed_ms={elapsed_ms}"
+            )
+
+    except Exception as e:
+        logger.error(f"[WARMUP] Standings warmup failed: {e}")
 
 
 app = FastAPI(
@@ -1464,6 +1550,21 @@ async def get_match_details(
     )
     _timings["get_teams"] = int((time.time() - _t0) * 1000)
 
+    # Determine season for standings lookup
+    current_date = match.date or datetime.now()
+    season = current_date.year if current_date.month >= 7 else current_date.year - 1
+
+    # NON-BLOCKING standings: only use cache, never call external API
+    # This ensures endpoint always responds <400ms regardless of league
+    _t0 = time.time()
+    standings = None
+    standings_status = "skipped"  # skipped | hit | miss
+    if match.league_id:
+        standings = _get_cached_standings(match.league_id, season)
+        standings_status = "hit" if standings is not None else "miss"
+    _timings["get_standings_cache"] = int((time.time() - _t0) * 1000)
+    _timings["standings_status"] = standings_status
+
     # Get history for both teams (parallel)
     _t0 = time.time()
     home_history, away_history = await asyncio.gather(
@@ -1472,32 +1573,15 @@ async def get_match_details(
     )
     _timings["get_history"] = int((time.time() - _t0) * 1000)
 
-    # Get standings for league (for club leagues only)
+    # Extract standings positions (only if we have cached data)
     home_position = None
     away_position = None
     home_league_points = None
     away_league_points = None
 
-    # Only fetch standings for club leagues (not national teams)
-    if home_team and home_team.team_type == "club" and match.league_id:
+    # Only use standings for club teams when cache hit
+    if home_team and home_team.team_type == "club" and standings:
         try:
-            # Determine season (current year or previous if early in year)
-            current_date = match.date or datetime.now()
-            season = current_date.year if current_date.month >= 7 else current_date.year - 1
-
-            # Check cache first (avoids ~2s external API call)
-            _t0 = time.time()
-            standings = _get_cached_standings(match.league_id, season)
-            _cache_hit = standings is not None
-            if standings is None:
-                provider = APIFootballProvider()
-                standings = await provider.get_standings(match.league_id, season)
-                await provider.close()
-                _set_cached_standings(match.league_id, season, standings)
-            _timings["get_standings"] = int((time.time() - _t0) * 1000)
-            _timings["standings_cache_hit"] = _cache_hit
-
-            # Find positions for both teams
             for standing in standings:
                 if home_team and standing.get("team_id") == home_team.external_id:
                     home_position = standing.get("position")
@@ -1506,7 +1590,7 @@ async def get_match_details(
                     away_position = standing.get("position")
                     away_league_points = standing.get("points")
         except Exception as e:
-            logger.warning(f"Could not fetch standings: {e}")
+            logger.warning(f"Could not process standings: {e}")
 
     # Get prediction if model is loaded and match not played
     prediction = None
@@ -1558,6 +1642,7 @@ async def get_match_details(
             "league_points": away_league_points,
         },
         "prediction": prediction,
+        "standings_status": standings_status,  # hit | miss | skipped
     }
 
 

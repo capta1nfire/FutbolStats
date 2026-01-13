@@ -250,12 +250,19 @@ struct MatchDetailsResponse: Codable {
     let homeTeam: TeamWithHistory
     let awayTeam: TeamWithHistory
     let prediction: MatchPrediction?
+    let standingsStatus: String?  // "hit" | "miss" | "skipped"
 
     enum CodingKeys: String, CodingKey {
         case match
         case homeTeam = "home_team"
         case awayTeam = "away_team"
         case prediction
+        case standingsStatus = "standings_status"
+    }
+
+    /// Whether standings data is available
+    var hasStandings: Bool {
+        standingsStatus == "hit"
     }
 }
 
@@ -502,6 +509,7 @@ struct MatchTimelineResponse: Codable {
     let goals: [TimelineGoal]
     let segments: [TimelineSegment]
     let summary: TimelineSummary
+    let meta: TimelineMeta?  // Optional telemetry metadata
 
     enum CodingKeys: String, CodingKey {
         case matchId = "match_id"
@@ -512,12 +520,23 @@ struct MatchTimelineResponse: Codable {
         case goals
         case segments
         case summary
+        case meta = "_meta"
+    }
+}
+
+struct TimelineMeta: Codable {
+    let eventsSource: String?
+    let eventsCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case eventsSource = "events_source"
+        case eventsCount = "events_count"
     }
 }
 
 struct TimelineScore: Codable {
-    let home: Int
-    let away: Int
+    let home: Int?  // Optional: may be null for incomplete match data
+    let away: Int?  // Optional: may be null for incomplete match data
 }
 
 struct TimelinePrediction: Codable {
@@ -525,7 +544,7 @@ struct TimelinePrediction: Codable {
     let homeProb: Double
     let drawProb: Double
     let awayProb: Double
-    let correct: Bool
+    let correct: Bool?  // Optional: may be null for incomplete data
 
     enum CodingKeys: String, CodingKey {
         case outcome
@@ -540,10 +559,10 @@ struct TimelineGoal: Codable, Identifiable {
     let minute: Int
     let extraMinute: Int?
     let team: String  // "home" or "away"
-    let teamName: String
+    let teamName: String?  // Optional: may be null in legacy events
     let player: String?
-    let isOwnGoal: Bool
-    let isPenalty: Bool
+    let isOwnGoal: Bool?  // Optional: may be null in legacy events
+    let isPenalty: Bool?  // Optional: may be null in legacy events
 
     var id: String {
         "\(minute)-\(team)-\(player ?? "unknown")"
