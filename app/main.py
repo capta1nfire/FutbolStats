@@ -920,11 +920,12 @@ async def get_predictions(
         context_applied=context_metadata if with_context else None,
     )
 
-    # Cache the response (only for default requests with context)
-    if league_ids is None and not save and with_context:
+    # Cache the response (only for default 7+7 requests with context)
+    # This prevents non-default requests (e.g., days=30) from polluting the cache
+    if is_default_full:
         _predictions_cache["data"] = response
         _predictions_cache["timestamp"] = now
-        logger.info(f"Cached {len(prediction_items)} predictions")
+        logger.info(f"Cached {len(prediction_items)} predictions (default 7+7)")
 
     return response
 
