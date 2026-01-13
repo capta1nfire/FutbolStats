@@ -345,6 +345,32 @@ class PostMatchAudit(SQLModel, table=True):
         description="Number of generation attempts (1 or 2)"
     )
 
+    # LLM Traceability (for debugging hallucinations)
+    llm_prompt_version: Optional[str] = Field(
+        default=None,
+        max_length=20,
+        description="Prompt template version (e.g., 'v1.0', 'v1.1')"
+    )
+    llm_prompt_input_json: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="Sanitized payload sent to LLM (no secrets)"
+    )
+    llm_prompt_input_hash: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="SHA256 of canonicalized input JSON"
+    )
+    llm_output_raw: Optional[str] = Field(
+        default=None,
+        description="Raw LLM output before parsing"
+    )
+    llm_validation_errors: Optional[list] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="List of claim validation errors detected"
+    )
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     # Relationships

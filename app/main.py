@@ -4668,6 +4668,79 @@ async def fastpath_debug_endpoint(
         return {"error": str(e)}
 
 
+@app.get("/dashboard/ops/llm_audit/{match_id}.json")
+async def llm_audit_endpoint(
+    match_id: int,
+    token: str = Query(...),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Debug endpoint for LLM traceability.
+
+    Returns the exact payload sent to Qwen for a specific match,
+    allowing quick RCA for hallucination issues.
+    """
+    if token != settings.DASHBOARD_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    try:
+        # Get audit with traceability data
+        res = await session.execute(
+            text("""
+                SELECT
+                    pma.id as audit_id,
+                    po.match_id,
+                    pma.llm_prompt_version,
+                    pma.llm_prompt_input_hash,
+                    pma.llm_prompt_input_json,
+                    pma.llm_output_raw,
+                    pma.llm_validation_errors,
+                    pma.llm_narrative_status,
+                    pma.llm_narrative_error_code,
+                    pma.llm_narrative_error_detail,
+                    pma.llm_narrative_request_id,
+                    pma.llm_narrative_json,
+                    pma.llm_narrative_generated_at,
+                    pma.llm_narrative_tokens_in,
+                    pma.llm_narrative_tokens_out,
+                    pma.llm_narrative_exec_ms,
+                    pma.created_at
+                FROM post_match_audits pma
+                JOIN prediction_outcomes po ON po.id = pma.outcome_id
+                WHERE po.match_id = :match_id
+            """),
+            {"match_id": match_id}
+        )
+        row = res.fetchone()
+
+        if not row:
+            return {"error": f"No audit found for match_id {match_id}"}
+
+        return {
+            "audit_id": row[0],
+            "match_id": row[1],
+            "prompt_version": row[2],
+            "prompt_input_hash": row[3],
+            "prompt_input_json": row[4],
+            "output_raw_preview": row[5][:500] if row[5] else None,
+            "output_raw_len": len(row[5]) if row[5] else 0,
+            "validation_errors": row[6],
+            "status": row[7],
+            "error_code": row[8],
+            "error_detail": row[9],
+            "runpod_job_id": row[10],
+            "narrative_json": row[11],
+            "generated_at": row[12].isoformat() if row[12] else None,
+            "tokens_in": row[13],
+            "tokens_out": row[14],
+            "exec_ms": row[15],
+            "audit_created_at": row[16].isoformat() if row[16] else None,
+        }
+    except Exception as e:
+        logger.error(f"llm_audit error for match {match_id}: {e}")
+        return {"error": str(e)}
+
+
 @app.get("/dashboard/ops/match_data.json")
 async def match_data_debug_endpoint(
     token: str = Query(...),

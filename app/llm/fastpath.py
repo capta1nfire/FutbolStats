@@ -33,6 +33,18 @@ from app.llm.narrative_generator import (
     log_llm_evaluation,
 )
 from app.llm.runpod_client import RunPodClient, RunPodError
+from app.llm.claim_validator import (
+    PROMPT_VERSION,
+    sanitize_payload_for_storage,
+    compute_payload_hash,
+    validate_narrative_claims,
+    should_reject_narrative,
+    get_rejection_reason,
+)
+from app.telemetry.metrics import (
+    llm_unsupported_claims_total,
+    llm_narratives_validated_total,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -510,6 +522,17 @@ class FastPathService:
                 # Submit to RunPod
                 try:
                     prompt, home_pack, away_pack = build_narrative_prompt(match_data)
+
+                    # Persist payload for traceability (before sending to LLM)
+                    sanitized_payload = sanitize_payload_for_storage(match_data)
+                    sanitized_payload["home_alias_pack"] = home_pack
+                    sanitized_payload["away_alias_pack"] = away_pack
+                    payload_hash = compute_payload_hash(sanitized_payload)
+
+                    audit.llm_prompt_version = PROMPT_VERSION
+                    audit.llm_prompt_input_json = sanitized_payload
+                    audit.llm_prompt_input_hash = payload_hash
+
                     job_id = await self.runpod.run_job(prompt)
 
                     audit.llm_narrative_status = "in_queue"
@@ -518,7 +541,7 @@ class FastPathService:
                     audit.llm_narrative_model = "qwen-vllm"
                     enqueued += 1
 
-                    logger.info(f"[FASTPATH] Enqueued match {match.id} -> job {job_id}")
+                    logger.info(f"[FASTPATH] Enqueued match {match.id} -> job {job_id}, hash={payload_hash[:12]}")
 
                 except RunPodError as e:
                     audit.llm_narrative_status = "error"
@@ -793,26 +816,65 @@ class FastPathService:
                         if not text or len(text) < 50:
                             logger.warning(f"[FASTPATH] Empty/short LLM response for audit {audit.id}: len={len(text) if text else 0}, text={text[:200] if text else 'None'}")
 
+                        # Store raw output for debugging
+                        audit.llm_output_raw = text[:5000] if text else None
+
                         parsed = parse_json_response(text)
                         # Get match_id for validation
                         outcome = await self.session.get(PredictionOutcome, audit.outcome_id)
                         match_id = outcome.match_id if outcome else 0
 
                         if parsed and validate_narrative_json(parsed, match_id):
-                            audit.llm_narrative_status = "ok"
-                            audit.llm_narrative_json = parsed
-                            audit.llm_narrative_generated_at = datetime.utcnow()
-                            audit.llm_narrative_delay_ms = meta["delay_ms"]
-                            audit.llm_narrative_exec_ms = meta["exec_ms"]
-                            audit.llm_narrative_tokens_in = tokens_in
-                            audit.llm_narrative_tokens_out = tokens_out
-                            audit.llm_narrative_worker_id = meta["worker_id"]
-                            completed += 1
+                            # Schema is valid, now validate claims against payload
+                            narrative_text = parsed.get("narrative", "")
+                            payload_for_claims = audit.llm_prompt_input_json or {}
 
-                            logger.info(
-                                f"[FASTPATH] Completed narrative for audit {audit.id}: "
-                                f"tokens={tokens_in}/{tokens_out}, exec={meta['exec_ms']}ms"
+                            claim_errors = validate_narrative_claims(
+                                narrative_text,
+                                payload_for_claims,
+                                strict=True
                             )
+                            audit.llm_validation_errors = claim_errors if claim_errors else None
+
+                            if should_reject_narrative(claim_errors):
+                                # Narrative has unsupported claims - reject
+                                rejection_reason = get_rejection_reason(claim_errors)
+                                audit.llm_narrative_status = "error"
+                                audit.llm_narrative_error_code = "unsupported_claim"
+                                audit.llm_narrative_error_detail = rejection_reason[:500]
+                                audit.llm_narrative_json = parsed  # Store anyway for debugging
+                                errors += 1
+
+                                # Telemetry: track claim types
+                                llm_narratives_validated_total.labels(status="rejected").inc()
+                                for err in claim_errors:
+                                    if err.get("severity") == "error":
+                                        llm_unsupported_claims_total.labels(
+                                            claim_type=err.get("claim", "unknown")
+                                        ).inc()
+
+                                logger.warning(
+                                    f"[FASTPATH] Narrative rejected for audit {audit.id}: {rejection_reason}"
+                                )
+                            else:
+                                # All validations passed
+                                audit.llm_narrative_status = "ok"
+                                audit.llm_narrative_json = parsed
+                                audit.llm_narrative_generated_at = datetime.utcnow()
+                                audit.llm_narrative_delay_ms = meta["delay_ms"]
+                                audit.llm_narrative_exec_ms = meta["exec_ms"]
+                                audit.llm_narrative_tokens_in = tokens_in
+                                audit.llm_narrative_tokens_out = tokens_out
+                                audit.llm_narrative_worker_id = meta["worker_id"]
+                                completed += 1
+
+                                # Telemetry: track successful validation
+                                llm_narratives_validated_total.labels(status="ok").inc()
+
+                                logger.info(
+                                    f"[FASTPATH] Completed narrative for audit {audit.id}: "
+                                    f"tokens={tokens_in}/{tokens_out}, exec={meta['exec_ms']}ms"
+                                )
                         else:
                             # Log what we received for debugging
                             logger.warning(

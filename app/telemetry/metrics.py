@@ -146,6 +146,22 @@ dq_frozen_market_suspects_total = Counter(
     ["provider", "book"],
 )
 
+# =============================================================================
+# LLM NARRATIVE METRICS
+# =============================================================================
+
+llm_unsupported_claims_total = Counter(
+    "llm_unsupported_claims_total",
+    "LLM narratives rejected due to unsupported claims (hallucinations)",
+    ["claim_type"],  # red_card, penalty, goal_minute
+)
+
+llm_narratives_validated_total = Counter(
+    "llm_narratives_validated_total",
+    "LLM narratives that passed claim validation",
+    ["status"],  # ok, rejected
+)
+
 dq_odds_overround = Histogram(
     "dq_odds_overround",
     "Overround (margin) distribution for 1X2 markets",
