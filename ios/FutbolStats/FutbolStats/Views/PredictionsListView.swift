@@ -76,11 +76,9 @@ struct PredictionsListView: View {
 
     // MARK: - Date Selector
 
-    // UTC calendar for consistent date handling (backend sends UTC dates)
-    private var utcCalendar: Calendar {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "UTC")!
-        return cal
+    // Local calendar for UI - user sees dates in their timezone
+    private var localCalendar: Calendar {
+        Calendar.current
     }
 
     private var dateSelector: some View {
@@ -90,7 +88,7 @@ struct PredictionsListView: View {
                     ForEach(dateRange, id: \.self) { date in
                         DateCell(
                             date: date,
-                            isSelected: utcCalendar.isDate(date, inSameDayAs: viewModel.selectedDate),
+                            isSelected: localCalendar.isDate(date, inSameDayAs: viewModel.selectedDate),
                             matchCount: viewModel.matchCount(for: date)
                         )
                         .id(date)
@@ -104,17 +102,17 @@ struct PredictionsListView: View {
                 .padding(.horizontal, 16)
             }
             .onAppear {
-                // Scroll to today (UTC)
-                proxy.scrollTo(utcCalendar.startOfDay(for: Date()), anchor: .center)
+                // Scroll to today (local timezone)
+                proxy.scrollTo(localCalendar.startOfDay(for: Date()), anchor: .center)
             }
         }
         .padding(.bottom, 12)
     }
 
-    // 2 days before + today + 7 days ahead = 10 days total (UTC-based)
+    // 2 days before + today + 7 days ahead = 10 days total (local timezone)
     private var dateRange: [Date] {
-        let today = utcCalendar.startOfDay(for: Date())
-        return (-2..<8).compactMap { utcCalendar.date(byAdding: .day, value: $0, to: today) }
+        let today = localCalendar.startOfDay(for: Date())
+        return (-2..<8).compactMap { localCalendar.date(byAdding: .day, value: $0, to: today) }
     }
 
     // MARK: - No Matches View

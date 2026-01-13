@@ -13,18 +13,14 @@ class PredictionsViewModel: ObservableObject {
 
     private let apiClient = APIClient.shared
 
-    // UTC calendar for consistent date comparisons (backend sends UTC dates)
-    private var utcCalendar: Calendar {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "UTC")!
-        return cal
+    // Local calendar for UI display (user sees dates in their timezone)
+    private var localCalendar: Calendar {
+        Calendar.current
     }
 
     init() {
-        // Initialize selectedDate to today in UTC to match dateRange and backend dates
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "UTC")!
-        self.selectedDate = cal.startOfDay(for: Date())
+        // Initialize selectedDate to today in user's local timezone
+        self.selectedDate = Calendar.current.startOfDay(for: Date())
     }
 
     // MARK: - Load Predictions
@@ -84,7 +80,8 @@ class PredictionsViewModel: ObservableObject {
     var predictionsForSelectedDate: [MatchPrediction] {
         return predictions.filter { prediction in
             guard let matchDate = prediction.matchDate else { return false }
-            return utcCalendar.isDate(matchDate, inSameDayAs: selectedDate)
+            // Compare in user's local timezone so "today" means today for the user
+            return localCalendar.isDate(matchDate, inSameDayAs: selectedDate)
         }.sorted { (p1, p2) in
             guard let d1 = p1.matchDate, let d2 = p2.matchDate else { return false }
             return d1 < d2
@@ -116,7 +113,7 @@ class PredictionsViewModel: ObservableObject {
     func matchCount(for date: Date) -> Int {
         return predictions.filter { prediction in
             guard let matchDate = prediction.matchDate else { return false }
-            return utcCalendar.isDate(matchDate, inSameDayAs: date)
+            return localCalendar.isDate(matchDate, inSameDayAs: date)
         }.count
     }
 }
