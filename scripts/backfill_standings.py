@@ -5,14 +5,21 @@ Backfill Standings: Populate league_standings table for DB-first architecture.
 Fetches standings from API-Football for active leagues and persists to DB.
 This ensures /matches/{id}/details serves standings from DB instead of external API.
 
+League selection logic (when no --leagues specified):
+1. Core leagues (Top 5, MX, BR, MLS, etc.) - always included
+2. Leagues with matches in DB (historical coverage)
+3. Leagues with fixtures in next 7 days (lookahead)
+4. Skip leagues that return "no data" (cups/tournaments without tables)
+
 Features:
 - Rate limiting (0.5s between requests)
 - Backoff on failures (exponential)
 - Skip already-fresh data (< 6h old)
+- Mark "no data" leagues as skipped (avoid retries)
 - Dry-run mode for testing
 
 Usage:
-    # Backfill all leagues with upcoming matches (default)
+    # Backfill with smart league selection (default)
     python scripts/backfill_standings.py
 
     # Backfill specific leagues
@@ -52,6 +59,55 @@ logger = logging.getLogger(__name__)
 API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL", "").replace("postgresql://", "postgresql+asyncpg://")
 STANDINGS_TTL_HOURS = 6  # Consider data stale after this
+LOOKAHEAD_DAYS = 7  # Check for fixtures this many days ahead
+
+# Core leagues: always backfill standings (leagues with regular tables)
+CORE_LEAGUES = [
+    # Top 5 European leagues
+    39,   # England - Premier League
+    140,  # Spain - La Liga
+    135,  # Italy - Serie A
+    78,   # Germany - Bundesliga
+    61,   # France - Ligue 1
+    # Other major leagues
+    94,   # Portugal - Primeira Liga
+    88,   # Netherlands - Eredivisie
+    203,  # Turkey - Super Lig
+    71,   # Brazil - Serie A
+    262,  # Mexico - Liga MX
+    128,  # Argentina - Primera Division
+    253,  # USA - MLS
+    # LATAM
+    239,  # Colombia - Primera A
+    242,  # Ecuador - Liga Pro
+    265,  # Chile - Primera Division
+    281,  # Peru - Primera Division
+]
+
+# Leagues that don't have standings tables (cups, tournaments, qualifiers)
+# These return empty from API and should be skipped
+NO_TABLE_LEAGUES = [
+    # UEFA club competitions
+    2,    # Champions League (groups phase has tables, knockout doesn't)
+    3,    # Europa League
+    848,  # Conference League
+    # Domestic cups
+    45,   # FA Cup
+    143,  # Copa del Rey
+    # CONMEBOL club competitions
+    13,   # CONMEBOL Libertadores
+    11,   # CONMEBOL Sudamericana
+    # World Cup Qualifiers
+    29, 30, 31, 32, 33, 34, 37,
+    # International tournaments / friendlies (no league table)
+    1,    # World Cup
+    4,    # Euro Championship
+    5,    # UEFA Nations League
+    7,    # African Cup of Nations
+    9,    # Copa America
+    10,   # Friendlies
+    28,   # Club Friendlies
+]
 
 
 async def get_engine():
@@ -144,10 +200,22 @@ async def save_standings(session: AsyncSession, league_id: int, season: int, sta
     await session.commit()
 
 
-async def get_active_leagues(session: AsyncSession, days_ahead: int = 14) -> list:
-    """Get unique league_ids from upcoming matches."""
+async def get_leagues_with_matches(session: AsyncSession) -> set:
+    """Get all unique league_ids that have any matches in DB."""
+    result = await session.execute(
+        text("""
+            SELECT DISTINCT league_id
+            FROM matches
+            WHERE league_id IS NOT NULL
+        """)
+    )
+    return {row[0] for row in result.fetchall()}
+
+
+async def get_leagues_with_upcoming_fixtures(session: AsyncSession) -> set:
+    """Get league_ids with fixtures in the next LOOKAHEAD_DAYS."""
     now = datetime.now()
-    future = now + timedelta(days=days_ahead)
+    future = now + timedelta(days=LOOKAHEAD_DAYS)
 
     result = await session.execute(
         text("""
@@ -157,11 +225,35 @@ async def get_active_leagues(session: AsyncSession, days_ahead: int = 14) -> lis
               AND date >= :start_date
               AND date <= :end_date
               AND status = 'NS'
-            ORDER BY league_id
         """),
         {"start_date": now.date(), "end_date": future.date()}
     )
-    return [row[0] for row in result.fetchall()]
+    return {row[0] for row in result.fetchall()}
+
+
+async def get_target_leagues(session: AsyncSession) -> list:
+    """
+    Get leagues to backfill using smart selection:
+    1. Core leagues (always)
+    2. Leagues with matches in DB
+    3. Leagues with upcoming fixtures
+    4. Exclude NO_TABLE_LEAGUES
+    """
+    # Gather all candidate leagues
+    db_leagues = await get_leagues_with_matches(session)
+    upcoming_leagues = await get_leagues_with_upcoming_fixtures(session)
+
+    # Union: core + DB + upcoming
+    all_candidates = set(CORE_LEAGUES) | db_leagues | upcoming_leagues
+
+    # Exclude leagues without tables
+    target_leagues = all_candidates - set(NO_TABLE_LEAGUES)
+
+    logger.info(f"League selection: {len(CORE_LEAGUES)} core, {len(db_leagues)} in DB, "
+                f"{len(upcoming_leagues)} upcoming, {len(NO_TABLE_LEAGUES)} excluded (no table)")
+    logger.info(f"Target leagues: {len(target_leagues)} total")
+
+    return sorted(target_leagues)
 
 
 async def backfill_standings(
@@ -181,8 +273,9 @@ async def backfill_standings(
         # Get leagues to process
         if leagues:
             league_ids = leagues
+            logger.info(f"Using specified leagues: {league_ids}")
         else:
-            league_ids = await get_active_leagues(session)
+            league_ids = await get_target_leagues(session)
 
         if not league_ids:
             logger.info("No leagues to process")
@@ -194,6 +287,7 @@ async def backfill_standings(
             "processed": 0,
             "fetched": 0,
             "skipped_fresh": 0,
+            "skipped_no_table": 0,
             "failed": 0,
         }
         consecutive_failures = 0
@@ -220,9 +314,11 @@ async def backfill_standings(
                     stats["fetched"] += 1
                     consecutive_failures = 0
                 else:
-                    logger.warning(f"League {league_id}: no standings returned")
-                    stats["failed"] += 1
-                    consecutive_failures += 1
+                    # No data returned - likely a cup/tournament without table
+                    logger.info(f"League {league_id}: skipped (no table data)")
+                    stats["skipped_no_table"] += 1
+                    # Don't count as failure - this is expected for some leagues
+                    consecutive_failures = 0
 
                 # Rate limiting
                 await asyncio.sleep(0.5)
