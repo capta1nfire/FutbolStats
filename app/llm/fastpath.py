@@ -509,7 +509,7 @@ class FastPathService:
 
                 # Submit to RunPod
                 try:
-                    prompt = build_narrative_prompt(match_data)
+                    prompt, home_pack, away_pack = build_narrative_prompt(match_data)
                     job_id = await self.runpod.run_job(prompt)
 
                     audit.llm_narrative_status = "in_queue"

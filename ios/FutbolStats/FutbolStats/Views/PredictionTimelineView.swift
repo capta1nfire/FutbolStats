@@ -23,14 +23,20 @@ struct PredictionTimelineView: View {
                     .foregroundStyle(.white)
                 Spacer()
                 // Result indicator
-                if timeline.prediction.correct {
-                    Label("Correct", systemImage: "checkmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.green)
+                if let correct = timeline.prediction.correct {
+                    if correct {
+                        Label("Correct", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    } else {
+                        Label("Wrong", systemImage: "xmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
                 } else {
-                    Label("Wrong", systemImage: "xmark.circle.fill")
+                    Label("Pending", systemImage: "questionmark.circle")
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(.gray)
                 }
             }
 
@@ -75,7 +81,7 @@ struct PredictionTimelineView: View {
                 Spacer()
 
                 // Final score
-                Text("\(timeline.finalScore.home) - \(timeline.finalScore.away)")
+                Text("\(timeline.finalScore.home ?? 0) - \(timeline.finalScore.away ?? 0)")
                     .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(.white)
@@ -253,7 +259,8 @@ struct GoalGroup: Identifiable {
                     TimelineSegment(startMinute: 47, endMinute: 67, homeGoals: 1, awayGoals: 1, status: "neutral"),
                     TimelineSegment(startMinute: 67, endMinute: 90, homeGoals: 3, awayGoals: 1, status: "correct")
                 ],
-                summary: TimelineSummary(correctMinutes: 47, correctPercentage: 52.2)
+                summary: TimelineSummary(correctMinutes: 47, correctPercentage: 52.2),
+                meta: nil
             )
         )
     }

@@ -102,6 +102,10 @@ struct PredictionsListView: View {
                 viewAppearTime = Date()
                 print("[Perf] PredictionsListView.onAppear")
             }
+            .onDisappear {
+                // Cancel background refresh when navigating away to free up connections
+                viewModel.cancelBackgroundTasks()
+            }
             .onChange(of: viewModel.predictions.count) { oldCount, newCount in
                 // Log when predictions first arrive (transition from 0 to N)
                 if oldCount == 0 && newCount > 0 && !hasLoggedFirstContent {
