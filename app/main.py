@@ -1868,16 +1868,19 @@ async def get_match_timeline(
         # Determine which team scored (prefer team_id, fallback to team_name match)
         is_home_team = False
         is_away_team = False
+        used_legacy_fallback = False
 
         if goal.get("team_id"):
             is_home_team = goal.get("team_id") == home_external_id
             is_away_team = goal.get("team_id") == away_external_id
         else:
             # Legacy fallback: match by team name
+            used_legacy_fallback = True
             goal_team_name = goal.get("team_name") or goal.get("team")
             if goal_team_name:
                 is_home_team = goal_team_name == (home_team.name if home_team else None)
                 is_away_team = goal_team_name == (away_team.name if away_team else None)
+            logger.info(f"[TIMELINE] match_id={match_id} legacy_fallback goal_team_name={goal_team_name} matched={'home' if is_home_team else 'away' if is_away_team else 'none'}")
 
         # Update score
         if is_home_team:

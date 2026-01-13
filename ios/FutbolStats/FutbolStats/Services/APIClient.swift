@@ -227,9 +227,13 @@ actor APIClient {
         }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
+        let setupMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+        let networkStart = CFAbsoluteTimeGetCurrent()
+
         // Use shared session to reuse warm connections
         let (data, response) = try await sharedSession.data(for: request)
-        let networkMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+        let networkMs = (CFAbsoluteTimeGetCurrent() - networkStart) * 1000
+        let dataSize = data.count
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw APIError.noData
@@ -252,7 +256,8 @@ actor APIClient {
             let decodeMs = (CFAbsoluteTimeGetCurrent() - decodeStart) * 1000
             let totalMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
 
-            print("[APIClient] \(endpoint) | ok | network_ms=\(String(format: "%.1f", networkMs)), decode_ms=\(String(format: "%.1f", decodeMs)), total_ms=\(String(format: "%.1f", totalMs))")
+            // Granular timing to diagnose TLS/DNS latency (per auditor recommendation)
+            print("[APIClient] \(endpoint) | ok | setup_ms=\(String(format: "%.1f", setupMs)), network_ms=\(String(format: "%.1f", networkMs)), decode_ms=\(String(format: "%.1f", decodeMs)), total_ms=\(String(format: "%.1f", totalMs)), bytes=\(dataSize)")
 
             return result
         } catch let decodingError as DecodingError {
