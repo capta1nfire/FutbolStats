@@ -58,7 +58,8 @@ logger = logging.getLogger(__name__)
 # Configuration
 API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL", "").replace("postgresql://", "postgresql+asyncpg://")
-STANDINGS_TTL_HOURS = 6  # Consider data stale after this
+STANDINGS_TTL_HOURS = 6  # Consider standings data stale after this
+NO_TABLE_TTL_DAYS = 30  # Don't retry "no table" leagues for this long
 LOOKAHEAD_DAYS = 7  # Check for fixtures this many days ahead
 
 # Core leagues: always backfill standings (leagues with regular tables)
@@ -200,6 +201,58 @@ async def save_standings(session: AsyncSession, league_id: int, season: int, sta
     await session.commit()
 
 
+async def mark_no_table(session: AsyncSession, league_id: int, season: int) -> None:
+    """Mark a league as having no standings table (persisted for NO_TABLE_TTL_DAYS)."""
+    expires_at = datetime.now() + timedelta(days=NO_TABLE_TTL_DAYS)
+    await session.execute(
+        text("""
+            INSERT INTO league_standings (league_id, season, standings, captured_at, expires_at, source)
+            VALUES (:league_id, :season, NULL, NOW(), :expires_at, 'no_table')
+            ON CONFLICT (league_id, season)
+            DO UPDATE SET standings = NULL, captured_at = NOW(), expires_at = :expires_at, source = 'no_table'
+        """),
+        {"league_id": league_id, "season": season, "expires_at": expires_at}
+    )
+    await session.commit()
+
+
+async def is_marked_no_table(session: AsyncSession, league_id: int, season: int) -> bool:
+    """Check if a league is marked as 'no_table' and still within TTL."""
+    result = await session.execute(
+        text("""
+            SELECT source, expires_at
+            FROM league_standings
+            WHERE league_id = :league_id AND season = :season
+        """),
+        {"league_id": league_id, "season": season}
+    )
+    row = result.fetchone()
+    if not row:
+        return False
+
+    source, expires_at = row
+    if source != 'no_table':
+        return False
+
+    # Check if still within TTL
+    return expires_at and datetime.now() < expires_at
+
+
+async def get_db_no_table_leagues(session: AsyncSession, season: int) -> set:
+    """Get league_ids marked as 'no_table' in DB (within TTL)."""
+    result = await session.execute(
+        text("""
+            SELECT league_id
+            FROM league_standings
+            WHERE season = :season
+              AND source = 'no_table'
+              AND expires_at > NOW()
+        """),
+        {"season": season}
+    )
+    return {row[0] for row in result.fetchall()}
+
+
 async def get_leagues_with_matches(session: AsyncSession) -> set:
     """Get all unique league_ids that have any matches in DB."""
     result = await session.execute(
@@ -231,13 +284,14 @@ async def get_leagues_with_upcoming_fixtures(session: AsyncSession) -> set:
     return {row[0] for row in result.fetchall()}
 
 
-async def get_target_leagues(session: AsyncSession) -> list:
+async def get_target_leagues(session: AsyncSession, season: int) -> list:
     """
     Get leagues to backfill using smart selection:
     1. Core leagues (always)
     2. Leagues with matches in DB
     3. Leagues with upcoming fixtures
-    4. Exclude NO_TABLE_LEAGUES
+    4. Exclude NO_TABLE_LEAGUES (hardcoded known)
+    5. Exclude DB-persisted 'no_table' marks (auto-discovered, TTL 30 days)
     """
     # Gather all candidate leagues
     db_leagues = await get_leagues_with_matches(session)
@@ -246,11 +300,16 @@ async def get_target_leagues(session: AsyncSession) -> list:
     # Union: core + DB + upcoming
     all_candidates = set(CORE_LEAGUES) | db_leagues | upcoming_leagues
 
-    # Exclude leagues without tables
-    target_leagues = all_candidates - set(NO_TABLE_LEAGUES)
+    # Get DB-persisted no_table marks
+    db_no_table = await get_db_no_table_leagues(session, season)
+
+    # Exclude leagues without tables (hardcoded + DB-persisted)
+    all_no_table = set(NO_TABLE_LEAGUES) | db_no_table
+    target_leagues = all_candidates - all_no_table
 
     logger.info(f"League selection: {len(CORE_LEAGUES)} core, {len(db_leagues)} in DB, "
-                f"{len(upcoming_leagues)} upcoming, {len(NO_TABLE_LEAGUES)} excluded (no table)")
+                f"{len(upcoming_leagues)} upcoming")
+    logger.info(f"Excluded: {len(NO_TABLE_LEAGUES)} hardcoded + {len(db_no_table)} DB-marked = {len(all_no_table)} no_table")
     logger.info(f"Target leagues: {len(target_leagues)} total")
 
     return sorted(target_leagues)
@@ -275,7 +334,7 @@ async def backfill_standings(
             league_ids = leagues
             logger.info(f"Using specified leagues: {league_ids}")
         else:
-            league_ids = await get_target_leagues(session)
+            league_ids = await get_target_leagues(session, season)
 
         if not league_ids:
             logger.info("No leagues to process")
@@ -314,8 +373,10 @@ async def backfill_standings(
                     stats["fetched"] += 1
                     consecutive_failures = 0
                 else:
-                    # No data returned - likely a cup/tournament without table
-                    logger.info(f"League {league_id}: skipped (no table data)")
+                    # No data returned - mark as no_table in DB (TTL 30 days)
+                    if not dry_run:
+                        await mark_no_table(session, league_id, season)
+                    logger.info(f"League {league_id}: {'would mark' if dry_run else 'marked'} no_table (TTL {NO_TABLE_TTL_DAYS}d)")
                     stats["skipped_no_table"] += 1
                     # Don't count as failure - this is expected for some leagues
                     consecutive_failures = 0
