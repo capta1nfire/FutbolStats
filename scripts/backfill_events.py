@@ -125,7 +125,7 @@ async def get_matches_without_events(
             FROM matches
             WHERE status IN ('FT', 'AET', 'PEN')
               AND date >= :cutoff
-              AND (events IS NULL OR events = '[]'::jsonb OR events = 'null'::jsonb)
+              AND (events IS NULL OR events::text = '[]' OR events::text = 'null')
             ORDER BY date DESC
             LIMIT :limit
         """),

@@ -134,10 +134,10 @@ async def save_standings(session: AsyncSession, league_id: int, season: int, sta
     expires_at = datetime.now() + timedelta(hours=STANDINGS_TTL_HOURS)
     await session.execute(
         text("""
-            INSERT INTO league_standings (league_id, season, standings, captured_at, expires_at)
-            VALUES (:league_id, :season, :standings, NOW(), :expires_at)
+            INSERT INTO league_standings (league_id, season, standings, captured_at, expires_at, source)
+            VALUES (:league_id, :season, :standings, NOW(), :expires_at, 'backfill')
             ON CONFLICT (league_id, season)
-            DO UPDATE SET standings = :standings, captured_at = NOW(), expires_at = :expires_at
+            DO UPDATE SET standings = :standings, captured_at = NOW(), expires_at = :expires_at, source = 'backfill'
         """),
         {"league_id": league_id, "season": season, "standings": json.dumps(standings), "expires_at": expires_at}
     )
