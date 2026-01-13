@@ -1,5 +1,6 @@
 """FastAPI application for FutbolStat MVP."""
 
+import json
 import logging
 import os
 import time
