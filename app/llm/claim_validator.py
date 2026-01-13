@@ -205,7 +205,7 @@ def _get_goal_minutes(events: list) -> set[int]:
 
 
 def validate_narrative_claims(
-    narrative_text: str,
+    narrative_text,
     match_data: dict,
     strict: bool = True
 ) -> list[dict]:
@@ -213,7 +213,7 @@ def validate_narrative_claims(
     Validate that claims in the narrative are supported by match data.
 
     Args:
-        narrative_text: The generated narrative text
+        narrative_text: The generated narrative text (str, dict, or None)
         match_data: The payload sent to the LLM (contains events, stats, etc.)
         strict: If True, unsupported claims are errors. If False, warnings only.
 
@@ -222,8 +222,17 @@ def validate_narrative_claims(
         [{"type": "unsupported_claim", "claim": "red_card", "pattern": "...", "severity": "error"}]
     """
     errors = []
-    narrative_lower = narrative_text.lower()
-    events = match_data.get("events", [])
+
+    # Normalize narrative_text to string (handle dict, None, etc.)
+    if isinstance(narrative_text, str):
+        narrative_str = narrative_text
+    elif isinstance(narrative_text, dict):
+        narrative_str = json.dumps(narrative_text)
+    else:
+        narrative_str = str(narrative_text or "")
+
+    narrative_lower = narrative_str.lower()
+    events = match_data.get("events", []) if isinstance(match_data, dict) else []
 
     # 1. Red card claims
     has_red = _has_red_card_evidence(events)
