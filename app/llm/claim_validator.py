@@ -94,13 +94,15 @@ def sanitize_payload_for_storage(match_data: dict) -> dict:
     # Include stats summary (not full stats)
     if "stats" in match_data and match_data["stats"]:
         stats = match_data["stats"]
+        home_stats = stats.get("home", {})
+        away_stats = stats.get("away", {})
         sanitized["stats_summary"] = {
-            "home_shots": stats.get("home", {}).get("Shots on Goal"),
-            "away_shots": stats.get("away", {}).get("Shots on Goal"),
-            "home_possession": stats.get("home", {}).get("Ball Possession"),
-            "away_possession": stats.get("away", {}).get("Ball Possession"),
-            "home_xg": stats.get("home", {}).get("expected_goals"),
-            "away_xg": stats.get("away", {}).get("expected_goals"),
+            "home_shots": home_stats.get("shots_on_goal") or home_stats.get("Shots on Goal"),
+            "away_shots": away_stats.get("shots_on_goal") or away_stats.get("Shots on Goal"),
+            "home_possession": home_stats.get("ball_possession") or home_stats.get("Ball Possession"),
+            "away_possession": away_stats.get("ball_possession") or away_stats.get("Ball Possession"),
+            "home_xg": home_stats.get("expected_goals"),
+            "away_xg": away_stats.get("expected_goals"),
         }
 
     return sanitized
