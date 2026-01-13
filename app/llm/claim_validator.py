@@ -127,14 +127,23 @@ PENALTY_EVENT_VARIANTS = [
 ]
 
 
+def _safe_lower(value) -> str:
+    """Safely convert value to lowercase string."""
+    if isinstance(value, str):
+        return value.lower()
+    return ""
+
+
 def _has_red_card_evidence(events: list) -> bool:
     """Check if events contain red card evidence (multilenguaje)."""
     if not events:
         return False
 
     for event in events:
-        event_type = event.get("type", "").lower()
-        detail = event.get("detail", "").lower()
+        if not isinstance(event, dict):
+            continue
+        event_type = _safe_lower(event.get("type", ""))
+        detail = _safe_lower(event.get("detail", ""))
 
         # Check if it's a card event with red card variant
         if event_type == "card":
@@ -156,8 +165,10 @@ def _has_penalty_evidence(events: list) -> bool:
         return False
 
     for event in events:
-        detail = event.get("detail", "").lower()
-        event_type = event.get("type", "").lower()
+        if not isinstance(event, dict):
+            continue
+        detail = _safe_lower(event.get("detail", ""))
+        event_type = _safe_lower(event.get("type", ""))
 
         # Check against all penalty variants
         for variant in PENALTY_EVENT_VARIANTS:
@@ -180,10 +191,15 @@ def _get_goal_minutes(events: list) -> set[int]:
         return minutes
 
     for event in events:
-        if event.get("type", "").lower() == "goal":
+        if not isinstance(event, dict):
+            continue
+        if _safe_lower(event.get("type", "")) == "goal":
             minute = event.get("minute")
             if minute is not None:
-                minutes.add(int(minute))
+                try:
+                    minutes.add(int(minute))
+                except (ValueError, TypeError):
+                    pass
 
     return minutes
 
