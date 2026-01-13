@@ -97,11 +97,11 @@ class MatchDetailViewModel: ObservableObject {
             // Show UI immediately after basic data loads (progressive loading)
             isLoading = false
 
+            // Log without match_id to avoid high-cardinality (per auditor guardrails)
             PerfLogger.shared.log(
                 endpoint: "MatchDetail.loadDetails",
                 message: "basic_data_ready",
                 data: [
-                    "match_id": matchId,
                     "details_ms": detailsMs,
                     "is_finished": prediction.isFinished
                 ]
@@ -122,7 +122,6 @@ class MatchDetailViewModel: ObservableObject {
                     endpoint: "MatchDetail.loadDetails",
                     message: "background_complete",
                     data: [
-                        "match_id": matchId,
                         "timeline_ms": timelineTimer.elapsedMs,
                         "insights_ms": insightsTimer.elapsedMs,
                         "total_ms": totalTimer.elapsedMs
@@ -138,7 +137,6 @@ class MatchDetailViewModel: ObservableObject {
                 endpoint: "MatchDetail.loadDetails",
                 message: "error",
                 data: [
-                    "match_id": matchId,
                     "error": error.localizedDescription,
                     "total_ms": totalTimer.elapsedMs
                 ]

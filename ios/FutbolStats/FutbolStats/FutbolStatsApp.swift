@@ -2,9 +2,17 @@ import SwiftUI
 
 @main
 struct FutbolStatsApp: App {
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some Scene {
         WindowGroup {
             MainTabView()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .background {
+                // Log telemetry when app goes to background
+                ImageCache.shared.logStats()
+            }
         }
     }
 }

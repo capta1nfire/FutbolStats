@@ -220,6 +220,32 @@ def _get_ops_logs(
 # Global ML engine
 ml_engine = XGBoostEngine()
 
+# =============================================================================
+# TELEMETRY COUNTERS (aggregated, no high-cardinality labels)
+# =============================================================================
+# Thread-safe via GIL for simple increments; no locks needed for counters.
+
+_telemetry = {
+    # Predictions cache
+    "predictions_cache_hit_full": 0,
+    "predictions_cache_hit_priority": 0,
+    "predictions_cache_miss_full": 0,
+    "predictions_cache_miss_priority_upgrade": 0,
+    # Standings source
+    "standings_source_cache": 0,
+    "standings_source_db": 0,
+    "standings_source_miss": 0,
+    # Timeline source
+    "timeline_source_db": 0,
+    "timeline_source_api_fallback": 0,
+}
+
+
+def _incr(key: str) -> None:
+    """Increment a telemetry counter."""
+    _telemetry[key] = _telemetry.get(key, 0) + 1
+
+
 # Simple in-memory cache for predictions
 _predictions_cache = {
     "data": None,
@@ -606,6 +632,57 @@ async def health_check(request: Request):
     )
 
 
+@app.get("/telemetry")
+async def get_telemetry(request: Request):
+    """
+    Aggregated telemetry counters for cache hit/miss monitoring.
+
+    No high-cardinality labels (no match_id, team names, URLs).
+    Safe for Prometheus/Grafana scraping.
+
+    Protected by X-Dashboard-Token (same as other dashboard endpoints).
+
+    NOTE: Counters reset on redeploy/restart. This is diagnostic telemetry,
+    not historical observability. For persistent metrics, export to Prometheus.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Telemetry access requires valid token.")
+
+    # Calculate hit rates
+    pred_hits = _telemetry["predictions_cache_hit_full"] + _telemetry["predictions_cache_hit_priority"]
+    pred_misses = _telemetry["predictions_cache_miss_full"] + _telemetry["predictions_cache_miss_priority_upgrade"]
+    pred_total = pred_hits + pred_misses
+    pred_hit_rate = pred_hits / pred_total if pred_total > 0 else 0
+
+    standings_hits = _telemetry["standings_source_cache"] + _telemetry["standings_source_db"]
+    standings_total = standings_hits + _telemetry["standings_source_miss"]
+    standings_hit_rate = standings_hits / standings_total if standings_total > 0 else 0
+
+    timeline_total = _telemetry["timeline_source_db"] + _telemetry["timeline_source_api_fallback"]
+    timeline_db_rate = _telemetry["timeline_source_db"] / timeline_total if timeline_total > 0 else 0
+
+    return {
+        "predictions_cache": {
+            "hit_full": _telemetry["predictions_cache_hit_full"],
+            "hit_priority": _telemetry["predictions_cache_hit_priority"],
+            "miss_full": _telemetry["predictions_cache_miss_full"],
+            "miss_priority_upgrade": _telemetry["predictions_cache_miss_priority_upgrade"],
+            "hit_rate": round(pred_hit_rate, 3),
+        },
+        "standings_source": {
+            "cache": _telemetry["standings_source_cache"],
+            "db": _telemetry["standings_source_db"],
+            "miss": _telemetry["standings_source_miss"],
+            "hit_rate": round(standings_hit_rate, 3),
+        },
+        "timeline_source": {
+            "db": _telemetry["timeline_source_db"],
+            "api_fallback": _telemetry["timeline_source_api_fallback"],
+            "db_rate": round(timeline_db_rate, 3),
+        },
+    }
+
+
 @app.get("/metrics")
 async def prometheus_metrics(
     authorization: str = Header(None, alias="Authorization"),
@@ -967,6 +1044,7 @@ async def get_predictions(
         if now - _predictions_cache["timestamp"] < _predictions_cache["ttl"]:
             if is_default_full:
                 # Full request with warm cache - return as-is (already handled above, but safety)
+                _incr("predictions_cache_hit_full")
                 logger.info("predictions_cache | cache_hit | type=full, count=%d", len(_predictions_cache["data"].predictions))
                 return _predictions_cache["data"]
             else:
@@ -976,6 +1054,7 @@ async def get_predictions(
                     actual_days_back,
                     actual_days_ahead
                 )
+                _incr("predictions_cache_hit_priority")
                 logger.info(
                     "predictions_cache | cache_hit | type=priority, filtered_count=%d, full_count=%d, days_back=%d, days_ahead=%d",
                     len(result.predictions), len(_predictions_cache["data"].predictions),
@@ -997,6 +1076,7 @@ async def get_predictions(
 
     if is_cacheable_subset and not is_default_full and league_id_list is None:
         # Subset request with cold cache - fetch full range to warm cache
+        _incr("predictions_cache_miss_priority_upgrade")
         logger.info(
             "predictions_cache | cache_miss | type=priority_upgrade, requested_days=%d+%d, fetching=7+7",
             actual_days_back, actual_days_ahead
@@ -1005,6 +1085,7 @@ async def get_predictions(
         fetch_days_ahead = 7
         needs_filtering = True
     elif is_cacheable_subset and is_default_full:
+        _incr("predictions_cache_miss_full")
         logger.info("predictions_cache | cache_miss | type=full")
     else:
         logger.info("predictions_cache | cache_bypass | league_ids=%s, save=%s, with_context=%s",
@@ -1637,16 +1718,19 @@ async def get_match_details(
         if standings is not None:
             standings_status = "cache_hit"
             standings_source = "cache"
+            _incr("standings_source_cache")
         else:
             # L2: database
             standings = await _get_standings_from_db(session, match.league_id, season)
             if standings is not None:
                 standings_status = "db_hit"
                 standings_source = "db"
+                _incr("standings_source_db")
                 # Populate L1 cache for next request
                 _set_cached_standings(match.league_id, season, standings)
             else:
                 standings_status = "miss"
+                _incr("standings_source_miss")
     _timings["get_standings"] = int((time.time() - _t0) * 1000)
     _timings["standings_status"] = standings_status
     if standings_source:
@@ -1964,9 +2048,11 @@ async def get_match_timeline(
     if match.events and len(match.events) > 0:
         events = match.events
         events_source = "db"
+        _incr("timeline_source_db")
         logger.info(f"[PERF] timeline match_id={match_id} events_source=db count={len(events)} time_ms={int((time.time() - _t0) * 1000)}")
     else:
         # Fallback to API (and persist for next time)
+        _incr("timeline_source_api_fallback")
         logger.info(f"[PERF] timeline match_id={match_id} events_source=api_fallback (db events empty)")
         provider = APIFootballProvider()
         try:
