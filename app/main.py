@@ -810,7 +810,7 @@ async def get_predictions(
         if now - _predictions_cache["timestamp"] < _predictions_cache["ttl"]:
             if is_default_full:
                 # Full request with warm cache - return as-is (already handled above, but safety)
-                logger.info("Returning cached predictions (full)")
+                logger.info("predictions_cache | cache_hit | type=full, count=%d", len(_predictions_cache["data"].predictions))
                 return _predictions_cache["data"]
             else:
                 # Subset request - filter from cache
@@ -819,7 +819,11 @@ async def get_predictions(
                     actual_days_back,
                     actual_days_ahead
                 )
-                logger.info(f"Priority request served from cache: filtered {len(result.predictions)}/{len(_predictions_cache['data'].predictions)} predictions (days_back={actual_days_back}, days_ahead={actual_days_ahead})")
+                logger.info(
+                    "predictions_cache | cache_hit | type=priority, filtered_count=%d, full_count=%d, days_back=%d, days_ahead=%d",
+                    len(result.predictions), len(_predictions_cache["data"].predictions),
+                    actual_days_back, actual_days_ahead
+                )
                 return result
 
     # Parse league IDs
@@ -836,10 +840,21 @@ async def get_predictions(
 
     if is_cacheable_subset and not is_default_full and league_id_list is None:
         # Subset request with cold cache - fetch full range to warm cache
-        logger.info(f"Cold cache: upgrading priority request ({actual_days_back}+{actual_days_ahead}) to full (7+7) for cache warmup")
+        logger.info(
+            "predictions_cache | cache_miss | type=priority_upgrade, requested_days=%d+%d, fetching=7+7",
+            actual_days_back, actual_days_ahead
+        )
         fetch_days_back = 7
         fetch_days_ahead = 7
         needs_filtering = True
+    elif is_cacheable_subset and is_default_full:
+        logger.info("predictions_cache | cache_miss | type=full")
+    else:
+        logger.info("predictions_cache | cache_bypass | league_ids=%s, save=%s, with_context=%s",
+                    league_ids, save, with_context)
+
+    # Track compute time for cache miss
+    _compute_start = time.time()
 
     # Get features for upcoming matches
     # iOS progressive loading:
@@ -982,13 +997,20 @@ async def get_predictions(
         context_applied=context_metadata if with_context else None,
     )
 
+    # Compute time for telemetry
+    _compute_ms = (time.time() - _compute_start) * 1000
+
     # Cache the response (for 7+7 requests or upgraded priority requests)
     # This ensures the cache is always populated with full data
     should_cache = is_default_full or needs_filtering
     if should_cache:
         _predictions_cache["data"] = response
         _predictions_cache["timestamp"] = now
-        logger.info(f"Cached {len(prediction_items)} predictions (7+7 {'upgraded from priority' if needs_filtering else 'full'})")
+        logger.info(
+            "predictions_cache | cached | compute_ms=%.1f, full_count=%d, type=%s",
+            _compute_ms, len(prediction_items),
+            "priority_upgrade" if needs_filtering else "full"
+        )
 
     # If this was an upgraded priority request, filter the result before returning
     if needs_filtering:
@@ -997,7 +1019,11 @@ async def get_predictions(
             actual_days_back,
             actual_days_ahead
         )
-        logger.info(f"Cold cache priority: returning filtered {len(filtered_response.predictions)}/{len(response.predictions)} predictions")
+        logger.info(
+            "predictions_cache | filtered | filtered_count=%d, full_count=%d, days_back=%d, days_ahead=%d",
+            len(filtered_response.predictions), len(response.predictions),
+            actual_days_back, actual_days_ahead
+        )
         return filtered_response
 
     return response
