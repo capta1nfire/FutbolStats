@@ -56,9 +56,17 @@ class PredictionsViewModel: ObservableObject {
         Calendar.current
     }
 
+    // UTC calendar for data operations (matches backend's UTC-based filtering)
+    private static var utcCalendar: Calendar = {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        return cal
+    }()
+
     init() {
-        // Initialize selectedDate to today in user's local timezone
-        self.selectedDate = Calendar.current.startOfDay(for: Date())
+        // Initialize selectedDate to today in UTC (matches backend definition of "today")
+        // This ensures the date selector aligns with what the API returns
+        self.selectedDate = Self.utcCalendar.startOfDay(for: Date())
     }
 
     // MARK: - Load Predictions
@@ -329,8 +337,10 @@ class PredictionsViewModel: ObservableObject {
     private var _predictionsByDay: [Int: [MatchPrediction]] = [:]  // dayKey -> predictions
 
     /// Compute day key from Date (YYYYMMDD as Int)
+    /// Uses UTC calendar to match backend's date filtering.
+    /// This ensures consistent day grouping with the API.
     private func dayKey(from date: Date) -> Int {
-        let components = localCalendar.dateComponents([.year, .month, .day], from: date)
+        let components = Self.utcCalendar.dateComponents([.year, .month, .day], from: date)
         return components.year! * 10000 + components.month! * 100 + components.day!
     }
 

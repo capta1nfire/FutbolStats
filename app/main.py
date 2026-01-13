@@ -3337,7 +3337,8 @@ def _render_pit_dashboard_html(data: dict) -> str:
         total_live = visibility.get("total_live_pre_kickoff_any_window", 0)
         captures_by_range = visibility.get("captures_by_range", {})
         ideal_captures = captures_by_range.get("ideal_45_75", 0)
-        ideal_pct = round(ideal_captures / total_live * 100, 1) if total_live > 0 else 0
+        # % Ideal Window = ideal / valid_10_90 (not total_live which includes out-of-window)
+        ideal_pct = round(ideal_n / principal_n * 100, 1) if principal_n > 0 else 0
 
         # Quality gate exclusions
         exclusions = report.get("data_quality", {}).get("exclusions", {})

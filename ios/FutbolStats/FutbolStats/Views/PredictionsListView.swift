@@ -127,10 +127,17 @@ struct PredictionsListView: View {
 
     // MARK: - Date Selector
 
-    // Local calendar for UI - user sees dates in their timezone
+    // Local calendar for UI display (day names, formatting)
     private var localCalendar: Calendar {
         Calendar.current
     }
+
+    // UTC calendar for date operations (must match backend's UTC filtering)
+    private static var utcCalendar: Calendar = {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        return cal
+    }()
 
     private var dateSelector: some View {
         let _ = print("[Render] dateSelector body evaluated")
@@ -140,7 +147,7 @@ struct PredictionsListView: View {
                     ForEach(dateRange, id: \.self) { date in
                         DateCell(
                             date: date,
-                            isSelected: localCalendar.isDate(date, inSameDayAs: viewModel.selectedDate),
+                            isSelected: Self.utcCalendar.isDate(date, inSameDayAs: viewModel.selectedDate),
                             matchCount: viewModel.matchCount(for: date)
                         )
                         .id(date)
@@ -156,17 +163,18 @@ struct PredictionsListView: View {
                 .padding(.horizontal, 16)
             }
             .onAppear {
-                // Scroll to today (local timezone)
-                proxy.scrollTo(localCalendar.startOfDay(for: Date()), anchor: .center)
+                // Scroll to today (UTC)
+                proxy.scrollTo(Self.utcCalendar.startOfDay(for: Date()), anchor: .center)
             }
         }
         .padding(.bottom, 12)
     }
 
     // 7 days before + today + 7 days ahead = 15 days total (matches competitor)
+    // Uses UTC calendar to match backend's date filtering
     private var dateRange: [Date] {
-        let today = localCalendar.startOfDay(for: Date())
-        return (-7..<8).compactMap { localCalendar.date(byAdding: .day, value: $0, to: today) }
+        let today = Self.utcCalendar.startOfDay(for: Date())
+        return (-7..<8).compactMap { Self.utcCalendar.date(byAdding: .day, value: $0, to: today) }
     }
 
     // MARK: - No Matches View
