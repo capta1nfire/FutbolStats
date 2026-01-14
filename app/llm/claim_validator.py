@@ -70,7 +70,14 @@ PENALTY_PATTERNS = [
 ]
 
 # Goal minute patterns - matches "gol al minuto X", "anotó al X'", etc.
-GOAL_MINUTE_PATTERN = r"(?:gol|anotó|marcó|convirtió).*?(?:al\s+)?(?:minuto\s+)?(\d{1,3})['\s]"
+# More restrictive: goal keyword must be within 40 non-digit chars of minute
+# Using [^0-9] to prevent the pattern from crossing other numbers
+GOAL_MINUTE_PATTERN = r"(?:gol|anot[óo]|marc[óo]|convirti[óo]|diana|remat[óoe])[^0-9]{0,40}(?:al\s+)?(?:minuto\s+)?(\d{1,3})['′\s]"
+
+# Card/expulsion keywords - if these appear near "minuto X", it's NOT a goal claim
+CARD_CONTEXT_KEYWORDS = [
+    "roja", "expuls", "tarjeta", "card", "amonest", "amarilla", "sanci"
+]
 
 
 def canonicalize_json(data: dict) -> str:
@@ -353,6 +360,22 @@ def sanitize_narrative_body(body: str) -> tuple[str, list[dict]]:
                 logger.warning(f"[CLAIM_VALIDATOR] Stripped control token '{token}' from narrative")
                 break  # Don't double-count same token
 
+    # Remove unwanted footer lines (LLM sometimes adds signatures)
+    footer_patterns = [
+        r"^\s*an[áa]lisis\s+realizado\s+por.*$",  # "Análisis realizado por..."
+        r"^\s*este\s+an[áa]lisis\s+fue.*$",  # "Este análisis fue..."
+        r"^\s*informe\s+elaborado\s+por.*$",  # "Informe elaborado por..."
+        r"^\s*reporte\s+generado\s+por.*$",  # "Reporte generado por..."
+    ]
+    for pattern in footer_patterns:
+        if re.search(pattern, sanitized, re.IGNORECASE | re.MULTILINE):
+            sanitized = re.sub(pattern, "", sanitized, flags=re.IGNORECASE | re.MULTILINE)
+            warnings.append({
+                "type": "footer_stripped",
+                "pattern": pattern,
+            })
+            logger.info(f"[CLAIM_VALIDATOR] Stripped footer matching '{pattern}'")
+
     # Clean up extra whitespace/newlines left behind
     sanitized = re.sub(r'\n{3,}', '\n\n', sanitized)  # Max 2 consecutive newlines
     sanitized = re.sub(r' {2,}', ' ', sanitized)  # Max 1 space
@@ -454,12 +477,28 @@ def validate_narrative_claims(
             break
 
     # 3. Goal minute claims (optional - less strict)
-    # Only validate if narrative mentions specific minutes
+    # Only validate if narrative mentions specific minutes with goal context
     goal_minutes = _get_goal_minutes(events)
-    minute_matches = re.findall(GOAL_MINUTE_PATTERN, narrative_lower)
-    for minute_str in minute_matches:
+    # Use finditer to get match objects with positions
+    for match in re.finditer(GOAL_MINUTE_PATTERN, narrative_lower):
+        minute_str = match.group(1)
         try:
             claimed_minute = int(minute_str)
+
+            # P1 FIX: Check if this is actually a card/expulsion context, not a goal
+            # Get surrounding context (50 chars before and after the match)
+            context_start = max(0, match.start() - 50)
+            context_end = min(len(narrative_lower), match.end() + 50)
+            context = narrative_lower[context_start:context_end]
+
+            # Skip if card/expulsion keywords are nearby (false positive)
+            is_card_context = any(kw in context for kw in CARD_CONTEXT_KEYWORDS)
+            if is_card_context:
+                logger.debug(
+                    f"[CLAIM_VALIDATOR] Skipping minute {claimed_minute} - card/expulsion context"
+                )
+                continue
+
             # Allow ±2 minute tolerance
             if not any(abs(claimed_minute - actual) <= 2 for actual in goal_minutes):
                 errors.append({

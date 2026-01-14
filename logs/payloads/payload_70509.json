@@ -1,0 +1,46 @@
+{
+  "match_id": 70509,
+  "date": "2026-01-13T20:00:00",
+  "home_team": "Cultural Leonesa",
+  "away_team": "Athletic Club",
+  "home_team_id": 725,
+  "away_team_id": 531,
+  "home_goals": 3,
+  "away_goals": 4,
+  "league_name": "Copa del Rey",
+  "venue": {
+    "city": "Leon",
+    "name": "Estadio Reino de León"
+  },
+  "events": [
+    {"type": "Goal", "assist": "V. Garcia", "detail": "Normal Goal", "minute": 16, "team_id": 725, "team_name": "Cultural Leonesa", "player_name": "I. Calero"},
+    {"type": "Goal", "assist": "A. Gorosabel", "detail": "Normal Goal", "minute": 26, "team_id": 531, "team_name": "Athletic Club", "player_name": "G. Guruzeta"},
+    {"type": "Goal", "assist": "M. Justo", "detail": "Normal Goal", "minute": 27, "team_id": 725, "team_name": "Cultural Leonesa", "player_name": "I. Calero"},
+    {"type": "Goal", "assist": "I. Ruiz de Galarreta", "detail": "Normal Goal", "minute": 38, "team_id": 531, "team_name": "Athletic Club", "player_name": "G. Guruzeta"},
+    {"type": "Goal", "detail": "Penalty", "minute": 41, "team_id": 725, "team_name": "Cultural Leonesa", "player_name": "R. Sobrino"},
+    {"type": "Goal", "detail": "Penalty", "minute": 45, "team_id": 531, "team_name": "Athletic Club", "player_name": "O. Sancet", "extra_minute": 3},
+    {"type": "Goal", "detail": "Penalty", "minute": 104, "team_id": 531, "team_name": "Athletic Club", "player_name": "U. Gomez"},
+    {"type": "Card", "detail": "Red Card", "minute": 56, "team_id": 531, "team_name": "Athletic Club", "player_name": "A. Paredes"},
+    {"type": "Card", "detail": "Yellow Card", "minute": 62, "team_id": 531, "team_name": "Athletic Club", "player_name": "O. Sancet"},
+    {"type": "Card", "detail": "Yellow Card", "minute": 64, "team_id": 725, "team_name": "Cultural Leonesa", "player_name": "M. Diallo Selu"}
+  ],
+  "stats": {
+    "home": {
+      "total_shots": 5,
+      "ball_possession": 59.0,
+      "shots_on_goal": 3
+    },
+    "away": {
+      "total_shots": 7,
+      "ball_possession": 41.0,
+      "shots_on_goal": 4
+    }
+  },
+  "prediction": {
+    "correct": false,
+    "confidence": 0.5288,
+    "probabilities": {"away": 0.2918, "draw": 0.1794, "home": 0.5288},
+    "predicted_result": "home"
+  },
+  "market_odds": {}
+}

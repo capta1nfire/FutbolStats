@@ -453,7 +453,7 @@ def parse_json_response(text: str) -> Optional[dict]:
         return None
 
 
-def _normalize_narrative_object(narrative: dict) -> tuple[dict, dict | None]:
+def _normalize_narrative_object(narrative: dict) -> tuple[dict, Optional[dict]]:
     """
     Normalize malformed narrative objects from LLM.
 

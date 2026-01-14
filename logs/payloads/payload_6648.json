@@ -1,0 +1,43 @@
+{
+  "match_id": 6648,
+  "date": "2026-01-13T19:30:00",
+  "home_team": "Borussia Dortmund",
+  "away_team": "Werder Bremen",
+  "home_team_id": 165,
+  "away_team_id": 162,
+  "home_goals": 3,
+  "away_goals": 0,
+  "league_name": "Bundesliga",
+  "venue": {
+    "city": "Dortmund",
+    "name": "Signal Iduna Park"
+  },
+  "events": [
+    {"type": "Goal", "assist": "J. Ryerson", "detail": "Normal Goal", "minute": 11, "team_id": 165, "team_name": "Borussia Dortmund", "player_name": "N. Schlotterbeck"},
+    {"type": "Goal", "assist": "F. Nmecha", "detail": "Normal Goal", "minute": 76, "team_id": 165, "team_name": "Borussia Dortmund", "player_name": "M. Sabitzer"},
+    {"type": "Goal", "assist": "J. Bellingham", "detail": "Normal Goal", "minute": 83, "team_id": 165, "team_name": "Borussia Dortmund", "player_name": "S. Guirassy"},
+    {"type": "Card", "detail": "Yellow Card", "minute": 23, "team_id": 165, "team_name": "Borussia Dortmund", "player_name": "N. Sule"},
+    {"type": "Card", "detail": "Yellow Card", "minute": 54, "team_id": 165, "team_name": "Borussia Dortmund", "player_name": "M. Sabitzer"}
+  ],
+  "stats": {
+    "home": {
+      "expected_goals": 2.02,
+      "ball_possession": 55.0,
+      "total_shots": 12,
+      "shots_on_goal": 6
+    },
+    "away": {
+      "expected_goals": 0.33,
+      "ball_possession": 45.0,
+      "total_shots": 8,
+      "shots_on_goal": 2
+    }
+  },
+  "prediction": {
+    "correct": true,
+    "confidence": 0.6165,
+    "probabilities": {"away": 0.1834, "draw": 0.2001, "home": 0.6165},
+    "predicted_result": "home"
+  },
+  "market_odds": {"away": 7.5, "draw": 5.25, "home": 1.36}
+}
