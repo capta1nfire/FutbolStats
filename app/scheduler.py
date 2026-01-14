@@ -3042,6 +3042,100 @@ def _log_scheduler_jobs():
     )
 
 
+async def update_predictions_health_metrics():
+    """
+    Update predictions health Prometheus gauges for Grafana alerting.
+
+    Runs every 5 minutes to ensure metrics are fresh even if nobody opens
+    /dashboard/ops.json. This enables reliable alerting on:
+      (predictions_hours_since_last_saved > 12) AND (predictions_ns_next_48h > 0)
+
+    Emits gauges:
+    - predictions_hours_since_last_saved
+    - predictions_ns_next_48h
+    - predictions_ns_missing_next_48h
+    - predictions_coverage_ns_pct
+    - predictions_health_status (0=ok, 1=warn, 2=red)
+    """
+    from sqlalchemy import text
+    from app.database import AsyncSessionLocal
+    from app.telemetry.metrics import set_predictions_health_metrics
+
+    try:
+        async with AsyncSessionLocal() as session:
+            now = datetime.utcnow()
+
+            # 1) Hours since last prediction saved
+            res = await session.execute(
+                text("SELECT MAX(created_at) FROM predictions")
+            )
+            last_pred_at = res.scalar()
+
+            hours_since_last = None
+            if last_pred_at:
+                delta = now - last_pred_at
+                hours_since_last = round(delta.total_seconds() / 3600, 2)
+
+            # 2) NS matches in next 48h
+            res = await session.execute(
+                text("""
+                    SELECT COUNT(*) FROM matches
+                    WHERE status = 'NS'
+                      AND date > NOW()
+                      AND date <= NOW() + INTERVAL '48 hours'
+                """)
+            )
+            ns_next_48h = int(res.scalar() or 0)
+
+            # 3) NS matches missing prediction
+            res = await session.execute(
+                text("""
+                    SELECT COUNT(*) FROM matches m
+                    WHERE m.status = 'NS'
+                      AND m.date > NOW()
+                      AND m.date <= NOW() + INTERVAL '48 hours'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM predictions p WHERE p.match_id = m.id
+                      )
+                """)
+            )
+            ns_missing = int(res.scalar() or 0)
+
+            # 4) Coverage percentage
+            coverage_pct = 100.0
+            if ns_next_48h > 0:
+                coverage_pct = round(((ns_next_48h - ns_missing) / ns_next_48h) * 100, 1)
+
+            # 5) Determine status
+            status = "ok"
+            if ns_next_48h == 0:
+                status = "ok"  # No upcoming matches, no concern
+            elif hours_since_last and hours_since_last > 12:
+                status = "warn"
+            elif coverage_pct < 50:
+                status = "red"
+            elif coverage_pct < 80:
+                status = "warn"
+
+            # Emit metrics
+            set_predictions_health_metrics(
+                hours_since_last=hours_since_last,
+                ns_next_48h=ns_next_48h,
+                ns_missing_next_48h=ns_missing,
+                coverage_ns_pct=coverage_pct,
+                status=status,
+            )
+
+            hours_str = f"{hours_since_last:.1f}" if hours_since_last else "N/A"
+            logger.info(
+                f"[METRICS] predictions gauges updated: hours={hours_str}, "
+                f"ns_48h={ns_next_48h}, missing={ns_missing}, coverage={coverage_pct}%, status={status}"
+            )
+
+    except Exception as e:
+        logger.error(f"[METRICS] Failed to update predictions health metrics: {e}")
+
+
 async def scheduler_heartbeat():
     """Periodic heartbeat to confirm scheduler is running and log job status."""
     _log_scheduler_jobs()
@@ -3416,6 +3510,16 @@ def start_scheduler(ml_engine):
         trigger=IntervalTrigger(minutes=30),
         id="scheduler_heartbeat",
         name="Scheduler Heartbeat (every 30 min)",
+        replace_existing=True,
+    )
+
+    # Predictions Health Metrics: Every 5 minutes, update Prometheus gauges for alerting
+    # Ensures metrics are fresh even if nobody opens /dashboard/ops.json
+    scheduler.add_job(
+        update_predictions_health_metrics,
+        trigger=IntervalTrigger(minutes=5),
+        id="predictions_health_metrics",
+        name="Predictions Health Metrics (every 5 min)",
         replace_existing=True,
     )
 
