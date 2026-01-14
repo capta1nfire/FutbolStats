@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     SMTP_TO_EMAIL: str = "capta1nfire@me.com"
     ALERT_COOLDOWN_MINUTES: int = 60  # Min time between same alert type
 
+    # OPS Console Session Auth (web login)
+    OPS_ADMIN_PASSWORD: str = ""  # Password for /ops/login (empty = login disabled)
+    OPS_SESSION_SECRET: str = ""  # Secret key for session signing (required in prod)
+    OPS_SESSION_TTL_HOURS: int = 8  # Session duration
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

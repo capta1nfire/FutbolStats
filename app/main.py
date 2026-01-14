@@ -664,6 +664,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Add session middleware for OPS console login
+# Secret key is required in production; fallback to random for dev
+_session_secret = settings.OPS_SESSION_SECRET or os.urandom(32).hex()
+if not settings.OPS_SESSION_SECRET and os.getenv("RAILWAY_PROJECT_ID"):
+    logger.warning("[SECURITY] OPS_SESSION_SECRET not set in production - sessions will be invalidated on restart")
+
+from starlette.middleware.sessions import SessionMiddleware
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=_session_secret,
+    session_cookie="ops_session",
+    max_age=settings.OPS_SESSION_TTL_HOURS * 3600,
+    same_site="lax",
+    https_only=os.getenv("RAILWAY_PROJECT_ID") is not None,  # Secure cookie in prod
+)
+
 # Add rate limiting
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -3535,25 +3551,60 @@ def _get_cached_pit_data() -> dict:
     return data
 
 
-def _verify_dashboard_token(request: Request) -> bool:
+def _has_valid_session(request: Request) -> bool:
     """
-    Verify dashboard access token.
+    Check if request has a valid OPS session cookie.
 
-    SECURITY: In production, only accepts token via X-Dashboard-Token header.
-    Query params are only allowed in development (token leaks in logs/browser history).
+    Returns True if session contains ops_authenticated=True and is not expired.
     """
-    token = settings.DASHBOARD_TOKEN
-    if not token:  # Empty token = dashboard disabled
+    try:
+        session = request.session
+        if not session.get("ops_authenticated"):
+            return False
+
+        # Check expiration
+        issued_at = session.get("issued_at")
+        if issued_at:
+            from datetime import datetime
+            issued = datetime.fromisoformat(issued_at)
+            ttl_hours = settings.OPS_SESSION_TTL_HOURS
+            if datetime.utcnow() - issued > timedelta(hours=ttl_hours):
+                return False
+
+        return True
+    except Exception:
         return False
 
-    # Check header first
-    provided = request.headers.get("X-Dashboard-Token")
 
-    # Query param fallback ONLY in development (Railway sets RAILWAY_PROJECT_ID in prod)
-    if not provided and not os.getenv("RAILWAY_PROJECT_ID"):
+def _verify_dashboard_token(request: Request) -> bool:
+    """
+    Verify dashboard access via token OR session.
+
+    Auth methods (in order of preference):
+    1. X-Dashboard-Token header (for services/automation)
+    2. Valid session cookie (for web browser access)
+    3. Query param token (dev only, disabled in prod)
+
+    SECURITY: In production, query params are disabled.
+    """
+    # Method 1: Check header token
+    token = settings.DASHBOARD_TOKEN
+    if token:
+        provided = request.headers.get("X-Dashboard-Token")
+        if provided == token:
+            return True
+
+    # Method 2: Check valid session
+    if _has_valid_session(request):
+        return True
+
+    # Method 3: Query param fallback ONLY in development
+    if token and not os.getenv("RAILWAY_PROJECT_ID"):
         provided = request.query_params.get("token")
+        if provided == token:
+            return True
 
-    return provided == token
+    return False
 
 
 def _get_dashboard_token_from_request(request: Request) -> str | None:
@@ -3579,15 +3630,26 @@ def _verify_debug_token(request: Request) -> None:
     """
     Verify dashboard token for debug endpoints. Raises HTTPException if invalid.
 
-    SECURITY: Same rules as _verify_dashboard_token - no query params in prod.
+    Accepts either:
+    - X-Dashboard-Token header
+    - Valid session cookie
+
+    SECURITY: Query params disabled in prod.
     """
+    # Check session first (for browser access)
+    if _has_valid_session(request):
+        return
+
+    # Then check header token
     expected = settings.DASHBOARD_TOKEN
     if not expected:
         raise HTTPException(status_code=503, detail="Dashboard token not configured")
 
     provided = _get_dashboard_token_from_request(request)
-    if not provided or provided != expected:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    if provided and provided == expected:
+        return
+
+    raise HTTPException(status_code=401, detail="Invalid token")
 
 
 def _render_pit_dashboard_html(data: dict) -> str:
@@ -4181,18 +4243,13 @@ async def pit_dashboard_html(request: Request):
     PIT Dashboard - Visual overview of Point-In-Time evaluation status.
 
     Reads from logs/ files only (no DB queries).
-    Protected by X-Dashboard-Token header (preferred) or ?token= query param.
-
-    SECURITY NOTE: Prefer header over query param in production.
-    Query params may be logged in server access logs and browser history.
+    Auth: session cookie (web) or X-Dashboard-Token header (API).
     """
-    from fastapi.responses import HTMLResponse
+    from fastapi.responses import HTMLResponse, RedirectResponse
 
     if not _verify_dashboard_token(request):
-        raise HTTPException(
-            status_code=401,
-            detail="Dashboard access requires valid token. Set DASHBOARD_TOKEN env var and provide via X-Dashboard-Token header or ?token= param.",
-        )
+        # Redirect to login for better UX
+        return RedirectResponse(url="/ops/login", status_code=302)
 
     data = await _get_cached_pit_data_async()
     html = _render_pit_dashboard_html(data)
@@ -6832,6 +6889,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
           <a class="nav-link" data-path="/dashboard/pit" href="/dashboard/pit">PIT</a>
           <a class="nav-link" data-path="/dashboard/ops/history" href="/dashboard/ops/history">History</a>
           <a class="nav-link" data-path="/dashboard/ops/logs" href="/dashboard/ops/logs">Logs (debug)</a>
+          <a class="nav-link" href="/ops/logout" style="margin-left: auto; color: #f87171;">Logout</a>
           <div class="json-dropdown">
             <span class="json-dropdown-btn">JSON ▾</span>
             <div class="json-dropdown-content">
@@ -7046,12 +7104,13 @@ async def ops_dashboard_html(request: Request):
     """
     Ops Dashboard - Monitoreo en vivo del backend (DB-backed).
 
-    Protegido por X-Dashboard-Token (preferido) o ?token=.
+    Auth: session cookie (web) or X-Dashboard-Token header (API).
     """
-    from fastapi.responses import HTMLResponse
+    from fastapi.responses import HTMLResponse, RedirectResponse
 
     if not _verify_dashboard_token(request):
-        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+        # Redirect to login for better UX (instead of 401)
+        return RedirectResponse(url="/ops/login", status_code=302)
 
     data = await _get_cached_ops_data()
 
@@ -7831,13 +7890,197 @@ async def ops_history_html(request: Request, days: int = 30):
     return HTMLResponse(content=html)
 
 
+# =============================================================================
+# OPS CONSOLE LOGIN / LOGOUT
+# =============================================================================
+
+
+def _render_login_page(error: str = "") -> str:
+    """Render the OPS console login page HTML."""
+    error_html = f'<div class="error">{error}</div>' if error else ""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OPS Console Login</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .login-container {{
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }}
+        h1 {{
+            color: #fff;
+            text-align: center;
+            margin-bottom: 8px;
+            font-size: 24px;
+        }}
+        .subtitle {{
+            color: rgba(255, 255, 255, 0.6);
+            text-align: center;
+            margin-bottom: 32px;
+            font-size: 14px;
+        }}
+        .error {{
+            background: rgba(239, 68, 68, 0.2);
+            border: 1px solid rgba(239, 68, 68, 0.5);
+            color: #fca5a5;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            text-align: center;
+        }}
+        .form-group {{
+            margin-bottom: 20px;
+        }}
+        label {{
+            display: block;
+            color: rgba(255, 255, 255, 0.8);
+            margin-bottom: 8px;
+            font-size: 14px;
+        }}
+        input[type="password"] {{
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 16px;
+            transition: border-color 0.2s;
+        }}
+        input[type="password"]:focus {{
+            outline: none;
+            border-color: #3b82f6;
+        }}
+        button {{
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }}
+        button:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+        }}
+        .footer {{
+            text-align: center;
+            margin-top: 24px;
+            color: rgba(255, 255, 255, 0.4);
+            font-size: 12px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h1>FutbolStats OPS</h1>
+        <p class="subtitle">Admin Console</p>
+        {error_html}
+        <form method="POST" action="/ops/login">
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required autofocus>
+            </div>
+            <button type="submit">Sign In</button>
+        </form>
+        <p class="footer">Secure access only</p>
+    </div>
+</body>
+</html>"""
+
+
+@app.get("/ops/login")
+async def ops_login_page(request: Request, error: str = ""):
+    """Display the OPS console login form."""
+    from fastapi.responses import HTMLResponse, RedirectResponse
+
+    # If already logged in, redirect to dashboard
+    if _has_valid_session(request):
+        return RedirectResponse(url="/dashboard/ops", status_code=302)
+
+    # Check if login is enabled
+    if not settings.OPS_ADMIN_PASSWORD:
+        raise HTTPException(
+            status_code=503,
+            detail="OPS login disabled. Set OPS_ADMIN_PASSWORD env var."
+        )
+
+    return HTMLResponse(content=_render_login_page(error))
+
+
+@app.post("/ops/login")
+@limiter.limit("10/minute")
+async def ops_login_submit(request: Request):
+    """Process OPS console login."""
+    from fastapi.responses import HTMLResponse, RedirectResponse
+
+    # Check if login is enabled
+    if not settings.OPS_ADMIN_PASSWORD:
+        raise HTTPException(status_code=503, detail="OPS login disabled")
+
+    # Parse form data
+    form = await request.form()
+    password = form.get("password", "")
+
+    # Validate password
+    if password != settings.OPS_ADMIN_PASSWORD:
+        logger.warning(f"[OPS_LOGIN] Failed login attempt from {request.client.host}")
+        return HTMLResponse(
+            content=_render_login_page("Invalid password"),
+            status_code=401
+        )
+
+    # Create session
+    request.session["ops_authenticated"] = True
+    request.session["issued_at"] = datetime.utcnow().isoformat()
+    logger.info(f"[OPS_LOGIN] Successful login from {request.client.host}")
+
+    # Redirect to dashboard
+    return RedirectResponse(url="/dashboard/ops", status_code=302)
+
+
+@app.get("/ops/logout")
+async def ops_logout(request: Request):
+    """Logout from OPS console."""
+    from fastapi.responses import RedirectResponse
+
+    # Clear session
+    request.session.clear()
+    logger.info(f"[OPS_LOGIN] Logout from {request.client.host}")
+
+    return RedirectResponse(url="/ops/login", status_code=302)
+
+
 @app.get("/dashboard")
 async def dashboard_home(request: Request):
     """Unified dashboard entrypoint (redirects to Ops)."""
     from fastapi.responses import RedirectResponse
 
     if not _verify_dashboard_token(request):
-        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+        # Redirect to login instead of 401 for better UX
+        return RedirectResponse(url="/ops/login", status_code=302)
 
     # Preserve token query param ONLY in development (not in prod - security risk)
     target = "/dashboard/ops"
