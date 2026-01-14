@@ -944,7 +944,7 @@ class FastPathService:
                     "draw": prediction.draw_prob,
                     "away": prediction.away_prob,
                 },
-                value_bet=prediction.value_bets[0] if prediction.value_bets else None,
+                value_bet=prediction.frozen_value_bets[0] if prediction.frozen_value_bets else None,
                 prediction_correct=(predicted_result == actual_result),
                 # P0/P1: League and team context for relative comparisons
                 league_context=league_context,
