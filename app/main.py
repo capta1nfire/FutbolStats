@@ -5967,18 +5967,18 @@ async def _load_ops_data() -> dict:
             GEMINI_PRICE_IN = 0.075   # $0.075 per 1M input tokens
             GEMINI_PRICE_OUT = 0.30   # $0.30 per 1M output tokens
 
-            # 24h metrics
+            # 24h metrics (includes 'ok' and legacy 'completed_sync' statuses)
             res_24h = await session.execute(
                 text(
                     """
                     SELECT
-                        COUNT(*) FILTER (WHERE llm_narrative_status = 'ok') AS ok_count,
+                        COUNT(*) AS ok_count,
                         COALESCE(SUM(llm_narrative_tokens_in), 0) AS tokens_in,
                         COALESCE(SUM(llm_narrative_tokens_out), 0) AS tokens_out
                     FROM post_match_audits
-                    WHERE llm_narrative_generated_at > NOW() - INTERVAL '24 hours'
-                      AND llm_narrative_model LIKE 'gemini%'
-                      AND llm_narrative_status = 'ok'
+                    WHERE llm_narrative_model LIKE 'gemini%'
+                      AND llm_narrative_status IN ('ok', 'completed_sync')
+                      AND created_at > NOW() - INTERVAL '24 hours'
                     """
                 )
             )
@@ -5993,13 +5993,13 @@ async def _load_ops_data() -> dict:
                 text(
                     """
                     SELECT
-                        COUNT(*) FILTER (WHERE llm_narrative_status = 'ok') AS ok_count,
+                        COUNT(*) AS ok_count,
                         COALESCE(SUM(llm_narrative_tokens_in), 0) AS tokens_in,
                         COALESCE(SUM(llm_narrative_tokens_out), 0) AS tokens_out
                     FROM post_match_audits
-                    WHERE llm_narrative_generated_at > NOW() - INTERVAL '7 days'
-                      AND llm_narrative_model LIKE 'gemini%'
-                      AND llm_narrative_status = 'ok'
+                    WHERE llm_narrative_model LIKE 'gemini%'
+                      AND llm_narrative_status IN ('ok', 'completed_sync')
+                      AND created_at > NOW() - INTERVAL '7 days'
                     """
                 )
             )

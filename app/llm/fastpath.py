@@ -684,14 +684,14 @@ class FastPathService:
                         if result.status == "COMPLETED":
                             _record_gemini_success()
                             llm_requests_total.labels(provider="gemini", status="ok").inc()
-                            audit.llm_narrative_status = "completed_sync"
+                            audit.llm_narrative_status = "ok"
                             audit.llm_narrative_request_id = f"gemini-{match.id}"
                             audit.llm_narrative_model = "gemini-2.0-flash"
-                            audit.llm_narrative_raw_output = result.text
-                            audit.llm_delay_time_ms = 0
-                            audit.llm_execution_time_ms = result.exec_ms
-                            audit.llm_tokens_input = result.tokens_in
-                            audit.llm_tokens_output = result.tokens_out
+                            audit.llm_narrative_generated_at = datetime.utcnow()
+                            audit.llm_narrative_delay_ms = 0
+                            audit.llm_narrative_exec_ms = result.exec_ms
+                            audit.llm_narrative_tokens_in = result.tokens_in
+                            audit.llm_narrative_tokens_out = result.tokens_out
                             enqueued += 1
                             logger.info(f"[FASTPATH] Gemini completed match {match.id} in {result.exec_ms}ms")
                         else:
