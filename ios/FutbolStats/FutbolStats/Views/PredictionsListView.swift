@@ -127,17 +127,10 @@ struct PredictionsListView: View {
 
     // MARK: - Date Selector
 
-    // Local calendar for UI display (day names, formatting)
+    // Local calendar for all date operations (user's timezone)
     private var localCalendar: Calendar {
         Calendar.current
     }
-
-    // UTC calendar for date operations (must match backend's UTC filtering)
-    private static var utcCalendar: Calendar = {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "UTC")!
-        return cal
-    }()
 
     private var dateSelector: some View {
         let _ = print("[Render] dateSelector body evaluated")
@@ -147,7 +140,7 @@ struct PredictionsListView: View {
                     ForEach(dateRange, id: \.self) { date in
                         DateCell(
                             date: date,
-                            isSelected: Self.utcCalendar.isDate(date, inSameDayAs: viewModel.selectedDate),
+                            isSelected: localCalendar.isDate(date, inSameDayAs: viewModel.selectedDate),
                             matchCount: viewModel.matchCount(for: date)
                         )
                         .id(date)
@@ -163,18 +156,18 @@ struct PredictionsListView: View {
                 .padding(.horizontal, 16)
             }
             .onAppear {
-                // Scroll to today (UTC)
-                proxy.scrollTo(Self.utcCalendar.startOfDay(for: Date()), anchor: .center)
+                // Scroll to today (local timezone)
+                proxy.scrollTo(localCalendar.startOfDay(for: Date()), anchor: .center)
             }
         }
         .padding(.bottom, 12)
     }
 
-    // 7 days before + today + 7 days ahead = 15 days total (matches competitor)
-    // Uses UTC calendar to match backend's date filtering
+    // 7 days before + today + 7 days ahead = 15 days total
+    // Uses LOCAL calendar so "Today" matches user's timezone
     private var dateRange: [Date] {
-        let today = Self.utcCalendar.startOfDay(for: Date())
-        return (-7..<8).compactMap { Self.utcCalendar.date(byAdding: .day, value: $0, to: today) }
+        let today = localCalendar.startOfDay(for: Date())
+        return (-7..<8).compactMap { localCalendar.date(byAdding: .day, value: $0, to: today) }
     }
 
     // MARK: - No Matches View
@@ -198,7 +191,7 @@ struct PredictionsListView: View {
     private var formattedSelectedDate: String {
         let formatter = DateFormatter()
         formatter.dateFormat = "EEEE, MMM d"
-        formatter.timeZone = TimeZone(identifier: "UTC")  // Match data grouping
+        // Local timezone for user display
         return formatter.string(from: viewModel.selectedDate)
     }
 
@@ -306,43 +299,32 @@ struct DateCell: View {
     let isSelected: Bool
     let matchCount: Int
 
-    // UTC calendar to match backend's date grouping
-    private static var utcCalendar: Calendar = {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "UTC")!
-        return cal
-    }()
-
-    // "Today" in UTC (matches how data is grouped)
+    // Use local calendar for user-facing display (Today/Tomorrow in user's timezone)
     private var isToday: Bool {
-        Self.utcCalendar.isDateInToday(date)
+        Calendar.current.isDateInToday(date)
     }
 
-    // "Yesterday" in UTC
     private var isYesterday: Bool {
-        Self.utcCalendar.isDateInYesterday(date)
+        Calendar.current.isDateInYesterday(date)
     }
 
-    // Past dates use UTC for consistency
     private var isPast: Bool {
-        date < Self.utcCalendar.startOfDay(for: Date())
+        date < Calendar.current.startOfDay(for: Date())
     }
 
     private var dayName: String {
         if isToday { return "Today" }
         if isYesterday { return "Yest." }
-        // Use UTC timezone for day name display to match data grouping
         let formatter = DateFormatter()
         formatter.dateFormat = "EEE"
-        formatter.timeZone = TimeZone(identifier: "UTC")
+        // Local timezone for display
         return formatter.string(from: date)
     }
 
     private var dayNumber: String {
-        // Use UTC timezone for day number display to match data grouping
         let formatter = DateFormatter()
         formatter.dateFormat = "d"
-        formatter.timeZone = TimeZone(identifier: "UTC")
+        // Local timezone for display
         return formatter.string(from: date)
     }
 

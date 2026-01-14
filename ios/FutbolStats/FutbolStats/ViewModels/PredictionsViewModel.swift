@@ -51,22 +51,16 @@ class PredictionsViewModel: ObservableObject {
 
     private let apiClient = APIClient.shared
 
-    // Local calendar for UI display (user sees dates in their timezone)
+    // Local calendar for all date operations (user sees dates in their timezone)
+    // Matches are grouped by their kickoff time in user's local timezone
     private var localCalendar: Calendar {
         Calendar.current
     }
 
-    // UTC calendar for data operations (matches backend's UTC-based filtering)
-    private static var utcCalendar: Calendar = {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "UTC")!
-        return cal
-    }()
-
     init() {
-        // Initialize selectedDate to today in UTC (matches backend definition of "today")
-        // This ensures the date selector aligns with what the API returns
-        self.selectedDate = Self.utcCalendar.startOfDay(for: Date())
+        // Initialize selectedDate to today in LOCAL timezone
+        // User expects "Today" to mean their local day, not UTC
+        self.selectedDate = Calendar.current.startOfDay(for: Date())
     }
 
     // MARK: - Load Predictions
@@ -202,9 +196,10 @@ class PredictionsViewModel: ObservableObject {
         Task { await apiClient.warmupConcurrentConnection() }
 
         // Phase 1: Load priority data - BLOCKING for fast TTFC
-        // daysBack=1, daysAhead=1 → yesterday/today/tomorrow (3 calendar days)
+        // daysBack=2, daysAhead=2 → 5 calendar days to cover timezone edge cases
+        // (e.g., LA user at 6pm Jan 13 = UTC 2am Jan 14, needs Jan 13 local matches)
         async let opsTask: () = loadOpsProgress()
-        await loadPredictions(daysBack: 1, daysAhead: 1, mode: "priority", requestId: requestId)
+        await loadPredictions(daysBack: 2, daysAhead: 2, mode: "priority", requestId: requestId)
 
         // Wait for ops (non-blocking on error)
         _ = await opsTask
@@ -337,10 +332,10 @@ class PredictionsViewModel: ObservableObject {
     private var _predictionsByDay: [Int: [MatchPrediction]] = [:]  // dayKey -> predictions
 
     /// Compute day key from Date (YYYYMMDD as Int)
-    /// Uses UTC calendar to match backend's date filtering.
-    /// This ensures consistent day grouping with the API.
+    /// Uses LOCAL calendar so matches are grouped by their kickoff in user's timezone.
+    /// Example: A match at 2am UTC on Jan 14 appears on Jan 13 for LA user (6pm local).
     private func dayKey(from date: Date) -> Int {
-        let components = Self.utcCalendar.dateComponents([.year, .month, .day], from: date)
+        let components = localCalendar.dateComponents([.year, .month, .day], from: date)
         return components.year! * 10000 + components.month! * 100 + components.day!
     }
 
