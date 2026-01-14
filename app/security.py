@@ -1,6 +1,7 @@
 """Security middleware: Rate limiting and API key authentication."""
 
 import logging
+import os
 from typing import Optional
 
 from fastapi import HTTPException, Request, Security
@@ -12,6 +13,9 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+# Detect production environment (Railway sets RAILWAY_ENVIRONMENT)
+IS_PRODUCTION = os.getenv("RAILWAY_ENVIRONMENT") == "production" or os.getenv("RAILWAY_PROJECT_ID") is not None
 
 # Rate limiter using client IP
 limiter = Limiter(key_func=get_remote_address)
@@ -26,11 +30,19 @@ async def verify_api_key(
     """
     Verify API key for protected endpoints.
 
-    If API_KEY is not configured (empty), all requests are allowed.
-    This enables gradual rollout of authentication.
+    SECURITY: In production, API_KEY must be configured. Empty API_KEY
+    blocks all admin requests (fail-closed). In development, empty API_KEY
+    allows all requests for convenience.
     """
-    # If no API key is configured, allow all requests
+    # FAIL-CLOSED: In production, require API_KEY to be configured
     if not settings.API_KEY:
+        if IS_PRODUCTION:
+            logger.error("API_KEY not configured in production - blocking admin access")
+            raise HTTPException(
+                status_code=503,
+                detail="Service misconfigured. Admin access disabled.",
+            )
+        # Dev only: allow all if API_KEY not set
         return True
 
     if not api_key:

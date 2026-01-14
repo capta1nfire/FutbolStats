@@ -12,6 +12,7 @@ from app.etl.api_football import APIFootballProvider
 from app.etl.base import DataProvider, MatchData, TeamData
 from app.etl.competitions import COMPETITIONS, Competition
 from app.models import Match, OddsHistory, Team
+from app.telemetry.validators import validate_odds_1x2
 
 logger = logging.getLogger(__name__)
 
@@ -92,8 +93,11 @@ class ETLPipeline:
         if existing_match:
             # Update existing match
             existing_match.date = match_data.date
-            existing_match.home_goals = match_data.home_goals
-            existing_match.away_goals = match_data.away_goals
+            # Only update goals if new value is not None (don't overwrite valid data with None)
+            if match_data.home_goals is not None:
+                existing_match.home_goals = match_data.home_goals
+            if match_data.away_goals is not None:
+                existing_match.away_goals = match_data.away_goals
             # Only update stats if new data has actual content (don't overwrite with empty)
             if match_data.stats and match_data.stats != {}:
                 existing_match.stats = match_data.stats
@@ -115,35 +119,75 @@ class ETLPipeline:
             if match_data.venue_city and not existing_match.venue_city:
                 existing_match.venue_city = match_data.venue_city
 
-            # Check if odds have changed and save to history
+            # Validate and update odds (only if valid - don't write garbage to matches)
             odds_changed = False
             if match_data.odds_home is not None:
-                if existing_match.odds_home != match_data.odds_home:
-                    odds_changed = True
-                existing_match.odds_home = match_data.odds_home
-            if match_data.odds_draw is not None:
-                if existing_match.odds_draw != match_data.odds_draw:
-                    odds_changed = True
-                existing_match.odds_draw = match_data.odds_draw
-            if match_data.odds_away is not None:
-                if existing_match.odds_away != match_data.odds_away:
-                    odds_changed = True
-                existing_match.odds_away = match_data.odds_away
-
-            # Save odds snapshot if odds changed
-            if odds_changed and match_data.odds_home is not None:
-                existing_match.odds_recorded_at = datetime.utcnow()
-                await self._save_odds_history(
-                    existing_match.id,
-                    match_data.odds_home,
-                    match_data.odds_draw,
-                    match_data.odds_away,
+                validation = validate_odds_1x2(
+                    odds_home=match_data.odds_home,
+                    odds_draw=match_data.odds_draw,
+                    odds_away=match_data.odds_away,
+                    provider="api_football",
+                    record_metrics=True,
                 )
+                if validation.is_usable:
+                    # Only update if odds are valid
+                    if existing_match.odds_home != match_data.odds_home:
+                        odds_changed = True
+                    existing_match.odds_home = match_data.odds_home
+                    if match_data.odds_draw is not None:
+                        if existing_match.odds_draw != match_data.odds_draw:
+                            odds_changed = True
+                        existing_match.odds_draw = match_data.odds_draw
+                    if match_data.odds_away is not None:
+                        if existing_match.odds_away != match_data.odds_away:
+                            odds_changed = True
+                        existing_match.odds_away = match_data.odds_away
+
+                    # Save odds snapshot if odds changed
+                    if odds_changed:
+                        existing_match.odds_recorded_at = datetime.utcnow()
+                        await self._save_odds_history(
+                            existing_match.id,
+                            match_data.odds_home,
+                            match_data.odds_draw,
+                            match_data.odds_away,
+                        )
+                else:
+                    logger.warning(
+                        f"Rejecting invalid odds for match {existing_match.id}: "
+                        f"H={match_data.odds_home}, D={match_data.odds_draw}, A={match_data.odds_away} "
+                        f"violations={validation.violations}"
+                    )
 
             return existing_match
 
-        # Create new match
+        # Create new match - validate odds before including
         now = datetime.utcnow()
+        odds_home_validated = None
+        odds_draw_validated = None
+        odds_away_validated = None
+        odds_valid = False
+
+        if match_data.odds_home is not None:
+            validation = validate_odds_1x2(
+                odds_home=match_data.odds_home,
+                odds_draw=match_data.odds_draw,
+                odds_away=match_data.odds_away,
+                provider="api_football",
+                record_metrics=True,
+            )
+            if validation.is_usable:
+                odds_home_validated = match_data.odds_home
+                odds_draw_validated = match_data.odds_draw
+                odds_away_validated = match_data.odds_away
+                odds_valid = True
+            else:
+                logger.warning(
+                    f"Rejecting invalid odds for new match {match_data.external_id}: "
+                    f"H={match_data.odds_home}, D={match_data.odds_draw}, A={match_data.odds_away} "
+                    f"violations={validation.violations}"
+                )
+
         new_match = Match(
             external_id=match_data.external_id,
             date=match_data.date,
@@ -157,23 +201,23 @@ class ETLPipeline:
             status=match_data.status,
             match_type=match_data.match_type,
             match_weight=match_data.match_weight,
-            odds_home=match_data.odds_home,
-            odds_draw=match_data.odds_draw,
-            odds_away=match_data.odds_away,
-            odds_recorded_at=now if match_data.odds_home is not None else None,
+            odds_home=odds_home_validated,
+            odds_draw=odds_draw_validated,
+            odds_away=odds_away_validated,
+            odds_recorded_at=now if odds_valid else None,
             venue_name=match_data.venue_name,
             venue_city=match_data.venue_city,
         )
         self.session.add(new_match)
 
-        # Flush to get the ID, then save opening odds
-        if match_data.odds_home is not None:
+        # Flush to get the ID, then save opening odds (only if valid)
+        if odds_valid:
             await self.session.flush()
             await self._save_odds_history(
                 new_match.id,
-                match_data.odds_home,
-                match_data.odds_draw,
-                match_data.odds_away,
+                odds_home_validated,
+                odds_draw_validated,
+                odds_away_validated,
                 is_opening=True,
             )
 

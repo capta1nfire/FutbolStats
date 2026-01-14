@@ -3536,14 +3536,58 @@ def _get_cached_pit_data() -> dict:
 
 
 def _verify_dashboard_token(request: Request) -> bool:
-    """Verify dashboard access token."""
+    """
+    Verify dashboard access token.
+
+    SECURITY: In production, only accepts token via X-Dashboard-Token header.
+    Query params are only allowed in development (token leaks in logs/browser history).
+    """
     token = settings.DASHBOARD_TOKEN
     if not token:  # Empty token = dashboard disabled
         return False
 
-    # Check header first, then query param
-    provided = request.headers.get("X-Dashboard-Token") or request.query_params.get("token")
+    # Check header first
+    provided = request.headers.get("X-Dashboard-Token")
+
+    # Query param fallback ONLY in development (Railway sets RAILWAY_PROJECT_ID in prod)
+    if not provided and not os.getenv("RAILWAY_PROJECT_ID"):
+        provided = request.query_params.get("token")
+
     return provided == token
+
+
+def _get_dashboard_token_from_request(request: Request) -> str | None:
+    """
+    Extract dashboard token from request.
+
+    SECURITY: In production, only accepts token via X-Dashboard-Token header.
+    Query params are only allowed in development (token leaks in logs/browser history).
+    """
+    # Header is preferred method
+    token = request.headers.get("X-Dashboard-Token")
+
+    # Query param fallback ONLY in development
+    if not token and not os.getenv("RAILWAY_PROJECT_ID"):
+        from fastapi import Query
+        # Check if token was passed as query param
+        token = request.query_params.get("token")
+
+    return token
+
+
+def _verify_debug_token(request: Request) -> None:
+    """
+    Verify dashboard token for debug endpoints. Raises HTTPException if invalid.
+
+    SECURITY: Same rules as _verify_dashboard_token - no query params in prod.
+    """
+    expected = settings.DASHBOARD_TOKEN
+    if not expected:
+        raise HTTPException(status_code=503, detail="Dashboard token not configured")
+
+    provided = _get_dashboard_token_from_request(request)
+    if not provided or provided != expected:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 
 def _render_pit_dashboard_html(data: dict) -> str:
@@ -4961,12 +5005,11 @@ async def _calculate_fastpath_health(session) -> dict:
 
 @app.get("/dashboard/ops/fastpath_debug.json")
 async def fastpath_debug_endpoint(
-    token: str = Query(...),
+    request: Request,
     session: AsyncSession = Depends(get_async_session),
 ):
     """Debug endpoint to see skipped audits and their reasons."""
-    if token != settings.DASHBOARD_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    _verify_debug_token(request)
 
     try:
         # Get skipped audits from last 60 min
@@ -5029,8 +5072,8 @@ async def fastpath_debug_endpoint(
 
 @app.get("/dashboard/ops/llm_audit/{match_id}.json")
 async def llm_audit_endpoint(
+    request: Request,
     match_id: int,
-    token: str = Query(...),
     session: AsyncSession = Depends(get_async_session),
 ):
     """
@@ -5039,8 +5082,7 @@ async def llm_audit_endpoint(
     Returns the exact payload sent to Qwen for a specific match,
     allowing quick RCA for hallucination issues.
     """
-    if token != settings.DASHBOARD_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    _verify_debug_token(request)
 
     try:
         # Get audit with traceability data
@@ -5102,13 +5144,12 @@ async def llm_audit_endpoint(
 
 @app.get("/dashboard/ops/match_data.json")
 async def match_data_debug_endpoint(
-    token: str = Query(...),
+    request: Request,
     match_id: int = Query(...),
     session: AsyncSession = Depends(get_async_session),
 ):
     """Debug endpoint to see exact match_data sent to LLM."""
-    if token != settings.DASHBOARD_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    _verify_debug_token(request)
 
     try:
         match = await session.get(Match, match_id)
@@ -5185,7 +5226,7 @@ async def match_data_debug_endpoint(
 
 @app.get("/dashboard/ops/stats_rca.json")
 async def stats_rca_endpoint(
-    token: str = Query(...),
+    request: Request,
     match_id: int = Query(...),
     session: AsyncSession = Depends(get_async_session),
 ):
@@ -5193,8 +5234,7 @@ async def stats_rca_endpoint(
     RCA endpoint: fetch stats from API-Football and show full diagnostic.
     Tests: API response, parsing, persistence.
     """
-    if token != settings.DASHBOARD_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    _verify_debug_token(request)
 
     from app.etl.api_football import APIFootballProvider
 
@@ -5325,7 +5365,7 @@ async def stats_rca_endpoint(
 
 @app.get("/dashboard/ops/bulk_stats_backfill.json")
 async def bulk_stats_backfill_endpoint(
-    token: str = Query(...),
+    request: Request,
     since_date: str = Query("2026-01-03", description="Start date YYYY-MM-DD"),
     limit: int = Query(50, description="Max matches to process per call"),
     dry_run: bool = Query(True, description="If true, only list matches without fetching"),
@@ -5335,8 +5375,7 @@ async def bulk_stats_backfill_endpoint(
     Bulk backfill stats for all FT matches since a given date that are missing stats.
     Use dry_run=true first to see how many matches need backfill.
     """
-    if token != settings.DASHBOARD_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    _verify_debug_token(request)
 
     from app.etl.api_football import APIFootballProvider
     from datetime import datetime
@@ -5464,7 +5503,7 @@ async def bulk_stats_backfill_endpoint(
 
 @app.get("/dashboard/ops/fetch_events.json")
 async def fetch_events_endpoint(
-    token: str = Query(...),
+    request: Request,
     match_id: int = Query(...),
     session: AsyncSession = Depends(get_async_session),
 ):
@@ -5472,8 +5511,7 @@ async def fetch_events_endpoint(
     Fetch events from API-Football for a specific match and persist.
     Used for testing/verification.
     """
-    if token != settings.DASHBOARD_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    _verify_debug_token(request)
 
     from app.etl.api_football import APIFootballProvider
     from app.llm.fastpath import FastPathService
@@ -5542,15 +5580,14 @@ async def fetch_events_endpoint(
 
 @app.get("/dashboard/ops/audit_metrics.json")
 async def audit_metrics_endpoint(
-    token: str = Query(...),
+    request: Request,
     session: AsyncSession = Depends(get_async_session),
 ):
     """
     Audit endpoint: cross-check dashboard metrics with direct DB queries.
     Returns raw query results for manual verification.
     """
-    if token != settings.DASHBOARD_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    _verify_debug_token(request)
 
     from sqlalchemy import text
 
@@ -5736,7 +5773,7 @@ async def audit_metrics_endpoint(
 
 @app.get("/dashboard/ops/predictions_performance.json")
 async def predictions_performance_endpoint(
-    token: str = Query(...),
+    request: Request,
     window_days: int = Query(default=7, ge=1, le=30),
     regenerate: bool = Query(default=False),
     session: AsyncSession = Depends(get_async_session),
@@ -5748,12 +5785,12 @@ async def predictions_performance_endpoint(
     Use this to distinguish variance from bugs.
 
     Args:
-        token: Dashboard auth token
         window_days: 7 or 14 (default 7)
         regenerate: If True, generates fresh report instead of returning cached
+
+    Auth: X-Dashboard-Token header required.
     """
-    if token != settings.DASHBOARD_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    _verify_debug_token(request)
 
     from app.ml.performance_metrics import (
         generate_performance_report,
@@ -7802,11 +7839,12 @@ async def dashboard_home(request: Request):
     if not _verify_dashboard_token(request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
-    # Preserve token query param if present (convenience). Prefer header in production.
-    token = request.query_params.get("token")
+    # Preserve token query param ONLY in development (not in prod - security risk)
     target = "/dashboard/ops"
-    if token:
-        target = f"{target}?token={token}"
+    if not os.getenv("RAILWAY_PROJECT_ID"):
+        token = request.query_params.get("token")
+        if token:
+            target = f"{target}?token={token}"
     return RedirectResponse(url=target, status_code=307)
 
 
@@ -8084,8 +8122,10 @@ async def migrate_fastpath_fields(
 from pathlib import Path
 from datetime import datetime as dt
 
-# Environment flag: DEBUG_LOG_ENABLED=true allows logging without token (dev mode)
+# Environment flag: DEBUG_LOG_ENABLED=true allows logging without token (dev mode ONLY)
+# SECURITY: In production (Railway), this flag is IGNORED - auth is always required
 _DEBUG_LOG_ENABLED = os.getenv("DEBUG_LOG_ENABLED", "false").lower() == "true"
+_IS_PRODUCTION = os.getenv("RAILWAY_PROJECT_ID") is not None
 
 
 @app.post("/debug/log")
@@ -8094,15 +8134,19 @@ async def debug_log(request: Request):
     Receives performance logs from iOS instrumentation.
 
     Security:
-    - If DEBUG_LOG_ENABLED=true: allow without token (dev/debug mode)
-    - Otherwise: require valid X-Dashboard-Token (401 if missing/invalid)
+    - In production: always require valid X-Dashboard-Token (fail-closed)
+    - In development: DEBUG_LOG_ENABLED=true allows without token
 
     Rate limit: handled by global rate limiter
     """
-    # Auth check (unless debug mode enabled)
-    if not _DEBUG_LOG_ENABLED:
+    # SECURITY: In production, ALWAYS require auth (ignore DEBUG_LOG_ENABLED)
+    skip_auth = _DEBUG_LOG_ENABLED and not _IS_PRODUCTION
+    if not skip_auth:
         token = request.headers.get("X-Dashboard-Token")
         expected = os.getenv("DASHBOARD_TOKEN", "")
+        if not expected:
+            # Fail-closed: no token configured = deny all
+            return JSONResponse({"error": "service misconfigured"}, status_code=503)
         if not token or token != expected:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
 

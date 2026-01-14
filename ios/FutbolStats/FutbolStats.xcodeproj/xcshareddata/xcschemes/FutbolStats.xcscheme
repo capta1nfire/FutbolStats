@@ -50,12 +50,6 @@
             ReferencedContainer = "container:FutbolStats.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
-      <CommandLineArguments>
-         <CommandLineArgument
-            argument = "-dashboard_token ops_a94a1bce7e91f32847718e7e6870bf0d"
-            isEnabled = "YES">
-         </CommandLineArgument>
-      </CommandLineArguments>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"
