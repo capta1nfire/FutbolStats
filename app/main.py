@@ -580,19 +580,19 @@ async def _predictions_catchup_on_startup():
                 and ns_next_48h > 0
             )
 
+            hours_str = f"{hours_since_last:.1f}" if hours_since_last else "N/A"
+
             if not should_catchup:
                 logger.info(
                     f"[STARTUP] Predictions catch-up skipped: "
-                    f"hours_since_last={hours_since_last:.1f if hours_since_last else 'N/A'}, "
-                    f"ns_next_48h={ns_next_48h}"
+                    f"hours_since_last={hours_str}, ns_next_48h={ns_next_48h}"
                 )
                 return
 
             # 4) Trigger catch-up
             logger.warning(
                 f"[OPS_ALERT] predictions catch-up on startup triggered: "
-                f"hours_since_last={hours_since_last:.1f if hours_since_last else 'N/A'}, "
-                f"ns_next_48h={ns_next_48h}"
+                f"hours_since_last={hours_str}, ns_next_48h={ns_next_48h}"
             )
 
             # Use same logic as /dashboard/predictions/trigger endpoint
