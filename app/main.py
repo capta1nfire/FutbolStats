@@ -4126,10 +4126,51 @@ async def _calculate_telemetry_summary(session) -> dict:
     except Exception:
         pass
 
+    # 4) Odds desync: matches with live snapshot but NULL odds in matches table
+    # P1 sensor (2026-01-14): Detects when write-through fails silently
+    odds_desync_6h = 0
+    odds_desync_90m = 0
+    try:
+        # 6h window - early warning
+        res = await session.execute(
+            text("""
+                SELECT COUNT(DISTINCT m.id)
+                FROM matches m
+                JOIN odds_snapshots os ON os.match_id = m.id
+                WHERE m.status = 'NS'
+                  AND m.date BETWEEN NOW() AND NOW() + INTERVAL '6 hours'
+                  AND os.odds_freshness = 'live'
+                  AND os.snapshot_type = 'lineup_confirmed'
+                  AND os.snapshot_at >= NOW() - INTERVAL '120 minutes'
+                  AND (m.odds_home IS NULL OR m.odds_draw IS NULL OR m.odds_away IS NULL)
+            """)
+        )
+        odds_desync_6h = int(res.scalar() or 0)
+
+        # 90m window - critical (near kickoff)
+        res = await session.execute(
+            text("""
+                SELECT COUNT(DISTINCT m.id)
+                FROM matches m
+                JOIN odds_snapshots os ON os.match_id = m.id
+                WHERE m.status = 'NS'
+                  AND m.date BETWEEN NOW() AND NOW() + INTERVAL '90 minutes'
+                  AND os.odds_freshness = 'live'
+                  AND os.snapshot_type = 'lineup_confirmed'
+                  AND os.snapshot_at >= NOW() - INTERVAL '120 minutes'
+                  AND (m.odds_home IS NULL OR m.odds_draw IS NULL OR m.odds_away IS NULL)
+            """)
+        )
+        odds_desync_90m = int(res.scalar() or 0)
+    except Exception:
+        pass  # Table/column may not exist
+
     # Determine status
-    if tainted_matches_24h > 0 or quarantined_odds_24h > 0:
+    # RED: desync near kickoff (90m) OR tainted/quarantined
+    # WARN: desync in 6h window OR unmapped entities
+    if odds_desync_90m > 0 or tainted_matches_24h > 0 or quarantined_odds_24h > 0:
         status = "RED"
-    elif unmapped_entities_24h > 0:
+    elif odds_desync_6h > 0 or unmapped_entities_24h > 0:
         status = "WARN"
     else:
         status = "OK"
@@ -4153,6 +4194,8 @@ async def _calculate_telemetry_summary(session) -> dict:
             "quarantined_odds_24h": quarantined_odds_24h,
             "tainted_matches_24h": tainted_matches_24h,
             "unmapped_entities_24h": unmapped_entities_24h,
+            "odds_desync_6h": odds_desync_6h,
+            "odds_desync_90m": odds_desync_90m,
         },
         "links": links,
     }
