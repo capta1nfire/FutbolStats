@@ -198,6 +198,7 @@ struct PredictionsListView: View {
     private var formattedSelectedDate: String {
         let formatter = DateFormatter()
         formatter.dateFormat = "EEEE, MMM d"
+        formatter.timeZone = TimeZone(identifier: "UTC")  // Match data grouping
         return formatter.string(from: viewModel.selectedDate)
     }
 
@@ -305,29 +306,43 @@ struct DateCell: View {
     let isSelected: Bool
     let matchCount: Int
 
+    // UTC calendar to match backend's date grouping
+    private static var utcCalendar: Calendar = {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        return cal
+    }()
+
+    // "Today" in UTC (matches how data is grouped)
     private var isToday: Bool {
-        Calendar.current.isDateInToday(date)
+        Self.utcCalendar.isDateInToday(date)
     }
 
+    // "Yesterday" in UTC
     private var isYesterday: Bool {
-        Calendar.current.isDateInYesterday(date)
+        Self.utcCalendar.isDateInYesterday(date)
     }
 
+    // Past dates use UTC for consistency
     private var isPast: Bool {
-        date < Calendar.current.startOfDay(for: Date())
+        date < Self.utcCalendar.startOfDay(for: Date())
     }
 
     private var dayName: String {
         if isToday { return "Today" }
         if isYesterday { return "Yest." }
+        // Use UTC timezone for day name display to match data grouping
         let formatter = DateFormatter()
         formatter.dateFormat = "EEE"
+        formatter.timeZone = TimeZone(identifier: "UTC")
         return formatter.string(from: date)
     }
 
     private var dayNumber: String {
+        // Use UTC timezone for day number display to match data grouping
         let formatter = DateFormatter()
         formatter.dateFormat = "d"
+        formatter.timeZone = TimeZone(identifier: "UTC")
         return formatter.string(from: date)
     }
 
