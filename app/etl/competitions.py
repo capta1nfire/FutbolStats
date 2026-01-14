@@ -193,6 +193,63 @@ ARGENTINA_PRIMERA = Competition(
     priority=Priority.MEDIUM,
 )
 
+# LATAM - Pack2 (Domestic leagues)
+COLOMBIA_PRIMERA_A = Competition(
+    league_id=239,
+    name="Colombia Primera A",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
+ECUADOR_LIGA_PRO = Competition(
+    league_id=242,
+    name="Ecuador Liga Pro",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
+PARAGUAY_PRIMERA = Competition(
+    league_id=250,  # Apertura - API-Football uses same ID for both tournaments
+    name="Paraguay Primera División",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
+CHILE_PRIMERA = Competition(
+    league_id=265,
+    name="Chile Primera División",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
+URUGUAY_PRIMERA = Competition(
+    league_id=268,  # Apertura - API-Football uses same ID for both tournaments
+    name="Uruguay Primera División",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
+PERU_PRIMERA = Competition(
+    league_id=281,
+    name="Perú Liga 1",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
+VENEZUELA_PRIMERA = Competition(
+    league_id=299,
+    name="Venezuela Primera División",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
+BOLIVIA_PRIMERA = Competition(
+    league_id=344,
+    name="Bolivia Primera División",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
 # CONMEBOL (Sudamérica)
 CONMEBOL_LIBERTADORES = Competition(
     league_id=13,
@@ -237,6 +294,14 @@ COMPETITIONS: dict[int, Competition] = {
         BRAZIL_SERIE_A,
         MEXICO_LIGA_MX,
         ARGENTINA_PRIMERA,
+        COLOMBIA_PRIMERA_A,
+        ECUADOR_LIGA_PRO,
+        PARAGUAY_PRIMERA,
+        CHILE_PRIMERA,
+        URUGUAY_PRIMERA,
+        PERU_PRIMERA,
+        VENEZUELA_PRIMERA,
+        BOLIVIA_PRIMERA,
         CONMEBOL_LIBERTADORES,
         CONMEBOL_SUDAMERICANA,
     ]
