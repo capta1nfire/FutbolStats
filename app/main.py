@@ -25,7 +25,7 @@ from app.features import FeatureEngineer
 from app.ml import XGBoostEngine
 from app.ml.persistence import load_active_model, persist_model_snapshot
 from app.models import Match, OddsHistory, PITReport, PostMatchAudit, Prediction, PredictionOutcome, Team, TeamAdjustment
-from app.scheduler import start_scheduler, stop_scheduler, get_last_sync_time, get_sync_leagues, SYNC_LEAGUES
+from app.scheduler import start_scheduler, stop_scheduler, get_last_sync_time, get_sync_leagues, SYNC_LEAGUES, global_sync_window
 from app.security import limiter, verify_api_key
 
 # Configure logging
@@ -881,6 +881,41 @@ async def etl_sync_historical(
         return result
     finally:
         await provider.close()
+
+
+@app.post("/etl/sync-window")
+@limiter.limit("5/minute")
+async def etl_sync_window(
+    request: Request,
+    days_ahead: int = 10,
+    days_back: int = 1,
+    _: bool = Depends(verify_api_key),
+):
+    """
+    Sync fixtures by date window (not by season).
+
+    This endpoint triggers the global_sync_window job which loads fixtures
+    for a range of dates regardless of season. Useful for loading LATAM 2026
+    fixtures when CURRENT_SEASON is still set to 2025.
+
+    Args:
+        days_ahead: Days ahead to sync (default: 10)
+        days_back: Days back to sync (default: 1)
+
+    Requires API key authentication.
+    """
+    logger.info(f"[ETL] sync-window request: days_back={days_back}, days_ahead={days_ahead}")
+
+    result = await global_sync_window(days_ahead=days_ahead, days_back=days_back)
+
+    return {
+        "status": "ok",
+        "matches_synced": result.get("matches_synced", 0),
+        "days_processed": result.get("days_processed", 0),
+        "window": result.get("window", {}),
+        "by_date": result.get("by_date", {}),
+        "error": result.get("error"),
+    }
 
 
 @app.post("/model/train", response_model=TrainResponse)
