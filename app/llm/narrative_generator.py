@@ -368,10 +368,113 @@ def parse_json_response(text: str) -> Optional[dict]:
         return json.loads(json_text)
     except json.JSONDecodeError as e:
         logger.warning(f"JSON parse failed: {e}")
+
+        # Try to fix unescaped quotes inside string values
+        # This is a common LLM issue where quotes like "team name" appear unescaped
+        fixed_text = _fix_unescaped_quotes(json_text)
+        if fixed_text != json_text:
+            try:
+                result = json.loads(fixed_text)
+                logger.info("JSON parsed successfully after fixing unescaped quotes")
+                return result
+            except json.JSONDecodeError as e2:
+                logger.warning(f"JSON still invalid after quote fix: {e2}")
+
         # Log full text length and content for debugging
         logger.warning(f"Raw text length: {len(json_text)}")
         logger.warning(f"Raw text (first 500 chars): {json_text[:500]}")
         return None
+
+
+def _fix_unescaped_quotes(json_text: str) -> str:
+    """
+    Fix unescaped double quotes and literal newlines inside JSON string values.
+
+    LLMs sometimes generate JSON with:
+    1. Unescaped quotes like: "body": "The "team" won"
+    2. Literal newlines inside strings (should be \\n)
+
+    This function processes the text to fix these issues.
+    """
+    import re
+
+    # First, replace curly/smart quotes with straight quotes
+    text = json_text.replace('"', '"').replace('"', '"')
+    text = text.replace(''', "'").replace(''', "'")
+
+    # Fix literal newlines inside string values
+    # Pattern: find "key": "...value with newline..." for specific keys
+    for key in ['body', 'title', 'evidence', 'responsible_note']:
+        # Match the key and capture everything until we find the closing pattern
+        # The closing pattern is: ", followed by newline and next key OR end of object
+        pattern = rf'("{key}":\s*")(.*?)("\s*,?\s*\n\s*"(?:key_factors|tone|title|body|label|evidence|direction|responsible_note)"|"\s*\n\s*\}})'
+
+        def fix_string_value(match):
+            prefix = match.group(1)
+            content = match.group(2)
+            suffix = match.group(3)
+
+            # Fix literal newlines - replace with \\n
+            # But don't replace already escaped \\n
+            fixed = content.replace('\r\n', '\\n').replace('\r', '\\n').replace('\n', '\\n')
+
+            # Fix unescaped quotes
+            result = ""
+            i = 0
+            while i < len(fixed):
+                if fixed[i] == '"':
+                    if i > 0 and fixed[i-1] == '\\':
+                        result += '"'
+                    else:
+                        result += '\\"'
+                else:
+                    result += fixed[i]
+                i += 1
+
+            return prefix + result + suffix
+
+        text = re.sub(pattern, fix_string_value, text, flags=re.DOTALL)
+
+    # Also try the simpler line-by-line approach for single-line values
+    lines = text.split('\n')
+    fixed_lines = []
+
+    for line in lines:
+        for key in ['body', 'title', 'evidence', 'responsible_note']:
+            prefix = f'"{key}": "'
+            if prefix in line:
+                start_idx = line.index(prefix) + len(prefix)
+                rest = line[start_idx:]
+                end_content = rest.rstrip()
+
+                if end_content.endswith('",'):
+                    value_content = end_content[:-2]
+                    suffix = '",'
+                elif end_content.endswith('"'):
+                    value_content = end_content[:-1]
+                    suffix = '"'
+                else:
+                    continue
+
+                # Escape unescaped quotes
+                fixed_content = ""
+                i = 0
+                while i < len(value_content):
+                    if value_content[i] == '"':
+                        if i > 0 and value_content[i-1] == '\\':
+                            fixed_content += '"'
+                        else:
+                            fixed_content += '\\"'
+                    else:
+                        fixed_content += value_content[i]
+                    i += 1
+
+                line = line[:start_idx - len(prefix)] + prefix + fixed_content + suffix
+                break
+
+        fixed_lines.append(line)
+
+    return '\n'.join(fixed_lines)
 
 
 def _normalize_narrative_object(narrative: dict) -> tuple[dict, Optional[dict]]:
