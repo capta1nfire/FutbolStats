@@ -795,6 +795,31 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                             "computed_at": snapshot_at,
                         })
 
+                        # P0 FIX (2026-01-14): Write-through odds to matches table
+                        # odds_snapshots was being populated but matches.odds_* stayed NULL
+                        # This broke /predictions/upcoming → market_odds null → iOS no Bookie/EV
+                        if odds_freshness == "live":
+                            await session.execute(text("""
+                                UPDATE matches
+                                SET odds_home = :odds_home,
+                                    odds_draw = :odds_draw,
+                                    odds_away = :odds_away,
+                                    odds_recorded_at = :recorded_at
+                                WHERE id = :match_id
+                                  AND (odds_recorded_at IS NULL OR odds_recorded_at < :recorded_at)
+                            """), {
+                                "match_id": match_id,
+                                "odds_home": odds_home,
+                                "odds_draw": odds_draw,
+                                "odds_away": odds_away,
+                                "recorded_at": snapshot_at,
+                            })
+                            logger.info(
+                                f"Synced live odds to matches: match_id={match_id}, "
+                                f"H={odds_home:.2f}, D={odds_draw:.2f}, A={odds_away:.2f}, "
+                                f"bookmaker={source}"
+                            )
+
                         # Also update match_lineups with lineup_confirmed_at if not already set
                         await session.execute(text("""
                             UPDATE match_lineups
