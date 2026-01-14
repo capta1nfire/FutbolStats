@@ -974,6 +974,83 @@ async def get_aggregates_status_endpoint(
     return {"status": "ok", **status}
 
 
+@app.get("/aggregates/breakdown")
+@limiter.limit("30/minute")
+async def get_aggregates_breakdown(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
+):
+    """
+    Get detailed breakdown of aggregates by dimension.
+
+    Clarifies what baselines_created and profiles_created represent.
+    Requires API key authentication.
+    """
+    from sqlalchemy import select, func, distinct
+    from app.models import LeagueSeasonBaseline, LeagueTeamProfile
+
+    # Baselines breakdown
+    total_baselines = (await session.execute(
+        select(func.count(LeagueSeasonBaseline.id))
+    )).scalar() or 0
+
+    distinct_leagues = (await session.execute(
+        select(func.count(distinct(LeagueSeasonBaseline.league_id)))
+    )).scalar() or 0
+
+    distinct_seasons = (await session.execute(
+        select(func.count(distinct(LeagueSeasonBaseline.season)))
+    )).scalar() or 0
+
+    distinct_dates = (await session.execute(
+        select(func.count(distinct(LeagueSeasonBaseline.as_of_date)))
+    )).scalar() or 0
+
+    # Profiles breakdown
+    total_profiles = (await session.execute(
+        select(func.count(LeagueTeamProfile.id))
+    )).scalar() or 0
+
+    distinct_teams = (await session.execute(
+        select(func.count(distinct(LeagueTeamProfile.team_id)))
+    )).scalar() or 0
+
+    profiles_with_min_sample = (await session.execute(
+        select(func.count(LeagueTeamProfile.id))
+        .where(LeagueTeamProfile.min_sample_ok == True)
+    )).scalar() or 0
+
+    # Season distribution
+    seasons_result = await session.execute(
+        select(
+            LeagueSeasonBaseline.season,
+            func.count(LeagueSeasonBaseline.id)
+        )
+        .group_by(LeagueSeasonBaseline.season)
+        .order_by(LeagueSeasonBaseline.season.desc())
+    )
+    seasons_breakdown = {str(row[0]): row[1] for row in seasons_result}
+
+    return {
+        "status": "ok",
+        "baselines": {
+            "total_rows": total_baselines,
+            "distinct_league_id": distinct_leagues,
+            "distinct_season": distinct_seasons,
+            "distinct_as_of_date": distinct_dates,
+            "note": "Each row = one (league_id, season, as_of_date) combination",
+        },
+        "profiles": {
+            "total_rows": total_profiles,
+            "distinct_team_id": distinct_teams,
+            "with_min_sample_ok": profiles_with_min_sample,
+            "note": "Each row = one (league_id, season, team_id, as_of_date) combination",
+        },
+        "seasons_breakdown": seasons_breakdown,
+    }
+
+
 @app.post("/model/train", response_model=TrainResponse)
 @limiter.limit("5/minute")
 async def train_model(
