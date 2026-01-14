@@ -26,15 +26,7 @@
 
 - [ ] Investigar Predictions frozen para los partidos del 9 de enero y probablemente 10 de enro (y los futuros) Probable bug?
 
-- [ ] Por que las estadisticas post-partido no estan en nuestra database?
-
 - [ ] Monitorear narrativa y comparar con un review de un humano (analista deportivo o periodista) para validar/reforzar prescicion de nuestra narrativa.
-
-- [ ] Revisar que esta en commit sin pushear.
-
-- [ ] Revisar que todas las ligas esten en el scheduler (todas reciban data).
-
-- [ ] Auditar sesion de trabajo de la tarde noche de ayer.
 
 - [ ] crear un checklist y mapa (ayer datos iban a pasar por fuera de "ML Engine")
 
@@ -69,8 +61,24 @@ y si hubo normalización, queda en llm_validation_errors.
 Cuando veas el próximo tick y esos campos, lo marcamos CLOSED. (esto es respecto a las narrativas LLMs).
 **CLOSED 2026-01-14**: Audits 98-103 verificados con llm_narrative_status=ok. Ver docs/MONITORING_REPORT_20260113.md
 
-- [ ]
-- [ ]
+- [x] P0: iOS "Bookie" null por desync odds_snapshots → matches.odds_*
+  - RCA: odds_snapshots se populaba pero matches.odds_* quedaba NULL
+  - Fix: write-through en scheduler.py + backfill script
+  - Backfill ejecutado: 8 matches actualizados
+  - Commit: 0b4b29d
+  **CLOSED 2026-01-14**
+
+- [x] Estaba pensando a futuro en como enriquecer la narrativa de qwem, habia pensado en que la narrativa aportara datos estadisticos puntuales basado en promedios generales de cada liga de cada pais.
+  **IMPLEMENTED 2026-01-14**: League aggregates system created.
+  - Tablas: `league_season_baselines` (promedios liga) + `league_team_profiles` (perfil equipo)
+  - Métricas P0: goals_avg, over_X_pct, btts, clean_sheet, corners, cards
+  - Métricas P0.3: ranks (best_attack, worst_defense, goal_difference)
+  - Métricas P1: by_time goals (0-15min, 76-90+min)
+  - Integrado en derived_facts: league_context, team_context, relative_context
+  - Job de refresh: `app/aggregates/refresh_job.py`
+  - Verificación: `scripts/verify_aggregates.py`
+  - Ref: `docs/API_FOOTBALL_PAYLOAD_INVENTORY.md`
+
 - [ ]
 - [ ]
 - [ ]

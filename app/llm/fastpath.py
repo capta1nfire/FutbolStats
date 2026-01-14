@@ -582,8 +582,33 @@ class FastPathService:
                 if not prediction:
                     continue
 
-                # Build match data for prompt (with team aliases)
-                match_data = self._build_match_data(match, prediction, home_info, away_info)
+                # Fetch league and team context for narratives (best-effort)
+                league_context = None
+                home_team_context = None
+                away_team_context = None
+                try:
+                    from app.aggregates import get_league_context, get_team_context
+                    league_context = await get_league_context(
+                        self.session, match.league_id, match.season
+                    )
+                    if match.home_team_id:
+                        home_team_context = await get_team_context(
+                            self.session, match.league_id, match.season, match.home_team_id
+                        )
+                    if match.away_team_id:
+                        away_team_context = await get_team_context(
+                            self.session, match.league_id, match.season, match.away_team_id
+                        )
+                except Exception as ctx_err:
+                    logger.debug(f"[FASTPATH] Failed to fetch context for match {match.id}: {ctx_err}")
+
+                # Build match data for prompt (with team aliases and context)
+                match_data = self._build_match_data(
+                    match, prediction, home_info, away_info,
+                    league_context=league_context,
+                    home_team_context=home_team_context,
+                    away_team_context=away_team_context,
+                )
 
                 # Check gating
                 passes, reason = check_stats_gating(match_data)
@@ -803,12 +828,16 @@ class FastPathService:
         prediction: Prediction,
         home_info: dict,
         away_info: dict,
+        league_context: Optional[dict] = None,
+        home_team_context: Optional[dict] = None,
+        away_team_context: Optional[dict] = None,
     ) -> dict:
         """Build match_data dict for narrative prompt.
 
         Team info passed explicitly to avoid lazy loading issues.
         Includes team_aliases for LLM to use (prevents hallucinated nicknames).
         Includes derived_facts for verifiable pre-computed facts (P1 anti-hallucination).
+        Includes league_context and team_context for relative comparisons (P0/P1 aggregates).
         """
         from app.llm.team_aliases import get_team_aliases
         from app.llm.derived_facts import build_derived_facts
@@ -897,6 +926,10 @@ class FastPathService:
                 },
                 value_bet=prediction.value_bets[0] if prediction.value_bets else None,
                 prediction_correct=(predicted_result == actual_result),
+                # P0/P1: League and team context for relative comparisons
+                league_context=league_context,
+                home_team_context=home_team_context,
+                away_team_context=away_team_context,
             ),
         }
 

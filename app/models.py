@@ -792,3 +792,113 @@ class LeagueStandings(SQLModel, table=True):
         default=None,
         description="When this data should be refreshed (TTL)"
     )
+
+
+class LeagueSeasonBaseline(SQLModel, table=True):
+    """
+    Aggregated baselines per league/season for narrative context.
+
+    Provides league-wide averages and percentages for goals, cards, corners, etc.
+    Used in derived_facts to give narratives relative context.
+    """
+
+    __tablename__ = "league_season_baselines"
+    __table_args__ = (
+        UniqueConstraint("league_id", "season", "as_of_date", name="uq_baseline_league_season_date"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    league_id: int = Field(index=True, description="API-Football league ID")
+    season: int = Field(index=True, description="Season year (e.g., 2025)")
+    as_of_date: datetime = Field(index=True, description="Date this baseline represents")
+
+    # Sample size
+    sample_n_matches: int = Field(description="Number of matches used for calculation")
+
+    # Goals metrics (P0)
+    goals_avg_per_match: float = Field(description="Average total goals per match")
+    over_1_5_pct: float = Field(description="Percentage of matches with >1.5 goals")
+    over_2_5_pct: float = Field(description="Percentage of matches with >2.5 goals")
+    over_3_5_pct: float = Field(description="Percentage of matches with >3.5 goals")
+    btts_yes_pct: float = Field(description="Both teams to score percentage")
+
+    # Clean sheet / failed to score (P0)
+    clean_sheet_pct_home: float = Field(description="Home team clean sheet percentage")
+    clean_sheet_pct_away: float = Field(description="Away team clean sheet percentage")
+    failed_to_score_pct_home: float = Field(description="Home team failed to score percentage")
+    failed_to_score_pct_away: float = Field(description="Away team failed to score percentage")
+
+    # Cards and corners (nullable - depends on data availability)
+    corners_avg_per_match: Optional[float] = Field(default=None, description="Average corners per match")
+    yellow_cards_avg_per_match: Optional[float] = Field(default=None, description="Average yellow cards per match")
+    red_cards_avg_per_match: Optional[float] = Field(default=None, description="Average red cards per match")
+
+    # Metadata
+    last_computed_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        description="When this baseline was computed"
+    )
+
+
+class LeagueTeamProfile(SQLModel, table=True):
+    """
+    Team-level aggregated profile within a league/season.
+
+    Provides team-specific rates, percentages, and ranks relative to the league.
+    Used in derived_facts for team context in narratives.
+    """
+
+    __tablename__ = "league_team_profiles"
+    __table_args__ = (
+        UniqueConstraint("league_id", "season", "team_id", "as_of_date", name="uq_profile_league_team_date"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    league_id: int = Field(index=True, description="API-Football league ID")
+    season: int = Field(index=True, description="Season year (e.g., 2025)")
+    team_id: int = Field(index=True, foreign_key="teams.id", description="Internal team ID")
+    as_of_date: datetime = Field(index=True, description="Date this profile represents")
+
+    # Sample size and confidence
+    matches_played: int = Field(description="Matches played in this league/season")
+    min_sample_ok: bool = Field(default=False, description="True if sample >= min threshold (5)")
+    rank_confidence: str = Field(default="low", max_length=10, description="'low' (<10 matches) or 'high' (>=10)")
+
+    # Goals metrics (P0.2)
+    goals_for_per_match: float = Field(description="Goals scored per match")
+    goals_against_per_match: float = Field(description="Goals conceded per match")
+    goal_difference_per_match: float = Field(description="Goal difference per match")
+
+    # Percentages (P0.2)
+    clean_sheet_pct: float = Field(description="Clean sheet percentage")
+    failed_to_score_pct: float = Field(description="Failed to score percentage")
+    btts_yes_pct: float = Field(description="Both teams scored percentage")
+    over_1_5_pct: float = Field(description="Over 1.5 goals percentage")
+    over_2_5_pct: float = Field(description="Over 2.5 goals percentage")
+    over_3_5_pct: float = Field(description="Over 3.5 goals percentage")
+
+    # Cards and corners (nullable)
+    corners_for_per_match: Optional[float] = Field(default=None, description="Corners won per match")
+    corners_against_per_match: Optional[float] = Field(default=None, description="Corners conceded per match")
+    yellow_cards_per_match: Optional[float] = Field(default=None, description="Yellow cards per match")
+    red_cards_per_match: Optional[float] = Field(default=None, description="Red cards per match")
+
+    # Ranks within league (P0.3) - nullable if min_sample_ok=False
+    rank_best_attack: Optional[int] = Field(default=None, description="Rank by goals_for (1=best)")
+    rank_worst_defense: Optional[int] = Field(default=None, description="Rank by goals_against (1=worst)")
+    rank_goal_difference: Optional[int] = Field(default=None, description="Rank by goal difference (1=best)")
+    rank_most_corners: Optional[int] = Field(default=None, description="Rank by corners won (1=most)")
+    rank_most_cards: Optional[int] = Field(default=None, description="Rank by cards received (1=most)")
+    total_teams_in_league: Optional[int] = Field(default=None, description="Total teams for rank context")
+
+    # By-time goals (P1)
+    goals_scored_0_15_pct: Optional[float] = Field(default=None, description="% of goals scored in 0-15 min")
+    goals_scored_76_90p_pct: Optional[float] = Field(default=None, description="% of goals scored in 76-90+ min")
+    goals_conceded_0_15_pct: Optional[float] = Field(default=None, description="% of goals conceded in 0-15 min")
+    goals_conceded_76_90p_pct: Optional[float] = Field(default=None, description="% of goals conceded in 76-90+ min")
+
+    # Metadata
+    last_computed_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        description="When this profile was computed"
+    )

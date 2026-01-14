@@ -607,6 +607,83 @@ def _build_betting_context(
     return result
 
 
+def _build_relative_context(
+    league_context: dict,
+    home_team_context: dict,
+    away_team_context: dict,
+) -> dict:
+    """
+    Build relative context comparing teams to league baselines.
+
+    Only includes comparisons where data is available.
+    Uses factual language (above/below average, top X).
+    """
+    result = {
+        "home_vs_league": {},
+        "away_vs_league": {},
+        "matchup_highlights": [],
+    }
+
+    if not league_context:
+        return result
+
+    league_over_2_5 = league_context.get("over_2_5_pct")
+    league_goals_avg = league_context.get("goals_avg_per_match")
+
+    # Home team vs league
+    if home_team_context:
+        home_over_2_5 = home_team_context.get("over_2_5_pct")
+        if home_over_2_5 is not None and league_over_2_5 is not None:
+            delta = home_over_2_5 - league_over_2_5
+            result["home_vs_league"]["over_2_5_delta"] = round(delta, 1)
+            result["home_vs_league"]["over_2_5_above_avg"] = delta > 0
+
+        # Attack rank context
+        rank_attack = home_team_context.get("rank_best_attack")
+        total_teams = home_team_context.get("total_teams_in_league")
+        if rank_attack and total_teams:
+            result["home_vs_league"]["attack_rank"] = rank_attack
+            result["home_vs_league"]["attack_top_third"] = rank_attack <= (total_teams / 3)
+
+    # Away team vs league
+    if away_team_context:
+        away_over_2_5 = away_team_context.get("over_2_5_pct")
+        if away_over_2_5 is not None and league_over_2_5 is not None:
+            delta = away_over_2_5 - league_over_2_5
+            result["away_vs_league"]["over_2_5_delta"] = round(delta, 1)
+            result["away_vs_league"]["over_2_5_above_avg"] = delta > 0
+
+        # Attack rank context
+        rank_attack = away_team_context.get("rank_best_attack")
+        total_teams = away_team_context.get("total_teams_in_league")
+        if rank_attack and total_teams:
+            result["away_vs_league"]["attack_rank"] = rank_attack
+            result["away_vs_league"]["attack_top_third"] = rank_attack <= (total_teams / 3)
+
+    # Matchup highlights (factual observations)
+    if home_team_context and away_team_context:
+        # Both teams high-scoring
+        home_goals_pm = home_team_context.get("goals_for_per_match", 0)
+        away_goals_pm = away_team_context.get("goals_for_per_match", 0)
+        if league_goals_avg and home_goals_pm > league_goals_avg and away_goals_pm > league_goals_avg:
+            result["matchup_highlights"].append("both_teams_above_avg_scoring")
+
+        # Both teams concede a lot
+        home_concede = home_team_context.get("goals_against_per_match", 0)
+        away_concede = away_team_context.get("goals_against_per_match", 0)
+        half_avg = (league_goals_avg / 2) if league_goals_avg else 1.0
+        if home_concede > half_avg and away_concede > half_avg:
+            result["matchup_highlights"].append("both_teams_defensive_issues")
+
+        # High over 2.5 matchup
+        home_over_2_5 = home_team_context.get("over_2_5_pct", 0)
+        away_over_2_5 = away_team_context.get("over_2_5_pct", 0)
+        if home_over_2_5 > 60 and away_over_2_5 > 60:
+            result["matchup_highlights"].append("high_over_2_5_matchup")
+
+    return result
+
+
 def _build_data_completeness(
     stats: dict,
     events: list,
@@ -752,6 +829,9 @@ def build_derived_facts(
     model_probs: Optional[dict] = None,
     value_bet: Optional[dict] = None,
     prediction_correct: Optional[bool] = None,
+    league_context: Optional[dict] = None,
+    home_team_context: Optional[dict] = None,
+    away_team_context: Optional[dict] = None,
 ) -> dict:
     """
     Build derived_facts block for LLM payload.
@@ -838,6 +918,28 @@ def build_derived_facts(
     # Data completeness (P2: for LLM self-limiting)
     data_completeness = _build_data_completeness(stats, events, market_odds or {})
 
+    # Update data completeness with context availability
+    if league_context:
+        data_completeness["baselines_present"] = True
+    if home_team_context and away_team_context:
+        data_completeness["team_profiles_present"] = True
+
+    # Build context_usable flag (True if both teams have min_sample_ok)
+    context_usable = False
+    if home_team_context and away_team_context:
+        home_ok = home_team_context.get("min_sample_ok", False)
+        away_ok = away_team_context.get("min_sample_ok", False)
+        context_usable = home_ok and away_ok
+
+    # Build relative context (only if usable)
+    relative_context = None
+    if context_usable and league_context:
+        relative_context = _build_relative_context(
+            league_context,
+            home_team_context,
+            away_team_context,
+        )
+
     return {
         "result": result_facts,
         "discipline": discipline,
@@ -848,4 +950,12 @@ def build_derived_facts(
         "market_context": market_context,
         "betting_context": betting_context,
         "data_completeness": data_completeness,
+        # New context blocks
+        "league_context": league_context,
+        "team_context": {
+            "home": home_team_context,
+            "away": away_team_context,
+        } if home_team_context or away_team_context else None,
+        "context_usable": context_usable,
+        "relative_context": relative_context,
     }
