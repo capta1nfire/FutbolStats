@@ -185,12 +185,12 @@ async def main():
     parser.add_argument("--limit", type=int, default=None, help="Limit rows per table")
     args = parser.parse_args()
 
-    # Railway connection string (from environment or hardcoded for this script)
-    # Note: In production, use environment variable
-    pg_url = os.environ.get("RAILWAY_DATABASE_URL")
+    # Railway connection string from environment variable (required)
+    pg_url = os.environ.get("RAILWAY_DATABASE_URL") or os.environ.get("DATABASE_URL")
     if not pg_url:
-        # Fallback for direct execution
-        pg_url = "postgresql://postgres:hzvozcXijUpblVrQshuowYcEGwZnMrfO@maglev.proxy.rlwy.net:24997/railway"
+        print("ERROR: RAILWAY_DATABASE_URL or DATABASE_URL environment variable required.")
+        print("Usage: export DATABASE_URL='postgresql://user:pass@host:port/db'")
+        sys.exit(1)
 
     tables = [t.strip() for t in args.tables.split(",")]
 

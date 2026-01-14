@@ -298,14 +298,21 @@ def _get_red_card_side(events: list, match_data: dict) -> Optional[str]:
     return None
 
 
-def _detect_team_mention_near_claim(narrative: str, claim_patterns: list) -> Optional[str]:
+def _detect_team_mention_near_claim(narrative, claim_patterns: list) -> Optional[str]:
     """
     Detect if narrative mentions 'local' or 'visitante' near a claim pattern.
+
+    Args:
+        narrative: Can be str, dict (with 'body' key), or None
+        claim_patterns: List of regex patterns to search for
 
     Returns:
         "local", "visitante", or None if no clear attribution.
     """
-    narrative_lower = narrative.lower()
+    # P0 FIX: Handle dict narrative (e.g., {"title": ..., "body": ...})
+    if isinstance(narrative, dict):
+        narrative = narrative.get("body", "") or ""
+    narrative_lower = _safe_lower(narrative)
 
     # Find all claim matches
     for pattern in claim_patterns:
@@ -403,15 +410,19 @@ def validate_narrative_claims(
     """
     errors = []
 
-    # Normalize narrative_text to string (handle dict, None, etc.)
+    # P0 FIX: Normalize narrative_text to string (handle dict with body, None, etc.)
     if isinstance(narrative_text, str):
         narrative_str = narrative_text
     elif isinstance(narrative_text, dict):
-        narrative_str = json.dumps(narrative_text)
+        # Extract body from dict narrative (e.g., {"title": ..., "body": ...})
+        narrative_str = narrative_text.get("body", "") or ""
+        # Fallback: if no body, try to get any string content
+        if not narrative_str and "title" in narrative_text:
+            narrative_str = narrative_text.get("title", "")
     else:
         narrative_str = str(narrative_text or "")
 
-    narrative_lower = narrative_str.lower()
+    narrative_lower = _safe_lower(narrative_str)
     events = match_data.get("events", []) if isinstance(match_data, dict) else []
 
     # 1. Red card claims - existence check
@@ -555,7 +566,7 @@ SHOTS_LEADER_PATTERNS = [
 
 
 def _validate_against_derived_facts(
-    narrative: str,
+    narrative,
     derived_facts: dict,
     strict: bool = True
 ) -> list[dict]:
@@ -568,7 +579,7 @@ def _validate_against_derived_facts(
     - Red card side contradictions (already checked in main validate, but double-check here)
 
     Args:
-        narrative: The narrative text
+        narrative: The narrative text (str or dict with 'body' key)
         derived_facts: The derived_facts dict from payload
         strict: If True, some checks are errors instead of warnings
 
@@ -576,7 +587,10 @@ def _validate_against_derived_facts(
         List of validation errors/warnings
     """
     errors = []
-    narrative_lower = narrative.lower()
+    # P0 FIX: Handle dict narrative
+    if isinstance(narrative, dict):
+        narrative = narrative.get("body", "") or ""
+    narrative_lower = _safe_lower(narrative)
 
     # 4a. HT score validation - if ht_score is null, narrative shouldn't mention it
     result_facts = derived_facts.get("result", {})

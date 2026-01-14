@@ -854,7 +854,12 @@ class FastPathService:
                                 token_warnings = []
 
                             # Schema is valid, now validate claims against payload
-                            narrative_text = parsed.get("narrative", "")
+                            # P0 FIX: narrative can be dict {title, body} or str
+                            narrative_obj = parsed.get("narrative", "")
+                            if isinstance(narrative_obj, dict):
+                                narrative_text = narrative_obj.get("body", "") or ""
+                            else:
+                                narrative_text = str(narrative_obj or "")
                             payload_for_claims = audit.llm_prompt_input_json or {}
 
                             claim_errors = validate_narrative_claims(

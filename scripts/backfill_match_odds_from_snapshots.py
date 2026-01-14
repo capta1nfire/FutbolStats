@@ -28,19 +28,27 @@ from psycopg2.extras import RealDictCursor
 
 
 def get_connection():
-    """Get database connection from environment or CLAUDE.md defaults."""
-    db_url = os.environ.get("DATABASE_URL")
-    if db_url and db_url.startswith("postgresql"):
-        return psycopg2.connect(db_url)
+    """Get database connection from DATABASE_URL environment variable.
 
-    # Fallback to Railway production
-    return psycopg2.connect(
-        host="maglev.proxy.rlwy.net",
-        port=24997,
-        user="postgres",
-        password="hzvozcXijUpblVrQshuowYcEGwZnMrfO",
-        database="railway"
-    )
+    Requires: export DATABASE_URL="postgresql://user:pass@host:port/db"
+
+    Raises:
+        SystemExit: If DATABASE_URL is not set or invalid
+    """
+    db_url = os.environ.get("DATABASE_URL")
+
+    if not db_url:
+        print("ERROR: DATABASE_URL environment variable is not set.")
+        print("Usage: export DATABASE_URL='postgresql://user:pass@host:port/db'")
+        print("       python scripts/backfill_match_odds_from_snapshots.py")
+        sys.exit(1)
+
+    if not db_url.startswith("postgresql"):
+        print(f"ERROR: DATABASE_URL must be a PostgreSQL connection string.")
+        print(f"Got: {db_url[:20]}...")
+        sys.exit(1)
+
+    return psycopg2.connect(db_url)
 
 
 def find_matches_needing_backfill(
