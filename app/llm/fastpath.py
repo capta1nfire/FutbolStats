@@ -751,7 +751,7 @@ class FastPathService:
                 "draw": match.odds_draw,
                 "away": match.odds_away,
             } if match.odds_home else {},
-            # P1: Pre-computed verifiable facts (reduces inference hallucinations)
+            # P1/P2: Pre-computed verifiable facts (reduces inference hallucinations)
             "derived_facts": build_derived_facts(
                 home_goals=home_goals,
                 away_goals=away_goals,
@@ -760,6 +760,19 @@ class FastPathService:
                 events=match.events or [],
                 stats=match.stats or {},
                 match_status=match.status,
+                # P2: Extended context for richer narratives
+                market_odds={
+                    "home": match.odds_home,
+                    "draw": match.odds_draw,
+                    "away": match.odds_away,
+                } if match.odds_home else None,
+                model_probs={
+                    "home": prediction.home_prob,
+                    "draw": prediction.draw_prob,
+                    "away": prediction.away_prob,
+                },
+                value_bet=prediction.value_bets[0] if prediction.value_bets else None,
+                prediction_correct=(predicted_result == actual_result),
             ),
         }
 

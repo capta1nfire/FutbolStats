@@ -220,6 +220,457 @@ def _extract_penalties(events: list) -> dict:
     return result
 
 
+def _build_timeline(events: list, home_team: str, away_team: str) -> dict:
+    """
+    Build score timeline from goal events.
+
+    Returns timeline dict with score progression and key metrics.
+    """
+    result = {
+        "score_timeline": [],
+        "lead_changes_count": 0,
+        "equalizers_count": 0,
+        "decisive_goal_minute": None,
+        "late_events": {
+            "goals_76_90p": 0,
+            "reds_76_90p": 0,
+            "pens_76_90p": 0,
+        },
+    }
+
+    home_team_lower = (home_team or "").lower()
+    away_team_lower = (away_team or "").lower()
+
+    # Extract goal events
+    goal_events = []
+    for event in events or []:
+        if not isinstance(event, dict):
+            continue
+
+        event_type = str(event.get("type", "")).lower()
+        if event_type != "goal":
+            continue
+
+        minute = _safe_int(event.get("minute"))
+        if minute is None:
+            continue
+
+        team_name = event.get("team_name", "")
+        team_name_lower = (team_name or "").lower()
+
+        # Determine side
+        side = None
+        if team_name_lower:
+            if team_name_lower in home_team_lower or home_team_lower in team_name_lower:
+                side = "home"
+            elif team_name_lower in away_team_lower or away_team_lower in team_name_lower:
+                side = "away"
+
+        if side:
+            detail = str(event.get("detail", "")).lower()
+            is_penalty = any(p in detail for p in ["penalty", "penal", "penalti"])
+
+            goal_events.append({
+                "minute": minute,
+                "side": side,
+                "is_penalty": is_penalty,
+            })
+
+    # Sort by minute
+    goal_events.sort(key=lambda x: x["minute"])
+
+    # Build timeline
+    home_score = 0
+    away_score = 0
+    previous_leader = None
+
+    for goal in goal_events:
+        if goal["side"] == "home":
+            home_score += 1
+        else:
+            away_score += 1
+
+        result["score_timeline"].append({
+            "minute": goal["minute"],
+            "side": goal["side"],
+            "new_score_home": home_score,
+            "new_score_away": away_score,
+            "is_penalty": goal["is_penalty"],
+        })
+
+        # Determine current leader
+        if home_score > away_score:
+            current_leader = "home"
+        elif away_score > home_score:
+            current_leader = "away"
+        else:
+            current_leader = "tie"
+
+        # Check for lead change or equalizer
+        if current_leader == "tie" and previous_leader in ("home", "away"):
+            result["equalizers_count"] += 1
+        elif current_leader in ("home", "away") and previous_leader is not None:
+            if previous_leader == "tie":
+                pass  # Breaking tie, not a lead change
+            elif previous_leader != current_leader:
+                result["lead_changes_count"] += 1
+
+        # Track decisive goal (last goal that changes winner)
+        if current_leader in ("home", "away"):
+            result["decisive_goal_minute"] = goal["minute"]
+
+        previous_leader = current_leader
+
+        # Late events (76-90+)
+        if goal["minute"] >= 76:
+            result["late_events"]["goals_76_90p"] += 1
+            if goal["is_penalty"]:
+                result["late_events"]["pens_76_90p"] += 1
+
+    # Count late red cards
+    for event in events or []:
+        if not isinstance(event, dict):
+            continue
+
+        event_type = str(event.get("type", "")).lower()
+        detail = str(event.get("detail", "")).lower()
+
+        if event_type == "card" and ("red" in detail or "roja" in detail):
+            minute = _safe_int(event.get("minute"))
+            if minute and minute >= 76:
+                result["late_events"]["reds_76_90p"] += 1
+
+    return result
+
+
+def _extract_yellow_cards(events: list, stats: dict, home_team: str, away_team: str) -> dict:
+    """
+    Extract yellow card information from events and stats.
+
+    Returns yellow card counts and first card info.
+    """
+    result = {
+        "yellow_cards": {
+            "home": None,
+            "away": None,
+        },
+        "first_card": {
+            "exists": False,
+            "minute": None,
+            "side": None,
+            "card_type": None,
+            "player_name": None,
+        },
+        "early_card_flag_15": False,  # Card in first 15 minutes
+        "late_card_flag_80p": False,  # Card after minute 80
+    }
+
+    # Try to get counts from stats first
+    if stats:
+        home_stats = stats.get("home", {}) or {}
+        away_stats = stats.get("away", {}) or {}
+
+        home_yellows = home_stats.get("yellow_cards") or home_stats.get("Yellow Cards")
+        away_yellows = away_stats.get("yellow_cards") or away_stats.get("Yellow Cards")
+
+        result["yellow_cards"]["home"] = _safe_int(home_yellows)
+        result["yellow_cards"]["away"] = _safe_int(away_yellows)
+
+    home_team_lower = (home_team or "").lower()
+    away_team_lower = (away_team or "").lower()
+
+    # Find all card events (yellow and red)
+    card_events = []
+    for event in events or []:
+        if not isinstance(event, dict):
+            continue
+
+        event_type = str(event.get("type", "")).lower()
+        if event_type != "card":
+            continue
+
+        minute = _safe_int(event.get("minute"))
+        if minute is None:
+            continue
+
+        detail = str(event.get("detail", "")).lower()
+        team_name = event.get("team_name", "")
+        player_name = event.get("player_name", "")
+
+        # Determine card type
+        if "red" in detail or "roja" in detail:
+            card_type = "red"
+        elif "yellow" in detail or "amarilla" in detail:
+            card_type = "yellow"
+        else:
+            continue
+
+        # Determine side
+        team_name_lower = (team_name or "").lower()
+        side = None
+        if team_name_lower:
+            if team_name_lower in home_team_lower or home_team_lower in team_name_lower:
+                side = "home"
+            elif team_name_lower in away_team_lower or away_team_lower in team_name_lower:
+                side = "away"
+
+        card_events.append({
+            "minute": minute,
+            "side": side,
+            "card_type": card_type,
+            "player_name": player_name,
+        })
+
+    # Sort by minute to find first
+    if card_events:
+        card_events.sort(key=lambda x: x["minute"])
+        first = card_events[0]
+
+        result["first_card"] = {
+            "exists": True,
+            "minute": first["minute"],
+            "side": first["side"],
+            "card_type": first["card_type"],
+            "player_name": first["player_name"],
+        }
+
+        # Check flags
+        if first["minute"] <= 15:
+            result["early_card_flag_15"] = True
+
+        # Check for late card
+        for card in card_events:
+            if card["minute"] >= 80:
+                result["late_card_flag_80p"] = True
+                break
+
+    return result
+
+
+def _extract_efficiency(stats: dict, home_goals: int, away_goals: int) -> dict:
+    """
+    Calculate shooting efficiency ratios.
+
+    Returns efficiency metrics (null if insufficient data).
+    """
+    result = {
+        "shots_to_goal_ratio": {"home": None, "away": None},
+        "sog_to_goal_ratio": {"home": None, "away": None},
+    }
+
+    if not stats:
+        return result
+
+    home_stats = stats.get("home", {}) or {}
+    away_stats = stats.get("away", {}) or {}
+
+    # Total shots to goals ratio (goals / shots, higher = more efficient)
+    home_shots = _safe_int(home_stats.get("total_shots") or home_stats.get("Total Shots"))
+    away_shots = _safe_int(away_stats.get("total_shots") or away_stats.get("Total Shots"))
+
+    if home_shots and home_shots > 0:
+        result["shots_to_goal_ratio"]["home"] = round(home_goals / home_shots, 3) if home_goals else 0.0
+    if away_shots and away_shots > 0:
+        result["shots_to_goal_ratio"]["away"] = round(away_goals / away_shots, 3) if away_goals else 0.0
+
+    # Shots on goal to goals ratio
+    home_sog = _safe_int(home_stats.get("shots_on_goal") or home_stats.get("Shots on Goal"))
+    away_sog = _safe_int(away_stats.get("shots_on_goal") or away_stats.get("Shots on Goal"))
+
+    if home_sog and home_sog > 0:
+        result["sog_to_goal_ratio"]["home"] = round(home_goals / home_sog, 3) if home_goals else 0.0
+    if away_sog and away_sog > 0:
+        result["sog_to_goal_ratio"]["away"] = round(away_goals / away_sog, 3) if away_goals else 0.0
+
+    return result
+
+
+def _build_market_context(
+    market_odds: dict,
+    model_probs: dict,
+) -> dict:
+    """
+    Build market context from odds and model probabilities.
+
+    Args:
+        market_odds: {home, draw, away} decimal odds
+        model_probs: {home, draw, away} model probabilities
+
+    Returns market context dict.
+    """
+    result = {
+        "market_favorite_side": None,
+        "market_implied_probs_normalized": {"home": None, "draw": None, "away": None},
+        "prediction_vs_market_gap": {"home": None, "draw": None, "away": None},
+    }
+
+    if not market_odds:
+        return result
+
+    home_odds = market_odds.get("home")
+    draw_odds = market_odds.get("draw")
+    away_odds = market_odds.get("away")
+
+    if not all([home_odds, draw_odds, away_odds]):
+        return result
+
+    try:
+        # Calculate implied probabilities
+        home_implied = 1 / float(home_odds)
+        draw_implied = 1 / float(draw_odds)
+        away_implied = 1 / float(away_odds)
+
+        # Normalize (remove overround)
+        total = home_implied + draw_implied + away_implied
+        home_norm = round(home_implied / total, 4)
+        draw_norm = round(draw_implied / total, 4)
+        away_norm = round(away_implied / total, 4)
+
+        result["market_implied_probs_normalized"] = {
+            "home": home_norm,
+            "draw": draw_norm,
+            "away": away_norm,
+        }
+
+        # Determine market favorite (lowest odds = highest implied prob)
+        if home_odds < draw_odds and home_odds < away_odds:
+            result["market_favorite_side"] = "home"
+        elif away_odds < draw_odds and away_odds < home_odds:
+            result["market_favorite_side"] = "away"
+        elif draw_odds < home_odds and draw_odds < away_odds:
+            result["market_favorite_side"] = "draw"
+
+        # Calculate gap vs model
+        if model_probs:
+            model_home = model_probs.get("home")
+            model_draw = model_probs.get("draw")
+            model_away = model_probs.get("away")
+
+            if model_home is not None:
+                result["prediction_vs_market_gap"]["home"] = round(model_home - home_norm, 4)
+            if model_draw is not None:
+                result["prediction_vs_market_gap"]["draw"] = round(model_draw - draw_norm, 4)
+            if model_away is not None:
+                result["prediction_vs_market_gap"]["away"] = round(model_away - away_norm, 4)
+
+    except (ValueError, TypeError, ZeroDivisionError):
+        pass
+
+    return result
+
+
+def _build_betting_context(
+    prediction_correct: bool,
+    value_bet: dict,
+    actual_result: str,
+) -> dict:
+    """
+    Build betting context with conflict detection.
+
+    Args:
+        prediction_correct: Whether main prediction was correct
+        value_bet: Value bet dict (outcome, is_value_bet, etc) or None
+        actual_result: Actual match result (home/draw/away)
+
+    Returns betting context dict.
+    """
+    result = {
+        "prediction_correct": prediction_correct,
+        "value_bet_present": False,
+        "value_bet_outcome": None,
+        "value_bet_result": None,
+        "conflict_flag": None,
+    }
+
+    if not value_bet or not value_bet.get("is_value_bet"):
+        return result
+
+    result["value_bet_present"] = True
+    result["value_bet_outcome"] = value_bet.get("outcome")
+
+    # Determine if value bet won
+    vb_outcome = value_bet.get("outcome")
+    if vb_outcome and actual_result:
+        if vb_outcome.lower() == actual_result.lower():
+            result["value_bet_result"] = "WON"
+        else:
+            result["value_bet_result"] = "LOST"
+
+    # Detect conflicts
+    if prediction_correct and result["value_bet_result"] == "LOST":
+        result["conflict_flag"] = "pred_ok_value_lost"
+    elif not prediction_correct and result["value_bet_result"] == "WON":
+        result["conflict_flag"] = "pred_fail_value_won"
+    elif prediction_correct and result["value_bet_result"] == "WON":
+        result["conflict_flag"] = "aligned"
+
+    return result
+
+
+def _build_data_completeness(
+    stats: dict,
+    events: list,
+    market_odds: dict,
+) -> dict:
+    """
+    Assess data completeness for LLM self-limiting.
+
+    Returns completeness flags and list of missing fields.
+    """
+    result = {
+        "stats_present": False,
+        "events_present": False,
+        "odds_present": False,
+        "standings_present": False,  # Placeholder for future
+        "baselines_present": False,  # Placeholder for future
+        "missing_fields": [],
+    }
+
+    # Check stats
+    if stats:
+        home_stats = stats.get("home", {}) or {}
+        away_stats = stats.get("away", {}) or {}
+
+        # Consider stats present if we have at least possession or shots
+        has_possession = (
+            home_stats.get("ball_possession") is not None or
+            home_stats.get("Ball Possession") is not None
+        )
+        has_shots = (
+            home_stats.get("shots_on_goal") is not None or
+            home_stats.get("Shots on Goal") is not None
+        )
+
+        result["stats_present"] = has_possession or has_shots
+
+        # Track specific missing fields
+        key_fields = [
+            ("ball_possession", "Ball Possession"),
+            ("shots_on_goal", "Shots on Goal"),
+            ("total_shots", "Total Shots"),
+            ("corner_kicks", "Corner Kicks"),
+        ]
+
+        for field, alt_field in key_fields:
+            home_val = home_stats.get(field) or home_stats.get(alt_field)
+            away_val = away_stats.get(field) or away_stats.get(alt_field)
+            if home_val is None and away_val is None:
+                result["missing_fields"].append(field)
+
+    # Check events
+    result["events_present"] = bool(events and len(events) > 0)
+
+    # Check odds
+    if market_odds:
+        result["odds_present"] = all([
+            market_odds.get("home"),
+            market_odds.get("draw"),
+            market_odds.get("away"),
+        ])
+
+    return result
+
+
 def _extract_stats_leaders(stats: dict) -> dict:
     """
     Extract stats comparisons (who led in possession, shots, etc).
@@ -297,6 +748,10 @@ def build_derived_facts(
     events: list,
     stats: dict,
     match_status: Optional[str] = None,
+    market_odds: Optional[dict] = None,
+    model_probs: Optional[dict] = None,
+    value_bet: Optional[dict] = None,
+    prediction_correct: Optional[bool] = None,
 ) -> dict:
     """
     Build derived_facts block for LLM payload.
@@ -312,6 +767,10 @@ def build_derived_facts(
         events: List of match events
         stats: Stats dict with home/away sub-dicts
         match_status: Match status (FT, AET, PEN, etc)
+        market_odds: {home, draw, away} decimal odds (optional)
+        model_probs: {home, draw, away} model probabilities (optional)
+        value_bet: Value bet dict from prediction (optional)
+        prediction_correct: Whether main prediction was correct (optional)
 
     Returns:
         derived_facts dict ready for LLM payload
@@ -347,15 +806,46 @@ def build_derived_facts(
         if first_red_minute < end_minute:
             discipline["minutes_played_with_10_men"] = end_minute - first_red_minute
 
+    # Yellow cards and first card info
+    yellow_card_info = _extract_yellow_cards(events, stats, home_team, away_team)
+    discipline["yellow_cards"] = yellow_card_info["yellow_cards"]
+    discipline["first_card"] = yellow_card_info["first_card"]
+    discipline["early_card_flag_15"] = yellow_card_info["early_card_flag_15"]
+    discipline["late_card_flag_80p"] = yellow_card_info["late_card_flag_80p"]
+
     # Penalty facts
     penalties = _extract_penalties(events)
 
     # Stats leaders
     stats_leaders = _extract_stats_leaders(stats)
 
+    # Timeline (P2: score progression, lead changes, late events)
+    timeline = _build_timeline(events, home_team, away_team)
+
+    # Efficiency (P2: shooting efficiency ratios)
+    efficiency = _extract_efficiency(stats, home_goals, away_goals)
+
+    # Market context (P2: implied probs, favorite, gap)
+    market_context = _build_market_context(market_odds or {}, model_probs or {})
+
+    # Betting context (P2: value bet result, conflict detection)
+    betting_context = _build_betting_context(
+        prediction_correct=prediction_correct or False,
+        value_bet=value_bet or {},
+        actual_result=winner,
+    )
+
+    # Data completeness (P2: for LLM self-limiting)
+    data_completeness = _build_data_completeness(stats, events, market_odds or {})
+
     return {
         "result": result_facts,
         "discipline": discipline,
         "penalties": penalties,
         "stats_leaders": stats_leaders,
+        "timeline": timeline,
+        "efficiency": efficiency,
+        "market_context": market_context,
+        "betting_context": betting_context,
+        "data_completeness": data_completeness,
     }
