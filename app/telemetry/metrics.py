@@ -249,6 +249,40 @@ dq_odds_overround = Histogram(
 )
 
 # =============================================================================
+# PREDICTIONS HEALTH METRICS (P1 Alerting)
+# =============================================================================
+
+predictions_hours_since_last_saved = Gauge(
+    "predictions_hours_since_last_saved",
+    "Hours since last prediction was saved to database",
+    [],
+)
+
+predictions_ns_next_48h = Gauge(
+    "predictions_ns_next_48h",
+    "Number of NS (not started) matches in next 48 hours",
+    [],
+)
+
+predictions_ns_missing_next_48h = Gauge(
+    "predictions_ns_missing_next_48h",
+    "NS matches in next 48h missing predictions",
+    [],
+)
+
+predictions_coverage_ns_pct = Gauge(
+    "predictions_coverage_ns_pct",
+    "Prediction coverage percentage for upcoming NS matches (0-100)",
+    [],
+)
+
+predictions_health_status = Gauge(
+    "predictions_health_status",
+    "Predictions health status code: 0=ok, 1=warn, 2=red",
+    [],
+)
+
+# =============================================================================
 # ENTITY MAPPING METRICS
 # =============================================================================
 
@@ -589,6 +623,47 @@ def record_aggregates_refresh(
 
     except Exception as e:
         logger.warning(f"Failed to record aggregates refresh metric: {e}")
+
+
+# =============================================================================
+# PREDICTIONS HEALTH TELEMETRY HELPER
+# =============================================================================
+
+
+def set_predictions_health_metrics(
+    hours_since_last: float | None,
+    ns_next_48h: int,
+    ns_missing_next_48h: int,
+    coverage_ns_pct: float,
+    status: str,
+) -> None:
+    """
+    Update predictions health gauges for Prometheus/Grafana alerting.
+
+    Args:
+        hours_since_last: Hours since last prediction saved (None if never)
+        ns_next_48h: NS matches in next 48 hours
+        ns_missing_next_48h: NS matches missing predictions
+        coverage_ns_pct: Coverage percentage (0-100)
+        status: Health status string: "ok", "warn", "red"
+    """
+    try:
+        # Hours since last (use -1 if None/never to indicate missing data)
+        if hours_since_last is not None:
+            predictions_hours_since_last_saved.set(hours_since_last)
+        else:
+            predictions_hours_since_last_saved.set(-1)
+
+        predictions_ns_next_48h.set(ns_next_48h)
+        predictions_ns_missing_next_48h.set(ns_missing_next_48h)
+        predictions_coverage_ns_pct.set(coverage_ns_pct)
+
+        # Status code: ok=0, warn=1, red=2
+        status_code = {"ok": 0, "warn": 1, "red": 2}.get(status, 1)
+        predictions_health_status.set(status_code)
+
+    except Exception as e:
+        logger.warning(f"Failed to set predictions health metrics: {e}")
 
 
 def get_metrics_text() -> tuple[str, str]:

@@ -4656,6 +4656,19 @@ async def _calculate_predictions_health(session) -> dict:
                 f"last_pred={last_pred_at}, preds_24h={preds_last_24h}, ns_next_48h={ns_next_48h}"
             )
 
+    # Emit Prometheus metrics for Grafana alerting (P1)
+    try:
+        from app.telemetry.metrics import set_predictions_health_metrics
+        set_predictions_health_metrics(
+            hours_since_last=hours_since_last,
+            ns_next_48h=ns_next_48h,
+            ns_missing_next_48h=ns_next_48h_missing,
+            coverage_ns_pct=ns_coverage_pct,
+            status=status,
+        )
+    except Exception as e:
+        logger.debug(f"Failed to emit predictions health metrics: {e}")
+
     return {
         "status": status,
         "status_reason": status_reason,
