@@ -14,7 +14,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # Current prompt version - bump when changing prompt template
-PROMPT_VERSION = "v1.3"
+PROMPT_VERSION = "v1.5"
 
 # Control tokens that should NEVER appear in narrative body
 # These are internal prompt instructions that LLM sometimes echoes
@@ -26,6 +26,13 @@ CONTROL_TOKENS = [
     "analyze_match",
     "pro-pick",
     "anti-pick",
+    # JSON field names that should never appear literally
+    "conflict_flag",
+    "betting_context",
+    "pred_ok_value_lost",
+    "pred_fail_value_won",
+    "value_bet_present",
+    "derived_facts",
 ]
 
 # Patterns for detecting team attribution in narrative (Spanish)
@@ -77,6 +84,24 @@ GOAL_MINUTE_PATTERN = r"(?:gol|anot[óo]|marc[óo]|convirti[óo]|diana|remat[óo
 # Card/expulsion keywords - if these appear near "minuto X", it's NOT a goal claim
 CARD_CONTEXT_KEYWORDS = [
     "roja", "expuls", "tarjeta", "card", "amonest", "amarilla", "sanci"
+]
+
+# v9: Style violation - prohibited editorial language (without extreme evidence)
+STYLE_BLACKLIST_PATTERNS = [
+    (r"\brobo\s+arbitral\b", "robo_arbitral"),
+    (r"\bescándalo\s+arbitral\b", "escandalo_arbitral"),
+    (r"\bvergüenza\b", "verguenza"),
+    (r"\binmerecid[oa]\b", "inmerecido"),
+    (r"\binjust[oa]\b", "injusto"),
+    (r"\bhumillante\b", "humillante"),
+    (r"\baplastan(?:te|do)\b", "aplastante"),
+    (r"\bgoleada\s+histórica\b", "goleada_historica"),
+    (r"\bépic[oa]\b", "epico"),
+    (r"\bmilagros[oa]\b", "milagroso"),
+    (r"\bincreíble\b", "increible"),
+    (r"\bdesastre\b", "desastre"),
+    (r"\bcatástrofe\b", "catastrofe"),
+    (r"\bpapelón\b", "papelon"),
 ]
 
 
@@ -532,7 +557,68 @@ def validate_narrative_claims(
     if derived_facts:
         errors.extend(_validate_against_derived_facts(narrative_str, derived_facts, strict))
 
+    # 5. Style validation (v9: check for prohibited editorial language)
+    style_warnings = _validate_style(narrative_str, match_data)
+    errors.extend(style_warnings)
+
     return errors
+
+
+def _validate_style(narrative: str, match_data: dict) -> list[dict]:
+    """
+    Validate narrative style for prohibited editorial language.
+
+    v9: Check for blacklisted terms that should only be used with extreme evidence.
+    Returns warnings (not errors) to avoid blocking narratives.
+
+    Args:
+        narrative: The narrative text
+        match_data: Match data for context checking
+
+    Returns:
+        List of style validation warnings
+    """
+    warnings = []
+    narrative_lower = _safe_lower(narrative)
+
+    # Get goal margin for context
+    derived_facts = match_data.get("derived_facts", {}) if isinstance(match_data, dict) else {}
+    result = derived_facts.get("result", {})
+    margin = result.get("margin", 0) or 0
+
+    for pattern, term_id in STYLE_BLACKLIST_PATTERNS:
+        match = re.search(pattern, narrative_lower)
+        if match:
+            # Check if term has sufficient evidence
+            has_evidence = False
+
+            # "aplastante", "goleada histórica" - only with 5+ goal margin
+            if term_id in ("aplastante", "goleada_historica", "humillante"):
+                has_evidence = margin >= 5
+
+            # "épico", "milagroso", "increíble" - only for comebacks of 2+ goals
+            elif term_id in ("epico", "milagroso", "increible"):
+                timeline = derived_facts.get("timeline", {})
+                lead_changes = timeline.get("lead_changes_count", 0) or 0
+                has_evidence = lead_changes >= 1 and margin >= 0  # Comeback
+
+            # Other terms never allowed without extreme circumstances
+            else:
+                has_evidence = False
+
+            if not has_evidence:
+                warnings.append({
+                    "type": "style_violation",
+                    "term": term_id,
+                    "matched_text": match.group(0),
+                    "severity": "warning",  # Never block, just log
+                    "reason": f"Editorial term '{term_id}' used without sufficient evidence",
+                })
+                logger.warning(
+                    f"[CLAIM_VALIDATOR] Style violation: '{term_id}' found in narrative"
+                )
+
+    return warnings
 
 
 # Patterns for HT score mentions

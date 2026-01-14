@@ -33,6 +33,7 @@ from app.llm.narrative_generator import (
     log_llm_evaluation,
 )
 from app.llm.runpod_client import RunPodClient, RunPodError
+from app.llm.gemini_client import GeminiClient, GeminiError
 from app.llm.claim_validator import (
     PROMPT_VERSION,
     sanitize_payload_for_storage,
@@ -45,9 +46,70 @@ from app.llm.claim_validator import (
 from app.telemetry.metrics import (
     llm_unsupported_claims_total,
     llm_narratives_validated_total,
+    llm_requests_total,
+    llm_latency_ms,
+    llm_tokens_total,
+    llm_cost_usd,
 )
 
 logger = logging.getLogger(__name__)
+
+# Circuit breaker state for LLM provider fallback
+# Prevents "spamming" fallback to RunPod when Gemini fails repeatedly
+_circuit_breaker = {
+    "gemini_consecutive_failures": 0,
+    "gemini_circuit_open": False,
+    "gemini_circuit_opened_at": None,
+    "threshold": 3,  # Open circuit after 3 consecutive failures
+    "reset_after_seconds": 300,  # Try Gemini again after 5 minutes
+}
+
+
+def _check_circuit_breaker() -> tuple[bool, str]:
+    """
+    Check if circuit breaker allows Gemini requests.
+
+    Returns:
+        (should_use_gemini, reason)
+    """
+    if not _circuit_breaker["gemini_circuit_open"]:
+        return True, "circuit_closed"
+
+    # Check if enough time has passed to retry
+    opened_at = _circuit_breaker["gemini_circuit_opened_at"]
+    if opened_at:
+        elapsed = (datetime.utcnow() - opened_at).total_seconds()
+        if elapsed >= _circuit_breaker["reset_after_seconds"]:
+            # Half-open: allow one request to test
+            logger.info("[CIRCUIT] Half-open: allowing Gemini test request")
+            return True, "half_open"
+
+    return False, "circuit_open"
+
+
+def _record_gemini_success():
+    """Record successful Gemini request, reset circuit breaker."""
+    _circuit_breaker["gemini_consecutive_failures"] = 0
+    if _circuit_breaker["gemini_circuit_open"]:
+        logger.info("[CIRCUIT] Gemini recovered, closing circuit breaker")
+        _circuit_breaker["gemini_circuit_open"] = False
+        _circuit_breaker["gemini_circuit_opened_at"] = None
+
+
+def _record_gemini_failure():
+    """Record failed Gemini request, potentially open circuit."""
+    _circuit_breaker["gemini_consecutive_failures"] += 1
+    failures = _circuit_breaker["gemini_consecutive_failures"]
+    threshold = _circuit_breaker["threshold"]
+
+    if failures >= threshold and not _circuit_breaker["gemini_circuit_open"]:
+        logger.warning(
+            f"[CIRCUIT] Opening circuit breaker after {failures} consecutive Gemini failures. "
+            f"Will retry in {_circuit_breaker['reset_after_seconds']}s"
+        )
+        _circuit_breaker["gemini_circuit_open"] = True
+        _circuit_breaker["gemini_circuit_opened_at"] = datetime.utcnow()
+
 
 # Backoff profile for stats refresh (minutes since FT -> seconds between checks)
 STATS_BACKOFF_PROFILE = [
@@ -100,12 +162,23 @@ class FastPathService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.settings = get_settings()
-        self.runpod = RunPodClient()
+        self.provider_name = self.settings.NARRATIVE_PROVIDER.lower()
+
+        # Initialize appropriate LLM client based on feature flag
+        if self.provider_name == "gemini":
+            self.llm_client = GeminiClient()
+            logger.info("FastPath using Gemini provider")
+        else:
+            self.llm_client = RunPodClient()
+            logger.info("FastPath using RunPod provider")
+
+        # Keep runpod reference for backward compatibility
+        self.runpod = self.llm_client if self.provider_name == "runpod" else None
         self._api_provider = None
 
     async def close(self):
         """Close resources."""
-        await self.runpod.close()
+        await self.llm_client.close()
         if self._api_provider:
             await self._api_provider.close()
 
@@ -520,7 +593,7 @@ class FastPathService:
                     audit.llm_narrative_error_detail = reason
                     continue
 
-                # Submit to RunPod
+                # Submit to LLM provider
                 try:
                     prompt, home_pack, away_pack = build_narrative_prompt(match_data)
 
@@ -534,21 +607,72 @@ class FastPathService:
                     audit.llm_prompt_input_json = sanitized_payload
                     audit.llm_prompt_input_hash = payload_hash
 
-                    job_id = await self.runpod.run_job(prompt)
+                    if self.provider_name == "gemini":
+                        # Check circuit breaker before calling Gemini
+                        use_gemini, circuit_state = _check_circuit_breaker()
 
-                    audit.llm_narrative_status = "in_queue"
-                    audit.llm_narrative_request_id = job_id
+                        if not use_gemini:
+                            # Circuit is open - skip this match (don't fallback to avoid double cost)
+                            logger.warning(
+                                f"[FASTPATH] Skipping match {match.id}: Gemini circuit breaker open. "
+                                f"Set NARRATIVE_PROVIDER=runpod for immediate fallback."
+                            )
+                            audit.llm_narrative_status = "skipped"
+                            audit.llm_narrative_error_code = "circuit_breaker_open"
+                            audit.llm_narrative_error_detail = (
+                                "Gemini circuit breaker open after consecutive failures. "
+                                "Match will be retried when circuit resets."
+                            )
+                            continue
+
+                        # Gemini is synchronous - generate immediately
+                        result = await self.llm_client.generate(prompt)
+
+                        # Record metrics
+                        llm_latency_ms.labels(provider="gemini").observe(result.exec_ms)
+                        llm_tokens_total.labels(provider="gemini", direction="input").inc(result.tokens_in)
+                        llm_tokens_total.labels(provider="gemini", direction="output").inc(result.tokens_out)
+                        # Gemini pricing: $0.10/1M input, $0.40/1M output
+                        cost = (result.tokens_in * 0.10 + result.tokens_out * 0.40) / 1_000_000
+                        llm_cost_usd.labels(provider="gemini").inc(cost)
+
+                        if result.status == "COMPLETED":
+                            _record_gemini_success()
+                            llm_requests_total.labels(provider="gemini", status="ok").inc()
+                            audit.llm_narrative_status = "completed_sync"
+                            audit.llm_narrative_request_id = f"gemini-{match.id}"
+                            audit.llm_narrative_model = "gemini-2.0-flash"
+                            audit.llm_narrative_raw_output = result.text
+                            audit.llm_delay_time_ms = 0
+                            audit.llm_execution_time_ms = result.exec_ms
+                            audit.llm_tokens_input = result.tokens_in
+                            audit.llm_tokens_output = result.tokens_out
+                            enqueued += 1
+                            logger.info(f"[FASTPATH] Gemini completed match {match.id} in {result.exec_ms}ms")
+                        else:
+                            _record_gemini_failure()
+                            llm_requests_total.labels(provider="gemini", status="error").inc()
+                            audit.llm_narrative_status = "error"
+                            audit.llm_narrative_error_code = "gemini_error"
+                            audit.llm_narrative_error_detail = result.error[:500] if result.error else "Unknown error"
+                            logger.error(f"[FASTPATH] Gemini failed for match {match.id}: {result.error}")
+                    else:
+                        # RunPod async pattern
+                        job_id = await self.llm_client.run_job(prompt)
+                        llm_requests_total.labels(provider="runpod", status="enqueued").inc()
+                        audit.llm_narrative_status = "in_queue"
+                        audit.llm_narrative_request_id = job_id
+                        audit.llm_narrative_model = "qwen-vllm"
+                        enqueued += 1
+                        logger.info(f"[FASTPATH] Enqueued match {match.id} -> job {job_id}, hash={payload_hash[:12]}")
+
                     audit.llm_narrative_attempts = 1
-                    audit.llm_narrative_model = "qwen-vllm"
-                    enqueued += 1
 
-                    logger.info(f"[FASTPATH] Enqueued match {match.id} -> job {job_id}, hash={payload_hash[:12]}")
-
-                except RunPodError as e:
+                except (RunPodError, GeminiError) as e:
                     audit.llm_narrative_status = "error"
-                    audit.llm_narrative_error_code = "runpod_http_error"
+                    audit.llm_narrative_error_code = f"{self.provider_name}_http_error"
                     audit.llm_narrative_error_detail = str(e)[:500]
-                    logger.error(f"[FASTPATH] Failed to enqueue match {match.id}: {e}")
+                    logger.error(f"[FASTPATH] Failed to process match {match.id}: {e}")
 
             await self.session.commit()
 

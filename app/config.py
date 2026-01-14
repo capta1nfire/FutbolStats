@@ -50,8 +50,16 @@ class Settings(BaseSettings):
     NARRATIVE_LLM_MAX_TOKENS: int = 1500
     NARRATIVE_LLM_TIMEOUT_SECONDS: int = 60
     NARRATIVE_LLM_POLL_INTERVAL_SECONDS: float = 1.5
-    NARRATIVE_LLM_TEMPERATURE: float = 0.15
+    NARRATIVE_LLM_TEMPERATURE: float = 0.28
     NARRATIVE_LLM_TOP_P: float = 0.9
+
+    # Gemini LLM Configuration
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.0-flash"
+    GEMINI_MAX_TOKENS: int = 1000
+
+    # Narrative Provider Selection (runpod | gemini)
+    NARRATIVE_PROVIDER: str = "runpod"
 
     # Fast-Path Narrative Configuration
     FASTPATH_ENABLED: bool = False

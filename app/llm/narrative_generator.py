@@ -137,12 +137,13 @@ def _determine_bet_won(prediction: dict, home_goals: int, away_goals: int) -> bo
 
 def build_narrative_prompt(match_data: dict) -> tuple[str, dict, dict]:
     """
-    Build prompt v7 for post-match narrative generation.
+    Build prompt v9 for post-match narrative generation.
 
-    v7 improvements (on top of v6):
-    - Includes derived_facts block with pre-computed verifiable facts
-    - Rules 18-21 mandate using derived_facts as primary source
-    - Reduces hallucinations from LLM inference errors
+    v9 improvements (on top of v7):
+    - New ESTILO block for "human_medium" voice without losing grounding
+    - Explicit rules for allowed/prohibited editorial language
+    - narrative_style hints support (energy, voice, tone_mode)
+    - Mandatory mention of total_shots and conflict_flag when present
 
     Args:
         match_data: Dict with match info (teams, score, stats, prediction, etc.)
@@ -231,113 +232,31 @@ def build_narrative_prompt(match_data: dict) -> tuple[str, dict, dict]:
     derived_facts = match_data.get("derived_facts", {})
     derived_facts_json = json.dumps(derived_facts, ensure_ascii=False) if derived_facts else "null"
 
-    prompt = f"""Eres un analista de fútbol profesional. Escribes en español neutral, serio, sin hype y sin emojis.
+    # Narrative style hints (v9)
+    narrative_style = match_data.get("narrative_style", {})
+    style_energy = narrative_style.get("energy", "medium")
+    style_voice = narrative_style.get("voice", "humano_tecnico")
+    style_tone_mode = narrative_style.get("tone_mode", "neutral")
+    narrative_style_json = json.dumps(narrative_style, ensure_ascii=False) if narrative_style else "null"
 
-REGLAS CRÍTICAS v7 (OBLIGATORIAS):
+    prompt = f"""You are a football analyst. Write in SPANISH (español), human but technical voice, no emojis.
 
-1) DEVUELVE SOLO JSON VÁLIDO. No incluyas texto antes ni después.
-
-2) SOLO DÍGITOS PARA NÚMEROS: Escribe "1", "2", "54%", nunca "uno", "dos", "cincuenta y cuatro por ciento".
-
-3) NO REPITAS EL MARCADOR en narrative.body. El usuario ya ve el resultado en la UI. Enfócate en el "por qué", no en el "qué".
-
-4) REFERENCIAS A EQUIPOS - REGLAS ESTRICTAS (CRÍTICO):
-
-   A) Formas PERMITIDAS para referirte a cada equipo:
-      1. NOMBRE OFICIAL: Usa el nombre del equipo directamente.
-      2. APODO (si está en nicknames_allowed): SIEMPRE entre comillas. Ej: "Los Merengues"
-      3. REFERENCIA GENÉRICA (siempre permitida, SIN comillas):
-         - "el equipo de [NOMBRE]" / "el conjunto de [NOMBRE]"
-         - "la escuadra de [NOMBRE]" / "el once de [NOMBRE]"
-         - "el local" / "los locales" (solo para equipo local)
-         - "el visitante" / "la visita" (solo para equipo visitante)
-
-   B) PROHIBIDO (tu respuesta será RECHAZADA si incluyes):
-      - Combinar genérico + color/apodo: "cuadro blanco", "once merengue", "equipo rojo", "onceno blanco"
-      - Cánticos de afición no provistos: "hala madrid", "visca barça", "forza juve"
-      - Inventar gentilicios/adjetivos: "madridista", "barcelonista", "sevillista", "bético"
-      - Usar apodos de otros equipos no participantes en el partido
-
-   C) Datos de equipos:
-      - LOCAL: {home_team}
-        Apodos permitidos: {home_aliases_json}{slogan_note}
-      - VISITANTE: {away_team}
-        Apodos permitidos: {away_aliases_json}
-
-5) FORMATO DE APODOS Y SLOGANS (CRÍTICO):
-   - Apodos: SIEMPRE entre comillas dobles. Ej: Los de "La Mechita" dominaron.
-   - Slogans: SIEMPRE entre comillas dobles. Ej: "La Pasión de un Pueblo"
-   - Referencias genéricas: SIN comillas. Ej: El equipo de Real Madrid controló.
-   - NO uses negrita (**...**) ni markdown porque el texto es JSON plano.
-
-6) Usa SOLO los datos proporcionados en "DATOS". NO inventes jugadores, lesiones, alineaciones, tácticas, xG, tarjetas, ni nada que no esté explícitamente en el JSON.
-
-7) match_id debe ser EXACTAMENTE el número recibido en DATOS.
-
-8) Si un dato no existe (ej. expected_goals, ball_possession), NO lo menciones.
-
-9) En narrative.body usa saltos de párrafo como "\\n\\n".
-
-10) Redondeo:
-    - prediction.confidence y prediction.probabilities a 2 decimales.
-    - probabilities debe sumar 1 ± 0.01. Si no suma, renormaliza.
-
-11) LONGITUD REDUCIDA: narrative.body debe tener 2-3 párrafos, 140-240 palabras. Sé conciso.
-
-12) key_factors NO DUPLICA el body:
-    - Cada evidence máx 120 caracteres.
-    - Debe contener al menos 1 cifra (stats) o 1 minuto (events).
-    - REGLA EVENTS VACÍO: Si el array events está vacío ([]), en key_factors[label="Events"] usa:
-      * direction: "neutral"
-      * evidence: "Eventos no disponibles" (EXACTAMENTE este texto, no "No hubo eventos")
-
-13) Tono según resultado de predicción:
-    - Si prediction.correct = true: refuerza con 2-3 evidencias numéricas.
-    - Si prediction.correct = false: matiza con 1-2 factores de los datos.
-    - Nunca uses "suerte/varianza" sin evidencia cuantitativa (xG vs goles).
-
-14) title: máx 8 palabras, sin comillas, sin \\n.
-
-15) VENUE (ESTADIO/CIUDAD) - REGLAS ESTRICTAS:
-    - SOLO mencionar el estadio si `venue.name` está presente en DATOS.
-    - NUNCA deducir el estadio por nombre del club (ej. Inter ⇒ San Siro es PROHIBIDO si venue es null).
-    - Si venue.name existe, puedes usarlo para dar contexto: "En [nombre del estadio], el partido se inclinó..."
-    - Si venue.city existe, puedes añadirlo: "En el [estadio] de [ciudad]..."
-    - El venue va SIN comillas (no es apodo).
-    - PROHIBIDO: inferir afición ("el estadio quedó mudo") o inventar ambiente sin datos.
-
-16) ATRIBUCIÓN DE EVENTOS CRÍTICOS (tarjetas rojas, penales):
-    - Si mencionas una expulsión o tarjeta roja, verifica EN EVENTS qué equipo la recibió (team_name).
-    - PROHIBIDO decir "expulsión del equipo local" si events muestra que fue el visitante (o viceversa).
-    - Si no estás seguro del equipo, NO menciones quién recibió la tarjeta; solo di que "hubo una expulsión".
-    - Mismo criterio para penales: verifica team_name antes de atribuir.
-
-17) TOKENS INTERNOS PROHIBIDOS:
-    - NUNCA incluyas en narrative.body palabras como: mitigate_loss, reinforce_win, pro-pick, anti-pick.
-    - Estos son valores del campo "tone", NO van en el texto visible.
-    - El campo tone sí debe tener "reinforce_win" o "mitigate_loss" según corresponda.
-
-18) DERIVED_FACTS - FUENTE PRIMARIA (CRÍTICO):
-    - Usa derived_facts como fuente principal para datos verificables.
-    - NO recalcules marcador, periodo, líderes de stats ni conteos de tarjetas.
-    - derived_facts.result contiene: winner, period (REGULAR/AET/PEN), ft_score.
-    - derived_facts.discipline contiene: red_cards, first_red_card (side, team_name, player_name).
-    - derived_facts.stats_leaders contiene: possession.leader, shots_on_goal.leader.
-
-19) HT_SCORE (RESULTADO AL DESCANSO):
-    - Si derived_facts.result.ht_score es null, NO menciones "al descanso iban...", "al medio tiempo...", ni similar.
-    - Solo menciona resultado parcial si ht_score tiene valor explícito.
-
-20) COMPARACIONES DE STATS:
-    - Si mencionas posesión o disparos, usa derived_facts.stats_leaders.
-    - Si stats_leaders.possession.leader es "home", puedes decir "los locales dominaron la posesión".
-    - Si stats_leaders.shots_on_goal.leader es null, NO afirmes comparaciones de disparos.
-    - Usar los valores delta_pct o delta para ser específico (ej: "con 18% más posesión").
-
-21) TARJETAS ROJAS CON DERIVED_FACTS:
-    - Usa derived_facts.discipline.first_red_card para atribuciones.
-    - Si first_red_card.side = "away", di "expulsión del equipo visitante" o usa first_red_card.team_name.
-    - PROHIBIDO contradecir derived_facts (ej: decir "local" cuando side = "away").
+RULES (v10):
+1) Return ONLY valid JSON. No text before/after. Ensure valid JSON syntax.
+2) Use digits: "1", "2", "54%", never words for numbers.
+3) Don't repeat score in body. Focus on WHY.
+4) TEAM REFS: Use official name, or nickname in quotes if in allowed list. Generic refs OK without quotes.
+   - HOME: {home_team} | Allowed: {home_aliases_json}
+   - AWAY: {away_team} | Allowed: {away_aliases_json}
+5) FORBIDDEN: made-up nicknames, fan chants, "cuadro blanco", markdown.
+6) Use ONLY DATA provided. Don't invent. match_id exact.
+7) If data missing, don't mention it. Paragraphs with "\\n\\n".
+8) tone: "reinforce_win" if prediction correct, "mitigate_loss" if wrong. NEVER in body text.
+9) DERIVED_FACTS is primary source. Don't recalculate stats.
+10) MANDATORY: mention total_shots ("X vs Y"), early goals if <15'.
+11) STYLE v10: "arranque rápido" only if goal<15'. FORBIDDEN: "robo", "inmerecido", "épico". Max 2 editorial phrases.
+12) LENGTH: 120-150 words. title max 8 words.
+13) ANTI-LEAK: NEVER write JSON field names literally in body (conflict_flag, betting_context, etc). Express ideas in natural language instead.
 
 FORMATO DE SALIDA (SCHEMA OBLIGATORIO):
 
@@ -390,7 +309,9 @@ market_odds: {market_odds_json}
 
 derived_facts: {derived_facts_json}
 
-RECUERDA: JSON válido, sin marcador en body, solo aliases permitidos (entre comillas), key_factors cortos y distintos del body. USA derived_facts como fuente primaria para winner, period, red_cards, y stats_leaders."""
+narrative_style: {narrative_style_json}
+
+RECUERDA: JSON válido (verifica sintaxis), sin marcador en body, solo aliases permitidos (entre comillas), key_factors cortos y distintos del body. USA derived_facts como fuente primaria. MENCIONA total_shots. NUNCA escribas nombres de campos JSON en el texto. Máx 2 frases editoriales."""
 
     return prompt, home_pack, away_pack
 

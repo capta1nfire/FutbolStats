@@ -162,6 +162,31 @@ llm_narratives_validated_total = Counter(
     ["status"],  # ok, rejected
 )
 
+llm_requests_total = Counter(
+    "llm_requests_total",
+    "Total LLM requests by provider and status",
+    ["provider", "status"],  # provider: runpod/gemini, status: ok/error/rejected
+)
+
+llm_latency_ms = Histogram(
+    "llm_latency_ms",
+    "LLM request latency in milliseconds by provider",
+    ["provider"],
+    buckets=[500, 1000, 2000, 3000, 5000, 10000, 20000, 30000, 60000, 120000],
+)
+
+llm_tokens_total = Counter(
+    "llm_tokens_total",
+    "Total LLM tokens by provider and direction",
+    ["provider", "direction"],  # direction: input/output
+)
+
+llm_cost_usd = Counter(
+    "llm_cost_usd",
+    "Estimated LLM cost in USD by provider",
+    ["provider"],
+)
+
 dq_odds_overround = Histogram(
     "dq_odds_overround",
     "Overround (margin) distribution for 1X2 markets",
