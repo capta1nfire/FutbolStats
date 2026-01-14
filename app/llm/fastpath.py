@@ -684,7 +684,34 @@ class FastPathService:
                         if result.status == "COMPLETED":
                             _record_gemini_success()
                             llm_requests_total.labels(provider="gemini", status="ok").inc()
-                            audit.llm_narrative_status = "ok"
+
+                            # Parse and validate Gemini response (same as RunPod)
+                            text = result.text
+                            audit.llm_output_raw = text[:5000] if text else None
+
+                            parsed = parse_json_response(text)
+                            outcome = await self.session.get(PredictionOutcome, audit.outcome_id)
+                            match_id_for_validation = outcome.match_id if outcome else 0
+
+                            if parsed and validate_narrative_json(parsed, match_id_for_validation):
+                                # Sanitize narrative body
+                                narrative_obj = parsed.get("narrative", {})
+                                if isinstance(narrative_obj, dict) and "body" in narrative_obj:
+                                    original_body = narrative_obj.get("body", "")
+                                    sanitized_body, _ = sanitize_narrative_body(original_body)
+                                    if sanitized_body != original_body:
+                                        narrative_obj["body"] = sanitized_body
+                                        parsed["narrative"] = narrative_obj
+
+                                audit.llm_narrative_status = "ok"
+                                audit.llm_narrative_json = parsed
+                            else:
+                                # Schema validation failed
+                                audit.llm_narrative_status = "error"
+                                audit.llm_narrative_error_code = "schema_invalid"
+                                audit.llm_narrative_error_detail = f"JSON validation failed. Text len: {len(text) if text else 0}"
+                                logger.warning(f"[FASTPATH] Gemini response invalid for match {match.id}")
+
                             audit.llm_narrative_request_id = f"gemini-{match.id}"
                             audit.llm_narrative_model = "gemini-2.0-flash"
                             audit.llm_narrative_generated_at = datetime.utcnow()
