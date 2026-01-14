@@ -231,6 +231,90 @@ async def global_sync_today() -> dict:
         return {"matches_synced": 0, "error": str(e)}
 
 
+async def global_sync_window(days_ahead: int = 10, days_back: int = 1) -> dict:
+    """
+    Window Sync: Load fixtures for a date range (default: yesterday to 10 days ahead).
+
+    This job ensures fixtures for upcoming matches are loaded in advance,
+    regardless of season. Works for both European (season=2025) and LATAM
+    (season=2026) leagues by using date-based queries instead of season.
+
+    IMPORTANT: This solves the LATAM 2026 fixture loading issue where
+    CURRENT_SEASON=2025 was preventing new season fixtures from loading.
+
+    Uses: GET /fixtures?date=YYYY-MM-DD (1 API call per day in window)
+    Budget: ~11 calls per run (10 days ahead + 1 back) = minimal impact
+
+    Schedule: Daily at 05:30 UTC (before other sync jobs)
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            provider = APIFootballProvider()
+            league_ids = await resolve_live_sync_leagues(session)
+
+            if not league_ids:
+                logger.warning("[WINDOW_SYNC] No leagues resolved, skipping")
+                return {"matches_synced": 0, "days_processed": 0}
+
+            pipeline = ETLPipeline(provider, session)
+            now = datetime.utcnow()
+            total_synced = 0
+            days_processed = 0
+            by_date = {}
+
+            # Process each day in the window
+            for day_offset in range(-days_back, days_ahead + 1):
+                target_date = now + timedelta(days=day_offset)
+
+                try:
+                    fixtures = await provider.get_fixtures_by_date(
+                        date=target_date,
+                        league_ids=league_ids
+                    )
+
+                    day_synced = 0
+                    for fixture in fixtures:
+                        try:
+                            await pipeline._upsert_match(fixture)
+                            day_synced += 1
+                        except Exception as e:
+                            logger.warning(f"[WINDOW_SYNC] Error upserting fixture: {e}")
+
+                    total_synced += day_synced
+                    days_processed += 1
+                    date_str = target_date.strftime("%Y-%m-%d")
+                    by_date[date_str] = day_synced
+
+                    if day_synced > 0:
+                        logger.debug(f"[WINDOW_SYNC] {date_str}: {day_synced} fixtures")
+
+                except APIBudgetExceeded as e:
+                    logger.warning(f"[WINDOW_SYNC] Budget exceeded at day {day_offset}: {e}")
+                    break
+                except Exception as e:
+                    logger.warning(f"[WINDOW_SYNC] Error processing day {day_offset}: {e}")
+                    continue
+
+            await session.commit()
+            await provider.close()
+
+            logger.info(
+                f"[WINDOW_SYNC] Complete: {total_synced} fixtures synced, "
+                f"{days_processed} days processed ({-days_back} to +{days_ahead})"
+            )
+
+            return {
+                "matches_synced": total_synced,
+                "days_processed": days_processed,
+                "window": {"days_back": days_back, "days_ahead": days_ahead},
+                "by_date": by_date,
+            }
+
+    except Exception as e:
+        logger.error(f"[WINDOW_SYNC] Failed: {e}")
+        return {"matches_synced": 0, "error": str(e)}
+
+
 async def freeze_predictions_before_kickoff() -> dict:
     """
     Freeze predictions for matches that are about to start or have started.
@@ -3070,6 +3154,17 @@ def start_scheduler(ml_engine):
     if os.environ.get("UVICORN_RELOADED"):
         logger.info("Skipping scheduler in reload subprocess")
         return
+
+    # Window Sync: Daily at 05:30 UTC (BEFORE other jobs)
+    # Loads fixtures for next 10 days using date-based API calls.
+    # Solves LATAM 2026 issue: works regardless of CURRENT_SEASON setting.
+    scheduler.add_job(
+        global_sync_window,
+        trigger=CronTrigger(hour=5, minute=30),
+        id="global_sync_window",
+        name="Daily Window Sync (10 days ahead)",
+        replace_existing=True,
+    )
 
     # Daily results sync: Every day at 6:00 AM UTC (first job of the day)
     scheduler.add_job(
