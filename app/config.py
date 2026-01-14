@@ -70,6 +70,16 @@ class Settings(BaseSettings):
     # Telemetry / Observability
     METRICS_BEARER_TOKEN: str = ""  # Bearer token for /metrics endpoint (Grafana Cloud scraping)
 
+    # Email Alerting (SMTP)
+    SMTP_ENABLED: bool = False
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""  # App password for Gmail
+    SMTP_FROM_EMAIL: str = ""
+    SMTP_TO_EMAIL: str = "capta1nfire@me.com"
+    ALERT_COOLDOWN_MINUTES: int = 60  # Min time between same alert type
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

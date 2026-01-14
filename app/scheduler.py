@@ -3132,6 +3132,24 @@ async def update_predictions_health_metrics():
                 f"ns_48h={ns_next_48h}, missing={ns_missing}, coverage={coverage_pct}%, status={status}"
             )
 
+            # Send email alert if status is warn or red
+            if status in ("warn", "red"):
+                from app.alerting.email import send_alert_email, AlertType
+
+                alert_type = (
+                    AlertType.PREDICTIONS_HEALTH_RED
+                    if status == "red"
+                    else AlertType.PREDICTIONS_HEALTH_WARN
+                )
+                await send_alert_email(
+                    alert_type=alert_type,
+                    status=status,
+                    hours_since_last=hours_since_last,
+                    ns_next_48h=ns_next_48h,
+                    ns_missing=ns_missing,
+                    coverage_pct=coverage_pct,
+                )
+
     except Exception as e:
         logger.error(f"[METRICS] Failed to update predictions health metrics: {e}")
 
