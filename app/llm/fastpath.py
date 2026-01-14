@@ -95,6 +95,9 @@ def _record_gemini_success():
         _circuit_breaker["gemini_circuit_open"] = False
         _circuit_breaker["gemini_circuit_opened_at"] = None
 
+    # Emit metrics
+    _update_circuit_breaker_metrics()
+
 
 def _record_gemini_failure():
     """Record failed Gemini request, potentially open circuit."""
@@ -109,6 +112,22 @@ def _record_gemini_failure():
         )
         _circuit_breaker["gemini_circuit_open"] = True
         _circuit_breaker["gemini_circuit_opened_at"] = datetime.utcnow()
+
+    # Emit metrics
+    _update_circuit_breaker_metrics()
+
+
+def _update_circuit_breaker_metrics():
+    """Update Prometheus gauges for circuit breaker state."""
+    try:
+        from app.telemetry.metrics import set_circuit_breaker_state
+        set_circuit_breaker_state(
+            provider="gemini",
+            is_open=_circuit_breaker["gemini_circuit_open"],
+            consecutive_failures=_circuit_breaker["gemini_consecutive_failures"],
+        )
+    except Exception as e:
+        logger.debug(f"[METRICS] Failed to update circuit breaker metrics: {e}")
 
 
 # Backoff profile for stats refresh (minutes since FT -> seconds between checks)
@@ -642,6 +661,7 @@ class FastPathService:
                                 f"[FASTPATH] Skipping match {match.id}: Gemini circuit breaker open. "
                                 f"Set NARRATIVE_PROVIDER=runpod for immediate fallback."
                             )
+                            llm_requests_total.labels(provider="gemini", status="skipped").inc()
                             audit.llm_narrative_status = "skipped"
                             audit.llm_narrative_error_code = "circuit_breaker_open"
                             audit.llm_narrative_error_detail = (
@@ -653,12 +673,12 @@ class FastPathService:
                         # Gemini is synchronous - generate immediately
                         result = await self.llm_client.generate(prompt)
 
-                        # Record metrics
+                        # Record metrics (latency and tokens regardless of outcome)
                         llm_latency_ms.labels(provider="gemini").observe(result.exec_ms)
                         llm_tokens_total.labels(provider="gemini", direction="input").inc(result.tokens_in)
                         llm_tokens_total.labels(provider="gemini", direction="output").inc(result.tokens_out)
-                        # Gemini pricing: $0.10/1M input, $0.40/1M output
-                        cost = (result.tokens_in * 0.10 + result.tokens_out * 0.40) / 1_000_000
+                        # Gemini 2.0 Flash pricing: $0.075/1M input, $0.30/1M output
+                        cost = (result.tokens_in * 0.075 + result.tokens_out * 0.30) / 1_000_000
                         llm_cost_usd.labels(provider="gemini").inc(cost)
 
                         if result.status == "COMPLETED":
@@ -1064,7 +1084,8 @@ class FastPathService:
                                 audit.llm_narrative_json = parsed  # Store anyway for debugging
                                 errors += 1
 
-                                # Telemetry: track claim types
+                                # Telemetry: track claim types + request status
+                                llm_requests_total.labels(provider="runpod", status="rejected").inc()
                                 llm_narratives_validated_total.labels(status="rejected").inc()
                                 for err in claim_errors:
                                     if err.get("severity") == "error":
@@ -1087,8 +1108,15 @@ class FastPathService:
                                 audit.llm_narrative_worker_id = meta["worker_id"]
                                 completed += 1
 
-                                # Telemetry: track successful validation
+                                # Telemetry: track successful validation + full metrics
+                                llm_requests_total.labels(provider="runpod", status="ok").inc()
                                 llm_narratives_validated_total.labels(status="ok").inc()
+                                llm_latency_ms.labels(provider="runpod").observe(meta["exec_ms"])
+                                llm_tokens_total.labels(provider="runpod", direction="input").inc(tokens_in)
+                                llm_tokens_total.labels(provider="runpod", direction="output").inc(tokens_out)
+                                # RunPod/Qwen pricing estimate: $0.20/1M tokens
+                                cost = (tokens_in + tokens_out) * 0.20 / 1_000_000
+                                llm_cost_usd.labels(provider="runpod").inc(cost)
 
                                 logger.info(
                                     f"[FASTPATH] Completed narrative for audit {audit.id}: "
@@ -1117,6 +1145,7 @@ class FastPathService:
                     audit.llm_narrative_status = "error"
                     audit.llm_narrative_error_code = "runpod_http_error"
                     audit.llm_narrative_error_detail = error_msg[:500]
+                    llm_requests_total.labels(provider="runpod", status="error").inc()
                     errors += 1
 
                 elif status == "IN_PROGRESS":

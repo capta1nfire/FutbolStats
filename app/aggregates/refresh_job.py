@@ -32,6 +32,9 @@ async def refresh_all_aggregates(
     Returns:
         Dict with refresh metrics
     """
+    import time
+    start_time = time.time()
+
     if as_of_date is None:
         as_of_date = datetime.utcnow().date()
 
@@ -82,11 +85,42 @@ async def refresh_all_aggregates(
     # Commit all changes
     await session.commit()
 
+    duration_ms = (time.time() - start_time) * 1000
     metrics["completed_at"] = datetime.utcnow().isoformat()
+    metrics["duration_ms"] = duration_ms
+
+    # Get final counts for telemetry
+    status = await get_aggregates_status(session)
+
+    # Calculate min_sample_ok percentage
+    min_sample_ok_pct = 0.0
+    if status["profiles_count"] > 0:
+        # Query count of profiles with min_sample_ok=True
+        min_ok_result = await session.execute(
+            select(func.count(LeagueTeamProfile.id))
+            .where(LeagueTeamProfile.min_sample_ok == True)
+        )
+        min_ok_count = min_ok_result.scalar() or 0
+        min_sample_ok_pct = (min_ok_count / status["profiles_count"]) * 100
+
+    # Emit telemetry
+    try:
+        from app.telemetry.metrics import record_aggregates_refresh
+        record_aggregates_refresh(
+            status="ok" if not metrics["errors"] else "error",
+            duration_ms=duration_ms,
+            baselines_count=status["baselines_count"],
+            profiles_count=status["profiles_count"],
+            leagues_count=status["leagues_with_baselines"],
+            min_sample_ok_pct=min_sample_ok_pct,
+        )
+    except Exception as e:
+        logger.debug(f"[AGGREGATES] Failed to emit telemetry: {e}")
 
     logger.info(
         f"[AGGREGATES] Refresh complete: {metrics['leagues_processed']} leagues, "
-        f"{metrics['baselines_created']} baselines, {metrics['profiles_created']} profiles"
+        f"{metrics['baselines_created']} baselines, {metrics['profiles_created']} profiles, "
+        f"duration={duration_ms:.0f}ms"
     )
 
     return metrics

@@ -187,6 +187,60 @@ llm_cost_usd = Counter(
     ["provider"],
 )
 
+# Circuit breaker state
+llm_circuit_open = Gauge(
+    "llm_circuit_open",
+    "Circuit breaker state (1=open/tripped, 0=closed/healthy)",
+    ["provider"],
+)
+
+llm_consecutive_failures = Gauge(
+    "llm_consecutive_failures",
+    "Current consecutive failure count for circuit breaker",
+    ["provider"],
+)
+
+# =============================================================================
+# AGGREGATES METRICS (P1)
+# =============================================================================
+
+aggregates_refresh_runs_total = Counter(
+    "aggregates_refresh_runs_total",
+    "Total aggregates refresh job runs",
+    ["status"],  # ok, error
+)
+
+aggregates_refresh_duration_ms = Histogram(
+    "aggregates_refresh_duration_ms",
+    "Aggregates refresh job duration in milliseconds",
+    [],
+    buckets=[1000, 5000, 10000, 30000, 60000, 120000, 300000],
+)
+
+aggregates_baselines_rows = Gauge(
+    "aggregates_baselines_rows",
+    "Current number of league baseline rows",
+    [],
+)
+
+aggregates_profiles_rows = Gauge(
+    "aggregates_profiles_rows",
+    "Current number of team profile rows",
+    [],
+)
+
+aggregates_leagues_distinct = Gauge(
+    "aggregates_leagues_distinct",
+    "Number of distinct leagues with baselines",
+    [],
+)
+
+aggregates_profiles_min_sample_ok_pct = Gauge(
+    "aggregates_profiles_min_sample_ok_pct",
+    "Percentage of team profiles with min_sample_ok=true",
+    [],
+)
+
 dq_odds_overround = Histogram(
     "dq_odds_overround",
     "Overround (margin) distribution for 1X2 markets",
@@ -415,6 +469,122 @@ def set_mapping_coverage(
         ).set(coverage_pct)
     except Exception as e:
         logger.warning(f"Failed to set mapping coverage metric: {e}")
+
+
+# =============================================================================
+# LLM TELEMETRY HELPERS
+# =============================================================================
+
+# Pricing per 1M tokens (as of 2026-01)
+LLM_PRICING = {
+    "gemini": {"input": 0.075, "output": 0.30},  # Gemini 1.5 Flash
+    "runpod": {"input": 0.20, "output": 0.20},   # Qwen 32B estimate
+}
+
+
+def record_llm_request(
+    provider: str,
+    status: str,
+    latency_ms: float,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+) -> None:
+    """
+    Record a complete LLM request with all metrics.
+
+    Args:
+        provider: "gemini" or "runpod"
+        status: "ok", "error", "rejected", "skipped"
+        latency_ms: End-to-end latency in milliseconds
+        input_tokens: Number of input tokens (0 if unknown)
+        output_tokens: Number of output tokens (0 if unknown)
+    """
+    try:
+        # Request count
+        llm_requests_total.labels(provider=provider, status=status).inc()
+
+        # Latency (only for completed requests)
+        if status in ("ok", "rejected") and latency_ms > 0:
+            llm_latency_ms.labels(provider=provider).observe(latency_ms)
+
+        # Tokens
+        if input_tokens > 0:
+            llm_tokens_total.labels(provider=provider, direction="input").inc(input_tokens)
+        if output_tokens > 0:
+            llm_tokens_total.labels(provider=provider, direction="output").inc(output_tokens)
+
+        # Estimated cost
+        if input_tokens > 0 or output_tokens > 0:
+            pricing = LLM_PRICING.get(provider, {"input": 0.10, "output": 0.10})
+            cost = (input_tokens * pricing["input"] + output_tokens * pricing["output"]) / 1_000_000
+            if cost > 0:
+                llm_cost_usd.labels(provider=provider).inc(cost)
+
+    except Exception as e:
+        logger.warning(f"Failed to record LLM request metric: {e}")
+
+
+def set_circuit_breaker_state(
+    provider: str,
+    is_open: bool,
+    consecutive_failures: int,
+) -> None:
+    """
+    Update circuit breaker state gauges.
+
+    Args:
+        provider: "gemini" or "runpod"
+        is_open: True if circuit is open (tripped), False if closed
+        consecutive_failures: Current consecutive failure count
+    """
+    try:
+        llm_circuit_open.labels(provider=provider).set(1 if is_open else 0)
+        llm_consecutive_failures.labels(provider=provider).set(consecutive_failures)
+    except Exception as e:
+        logger.warning(f"Failed to set circuit breaker metric: {e}")
+
+
+# =============================================================================
+# AGGREGATES TELEMETRY HELPERS
+# =============================================================================
+
+
+def record_aggregates_refresh(
+    status: str,
+    duration_ms: float,
+    baselines_count: int = 0,
+    profiles_count: int = 0,
+    leagues_count: int = 0,
+    min_sample_ok_pct: float = 0.0,
+) -> None:
+    """
+    Record aggregates refresh job metrics.
+
+    Args:
+        status: "ok" or "error"
+        duration_ms: Job duration in milliseconds
+        baselines_count: Number of baseline rows after refresh
+        profiles_count: Number of profile rows after refresh
+        leagues_count: Number of distinct leagues
+        min_sample_ok_pct: Percentage of profiles with min_sample_ok=true
+    """
+    try:
+        # Job run counter
+        aggregates_refresh_runs_total.labels(status=status).inc()
+
+        # Duration histogram
+        if duration_ms > 0:
+            aggregates_refresh_duration_ms.observe(duration_ms)
+
+        # State gauges (only update on success)
+        if status == "ok":
+            aggregates_baselines_rows.set(baselines_count)
+            aggregates_profiles_rows.set(profiles_count)
+            aggregates_leagues_distinct.set(leagues_count)
+            aggregates_profiles_min_sample_ok_pct.set(min_sample_ok_pct)
+
+    except Exception as e:
+        logger.warning(f"Failed to record aggregates refresh metric: {e}")
 
 
 def get_metrics_text() -> tuple[str, str]:
