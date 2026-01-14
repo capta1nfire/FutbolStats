@@ -684,8 +684,10 @@ class FastPathService:
 
         Team info passed explicitly to avoid lazy loading issues.
         Includes team_aliases for LLM to use (prevents hallucinated nicknames).
+        Includes derived_facts for verifiable pre-computed facts (P1 anti-hallucination).
         """
         from app.llm.team_aliases import get_team_aliases
+        from app.llm.derived_facts import build_derived_facts
 
         home_team_name = home_info.get("name", "Local")
         away_team_name = away_info.get("name", "Visitante")
@@ -749,6 +751,16 @@ class FastPathService:
                 "draw": match.odds_draw,
                 "away": match.odds_away,
             } if match.odds_home else {},
+            # P1: Pre-computed verifiable facts (reduces inference hallucinations)
+            "derived_facts": build_derived_facts(
+                home_goals=home_goals,
+                away_goals=away_goals,
+                home_team=home_team_name,
+                away_team=away_team_name,
+                events=match.events or [],
+                stats=match.stats or {},
+                match_status=match.status,
+            ),
         }
 
     async def _poll_completions(self) -> tuple[int, int]:

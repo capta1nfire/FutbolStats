@@ -14,7 +14,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # Current prompt version - bump when changing prompt template
-PROMPT_VERSION = "v1.2"
+PROMPT_VERSION = "v1.3"
 
 # Control tokens that should NEVER appear in narrative body
 # These are internal prompt instructions that LLM sometimes echoes
@@ -476,6 +476,163 @@ def validate_narrative_claims(
                 )
         except ValueError:
             pass
+
+    # 4. Validate against derived_facts (P1: reduce inference hallucinations)
+    derived_facts = match_data.get("derived_facts", {})
+    if derived_facts:
+        errors.extend(_validate_against_derived_facts(narrative_str, derived_facts, strict))
+
+    return errors
+
+
+# Patterns for HT score mentions
+HT_SCORE_PATTERNS = [
+    r"al\s+descanso",
+    r"al\s+medio\s+tiempo",
+    r"al\s+intermedio",
+    r"en\s+el\s+descanso",
+    r"primer\s+tiempo\s+termin[óo]",
+    r"al\s+finalizar\s+(?:el\s+)?primer\s+tiempo",
+]
+
+# Patterns for stats comparisons
+POSSESSION_LEADER_PATTERNS = [
+    (r"(?:los\s+)?locales\s+(?:dominaron|tuvieron\s+(?:más|mayor))\s+(?:la\s+)?posesi[óo]n", "home"),
+    (r"(?:los\s+)?visitantes\s+(?:dominaron|tuvieron\s+(?:más|mayor))\s+(?:la\s+)?posesi[óo]n", "away"),
+    (r"(?:el\s+)?local\s+(?:dominó|tuvo\s+(?:más|mayor))\s+(?:la\s+)?posesi[óo]n", "home"),
+    (r"(?:el\s+)?visitante\s+(?:dominó|tuvo\s+(?:más|mayor))\s+(?:la\s+)?posesi[óo]n", "away"),
+    (r"mayor\s+posesi[óo]n\s+(?:del|de\s+los)\s+locales", "home"),
+    (r"mayor\s+posesi[óo]n\s+(?:del|de\s+los)\s+visitantes", "away"),
+]
+
+SHOTS_LEADER_PATTERNS = [
+    (r"(?:los\s+)?locales\s+(?:tuvieron|generaron)\s+(?:más|mayor(?:es)?)\s+(?:disparos|remates|tiros)", "home"),
+    (r"(?:los\s+)?visitantes\s+(?:tuvieron|generaron)\s+(?:más|mayor(?:es)?)\s+(?:disparos|remates|tiros)", "away"),
+    (r"(?:el\s+)?local\s+(?:tuvo|generó)\s+(?:más|mayor(?:es)?)\s+(?:disparos|remates|tiros)", "home"),
+    (r"(?:el\s+)?visitante\s+(?:tuvo|generó)\s+(?:más|mayor(?:es)?)\s+(?:disparos|remates|tiros)", "away"),
+    (r"más\s+(?:disparos|remates|tiros)(?:\s+al\s+arco)?\s+(?:del|de\s+los)\s+locales", "home"),
+    (r"más\s+(?:disparos|remates|tiros)(?:\s+al\s+arco)?\s+(?:del|de\s+los)\s+visitantes", "away"),
+]
+
+
+def _validate_against_derived_facts(
+    narrative: str,
+    derived_facts: dict,
+    strict: bool = True
+) -> list[dict]:
+    """
+    Validate narrative claims against derived_facts.
+
+    Checks for:
+    - HT score mentions when ht_score is null
+    - Stats leader contradictions (possession, shots)
+    - Red card side contradictions (already checked in main validate, but double-check here)
+
+    Args:
+        narrative: The narrative text
+        derived_facts: The derived_facts dict from payload
+        strict: If True, some checks are errors instead of warnings
+
+    Returns:
+        List of validation errors/warnings
+    """
+    errors = []
+    narrative_lower = narrative.lower()
+
+    # 4a. HT score validation - if ht_score is null, narrative shouldn't mention it
+    result_facts = derived_facts.get("result", {})
+    ht_score = result_facts.get("ht_score")
+
+    if ht_score is None:
+        for pattern in HT_SCORE_PATTERNS:
+            if re.search(pattern, narrative_lower):
+                errors.append({
+                    "type": "unsupported_claim",
+                    "claim": "ht_score",
+                    "pattern": pattern,
+                    "severity": "warning",  # Warning since HT might be implied from events
+                    "derived_facts_value": None,
+                    "reason": "ht_score is null but narrative mentions half-time result",
+                })
+                logger.warning(
+                    f"[CLAIM_VALIDATOR] HT score mentioned but derived_facts.ht_score is null"
+                )
+                break
+
+    # 4b. Possession leader validation
+    stats_leaders = derived_facts.get("stats_leaders", {})
+    possession_info = stats_leaders.get("possession", {})
+    actual_possession_leader = possession_info.get("leader")
+
+    if actual_possession_leader and actual_possession_leader != "tie":
+        for pattern, claimed_leader in POSSESSION_LEADER_PATTERNS:
+            if re.search(pattern, narrative_lower):
+                if claimed_leader != actual_possession_leader:
+                    errors.append({
+                        "type": "derived_facts_conflict",
+                        "claim": "possession_leader",
+                        "pattern": pattern,
+                        "claimed": claimed_leader,
+                        "actual": actual_possession_leader,
+                        "severity": "warning",  # Warning for stats conflicts
+                    })
+                    logger.warning(
+                        f"[CLAIM_VALIDATOR] Possession leader conflict: "
+                        f"narrative says {claimed_leader}, derived_facts says {actual_possession_leader}"
+                    )
+                break
+
+    # 4c. Shots leader validation
+    shots_info = stats_leaders.get("shots_on_goal", {})
+    actual_shots_leader = shots_info.get("leader")
+
+    if actual_shots_leader and actual_shots_leader != "tie":
+        for pattern, claimed_leader in SHOTS_LEADER_PATTERNS:
+            if re.search(pattern, narrative_lower):
+                if claimed_leader != actual_shots_leader:
+                    errors.append({
+                        "type": "derived_facts_conflict",
+                        "claim": "shots_leader",
+                        "pattern": pattern,
+                        "claimed": claimed_leader,
+                        "actual": actual_shots_leader,
+                        "severity": "warning",
+                    })
+                    logger.warning(
+                        f"[CLAIM_VALIDATOR] Shots leader conflict: "
+                        f"narrative says {claimed_leader}, derived_facts says {actual_shots_leader}"
+                    )
+                break
+
+    # 4d. Red card side validation using derived_facts (more reliable than events parsing)
+    discipline = derived_facts.get("discipline", {})
+    first_red = discipline.get("first_red_card", {})
+
+    if first_red.get("exists") and first_red.get("side"):
+        actual_side = first_red["side"]  # "home" or "away"
+        mentioned_side = _detect_team_mention_near_claim(narrative, RED_CARD_PATTERNS)
+
+        if mentioned_side:
+            # Map mentioned side to home/away
+            is_mismatch = (
+                (actual_side == "away" and mentioned_side == "local") or
+                (actual_side == "home" and mentioned_side == "visitante")
+            )
+            if is_mismatch:
+                # Only add if not already caught by main validation
+                existing_types = [e.get("type") for e in errors]
+                if "wrong_team_attribution" not in existing_types:
+                    errors.append({
+                        "type": "derived_facts_conflict",
+                        "claim": "red_card_side",
+                        "derived_side": actual_side,
+                        "narrative_says": mentioned_side,
+                        "severity": "error",  # This is a serious factual error
+                    })
+                    logger.warning(
+                        f"[CLAIM_VALIDATOR] Red card side conflict via derived_facts: "
+                        f"actual={actual_side}, narrative says={mentioned_side}"
+                    )
 
     return errors
 

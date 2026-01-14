@@ -137,13 +137,12 @@ def _determine_bet_won(prediction: dict, home_goals: int, away_goals: int) -> bo
 
 def build_narrative_prompt(match_data: dict) -> tuple[str, dict, dict]:
     """
-    Build prompt v5 for post-match narrative generation.
+    Build prompt v7 for post-match narrative generation.
 
-    v5 improvements (on top of v4):
-    - Uses get_team_alias_pack() for richer alias data
-    - Includes slogans when available
-    - Requires quotes around nicknames and slogans in narrative
-    - No markdown (plain text JSON output)
+    v7 improvements (on top of v6):
+    - Includes derived_facts block with pre-computed verifiable facts
+    - Rules 18-21 mandate using derived_facts as primary source
+    - Reduces hallucinations from LLM inference errors
 
     Args:
         match_data: Dict with match info (teams, score, stats, prediction, etc.)
@@ -228,9 +227,13 @@ def build_narrative_prompt(match_data: dict) -> tuple[str, dict, dict]:
     else:
         venue_json = "null"
 
+    # Derived facts (pre-computed verifiable facts) as JSON
+    derived_facts = match_data.get("derived_facts", {})
+    derived_facts_json = json.dumps(derived_facts, ensure_ascii=False) if derived_facts else "null"
+
     prompt = f"""Eres un analista de fútbol profesional. Escribes en español neutral, serio, sin hype y sin emojis.
 
-REGLAS CRÍTICAS v6 (OBLIGATORIAS):
+REGLAS CRÍTICAS v7 (OBLIGATORIAS):
 
 1) DEVUELVE SOLO JSON VÁLIDO. No incluyas texto antes ni después.
 
@@ -314,6 +317,28 @@ REGLAS CRÍTICAS v6 (OBLIGATORIAS):
     - Estos son valores del campo "tone", NO van en el texto visible.
     - El campo tone sí debe tener "reinforce_win" o "mitigate_loss" según corresponda.
 
+18) DERIVED_FACTS - FUENTE PRIMARIA (CRÍTICO):
+    - Usa derived_facts como fuente principal para datos verificables.
+    - NO recalcules marcador, periodo, líderes de stats ni conteos de tarjetas.
+    - derived_facts.result contiene: winner, period (REGULAR/AET/PEN), ft_score.
+    - derived_facts.discipline contiene: red_cards, first_red_card (side, team_name, player_name).
+    - derived_facts.stats_leaders contiene: possession.leader, shots_on_goal.leader.
+
+19) HT_SCORE (RESULTADO AL DESCANSO):
+    - Si derived_facts.result.ht_score es null, NO menciones "al descanso iban...", "al medio tiempo...", ni similar.
+    - Solo menciona resultado parcial si ht_score tiene valor explícito.
+
+20) COMPARACIONES DE STATS:
+    - Si mencionas posesión o disparos, usa derived_facts.stats_leaders.
+    - Si stats_leaders.possession.leader es "home", puedes decir "los locales dominaron la posesión".
+    - Si stats_leaders.shots_on_goal.leader es null, NO afirmes comparaciones de disparos.
+    - Usar los valores delta_pct o delta para ser específico (ej: "con 18% más posesión").
+
+21) TARJETAS ROJAS CON DERIVED_FACTS:
+    - Usa derived_facts.discipline.first_red_card para atribuciones.
+    - Si first_red_card.side = "away", di "expulsión del equipo visitante" o usa first_red_card.team_name.
+    - PROHIBIDO contradecir derived_facts (ej: decir "local" cuando side = "away").
+
 FORMATO DE SALIDA (SCHEMA OBLIGATORIO):
 
 {{
@@ -363,7 +388,9 @@ events: {events_json}
 
 market_odds: {market_odds_json}
 
-RECUERDA: JSON válido, sin marcador en body, solo aliases permitidos (entre comillas), key_factors cortos y distintos del body."""
+derived_facts: {derived_facts_json}
+
+RECUERDA: JSON válido, sin marcador en body, solo aliases permitidos (entre comillas), key_factors cortos y distintos del body. USA derived_facts como fuente primaria para winner, period, red_cards, y stats_leaders."""
 
     return prompt, home_pack, away_pack
 
