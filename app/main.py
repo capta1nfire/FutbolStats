@@ -5955,6 +5955,83 @@ async def _load_ops_data() -> dict:
         # =============================================================
         telemetry_data = await _calculate_telemetry_summary(session)
 
+        # =============================================================
+        # LLM COST (Gemini token usage from PostMatchAudit)
+        # =============================================================
+        llm_cost_data = {"provider": "gemini", "status": "unavailable"}
+        try:
+            # Gemini 2.0 Flash pricing (per 1M tokens)
+            GEMINI_PRICE_IN = 0.075   # $0.075 per 1M input tokens
+            GEMINI_PRICE_OUT = 0.30   # $0.30 per 1M output tokens
+
+            # 24h metrics
+            res_24h = await session.execute(
+                text(
+                    """
+                    SELECT
+                        COUNT(*) FILTER (WHERE llm_narrative_status = 'ok') AS ok_count,
+                        COALESCE(SUM(llm_narrative_tokens_in), 0) AS tokens_in,
+                        COALESCE(SUM(llm_narrative_tokens_out), 0) AS tokens_out
+                    FROM post_match_audits
+                    WHERE llm_narrative_generated_at > NOW() - INTERVAL '24 hours'
+                      AND llm_narrative_model LIKE 'gemini%'
+                      AND llm_narrative_status = 'ok'
+                    """
+                )
+            )
+            row_24h = res_24h.first()
+            ok_24h = int(row_24h[0] or 0) if row_24h else 0
+            tokens_in_24h = int(row_24h[1] or 0) if row_24h else 0
+            tokens_out_24h = int(row_24h[2] or 0) if row_24h else 0
+            cost_24h = (tokens_in_24h * GEMINI_PRICE_IN + tokens_out_24h * GEMINI_PRICE_OUT) / 1_000_000
+
+            # 7d metrics
+            res_7d = await session.execute(
+                text(
+                    """
+                    SELECT
+                        COUNT(*) FILTER (WHERE llm_narrative_status = 'ok') AS ok_count,
+                        COALESCE(SUM(llm_narrative_tokens_in), 0) AS tokens_in,
+                        COALESCE(SUM(llm_narrative_tokens_out), 0) AS tokens_out
+                    FROM post_match_audits
+                    WHERE llm_narrative_generated_at > NOW() - INTERVAL '7 days'
+                      AND llm_narrative_model LIKE 'gemini%'
+                      AND llm_narrative_status = 'ok'
+                    """
+                )
+            )
+            row_7d = res_7d.first()
+            ok_7d = int(row_7d[0] or 0) if row_7d else 0
+            tokens_in_7d = int(row_7d[1] or 0) if row_7d else 0
+            tokens_out_7d = int(row_7d[2] or 0) if row_7d else 0
+            cost_7d = (tokens_in_7d * GEMINI_PRICE_IN + tokens_out_7d * GEMINI_PRICE_OUT) / 1_000_000
+
+            # Calculate avg cost per OK request
+            avg_cost_per_ok = cost_24h / ok_24h if ok_24h > 0 else 0.0
+
+            # Status: warn if cost_24h > $1 or avg_cost > $0.01
+            status = "ok"
+            if cost_24h > 1.0 or avg_cost_per_ok > 0.01:
+                status = "warn"
+
+            llm_cost_data = {
+                "provider": "gemini",
+                "cost_24h_usd": round(cost_24h, 4),
+                "cost_7d_usd": round(cost_7d, 4),
+                "requests_ok_24h": ok_24h,
+                "requests_ok_7d": ok_7d,
+                "avg_cost_per_ok_24h": round(avg_cost_per_ok, 6),
+                "tokens_in_24h": tokens_in_24h,
+                "tokens_out_24h": tokens_out_24h,
+                "tokens_in_7d": tokens_in_7d,
+                "tokens_out_7d": tokens_out_7d,
+                "status": status,
+                "note": "Estimated from token usage. Gemini 2.0 Flash: $0.075/1M in, $0.30/1M out",
+            }
+        except Exception as e:
+            logger.warning(f"Could not calculate LLM cost: {e}")
+            llm_cost_data = {"provider": "gemini", "status": "error", "error": str(e)}
+
     # League names - comprehensive fallback for all known leagues
     # Includes EXTENDED_LEAGUES and other common leagues from API-Football
     LEAGUE_NAMES_FALLBACK: dict[int, str] = {
@@ -6054,6 +6131,7 @@ async def _load_ops_data() -> dict:
         "fastpath_health": fastpath_health,
         "model_performance": model_performance,
         "telemetry": telemetry_data,
+        "llm_cost": llm_cost_data,
     }
 
 
