@@ -1584,17 +1584,19 @@ async def daily_refresh_aggregates():
     logger.info("Starting daily aggregates refresh job...")
 
     try:
-        from app.aggregates import refresh_all_aggregates
+        from app.aggregates.refresh_job import refresh_all_aggregates
 
-        result = await refresh_all_aggregates()
+        async with AsyncSessionLocal() as session:
+            result = await refresh_all_aggregates(session)
 
-        if result["status"] == "ok":
             logger.info(
                 f"Aggregates refresh complete: {result['leagues_processed']} leagues, "
                 f"{result['baselines_created']} baselines, {result['profiles_created']} profiles"
             )
-        else:
-            logger.warning(f"Aggregates refresh partial: {result}")
+
+            if result.get("errors"):
+                for err in result["errors"][:5]:  # Log first 5 errors
+                    logger.warning(f"  - {err}")
 
     except Exception as e:
         logger.error(f"Aggregates refresh failed: {e}")
