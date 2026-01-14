@@ -383,6 +383,11 @@ async def lifespan(app: FastAPI):
     # Warm up standings cache for active leagues (non-blocking)
     asyncio.create_task(_warmup_standings_cache())
 
+    # Predictions catch-up on startup (P2 resilience)
+    # If predictions job hasn't run recently and there are upcoming matches,
+    # trigger a catch-up to avoid gaps from deploys interrupting the daily cron
+    asyncio.create_task(_predictions_catchup_on_startup())
+
     yield
 
     # Shutdown
@@ -525,6 +530,131 @@ async def _warmup_standings_cache():
 
     except Exception as e:
         logger.error(f"[WARMUP] Standings warmup failed: {e}")
+
+
+async def _predictions_catchup_on_startup():
+    """
+    Predictions catch-up on startup (P2 resilience).
+
+    Handles missed daily_save_predictions runs due to deploys/restarts.
+    Conditions to trigger:
+    - hours_since_last_prediction_saved > 6
+    - ns_next_48h > 0 (there are upcoming matches to predict)
+
+    This is fire-and-forget, idempotent (upsert), and non-blocking.
+    """
+    import asyncio
+
+    # Small delay to let server fully start and ML model load
+    await asyncio.sleep(5)
+
+    try:
+        async with AsyncSessionLocal() as session:
+            now = datetime.utcnow()
+
+            # 1) Check hours since last prediction saved
+            res = await session.execute(
+                text("SELECT MAX(created_at) FROM predictions")
+            )
+            last_pred_at = res.scalar()
+
+            hours_since_last = None
+            if last_pred_at:
+                delta = now - last_pred_at
+                hours_since_last = delta.total_seconds() / 3600
+
+            # 2) Check NS matches in next 48h
+            res = await session.execute(
+                text("""
+                    SELECT COUNT(*) FROM matches
+                    WHERE status = 'NS'
+                      AND date > NOW()
+                      AND date <= NOW() + INTERVAL '48 hours'
+                """)
+            )
+            ns_next_48h = int(res.scalar() or 0)
+
+            # 3) Evaluate conditions
+            should_catchup = (
+                (hours_since_last is None or hours_since_last > 6)
+                and ns_next_48h > 0
+            )
+
+            if not should_catchup:
+                logger.info(
+                    f"[STARTUP] Predictions catch-up skipped: "
+                    f"hours_since_last={hours_since_last:.1f if hours_since_last else 'N/A'}, "
+                    f"ns_next_48h={ns_next_48h}"
+                )
+                return
+
+            # 4) Trigger catch-up
+            logger.warning(
+                f"[OPS_ALERT] predictions catch-up on startup triggered: "
+                f"hours_since_last={hours_since_last:.1f if hours_since_last else 'N/A'}, "
+                f"ns_next_48h={ns_next_48h}"
+            )
+
+            # Use same logic as /dashboard/predictions/trigger endpoint
+            from app.db_utils import upsert
+
+            # Check ML model is loaded
+            if not ml_engine.is_loaded:
+                logger.error("[STARTUP] Predictions catch-up aborted: ML model not loaded")
+                return
+
+            # Get features for upcoming matches
+            feature_engineer = FeatureEngineer(session=session)
+            df = await feature_engineer.get_upcoming_matches_features()
+
+            if len(df) == 0:
+                logger.info("[STARTUP] Predictions catch-up: no upcoming matches found")
+                return
+
+            # Filter to NS only
+            df_ns = df[df["status"] == "NS"].copy()
+
+            if len(df_ns) == 0:
+                logger.info("[STARTUP] Predictions catch-up: no NS matches to predict")
+                return
+
+            # Generate predictions
+            predictions = ml_engine.predict(df_ns)
+
+            # Save to database (idempotent upsert)
+            saved = 0
+            for pred in predictions:
+                match_id = pred.get("match_id")
+                if not match_id:
+                    continue
+
+                probs = pred["probabilities"]
+                try:
+                    await upsert(
+                        session,
+                        Prediction,
+                        values={
+                            "match_id": match_id,
+                            "model_version": ml_engine.model_version,
+                            "home_prob": probs["home"],
+                            "draw_prob": probs["draw"],
+                            "away_prob": probs["away"],
+                        },
+                        conflict_columns=["match_id", "model_version"],
+                        update_columns=["home_prob", "draw_prob", "away_prob"],
+                    )
+                    saved += 1
+                except Exception as e:
+                    logger.warning(f"[STARTUP] Predictions catch-up: match {match_id} failed: {e}")
+
+            await session.commit()
+            logger.info(
+                f"[STARTUP] Predictions catch-up complete: saved={saved}, "
+                f"ns_matches={len(df_ns)}, model={ml_engine.model_version}"
+            )
+
+    except Exception as e:
+        logger.error(f"[STARTUP] Predictions catch-up failed: {e}")
 
 
 app = FastAPI(
