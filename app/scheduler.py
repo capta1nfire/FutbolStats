@@ -1570,6 +1570,36 @@ async def daily_save_predictions():
         logger.error(f"Daily prediction save failed: {e}")
 
 
+async def daily_refresh_aggregates():
+    """
+    Daily job to refresh league baselines and team profiles.
+    Runs every day at 6:30 AM UTC (after results sync).
+
+    Uses season-to-date data to compute:
+    - League baselines: goals_avg, over_X_pct, btts, corners, cards
+    - Team profiles: rates, ranks, by_time metrics (0-15, 76-90+)
+
+    This data enriches narratives with relative context (team vs league).
+    """
+    logger.info("Starting daily aggregates refresh job...")
+
+    try:
+        from app.aggregates import refresh_all_aggregates
+
+        result = await refresh_all_aggregates()
+
+        if result["status"] == "ok":
+            logger.info(
+                f"Aggregates refresh complete: {result['leagues_processed']} leagues, "
+                f"{result['baselines_created']} baselines, {result['profiles_created']} profiles"
+            )
+        else:
+            logger.warning(f"Aggregates refresh partial: {result}")
+
+    except Exception as e:
+        logger.error(f"Aggregates refresh failed: {e}")
+
+
 async def daily_sync_results():
     """
     Daily job to sync match results from API.
@@ -3172,6 +3202,16 @@ def start_scheduler(ml_engine):
         trigger=CronTrigger(hour=6, minute=0),
         id="daily_sync_results",
         name="Daily Results Sync",
+        replace_existing=True,
+    )
+
+    # Daily aggregates refresh: Every day at 6:30 AM UTC (after results sync)
+    # Computes league baselines and team profiles for narrative context
+    scheduler.add_job(
+        daily_refresh_aggregates,
+        trigger=CronTrigger(hour=6, minute=30),
+        id="daily_refresh_aggregates",
+        name="Daily Aggregates Refresh (league baselines + team profiles)",
         replace_existing=True,
     )
 
