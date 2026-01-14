@@ -3226,6 +3226,16 @@ def start_scheduler(ml_engine):
         replace_existing=True,
     )
 
+    # Prediction save safety net: Every 6 hours to catch missed daily runs
+    # This ensures predictions are generated even if deploys interrupt the 7:00 UTC job
+    scheduler.add_job(
+        daily_save_predictions,
+        trigger=IntervalTrigger(hours=6),
+        id="predictions_safety_net",
+        name="Predictions Safety Net (every 6h)",
+        replace_existing=True,
+    )
+
     # Daily audit job: Every day at 8:00 AM UTC (after results are synced)
     scheduler.add_job(
         daily_audit,

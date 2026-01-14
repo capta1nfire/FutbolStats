@@ -4488,6 +4488,10 @@ async def _calculate_predictions_health(session) -> dict:
     if ns_next_48h == 0:
         status = "ok"
         status_reason = "No upcoming NS matches in 48h (low activity period)"
+    # NEW: Check if prediction job hasn't run recently (stale job detection)
+    elif hours_since_last and hours_since_last > 12 and ns_next_48h > 0:
+        status = "warn"
+        status_reason = f"Predictions job stale: {hours_since_last:.1f}h since last save with {ns_next_48h} NS upcoming"
     # Primary check: upcoming NS matches should have predictions
     elif ns_coverage_pct < 50:
         status = "red"
