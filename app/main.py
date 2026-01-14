@@ -5960,6 +5960,9 @@ async def _load_ops_data() -> dict:
         # =============================================================
         llm_cost_data = {"provider": "gemini", "status": "unavailable"}
         try:
+            # Rollback any previous failed transaction state
+            await session.rollback()
+
             # Gemini 2.0 Flash pricing (per 1M tokens)
             GEMINI_PRICE_IN = 0.075   # $0.075 per 1M input tokens
             GEMINI_PRICE_OUT = 0.30   # $0.30 per 1M output tokens
