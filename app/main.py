@@ -918,6 +918,62 @@ async def etl_sync_window(
     }
 
 
+@app.post("/etl/refresh-aggregates")
+@limiter.limit("5/minute")
+async def etl_refresh_aggregates(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
+):
+    """
+    Manually trigger league aggregates refresh.
+
+    Computes league baselines and team profiles for all leagues with
+    sufficient data. This is the same job that runs daily at 06:30 UTC.
+
+    Returns metrics about the refresh operation.
+    Requires API key authentication.
+    """
+    logger.info("[AGGREGATES] Manual refresh triggered via API")
+
+    from app.aggregates.refresh_job import refresh_all_aggregates, get_aggregates_status
+
+    # Get status before
+    status_before = await get_aggregates_status(session)
+
+    # Run refresh
+    result = await refresh_all_aggregates(session)
+
+    # Get status after
+    status_after = await get_aggregates_status(session)
+
+    return {
+        "status": "ok",
+        "refresh_result": result,
+        "status_before": status_before,
+        "status_after": status_after,
+    }
+
+
+@app.get("/aggregates/status")
+@limiter.limit("30/minute")
+async def get_aggregates_status_endpoint(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
+):
+    """
+    Get current status of league aggregates tables.
+
+    Returns counts and latest computation timestamps.
+    Requires API key authentication.
+    """
+    from app.aggregates.refresh_job import get_aggregates_status
+
+    status = await get_aggregates_status(session)
+    return {"status": "ok", **status}
+
+
 @app.post("/model/train", response_model=TrainResponse)
 @limiter.limit("5/minute")
 async def train_model(
