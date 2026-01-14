@@ -183,7 +183,7 @@ llm_tokens_total = Counter(
 
 llm_cost_usd = Counter(
     "llm_cost_usd",
-    "Estimated LLM cost in USD by provider",
+    "Estimated LLM cost in USD by provider. Formula: (in_tokens * in_rate + out_tokens * out_rate) / 1M",
     ["provider"],
 )
 
@@ -476,9 +476,13 @@ def set_mapping_coverage(
 # =============================================================================
 
 # Pricing per 1M tokens (as of 2026-01)
+# Formula: cost_usd = (input_tokens * input_rate + output_tokens * output_rate) / 1,000,000
+# Sources:
+#   - Gemini 2.0 Flash: https://ai.google.dev/pricing (Jan 2026)
+#   - RunPod/Qwen: Estimate based on serverless GPU pricing
 LLM_PRICING = {
-    "gemini": {"input": 0.075, "output": 0.30},  # Gemini 1.5 Flash
-    "runpod": {"input": 0.20, "output": 0.20},   # Qwen 32B estimate
+    "gemini": {"input": 0.075, "output": 0.30},  # Gemini 2.0 Flash: $0.075/1M in, $0.30/1M out
+    "runpod": {"input": 0.20, "output": 0.20},   # Qwen 32B estimate: ~$0.20/1M tokens
 }
 
 
