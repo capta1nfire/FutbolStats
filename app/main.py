@@ -26,7 +26,7 @@ from app.ml import XGBoostEngine
 from app.ml.persistence import load_active_model, persist_model_snapshot
 from app.models import Match, OddsHistory, PITReport, PostMatchAudit, Prediction, PredictionOutcome, Team, TeamAdjustment
 from app.scheduler import start_scheduler, stop_scheduler, get_last_sync_time, get_sync_leagues, SYNC_LEAGUES, global_sync_window
-from app.security import limiter, verify_api_key
+from app.security import limiter, verify_api_key, verify_api_key_or_ops_session
 
 # Configure logging
 logging.basicConfig(
@@ -1899,7 +1899,7 @@ async def model_info():
 async def get_shadow_report_endpoint(
     request: Request,
     session: AsyncSession = Depends(get_async_session),
-    _: bool = Depends(verify_api_key),
+    _: bool = Depends(verify_api_key_or_ops_session),
 ):
     """
     Get shadow model A/B comparison report.
@@ -1925,7 +1925,7 @@ async def get_shadow_report_endpoint(
 async def get_sensor_report_endpoint(
     request: Request,
     session: AsyncSession = Depends(get_async_session),
-    _: bool = Depends(verify_api_key),
+    _: bool = Depends(verify_api_key_or_ops_session),
 ):
     """
     Get Sensor B (LogReg L2) calibration diagnostics report.
