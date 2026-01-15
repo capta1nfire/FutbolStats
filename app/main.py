@@ -6545,6 +6545,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
     fp_60m = fp_health.get("last_60m") or {}
     telemetry = data.get("telemetry") or {}
     telemetry_summary = telemetry.get("summary") or {}
+    llm_cost = data.get("llm_cost") or {}
 
     def budget_color() -> str:
         if budget_status in ("unavailable", "error"):
@@ -6589,6 +6590,16 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
         if status == "WARN":
             return "yellow"
         if status == "OK":
+            return "green"
+        return "blue"
+
+    def llm_cost_color() -> str:
+        status = llm_cost.get("status", "unavailable")
+        if status == "error":
+            return "red"
+        if status == "warn":
+            return "yellow"
+        if status == "ok":
             return "green"
         return "blue"
 
@@ -6967,6 +6978,15 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
         Tainted: {telemetry_summary.get("tainted_matches_24h", 0)} |
         Unmapped: {telemetry_summary.get("unmapped_entities_24h", 0)}
         {f'<br/><a href="{telemetry.get("links", [{}])[0].get("url", "#")}" target="_blank" style="font-size:0.75rem;">Grafana →</a>' if telemetry.get("links") else ""}
+      </div>
+    </div>
+    <div class="card {llm_cost_color()}">
+      <div class="card-label">LLM Cost (Gemini)<span class="info-icon">i<span class="tooltip">Costo estimado de llamadas a Gemini 2.0 Flash. Pricing: $0.075/1M tokens entrada, $0.30/1M tokens salida. AMARILLO: &gt;$1/día o &gt;$0.01/request.</span></span></div>
+      <div class="card-value">${llm_cost.get("cost_24h_usd", 0):.4f}</div>
+      <div class="card-sub">
+        24h: {llm_cost.get("requests_ok_24h", 0)} req | 7d: ${llm_cost.get("cost_7d_usd", 0):.4f}
+        <br/>Tokens 24h: {llm_cost.get("tokens_in_24h", 0):,} in / {llm_cost.get("tokens_out_24h", 0):,} out
+        <br/>Avg: ${llm_cost.get("avg_cost_per_ok_24h", 0):.6f}/req
       </div>
     </div>
   </div>
