@@ -360,15 +360,45 @@ class XGBoostEngine:
         timestamp = datetime.now().strftime("%Y%m%d")
         return self.model_path / f"xgb_{self.model_version}_{timestamp}.json"
 
+    def _get_model_expected_features(self) -> list[str]:
+        """
+        Get the features expected by the loaded model.
+
+        Handles backward compatibility with models trained on fewer features.
+        """
+        if self.model is None:
+            return self.FEATURE_COLUMNS
+
+        # Try to get feature count from model
+        try:
+            n_features = self.model.n_features_in_
+        except AttributeError:
+            # Fallback for older models
+            n_features = len(self.FEATURE_COLUMNS)
+
+        # If model expects fewer features than current FEATURE_COLUMNS,
+        # return only the first N features (they were added in order)
+        if n_features < len(self.FEATURE_COLUMNS):
+            logger.info(
+                f"Model expects {n_features} features, current code has {len(self.FEATURE_COLUMNS)}. "
+                f"Using backward-compatible feature selection."
+            )
+            return self.FEATURE_COLUMNS[:n_features]
+
+        return self.FEATURE_COLUMNS
+
     def _prepare_features(self, df: pd.DataFrame) -> np.ndarray:
         """Extract and prepare feature matrix from DataFrame."""
+        # Get features expected by the loaded model (handles backward compatibility)
+        expected_features = self._get_model_expected_features()
+
         # Ensure all required columns exist
-        for col in self.FEATURE_COLUMNS:
+        for col in expected_features:
             if col not in df.columns:
                 logger.warning(f"Missing column {col}, filling with 0")
                 df[col] = 0
 
-        return df[self.FEATURE_COLUMNS].fillna(0).values
+        return df[expected_features].fillna(0).values
 
     def train(
         self,
