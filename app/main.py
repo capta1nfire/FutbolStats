@@ -263,6 +263,35 @@ _STANDINGS_CACHE_TTL = 1800  # 30 minutes (L1 memory)
 _STANDINGS_DB_TTL = 21600  # 6 hours (DB refresh threshold)
 
 
+# Many LATAM leagues run on a calendar-year season (Jan-Dec). Our default season logic
+# (Jul-Jun) is correct for most European leagues but wrong for these.
+_CALENDAR_YEAR_SEASON_LEAGUES = {
+    71,   # Brazil - Serie A
+    128,  # Argentina - Primera División
+    239,  # Colombia Primera A
+    242,  # Ecuador Liga Pro
+    253,  # USA - MLS (calendar)
+    265,  # Chile Primera Division
+    268,  # Uruguay Primera - Apertura
+    270,  # Uruguay Primera - Clausura
+    281,  # Peru Primera Division
+    299,  # Venezuela Primera Division
+    344,  # Bolivia Primera Division
+}
+
+
+def _season_for_league(league_id: Optional[int], dt: datetime) -> int:
+    """
+    Determine API-Football 'season' parameter for a league at a given date.
+
+    - Default: European-style season year (Jul-Jun): Jan 2026 -> 2025.
+    - Calendar-year leagues (LATAM/MLS): Jan 2026 -> 2026.
+    """
+    if league_id is not None and league_id in _CALENDAR_YEAR_SEASON_LEAGUES:
+        return dt.year
+    return dt.year if dt.month >= 7 else dt.year - 1
+
+
 def _get_cached_standings(league_id: int, season: int) -> Optional[list]:
     """Get standings from L1 memory cache if still valid."""
     key = (league_id, season)
@@ -462,7 +491,6 @@ async def _warmup_standings_cache():
             from datetime import timedelta
             now = datetime.now()
             week_ahead = now + timedelta(days=7)
-            season = now.year if now.month >= 7 else now.year - 1
 
             result = await session.execute(
                 text("""
@@ -493,6 +521,7 @@ async def _warmup_standings_cache():
             max_consecutive_failures = 3  # Stop if API seems down
 
             for league_id in league_ids:
+                season = _season_for_league(league_id, now)
                 # Skip if already in L1 cache
                 if _get_cached_standings(league_id, season) is not None:
                     skipped_cache += 1
@@ -2112,7 +2141,7 @@ async def get_match_details(
 
     # Determine season for standings lookup
     current_date = match.date or datetime.now()
-    season = current_date.year if current_date.month >= 7 else current_date.year - 1
+    season = _season_for_league(match.league_id, current_date)
 
     # NON-BLOCKING standings: L1 cache -> DB -> skip (never call external API in hot path)
     # This ensures endpoint always responds <400ms regardless of league
@@ -2770,7 +2799,7 @@ async def get_league_standings(
         # Determine season if not provided
         if season is None:
             current_date = datetime.now()
-            season = current_date.year if current_date.month >= 7 else current_date.year - 1
+            season = _season_for_league(league_id, current_date)
 
         # L1: Memory cache
         standings = _get_cached_standings(league_id, season)
@@ -6749,9 +6778,9 @@ async def _load_ops_data() -> dict:
             # Rollback any previous failed transaction state
             await session.rollback()
 
-            # Gemini 2.0 Flash pricing (per 1M tokens)
-            GEMINI_PRICE_IN = 0.075   # $0.075 per 1M input tokens
-            GEMINI_PRICE_OUT = 0.30   # $0.30 per 1M output tokens
+            # Gemini pricing from settings (per 1M tokens)
+            GEMINI_PRICE_IN = settings.GEMINI_PRICE_INPUT
+            GEMINI_PRICE_OUT = settings.GEMINI_PRICE_OUTPUT
 
             # 24h metrics (includes 'ok' and legacy 'completed_sync' statuses)
             res_24h = await session.execute(
@@ -7560,7 +7589,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
       </div>
     </div>
     <div class="card {llm_cost_color()}">
-      <div class="card-label">LLM Cost (Gemini)<span class="info-icon">i<span class="tooltip">Costo estimado de llamadas a Gemini 2.0 Flash. Pricing: $0.075/1M tokens entrada, $0.30/1M tokens salida. AMARILLO: &gt;$1/día o &gt;$0.01/request.</span></span></div>
+      <div class="card-label">LLM Cost ({settings.GEMINI_MODEL})<span class="info-icon">i<span class="tooltip">Costo estimado de llamadas a {settings.GEMINI_MODEL}. Pricing: ${settings.GEMINI_PRICE_INPUT}/1M tokens entrada, ${settings.GEMINI_PRICE_OUTPUT}/1M tokens salida. AMARILLO: &gt;$1/día o &gt;$0.01/request.</span></span></div>
       <div class="card-value">${llm_cost.get("cost_24h_usd", 0):.4f}</div>
       <div class="card-sub">
         24h: {llm_cost.get("requests_ok_24h", 0)} req | 7d: ${llm_cost.get("cost_7d_usd", 0):.4f}

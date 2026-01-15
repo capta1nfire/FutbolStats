@@ -83,6 +83,10 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.0-flash"
     GEMINI_MAX_TOKENS: int = 1000
+    # Gemini pricing (per 1M tokens) - adjust when changing models
+    # 2.0-flash: $0.075/$0.30, 2.5-flash: $0.15/$0.60
+    GEMINI_PRICE_INPUT: float = 0.075
+    GEMINI_PRICE_OUTPUT: float = 0.30
 
     # Narrative Provider Selection (runpod | gemini)
     NARRATIVE_PROVIDER: str = "runpod"
