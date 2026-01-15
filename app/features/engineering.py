@@ -601,6 +601,9 @@ class FeatureEngineer:
                 features["away_team_name"] = match.away_team.name if match.away_team else "Unknown"
                 features["home_team_logo"] = match.home_team.logo_url if match.home_team else None
                 features["away_team_logo"] = match.away_team.logo_url if match.away_team else None
+                # External IDs for team override resolution
+                features["home_team_external_id"] = match.home_team.external_id if match.home_team else None
+                features["away_team_external_id"] = match.away_team.external_id if match.away_team else None
                 features["odds_home"] = match.odds_home
                 features["odds_draw"] = match.odds_draw
                 features["odds_away"] = match.odds_away

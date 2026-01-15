@@ -723,6 +723,9 @@ class XGBoostEngine:
                 "away_team": away_team_name,
                 "home_team_logo": row.get("home_team_logo"),
                 "away_team_logo": row.get("away_team_logo"),
+                # External IDs for team override resolution
+                "home_team_external_id": int(row.get("home_team_external_id")) if row.get("home_team_external_id") else None,
+                "away_team_external_id": int(row.get("away_team_external_id")) if row.get("away_team_external_id") else None,
                 "date": row.get("date"),
                 "status": row.get("status"),
                 "home_goals": int(row.get("home_goals")) if pd.notna(row.get("home_goals")) else None,

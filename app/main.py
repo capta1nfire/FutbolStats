@@ -24,7 +24,8 @@ from app.etl.competitions import ALL_LEAGUE_IDS, COMPETITIONS
 from app.features import FeatureEngineer
 from app.ml import XGBoostEngine
 from app.ml.persistence import load_active_model, persist_model_snapshot
-from app.models import Match, OddsHistory, PITReport, PostMatchAudit, Prediction, PredictionOutcome, Team, TeamAdjustment
+from app.models import Match, OddsHistory, PITReport, PostMatchAudit, Prediction, PredictionOutcome, Team, TeamAdjustment, TeamOverride
+from app.teams.overrides import preload_team_overrides, resolve_team_display
 from app.scheduler import start_scheduler, stop_scheduler, get_last_sync_time, get_sync_leagues, SYNC_LEAGUES, global_sync_window
 from app.security import limiter, verify_api_key, verify_api_key_or_ops_session
 
@@ -1698,6 +1699,11 @@ async def get_predictions(
     predictions = await _overlay_frozen_predictions(session, predictions)
     _stage_times["overlay_ms"] = (time.time() - _t3) * 1000
 
+    # Apply team identity overrides (rebranding, e.g., La Equidad → Internacional de Bogotá)
+    _t4 = time.time()
+    predictions = await _apply_team_overrides(session, predictions)
+    _stage_times["overrides_ms"] = (time.time() - _t4) * 1000
+
     # Save predictions to database if requested
     if save:
         saved_count = await _save_predictions_to_db(session, predictions, ml_engine.model_version)
@@ -1911,6 +1917,94 @@ async def _overlay_frozen_predictions(
                     "draw": frozen.frozen_ev_draw,
                     "away": frozen.frozen_ev_away,
                 }
+
+    return predictions
+
+
+async def _apply_team_overrides(
+    session: AsyncSession,
+    predictions: list[dict],
+) -> list[dict]:
+    """
+    Apply team identity overrides to predictions.
+
+    For rebranded teams (e.g., La Equidad → Internacional de Bogotá),
+    replaces display names/logos based on match date and effective_from.
+
+    Args:
+        session: Database session.
+        predictions: List of prediction dicts with team info.
+
+    Returns:
+        Predictions with overridden team names/logos where applicable.
+    """
+    if not predictions:
+        return predictions
+
+    # Collect all unique external team IDs
+    external_ids = set()
+    for pred in predictions:
+        home_ext = pred.get("home_team_external_id")
+        away_ext = pred.get("away_team_external_id")
+        if home_ext:
+            external_ids.add(home_ext)
+        if away_ext:
+            external_ids.add(away_ext)
+
+    if not external_ids:
+        return predictions
+
+    # Batch load all overrides (single query)
+    overrides = await preload_team_overrides(session, list(external_ids))
+
+    if not overrides:
+        return predictions
+
+    # Apply overrides to each prediction
+    override_count = 0
+    for pred in predictions:
+        match_date = pred.get("date")
+        if not match_date:
+            continue
+
+        # Convert to datetime if string
+        if isinstance(match_date, str):
+            match_date = datetime.fromisoformat(match_date.replace("Z", "+00:00"))
+
+        # Home team override
+        home_ext = pred.get("home_team_external_id")
+        if home_ext:
+            home_display = resolve_team_display(
+                overrides,
+                home_ext,
+                match_date,
+                pred.get("home_team", "Unknown"),
+                pred.get("home_team_logo"),
+            )
+            if home_display.is_override:
+                pred["home_team"] = home_display.name
+                if home_display.logo_url:
+                    pred["home_team_logo"] = home_display.logo_url
+                override_count += 1
+
+        # Away team override
+        away_ext = pred.get("away_team_external_id")
+        if away_ext:
+            away_display = resolve_team_display(
+                overrides,
+                away_ext,
+                match_date,
+                pred.get("away_team", "Unknown"),
+                pred.get("away_team_logo"),
+            )
+            if away_display.is_override:
+                pred["away_team"] = away_display.name
+                if away_display.logo_url:
+                    pred["away_team_logo"] = away_display.logo_url
+                override_count += 1
+
+    if override_count > 0:
+        logger.info(f"Applied {override_count} team identity overrides to predictions")
 
     return predictions
 
