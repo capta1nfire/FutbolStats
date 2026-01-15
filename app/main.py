@@ -350,7 +350,8 @@ async def _generate_placeholder_standings(session, league_id: int, season: int) 
 
     Strategy:
     1. First, try to use teams from the most recent valid standings (previous season).
-       This ensures we get the correct roster including promotions/relegations.
+       - Excludes teams with description containing "Relegation" (they went down)
+       - Includes promoted teams from second division (TODO: when available)
     2. If no previous standings exist, fall back to teams from recent matches.
 
     Returns teams with zero stats, ordered alphabetically.
@@ -366,7 +367,7 @@ async def _generate_placeholder_standings(session, league_id: int, season: int) 
     teams_data = []
 
     # Strategy 1: Use teams from the most recent valid standings (e.g., 2025 for 2026)
-    # This respects promotions/relegations from the previous season
+    # Filter out relegated teams based on 'description' field
     prev_standings_result = await session.execute(
         text("""
             SELECT standings
@@ -383,14 +384,21 @@ async def _generate_placeholder_standings(session, league_id: int, season: int) 
 
     if prev_row and prev_row[0]:
         prev_standings = prev_row[0]
-        # Extract team info from previous standings, sort alphabetically
+        relegated_teams = []
+        # Extract team info, excluding relegated teams
         for s in prev_standings:
+            desc = s.get("description") or ""
+            if "relegation" in desc.lower():
+                relegated_teams.append(s.get("team_name"))
+                continue  # Skip relegated teams
             teams_data.append({
                 "external_id": s.get("team_id"),
                 "name": s.get("team_name"),
                 "logo_url": s.get("team_logo"),
             })
         teams_data.sort(key=lambda x: x.get("name", ""))
+        if relegated_teams:
+            logger.info(f"Excluded {len(relegated_teams)} relegated teams: {relegated_teams}")
         logger.info(f"Using {len(teams_data)} teams from previous season standings for placeholder")
 
     # Strategy 2: Fallback to teams from recent matches (less accurate for new season)

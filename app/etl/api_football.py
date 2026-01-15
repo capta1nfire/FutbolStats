@@ -620,7 +620,13 @@ class APIFootballProvider(DataProvider):
         return best_rows
 
     def _parse_standing(self, standing: dict) -> dict:
-        """Parse a single standing entry."""
+        """Parse a single standing entry.
+
+        Includes 'description' field from API-Football which indicates:
+        - "Promotion" / "Promotion - Play Offs" for top teams
+        - "Relegation" / "Relegation - Play Offs" for bottom teams
+        - None for mid-table teams
+        """
         team = standing.get("team", {})
         return {
             "position": standing.get("rank"),
@@ -637,6 +643,7 @@ class APIFootballProvider(DataProvider):
             "goal_diff": standing.get("goalsDiff", 0),
             "form": standing.get("form", ""),
             "group": standing.get("group"),
+            "description": standing.get("description"),  # Promotion/Relegation status
         }
 
     async def get_lineups(self, fixture_id: int) -> Optional[dict]:
