@@ -100,7 +100,7 @@ Cuando veas el próximo tick y esos campos, lo marcamos CLOSED. (esto es respect
 - [ ] 
 - [ ] 
 - [ ] 
-- [ ] 
+- [ ] Revisar claude.md para validar los pendientes.
 - [ ] Supervisar Shadow Mode (2 semanas a partir de Jan 14/25)
 
 

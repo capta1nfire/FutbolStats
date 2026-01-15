@@ -4688,6 +4688,244 @@ async def _calculate_telemetry_summary(session) -> dict:
     }
 
 
+async def _calculate_shadow_mode_summary(session) -> dict:
+    """
+    Calculate Shadow Mode summary for ops dashboard.
+
+    Returns state, counts, metrics, and recommendation for A/B model comparison.
+    """
+    from app.ml.shadow import is_shadow_enabled, get_shadow_engine
+    from app.config import get_settings
+
+    settings = get_settings()
+    now = datetime.utcnow()
+
+    # State info
+    shadow_arch = settings.MODEL_SHADOW_ARCHITECTURE
+    enabled = bool(shadow_arch)
+    shadow_engine = get_shadow_engine()
+    engine_loaded = shadow_engine is not None and shadow_engine.is_loaded if shadow_engine else False
+
+    state = {
+        "enabled": enabled,
+        "shadow_architecture": shadow_arch or None,
+        "shadow_model_version": shadow_engine.model_version if engine_loaded else None,
+        "baseline_model_version": settings.MODEL_VERSION,
+        "last_evaluation_at": None,
+        "evaluation_job_interval_minutes": 30,
+    }
+
+    # Thresholds from settings
+    min_samples = settings.SHADOW_MIN_SAMPLES
+    brier_improvement_min = settings.SHADOW_BRIER_IMPROVEMENT_MIN
+    accuracy_drop_max = settings.SHADOW_ACCURACY_DROP_MAX
+    window_days = settings.SHADOW_WINDOW_DAYS
+
+    # Default response if disabled
+    if not enabled or not engine_loaded:
+        return {
+            "state": state,
+            "counts": None,
+            "metrics": None,
+            "gating": {
+                "min_samples_required": min_samples,
+                "samples_evaluated": 0,
+            },
+            "recommendation": {
+                "status": "DISABLED" if not enabled else "NOT_LOADED",
+                "reason": "Shadow mode not configured" if not enabled else "Shadow model not loaded",
+            },
+        }
+
+    # Counts query (window)
+    counts = {
+        "shadow_predictions_total": 0,
+        "shadow_predictions_evaluated": 0,
+        "shadow_predictions_pending": 0,
+        "shadow_predictions_last_24h": 0,
+        "shadow_evaluations_last_24h": 0,
+    }
+
+    try:
+        # Total predictions
+        res = await session.execute(
+            text(f"""
+                SELECT COUNT(*) FROM shadow_predictions
+                WHERE created_at > NOW() - INTERVAL '{window_days} days'
+            """)
+        )
+        counts["shadow_predictions_total"] = int(res.scalar() or 0)
+
+        # Evaluated vs pending
+        res = await session.execute(
+            text(f"""
+                SELECT
+                    COUNT(*) FILTER (WHERE evaluated_at IS NOT NULL) AS evaluated,
+                    COUNT(*) FILTER (WHERE evaluated_at IS NULL) AS pending
+                FROM shadow_predictions
+                WHERE created_at > NOW() - INTERVAL '{window_days} days'
+            """)
+        )
+        row = res.first()
+        if row:
+            counts["shadow_predictions_evaluated"] = int(row[0] or 0)
+            counts["shadow_predictions_pending"] = int(row[1] or 0)
+
+        # Last 24h predictions
+        res = await session.execute(
+            text("""
+                SELECT COUNT(*) FROM shadow_predictions
+                WHERE created_at > NOW() - INTERVAL '24 hours'
+            """)
+        )
+        counts["shadow_predictions_last_24h"] = int(res.scalar() or 0)
+
+        # Last 24h evaluations
+        res = await session.execute(
+            text("""
+                SELECT COUNT(*) FROM shadow_predictions
+                WHERE evaluated_at > NOW() - INTERVAL '24 hours'
+            """)
+        )
+        counts["shadow_evaluations_last_24h"] = int(res.scalar() or 0)
+
+        # Last evaluation timestamp
+        res = await session.execute(
+            text("SELECT MAX(evaluated_at) FROM shadow_predictions")
+        )
+        last_eval = res.scalar()
+        if last_eval:
+            state["last_evaluation_at"] = last_eval.isoformat() if hasattr(last_eval, 'isoformat') else str(last_eval)
+
+    except Exception as e:
+        logger.warning(f"Shadow mode counts query failed: {e}")
+
+    # Metrics (only if enough evaluated samples)
+    samples_evaluated = counts["shadow_predictions_evaluated"]
+    metrics = None
+    head_to_head = None
+    draws_info = None
+
+    if samples_evaluated >= min_samples:
+        try:
+            # Accuracy and Brier
+            res = await session.execute(
+                text(f"""
+                    SELECT
+                        AVG(CASE WHEN baseline_correct THEN 1.0 ELSE 0.0 END) AS baseline_acc,
+                        AVG(CASE WHEN shadow_correct THEN 1.0 ELSE 0.0 END) AS shadow_acc,
+                        AVG(baseline_brier) AS baseline_brier,
+                        AVG(shadow_brier) AS shadow_brier,
+                        SUM(CASE WHEN shadow_correct AND NOT baseline_correct THEN 1 ELSE 0 END) AS shadow_better,
+                        SUM(CASE WHEN baseline_correct AND NOT shadow_correct THEN 1 ELSE 0 END) AS baseline_better,
+                        SUM(CASE WHEN shadow_correct AND baseline_correct THEN 1 ELSE 0 END) AS both_correct,
+                        SUM(CASE WHEN NOT shadow_correct AND NOT baseline_correct THEN 1 ELSE 0 END) AS both_wrong
+                    FROM shadow_predictions
+                    WHERE evaluated_at IS NOT NULL
+                      AND created_at > NOW() - INTERVAL '{window_days} days'
+                """)
+            )
+            row = res.first()
+            if row:
+                baseline_acc = float(row[0] or 0)
+                shadow_acc = float(row[1] or 0)
+                baseline_brier = float(row[2] or 0)
+                shadow_brier = float(row[3] or 0)
+
+                metrics = {
+                    "baseline_accuracy": round(baseline_acc, 4),
+                    "shadow_accuracy": round(shadow_acc, 4),
+                    "baseline_brier": round(baseline_brier, 4),
+                    "shadow_brier": round(shadow_brier, 4),
+                    "delta_accuracy": round(shadow_acc - baseline_acc, 4),
+                    "delta_brier": round(shadow_brier - baseline_brier, 4),
+                }
+
+                head_to_head = {
+                    "shadow_better": int(row[4] or 0),
+                    "baseline_better": int(row[5] or 0),
+                    "both_correct": int(row[6] or 0),
+                    "both_wrong": int(row[7] or 0),
+                }
+
+            # Draw prediction stats
+            res = await session.execute(
+                text(f"""
+                    SELECT
+                        AVG(CASE WHEN shadow_predicted = 'draw' THEN 1.0 ELSE 0.0 END) AS shadow_draw_pct,
+                        AVG(CASE WHEN actual_result = 'draw' THEN 1.0 ELSE 0.0 END) AS actual_draw_pct
+                    FROM shadow_predictions
+                    WHERE evaluated_at IS NOT NULL
+                      AND created_at > NOW() - INTERVAL '{window_days} days'
+                """)
+            )
+            row = res.first()
+            if row:
+                draws_info = {
+                    "shadow_draw_predicted_pct": round(float(row[0] or 0) * 100, 1),
+                    "actual_draw_pct": round(float(row[1] or 0) * 100, 1),
+                }
+
+        except Exception as e:
+            logger.warning(f"Shadow mode metrics query failed: {e}")
+
+    # Recommendation logic
+    if samples_evaluated < min_samples:
+        recommendation = {
+            "status": "NO_DATA",
+            "reason": f"Need {min_samples} evaluated samples, have {samples_evaluated}",
+        }
+    elif metrics:
+        delta_brier = metrics["delta_brier"]
+        delta_acc = metrics["delta_accuracy"]
+
+        # GO: shadow improves brier AND doesn't hurt accuracy too much
+        if delta_brier <= -brier_improvement_min and delta_acc >= -accuracy_drop_max:
+            recommendation = {
+                "status": "GO",
+                "reason": f"Shadow improves Brier by {-delta_brier:.4f}, accuracy delta {delta_acc:+.1%}",
+            }
+        # NO_GO: shadow degrades accuracy significantly
+        elif delta_acc < -accuracy_drop_max:
+            recommendation = {
+                "status": "NO_GO",
+                "reason": f"Shadow degrades accuracy by {-delta_acc:.1%} (max allowed: {accuracy_drop_max:.1%})",
+            }
+        # NO_GO: shadow makes brier worse
+        elif delta_brier > brier_improvement_min:
+            recommendation = {
+                "status": "NO_GO",
+                "reason": f"Shadow degrades Brier by {delta_brier:.4f}",
+            }
+        # HOLD: not enough improvement to switch
+        else:
+            recommendation = {
+                "status": "HOLD",
+                "reason": f"Shadow comparable to baseline (Brier delta: {delta_brier:+.4f}, accuracy delta: {delta_acc:+.1%})",
+            }
+    else:
+        recommendation = {
+            "status": "NO_DATA",
+            "reason": "Metrics not available",
+        }
+
+    return {
+        "state": state,
+        "counts": counts,
+        "metrics": metrics,
+        "head_to_head": head_to_head,
+        "draws": draws_info,
+        "gating": {
+            "min_samples_required": min_samples,
+            "samples_evaluated": samples_evaluated,
+            "brier_improvement_min": brier_improvement_min,
+            "accuracy_drop_max": accuracy_drop_max,
+            "window_days": window_days,
+        },
+        "recommendation": recommendation,
+    }
+
+
 async def _calculate_predictions_health(session) -> dict:
     """
     Calculate predictions health metrics for P0 observability.
@@ -6285,6 +6523,11 @@ async def _load_ops_data() -> dict:
         telemetry_data = await _calculate_telemetry_summary(session)
 
         # =============================================================
+        # SHADOW MODE (A/B model comparison monitoring)
+        # =============================================================
+        shadow_mode_data = await _calculate_shadow_mode_summary(session)
+
+        # =============================================================
         # LLM COST (Gemini token usage from PostMatchAudit)
         # =============================================================
         llm_cost_data = {"provider": "gemini", "status": "unavailable"}
@@ -6464,6 +6707,7 @@ async def _load_ops_data() -> dict:
         "model_performance": model_performance,
         "telemetry": telemetry_data,
         "llm_cost": llm_cost_data,
+        "shadow_mode": shadow_mode_data,
     }
 
 
@@ -6634,6 +6878,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
     telemetry = data.get("telemetry") or {}
     telemetry_summary = telemetry.get("summary") or {}
     llm_cost = data.get("llm_cost") or {}
+    shadow_mode = data.get("shadow_mode") or {}
 
     def budget_color() -> str:
         if budget_status in ("unavailable", "error"):
@@ -6689,6 +6934,19 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
             return "yellow"
         if status == "ok":
             return "green"
+        return "blue"
+
+    def shadow_mode_color() -> str:
+        rec = shadow_mode.get("recommendation") or {}
+        status = rec.get("status", "DISABLED").upper()
+        if status == "GO":
+            return "green"
+        if status == "NO_GO":
+            return "red"
+        if status == "HOLD":
+            return "yellow"
+        if status in ("NO_DATA", "DISABLED", "NOT_LOADED"):
+            return "blue"
         return "blue"
 
     # Tables HTML
@@ -7075,6 +7333,16 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
         24h: {llm_cost.get("requests_ok_24h", 0)} req | 7d: ${llm_cost.get("cost_7d_usd", 0):.4f}
         <br/>Tokens 24h: {llm_cost.get("tokens_in_24h", 0):,} in / {llm_cost.get("tokens_out_24h", 0):,} out
         <br/>Avg: ${llm_cost.get("avg_cost_per_ok_24h", 0):.6f}/req
+      </div>
+    </div>
+    <div class="card {shadow_mode_color()}">
+      <div class="card-label">Shadow Mode<span class="info-icon">i<span class="tooltip">A/B testing del modelo two-stage vs baseline. GO: shadow mejora Brier sin degradar accuracy. NO_GO: shadow degrada métricas. HOLD: comparable, seguir monitoreando. NO_DATA: faltan muestras evaluadas.</span></span></div>
+      <div class="card-value">{(shadow_mode.get("recommendation") or {}).get("status", "DISABLED")}</div>
+      <div class="card-sub">
+        {f'Pending: {(shadow_mode.get("counts") or {}).get("shadow_predictions_pending", 0)} | Evaluated: {(shadow_mode.get("counts") or {}).get("shadow_predictions_evaluated", 0)}' if shadow_mode.get("counts") else 'Disabled'}
+        {f'<br/>Δ Brier: {(shadow_mode.get("metrics") or {}).get("delta_brier", 0):+.4f} | Δ Acc: {(shadow_mode.get("metrics") or {}).get("delta_accuracy", 0)*100:+.1f}%' if shadow_mode.get("metrics") else ''}
+        <br/><span style="font-size:0.75rem;">{(shadow_mode.get("recommendation") or {}).get("reason", "")[:60]}</span>
+        <br/><a href="/model/shadow-report" target="_blank" style="font-size:0.75rem;">Full report →</a>
       </div>
     </div>
   </div>

@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # Draw threshold for two-stage (None = use argmax, 0.30 = threshold override)
     MODEL_DRAW_THRESHOLD: float = 0.0  # 0.0 = disabled (argmax), >0 = threshold
 
+    # Shadow Mode Evaluation Thresholds
+    SHADOW_MIN_SAMPLES: int = 50  # Minimum evaluated predictions for GO/NO_GO decision
+    SHADOW_BRIER_IMPROVEMENT_MIN: float = 0.005  # Shadow must improve brier by this much for GO
+    SHADOW_ACCURACY_DROP_MAX: float = 0.01  # Max accuracy drop allowed (1%)
+    SHADOW_WINDOW_DAYS: int = 14  # Window for shadow evaluation metrics
+
     # Development settings
     SKIP_AUTO_TRAIN: bool = False  # Skip auto-training on startup (useful during dev)
 
