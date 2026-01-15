@@ -4792,6 +4792,16 @@ async def _calculate_shadow_mode_summary(session) -> dict:
         )
         counts["shadow_evaluations_last_24h"] = int(res.scalar() or 0)
 
+        # Errors in last 24h (shadow prediction failures)
+        res = await session.execute(
+            text("""
+                SELECT COUNT(*) FROM shadow_predictions
+                WHERE error_code IS NOT NULL
+                  AND created_at > NOW() - INTERVAL '24 hours'
+            """)
+        )
+        counts["shadow_errors_last_24h"] = int(res.scalar() or 0)
+
         # Last evaluation timestamp
         res = await session.execute(
             text("SELECT MAX(evaluated_at) FROM shadow_predictions")
@@ -7339,12 +7349,14 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
       </div>
     </div>
     <div class="card {shadow_mode_color()}">
-      <div class="card-label">Shadow Mode<span class="info-icon">i<span class="tooltip">A/B testing del modelo two-stage vs baseline. GO: shadow mejora Brier sin degradar accuracy. NO_GO: shadow degrada métricas. HOLD: comparable, seguir monitoreando. NO_DATA: faltan muestras evaluadas.</span></span></div>
+      <div class="card-label">Shadow Mode<span class="info-icon">i<span class="tooltip">A/B testing del modelo two-stage vs baseline. GO: shadow mejora Brier sin degradar accuracy. NO_GO: shadow degrada métricas. HOLD: comparable, seguir monitoreando. NO_DATA: faltan muestras evaluadas (esperando partidos FT).</span></span></div>
       <div class="card-value">{(shadow_mode.get("recommendation") or {}).get("status", "DISABLED")}</div>
       <div class="card-sub">
-        {f'Pending: {(shadow_mode.get("counts") or {}).get("shadow_predictions_pending", 0)} | Evaluated: {(shadow_mode.get("counts") or {}).get("shadow_predictions_evaluated", 0)}' if shadow_mode.get("counts") else 'Disabled'}
+        {f'Awaiting FT: {(shadow_mode.get("counts") or {}).get("shadow_predictions_pending", 0)} | Evaluated: {(shadow_mode.get("counts") or {}).get("shadow_predictions_evaluated", 0)}' if shadow_mode.get("counts") else 'Disabled'}
+        {f' | Errors 24h: {(shadow_mode.get("counts") or {}).get("shadow_errors_last_24h", 0)}' if (shadow_mode.get("counts") or {}).get("shadow_errors_last_24h", 0) > 0 else ''}
         {f'<br/>Δ Brier: {(shadow_mode.get("metrics") or {}).get("delta_brier", 0):+.4f} | Δ Acc: {(shadow_mode.get("metrics") or {}).get("delta_accuracy", 0)*100:+.1f}%' if shadow_mode.get("metrics") else ''}
-        <br/><span style="font-size:0.75rem;">{(shadow_mode.get("recommendation") or {}).get("reason", "")[:60]}</span>
+        <br/><span style="font-size:0.7rem;">Last eval: {_format_timestamp_la((shadow_mode.get("state") or {}).get("last_evaluation_at") or "") or "—"} | Next: every {(shadow_mode.get("state") or {}).get("evaluation_job_interval_minutes", 30)}m</span>
+        <br/><span style="font-size:0.75rem;">{(shadow_mode.get("recommendation") or {}).get("reason", "")[:55]}</span>
         <br/><a href="/model/shadow-report" target="_blank" style="font-size:0.75rem;">Full report →</a>
       </div>
     </div>
