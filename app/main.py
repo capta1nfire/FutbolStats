@@ -5079,13 +5079,37 @@ async def _calculate_sensor_b_summary(session) -> dict:
         except Exception as he:
             logger.warning(f"Sensor health metrics query failed: {he}")
 
+        # Compute accuracy percentages (only if samples >= min_samples)
+        samples_evaluated = counts.get("evaluated", 0)
+        min_samples = gating.get("min_samples_required", 50)
+        has_enough_samples = samples_evaluated >= min_samples
+
+        # Accuracy fields (null if not enough samples)
+        accuracy_a_pct = None
+        accuracy_b_pct = None
+        delta_accuracy_pct = None
+
+        if has_enough_samples:
+            a_acc = metrics.get("a_accuracy")
+            b_acc = metrics.get("b_accuracy")
+            if a_acc is not None and b_acc is not None:
+                accuracy_a_pct = round(a_acc * 100, 1)
+                accuracy_b_pct = round(b_acc * 100, 1)
+                delta_accuracy_pct = round((b_acc - a_acc) * 100, 1)
+
         return {
             "state": state,
             "reason": rec.get("reason", ""),
             # Counts
-            "samples_evaluated": counts.get("evaluated", 0),
+            "samples_evaluated": samples_evaluated,
             "samples_pending": counts.get("pending", 0),
-            "min_samples": gating.get("min_samples_required", 50),
+            "min_samples": min_samples,
+            # Accuracy A vs B (Auditor card) - only present if samples >= min_samples
+            "accuracy_a_pct": accuracy_a_pct,
+            "accuracy_b_pct": accuracy_b_pct,
+            "delta_accuracy_pct": delta_accuracy_pct,
+            "window_days": sensor_settings.SENSOR_EVAL_WINDOW_DAYS,
+            "note": "solo FT evaluados",
             # Metrics (only show if we have enough samples - gating)
             "signal_score": metrics.get("signal_score") if state != "LEARNING" else None,
             "brier_a": metrics.get("a_brier") if state != "LEARNING" else None,
@@ -7564,6 +7588,16 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
         {f'<br/>A Brier: {sensor_b.get("brier_a"):.4f} | B Brier: {sensor_b.get("brier_b"):.4f}' if sensor_b.get("brier_a") is not None else ''}
         {f'<br/><span style="font-size:0.7rem;">Last retrain: {_format_timestamp_la(sensor_b.get("last_retrain_at") or "") or "—"} | Every {sensor_b.get("retrain_interval_hours", 6)}h</span>' if sensor_b.get("state") not in ("DISABLED", None) else ''}
         {f'<br/><span style="font-size:0.75rem;">{sensor_b.get("reason", "")[:55]}</span>' if sensor_b.get("reason") else ''}
+        <br/><a href="/model/sensor-report" target="_blank" style="font-size:0.75rem;">Full report →</a>
+      </div>
+    </div>
+    <div class="card {'neutral' if sensor_b.get('accuracy_a_pct') is None else 'green' if (sensor_b.get('delta_accuracy_pct') or 0) >= 0 else 'yellow'}">
+      <div class="card-label">Accuracy A vs B<span class="info-icon">i<span class="tooltip">Comparación de % acierto entre Model A (producción) y Sensor B (LogReg L2). Solo diagnóstico interno, basado en partidos FT evaluados. NO afecta producción.</span></span></div>
+      <div class="card-value">{f"A: {sensor_b.get('accuracy_a_pct'):.1f}% | B: {sensor_b.get('accuracy_b_pct'):.1f}%" if sensor_b.get('accuracy_a_pct') is not None else sensor_b.get('state', 'NO_DATA')}</div>
+      <div class="card-sub">
+        {f"Δ: {sensor_b.get('delta_accuracy_pct'):+.1f}%" if sensor_b.get('delta_accuracy_pct') is not None else f"Evaluated: {sensor_b.get('samples_evaluated', 0)}/{sensor_b.get('min_samples', 50)}"}
+        <br/>Evaluated: {sensor_b.get('samples_evaluated', 0)} (window: {sensor_b.get('window_days', 14)}d)
+        <br/><span style="font-size:0.7rem;">{sensor_b.get('note', 'solo FT evaluados')}</span>
         <br/><a href="/model/sensor-report" target="_blank" style="font-size:0.75rem;">Full report →</a>
       </div>
     </div>
