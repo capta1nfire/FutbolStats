@@ -902,3 +902,53 @@ class LeagueTeamProfile(SQLModel, table=True):
         default_factory=datetime.utcnow,
         description="When this profile was computed"
     )
+
+
+class ShadowPrediction(SQLModel, table=True):
+    """
+    Shadow predictions for A/B model comparison.
+
+    Stores predictions from both baseline and shadow (experimental) models
+    for the same matches. Used for evaluating new model architectures
+    in production without affecting served predictions.
+
+    FASE 2: Two-stage model shadow evaluation.
+    """
+
+    __tablename__ = "shadow_predictions"
+    __table_args__ = (
+        UniqueConstraint("match_id", "created_at", name="uq_shadow_match_created"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    match_id: int = Field(foreign_key="matches.id", index=True)
+
+    # Baseline model predictions (currently served)
+    baseline_version: str = Field(max_length=50, description="e.g., 'v1.0.0'")
+    baseline_home_prob: float
+    baseline_draw_prob: float
+    baseline_away_prob: float
+    baseline_predicted: str = Field(max_length=10, description="'home', 'draw', or 'away'")
+
+    # Shadow model predictions (experimental, not served)
+    shadow_version: str = Field(max_length=50, description="e.g., 'v1.1.0-twostage'")
+    shadow_architecture: str = Field(max_length=50, description="'baseline' or 'two_stage'")
+    shadow_home_prob: float
+    shadow_draw_prob: float
+    shadow_away_prob: float
+    shadow_predicted: str = Field(max_length=10, description="'home', 'draw', or 'away'")
+
+    # Outcome (filled after match completes)
+    actual_result: Optional[str] = Field(
+        default=None, max_length=10, description="'home', 'draw', or 'away'"
+    )
+    baseline_correct: Optional[bool] = Field(default=None)
+    shadow_correct: Optional[bool] = Field(default=None)
+
+    # Metrics (computed after outcome)
+    baseline_brier: Optional[float] = Field(default=None, description="Brier contribution")
+    shadow_brier: Optional[float] = Field(default=None, description="Brier contribution")
+
+    # Metadata
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    evaluated_at: Optional[datetime] = Field(default=None, description="When outcome was recorded")

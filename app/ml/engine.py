@@ -1,6 +1,5 @@
 """XGBoost model engine for match prediction."""
 
-import json
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +15,307 @@ from app.ml.metrics import calculate_brier_score
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+# =============================================================================
+# FASE 2: Two-Stage Model Architecture
+# =============================================================================
+
+
+class TwoStageEngine:
+    """
+    Two-stage model for improved draw prediction.
+
+    Architecture:
+    - Stage 1: Binary classifier (draw vs non-draw)
+    - Stage 2: Binary classifier (home vs away) for non-draws
+
+    Composition (soft, no hard override):
+    - p_draw = P(draw | Stage1)
+    - p_home = (1 - p_draw) × P(home | non-draw, Stage2)
+    - p_away = (1 - p_draw) × P(away | non-draw, Stage2)
+
+    All probabilities sum to 1.0 by construction.
+    """
+
+    # Stage 1 features (draw detection) - includes implied_draw from odds
+    STAGE1_FEATURES = [
+        "home_goals_scored_avg", "home_goals_conceded_avg", "home_shots_avg",
+        "home_corners_avg", "home_rest_days", "home_matches_played",
+        "away_goals_scored_avg", "away_goals_conceded_avg", "away_shots_avg",
+        "away_corners_avg", "away_rest_days", "away_matches_played",
+        "goal_diff_avg", "rest_diff",
+        "abs_attack_diff", "abs_defense_diff", "abs_strength_gap",
+        "implied_draw",  # Derived from odds
+    ]
+
+    # Stage 2 features (home vs away)
+    STAGE2_FEATURES = [
+        "home_goals_scored_avg", "home_goals_conceded_avg", "home_shots_avg",
+        "home_corners_avg", "home_rest_days", "home_matches_played",
+        "away_goals_scored_avg", "away_goals_conceded_avg", "away_shots_avg",
+        "away_corners_avg", "away_rest_days", "away_matches_played",
+        "goal_diff_avg", "rest_diff",
+        "abs_attack_diff", "abs_defense_diff", "abs_strength_gap",
+    ]
+
+    # Stage 1 hyperparameters (binary draw vs non-draw)
+    PARAMS_STAGE1 = {
+        "objective": "binary:logistic",
+        "max_depth": 3,
+        "learning_rate": 0.05,
+        "n_estimators": 100,
+        "min_child_weight": 7,
+        "subsample": 0.72,
+        "colsample_bytree": 0.71,
+        "random_state": 42,
+    }
+
+    # Stage 2 hyperparameters (binary home vs away)
+    PARAMS_STAGE2 = {
+        "objective": "binary:logistic",
+        "max_depth": 3,
+        "learning_rate": 0.05,
+        "n_estimators": 100,
+        "min_child_weight": 5,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "random_state": 42,
+    }
+
+    def __init__(self, model_version: str = None, draw_weight: float = 1.2):
+        """
+        Initialize two-stage engine.
+
+        Args:
+            model_version: Version string for saving/loading.
+            draw_weight: Sample weight for draws in Stage 1 (default 1.2).
+        """
+        self.model_version = model_version or "v1.1.0-twostage"
+        self.draw_weight = draw_weight
+        self.stage1: Optional[xgb.XGBClassifier] = None
+        self.stage2: Optional[xgb.XGBClassifier] = None
+        self.model_path = Path(settings.MODEL_PATH)
+        self.model_path.mkdir(exist_ok=True)
+
+    def _prepare_features_stage1(self, df: pd.DataFrame) -> np.ndarray:
+        """Prepare features for Stage 1, adding implied_draw from odds."""
+        df = df.copy()
+
+        # Compute implied_draw from odds if available
+        if "odds_draw" in df.columns:
+            df["implied_draw_raw"] = 1 / df["odds_draw"].replace(0, np.nan)
+            df["implied_home_raw"] = 1 / df["odds_home"].replace(0, np.nan)
+            df["implied_away_raw"] = 1 / df["odds_away"].replace(0, np.nan)
+            total = df["implied_draw_raw"] + df["implied_home_raw"] + df["implied_away_raw"]
+            df["implied_draw"] = df["implied_draw_raw"] / total
+            df["implied_draw"] = df["implied_draw"].fillna(0.25)
+        else:
+            df["implied_draw"] = 0.25  # Default league average
+
+        # Fill missing features
+        for col in self.STAGE1_FEATURES:
+            if col not in df.columns:
+                logger.warning(f"Missing Stage1 feature {col}, filling with 0")
+                df[col] = 0
+
+        return df[self.STAGE1_FEATURES].fillna(0).values
+
+    def _prepare_features_stage2(self, df: pd.DataFrame) -> np.ndarray:
+        """Prepare features for Stage 2."""
+        df = df.copy()
+        for col in self.STAGE2_FEATURES:
+            if col not in df.columns:
+                logger.warning(f"Missing Stage2 feature {col}, filling with 0")
+                df[col] = 0
+        return df[self.STAGE2_FEATURES].fillna(0).values
+
+    def train(self, df: pd.DataFrame, n_splits: int = 3) -> dict:
+        """
+        Train both stages using TimeSeriesSplit.
+
+        Args:
+            df: DataFrame with features and 'result' target (0=home, 1=draw, 2=away).
+            n_splits: Number of CV splits.
+
+        Returns:
+            Dictionary with training metrics.
+        """
+        logger.info(f"Training TwoStage model {self.model_version} with {len(df)} samples")
+
+        # Prepare targets
+        y = df["result"].values
+        y_draw = (y == 1).astype(int)  # Stage 1: 1=draw, 0=non-draw
+
+        # Non-draw subset for Stage 2
+        nondraw_mask = y != 1
+        y_home = (y[nondraw_mask] == 0).astype(int)  # Stage 2: 1=home, 0=away
+
+        # Prepare feature matrices
+        X_s1 = self._prepare_features_stage1(df)
+        X_s2_full = self._prepare_features_stage2(df)
+        X_s2 = X_s2_full[nondraw_mask]
+
+        # Sample weights for Stage 1 (upweight draws)
+        sample_weight_s1 = np.ones(len(y_draw), dtype=np.float32)
+        sample_weight_s1[y_draw == 1] = self.draw_weight
+        logger.info(
+            f"Stage1 sample weights: non-draw=1.0, draw={self.draw_weight} "
+            f"(draws: {(y_draw == 1).sum()}/{len(y_draw)} = {(y_draw == 1).mean():.1%})"
+        )
+
+        # Time series CV
+        tscv = TimeSeriesSplit(n_splits=n_splits)
+        cv_brier_scores = []
+
+        for fold, (train_idx, val_idx) in enumerate(tscv.split(X_s1)):
+            # Stage 1 split
+            X_s1_train, X_s1_val = X_s1[train_idx], X_s1[val_idx]
+            y_draw_train, y_draw_val = y_draw[train_idx], y_draw[val_idx]
+            w_s1_train = sample_weight_s1[train_idx]
+
+            # Stage 2 split (only non-draws in training)
+            nondraw_train_mask = y[train_idx] != 1
+            train_idx_nondraw = train_idx[nondraw_train_mask]
+            X_s2_train = X_s2_full[train_idx_nondraw]
+            y_home_train = (y[train_idx_nondraw] == 0).astype(int)
+
+            # Train Stage 1
+            s1_model = xgb.XGBClassifier(**self.PARAMS_STAGE1)
+            s1_model.fit(X_s1_train, y_draw_train, sample_weight=w_s1_train, verbose=False)
+
+            # Train Stage 2
+            s2_model = xgb.XGBClassifier(**self.PARAMS_STAGE2)
+            s2_model.fit(X_s2_train, y_home_train, verbose=False)
+
+            # Predict on validation
+            p_draw = s1_model.predict_proba(X_s1_val)[:, 1]
+            X_s2_val = X_s2_full[val_idx]
+            p_home_given_nondraw = s2_model.predict_proba(X_s2_val)[:, 1]
+
+            # Compose 3-class probabilities
+            p_home = (1 - p_draw) * p_home_given_nondraw
+            p_away = (1 - p_draw) * (1 - p_home_given_nondraw)
+            y_proba = np.column_stack([p_home, p_draw, p_away])
+
+            # Calculate Brier
+            brier = calculate_brier_score(y[val_idx], y_proba)
+            cv_brier_scores.append(brier)
+            logger.info(f"Fold {fold + 1}: Brier Score = {brier:.4f}")
+
+        avg_brier = np.mean(cv_brier_scores)
+        logger.info(f"Average Brier Score: {avg_brier:.4f}")
+
+        # Train final models on all data
+        self.stage1 = xgb.XGBClassifier(**self.PARAMS_STAGE1)
+        self.stage1.fit(X_s1, y_draw, sample_weight=sample_weight_s1, verbose=False)
+
+        self.stage2 = xgb.XGBClassifier(**self.PARAMS_STAGE2)
+        self.stage2.fit(X_s2, y_home, verbose=False)
+
+        logger.info("TwoStage model training complete")
+
+        return {
+            "model_version": self.model_version,
+            "architecture": "two_stage",
+            "samples_trained": len(df),
+            "brier_score": round(avg_brier, 4),
+            "cv_scores": [round(s, 4) for s in cv_brier_scores],
+            "draw_weight": self.draw_weight,
+        }
+
+    def predict_proba(self, df: pd.DataFrame) -> np.ndarray:
+        """
+        Predict 3-class probabilities using soft composition.
+
+        Returns:
+            Array of shape (n_samples, 3) with [p_home, p_draw, p_away].
+        """
+        if self.stage1 is None or self.stage2 is None:
+            raise ValueError("Model not trained or loaded")
+
+        X_s1 = self._prepare_features_stage1(df)
+        X_s2 = self._prepare_features_stage2(df)
+
+        # Stage 1: P(draw)
+        p_draw = self.stage1.predict_proba(X_s1)[:, 1]
+
+        # Stage 2: P(home | non-draw)
+        p_home_given_nondraw = self.stage2.predict_proba(X_s2)[:, 1]
+
+        # Compose (soft composition, no threshold override)
+        p_home = (1 - p_draw) * p_home_given_nondraw
+        p_away = (1 - p_draw) * (1 - p_home_given_nondraw)
+
+        proba = np.column_stack([p_home, p_draw, p_away])
+
+        # Clamp to [0, 1] and renormalize (safety)
+        proba = np.clip(proba, 0, 1)
+        row_sums = proba.sum(axis=1, keepdims=True)
+        proba = proba / row_sums
+
+        return proba
+
+    def save_to_bytes(self) -> bytes:
+        """Export both stages to compressed bytes for DB storage."""
+        import pickle
+        import zlib
+
+        if self.stage1 is None or self.stage2 is None:
+            raise ValueError("No model trained to export")
+
+        payload = {
+            "stage1": self.stage1,
+            "stage2": self.stage2,
+            "model_version": self.model_version,
+            "draw_weight": self.draw_weight,
+        }
+
+        raw_bytes = pickle.dumps(payload)
+        compressed = zlib.compress(raw_bytes, level=6)
+
+        compression_ratio = (1 - len(compressed) / len(raw_bytes)) * 100
+        logger.info(
+            f"TwoStage model compressed: {len(raw_bytes)} -> {len(compressed)} bytes "
+            f"({compression_ratio:.1f}% reduction)"
+        )
+
+        return compressed
+
+    def load_from_bytes(self, blob: bytes) -> bool:
+        """Load both stages from compressed bytes."""
+        import pickle
+        import zlib
+
+        try:
+            decompressed = zlib.decompress(blob)
+            payload = pickle.loads(decompressed)
+
+            self.stage1 = payload["stage1"]
+            self.stage2 = payload["stage2"]
+            self.model_version = payload.get("model_version", "v1.1.0-twostage")
+            self.draw_weight = payload.get("draw_weight", 1.2)
+
+            logger.info(
+                f"TwoStage model loaded from bytes: {len(blob)} compressed -> "
+                f"{len(decompressed)} decompressed"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load TwoStage model from bytes: {e}")
+            self.stage1 = None
+            self.stage2 = None
+            return False
+
+    @property
+    def is_loaded(self) -> bool:
+        """Check if both stages are loaded."""
+        return self.stage1 is not None and self.stage2 is not None
+
+
+# =============================================================================
+# Original XGBoostEngine (baseline)
+# =============================================================================
 
 
 class XGBoostEngine:
@@ -43,6 +343,10 @@ class XGBoostEngine:
         "away_matches_played",
         "goal_diff_avg",
         "rest_diff",
+        # FASE 1: Competitiveness features for draw prediction
+        "abs_attack_diff",
+        "abs_defense_diff",
+        "abs_strength_gap",
     ]
 
     def __init__(self, model_version: str = None):
@@ -71,6 +375,7 @@ class XGBoostEngine:
         df: pd.DataFrame,
         n_splits: int = 3,
         hyperparams: Optional[dict] = None,
+        draw_weight: float = 1.5,
     ) -> dict:
         """
         Train the XGBoost model using TimeSeriesSplit.
@@ -79,6 +384,8 @@ class XGBoostEngine:
             df: DataFrame with features and 'result' target column.
             n_splits: Number of splits for time series cross-validation.
             hyperparams: Optional XGBoost hyperparameters.
+            draw_weight: Weight multiplier for draw samples (default 1.5).
+                         Higher values give more importance to predicting draws correctly.
 
         Returns:
             Dictionary with training metrics.
@@ -88,6 +395,16 @@ class XGBoostEngine:
         # Prepare data
         X = self._prepare_features(df)
         y = df["result"].values
+
+        # FASE 1: Compute sample weights to address draw imbalance
+        # Draws (class 1) are naturally rarer (~28%) but model predicts them at ~0%
+        # Giving higher weight to draws forces the model to learn their patterns
+        sample_weight = np.ones(len(y), dtype=np.float32)
+        sample_weight[y == 1] = draw_weight  # Upweight draws
+        logger.info(
+            f"Sample weights: home/away=1.0, draw={draw_weight} "
+            f"(draws: {(y == 1).sum()}/{len(y)} = {(y == 1).mean():.1%})"
+        )
 
         # Optimized hyperparameters (Optuna, 50 trials, Brier Score: 0.2054)
         params = {
@@ -115,11 +432,13 @@ class XGBoostEngine:
         for fold, (train_idx, val_idx) in enumerate(tscv.split(X)):
             X_train, X_val = X[train_idx], X[val_idx]
             y_train, y_val = y[train_idx], y[val_idx]
+            w_train = sample_weight[train_idx]
 
             fold_model = xgb.XGBClassifier(**params)
             fold_model.fit(
                 X_train,
                 y_train,
+                sample_weight=w_train,
                 eval_set=[(X_val, y_val)],
                 verbose=False,
             )
@@ -134,7 +453,7 @@ class XGBoostEngine:
 
         # Train final model on all data
         self.model = xgb.XGBClassifier(**params)
-        self.model.fit(X, y, verbose=False)
+        self.model.fit(X, y, sample_weight=sample_weight, verbose=False)
 
         # Save model
         model_path = self._get_model_filepath()

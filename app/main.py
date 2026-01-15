@@ -377,6 +377,13 @@ async def lifespan(app: FastAPI):
         logger.info("No ML model found. Starting background training...")
         asyncio.create_task(_train_model_background())
 
+    # Initialize shadow engine if configured (FASE 2: two-stage shadow mode)
+    async with AsyncSessionLocal() as session:
+        from app.ml.shadow import init_shadow_engine
+        shadow_initialized = await init_shadow_engine(session)
+        if shadow_initialized:
+            logger.info("Shadow engine initialized (two-stage model for A/B comparison)")
+
     # Start background scheduler for weekly sync/train
     start_scheduler(ml_engine)
 
@@ -1885,6 +1892,32 @@ async def model_info():
         "version": ml_engine.model_version,
         "features": ml_engine.FEATURE_COLUMNS,
     }
+
+
+@app.get("/model/shadow-report")
+@limiter.limit("30/minute")
+async def get_shadow_report_endpoint(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
+):
+    """
+    Get shadow model A/B comparison report.
+
+    Returns accuracy and Brier score comparison between baseline and shadow (two-stage) model.
+    Includes per-outcome breakdown and GO/NO-GO recommendation.
+    Requires API key authentication.
+    """
+    from app.ml.shadow import is_shadow_enabled, get_shadow_report
+
+    if not is_shadow_enabled():
+        return {
+            "status": "disabled",
+            "message": "Shadow mode not enabled. Set MODEL_SHADOW_ARCHITECTURE=two_stage to enable.",
+        }
+
+    report = await get_shadow_report(session)
+    return report
 
 
 @app.post("/odds/refresh")

@@ -1530,10 +1530,15 @@ async def daily_save_predictions():
             # Make predictions
             predictions = engine.predict(df)
 
+            # Shadow mode: log parallel predictions if enabled
+            from app.ml.shadow import is_shadow_enabled, log_shadow_prediction
+            shadow_logged = 0
+            shadow_errors = 0
+
             # Save to database using generic upsert (only NS matches)
             saved = 0
             skipped = 0
-            for pred in predictions:
+            for idx, pred in enumerate(predictions):
                 match_id = pred.get("match_id")
                 if not match_id:
                     continue
@@ -1560,14 +1565,68 @@ async def daily_save_predictions():
                         update_columns=["home_prob", "draw_prob", "away_prob"],
                     )
                     saved += 1
+
+                    # Shadow prediction: log parallel two-stage prediction (never affects main flow)
+                    if is_shadow_enabled():
+                        try:
+                            match_df = df.iloc[[idx]]
+                            shadow_result = await log_shadow_prediction(
+                                session=session,
+                                match_id=match_id,
+                                df=match_df,
+                                baseline_engine=engine,
+                            )
+                            if shadow_result:
+                                shadow_logged += 1
+                        except Exception as shadow_err:
+                            shadow_errors += 1
+                            logger.warning(f"Shadow prediction failed for match {match_id}: {shadow_err}")
+
                 except Exception as e:
                     logger.warning(f"Error saving prediction: {e}")
 
             await session.commit()
-            logger.info(f"Daily prediction save complete: {saved} saved, {skipped} skipped (non-NS)")
+            logger.info(
+                f"Daily prediction save complete: {saved} saved, {skipped} skipped (non-NS)"
+                + (f", shadow: {shadow_logged} logged, {shadow_errors} errors" if is_shadow_enabled() else "")
+            )
 
     except Exception as e:
         logger.error(f"Daily prediction save failed: {e}")
+
+
+async def evaluate_shadow_predictions():
+    """
+    Evaluate shadow predictions against actual outcomes.
+    Runs every 30 minutes to update completed matches.
+
+    Updates shadow_predictions records with actual_result, correctness, and Brier scores.
+    """
+    from app.ml.shadow import is_shadow_enabled, evaluate_shadow_outcomes
+
+    if not is_shadow_enabled():
+        return {"status": "disabled", "message": "Shadow mode not enabled"}
+
+    logger.info("Starting shadow predictions evaluation...")
+
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await evaluate_shadow_outcomes(session)
+
+            if result.get("evaluated", 0) > 0:
+                logger.info(
+                    f"Shadow evaluation complete: {result['evaluated']} matches, "
+                    f"baseline_acc={result['baseline_accuracy']:.1%}, "
+                    f"shadow_acc={result['shadow_accuracy']:.1%}, "
+                    f"delta_brier={result['delta_brier']:+.4f}"
+                )
+            else:
+                logger.debug("Shadow evaluation: no pending predictions to evaluate")
+
+            return result
+    except Exception as e:
+        logger.error(f"Shadow predictions evaluation failed: {e}")
+        return {"status": "error", "error": str(e)}
 
 
 async def daily_refresh_aggregates():
@@ -3354,6 +3413,16 @@ def start_scheduler(ml_engine):
         trigger=CronTrigger(hour=8, minute=0),
         id="daily_audit",
         name="Daily Post-Match Audit",
+        replace_existing=True,
+    )
+
+    # Shadow predictions evaluation: Every 30 minutes
+    # Updates shadow_predictions with actual outcomes for A/B comparison
+    scheduler.add_job(
+        evaluate_shadow_predictions,
+        trigger=IntervalTrigger(minutes=30),
+        id="evaluate_shadow_predictions",
+        name="Shadow Predictions Evaluation (every 30min)",
         replace_existing=True,
     )
 

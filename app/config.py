@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     # Model versioning
     MODEL_VERSION: str = "v1.0.0"
 
+    # Model architecture (baseline | two_stage)
+    MODEL_ARCHITECTURE: str = "baseline"
+    # Shadow architecture for A/B comparison (runs in parallel, logged but not served)
+    MODEL_SHADOW_ARCHITECTURE: str = ""  # Empty = disabled
+    # Draw threshold for two-stage (None = use argmax, 0.30 = threshold override)
+    MODEL_DRAW_THRESHOLD: float = 0.0  # 0.0 = disabled (argmax), >0 = threshold
+
     # Development settings
     SKIP_AUTO_TRAIN: bool = False  # Skip auto-training on startup (useful during dev)
 
