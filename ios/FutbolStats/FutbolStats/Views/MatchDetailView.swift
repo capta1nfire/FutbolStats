@@ -45,15 +45,45 @@ struct MatchInsight {
     let confidence: Double
 }
 
+// MARK: - Section Loading State
+
+enum SectionLoadState: Equatable {
+    case idle
+    case loading
+    case loaded
+    case error(String)
+
+    var isLoading: Bool {
+        if case .loading = self { return true }
+        return false
+    }
+
+    var isLoaded: Bool {
+        if case .loaded = self { return true }
+        return false
+    }
+}
+
 // MARK: - View Model
 
 @MainActor
 class MatchDetailViewModel: ObservableObject {
     let prediction: MatchPrediction
 
+    // Section-specific loading states for progressive UI
+    @Published var detailsState: SectionLoadState = .idle
+    @Published var timelineState: SectionLoadState = .idle
+    @Published var narrativeState: SectionLoadState = .idle
+    @Published var statsState: SectionLoadState = .idle
+
+    // Legacy compatibility (computed from detailsState)
+    var isLoading: Bool { detailsState == .idle || detailsState.isLoading }
+    var error: String? {
+        if case .error(let msg) = detailsState { return msg }
+        return nil
+    }
+
     @Published var matchDetails: MatchDetailsResponse?
-    @Published var isLoading = true
-    @Published var error: String?
     @Published var homeEV: EVResult?
     @Published var drawEV: EVResult?
     @Published var awayEV: EVResult?
@@ -72,30 +102,53 @@ class MatchDetailViewModel: ObservableObject {
     @Published var matchStats: MatchStats?
     @Published var matchEvents: [MatchEvent]?
 
+    // Task cancellation support
+    private var loadTask: Task<Void, Never>?
+
     init(prediction: MatchPrediction) {
         self.prediction = prediction
         calculateEV()
     }
 
+    deinit {
+        loadTask?.cancel()
+    }
+
+    func cancelLoading() {
+        loadTask?.cancel()
+        loadTask = nil
+    }
+
     func loadDetails() async {
+        // Cancel any existing load task
+        loadTask?.cancel()
+
         guard let matchId = prediction.matchId else {
-            isLoading = false
-            error = "No match ID available"
+            detailsState = .error("No match ID available")
             return
         }
+
+        // Start loading immediately
+        detailsState = .loading
 
         let totalTimer = PerfTimer()
 
         do {
+            // Check for cancellation
+            try Task.checkCancellation()
+
             let detailsTimer = PerfTimer()
             matchDetails = try await APIClient.shared.getMatchDetails(matchId: matchId)
             let detailsMs = detailsTimer.elapsedMs
 
+            // Check for cancellation before processing
+            try Task.checkCancellation()
+
             processTeamHistory()
             generateInsights()
 
-            // Show UI immediately after basic data loads (progressive loading)
-            isLoading = false
+            // Mark details as loaded (triggers UI transition)
+            detailsState = .loaded
 
             // Log without match_id to avoid high-cardinality (per auditor guardrails)
             PerfLogger.shared.log(
@@ -110,6 +163,11 @@ class MatchDetailViewModel: ObservableObject {
             // Load timeline and narrative insights in background (non-blocking)
             if prediction.isFinished {
                 print("Match \(matchId) is finished, loading timeline and insights in background...")
+
+                // Set loading states for background sections
+                timelineState = .loading
+                narrativeState = .loading
+                statsState = .loading
 
                 let timelineTimer = PerfTimer()
                 let insightsTimer = PerfTimer()
@@ -130,9 +188,11 @@ class MatchDetailViewModel: ObservableObject {
             } else {
                 print("Match \(matchId) status: \(prediction.status ?? "nil") - not loading timeline/insights")
             }
+        } catch is CancellationError {
+            // Task was cancelled (user navigated away), don't update state
+            print("MatchDetail load cancelled for match \(matchId)")
         } catch {
-            self.error = error.localizedDescription
-            isLoading = false
+            detailsState = .error(error.localizedDescription)
             PerfLogger.shared.log(
                 endpoint: "MatchDetail.loadDetails",
                 message: "error",
@@ -146,33 +206,44 @@ class MatchDetailViewModel: ObservableObject {
 
     private func loadTimeline(matchId: Int) async {
         do {
+            try Task.checkCancellation()
             timeline = try await APIClient.shared.getMatchTimeline(matchId: matchId)
+            timelineState = .loaded
             print("Timeline loaded successfully: \(timeline?.summary.correctPercentage ?? 0)% correct")
+        } catch is CancellationError {
+            // Don't update state on cancellation
         } catch {
             // Timeline is optional - don't fail the whole view
             timelineError = error.localizedDescription
+            timelineState = .error(error.localizedDescription)
             print("Timeline error: \(error.localizedDescription)")
         }
     }
 
     private func loadNarrativeInsights(matchId: Int) async {
         do {
+            try Task.checkCancellation()
             let response = try await APIClient.shared.getMatchInsights(matchId: matchId)
+
+            try Task.checkCancellation()
 
             // Use LLM narrative if available (new system)
             if let narrative = response.llmNarrative {
                 llmNarrative = narrative
                 llmNarrativeStatus = response.llmNarrativeStatus
+                narrativeState = .loaded
                 print("LLM narrative loaded: \(narrative.narrative?.title ?? "no title")")
             } else {
                 // No LLM narrative available
                 llmNarrativeStatus = response.llmNarrativeStatus ?? "pending"
+                narrativeState = .loaded  // Still "loaded" even if no narrative
                 print("LLM narrative not available, status: \(llmNarrativeStatus ?? "unknown")")
             }
 
             // Load match stats for stats table (always, independent of narrative)
             matchStats = response.matchStats
             matchEvents = response.matchEvents
+            statsState = .loaded
             print("DEBUG: matchStats = \(String(describing: response.matchStats))")
             print("DEBUG: matchEvents count = \(response.matchEvents?.count ?? 0)")
             if let stats = matchStats {
@@ -180,9 +251,13 @@ class MatchDetailViewModel: ObservableObject {
             } else {
                 print("Match stats is nil")
             }
+        } catch is CancellationError {
+            // Don't update state on cancellation
         } catch {
             // Insights are optional - don't fail the whole view
             llmNarrativeError = error.localizedDescription
+            narrativeState = .error(error.localizedDescription)
+            statsState = .error(error.localizedDescription)
             // Log full error for debugging schema mismatches
             print("LLM narrative error: \(error)")
             if let decodingError = error as? DecodingError {
@@ -393,38 +468,83 @@ struct MatchDetailView: View {
 
     private let valueColor = Color(red: 0.19, green: 0.82, blue: 0.35)  // #30D158
 
+    // Animation for section transitions
+    private let sectionTransition: AnyTransition = .opacity.combined(with: .move(edge: .bottom))
+    private let sectionAnimation: Animation = .easeOut(duration: 0.25)
+
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-                matchHeader
-                probabilityBar
-
-                // Timeline for finished matches
-                if let timeline = viewModel.timeline {
-                    PredictionTimelineView(timeline: timeline)
+                // Header section - shows skeleton until details loaded
+                if viewModel.detailsState.isLoaded {
+                    matchHeader
+                        .transition(sectionTransition)
+                } else if viewModel.detailsState.isLoading || viewModel.detailsState == .idle {
+                    MatchHeaderSkeleton()
+                } else if case .error(let msg) = viewModel.detailsState {
+                    errorView(message: msg)
                 }
 
-                oddsCards
+                // Probability bar - shows skeleton until details loaded
+                if viewModel.detailsState.isLoaded {
+                    probabilityBar
+                        .transition(sectionTransition)
+                } else if viewModel.detailsState.isLoading || viewModel.detailsState == .idle {
+                    ProbabilityBarSkeleton()
+                }
 
+                // Timeline for finished matches - shows skeleton while loading
+                if prediction.isFinished {
+                    if let timeline = viewModel.timeline {
+                        PredictionTimelineView(timeline: timeline)
+                            .transition(sectionTransition)
+                    } else if viewModel.timelineState.isLoading {
+                        TimelineSkeleton()
+                    }
+                }
+
+                // Odds cards - shows skeleton until details loaded
+                if viewModel.detailsState.isLoaded {
+                    oddsCards
+                        .transition(sectionTransition)
+                } else if viewModel.detailsState.isLoading || viewModel.detailsState == .idle {
+                    OddsCardsSkeleton()
+                }
+
+                // Form table - shows skeleton until details loaded
                 if viewModel.homeTeamForm != nil || viewModel.awayTeamForm != nil {
                     formTable
+                        .transition(sectionTransition)
+                } else if viewModel.detailsState.isLoading || viewModel.detailsState == .idle {
+                    FormTableSkeleton()
                 }
 
-                // LLM Narrative (post-match analysis)
-                if let narrative = viewModel.llmNarrative {
-                    LLMNarrativeView(narrative: narrative)
-                } else if prediction.isFinished && viewModel.llmNarrativeStatus != nil {
-                    // Show unavailable state for finished matches without narrative
-                    LLMNarrativeUnavailableView(status: viewModel.llmNarrativeStatus)
+                // LLM Narrative (post-match analysis) - shows skeleton while loading
+                if prediction.isFinished {
+                    if let narrative = viewModel.llmNarrative {
+                        LLMNarrativeView(narrative: narrative)
+                            .transition(sectionTransition)
+                    } else if viewModel.narrativeState.isLoading {
+                        NarrativeSkeleton()
+                    } else if viewModel.narrativeState.isLoaded && viewModel.llmNarrativeStatus != nil {
+                        // Show unavailable state for finished matches without narrative
+                        LLMNarrativeUnavailableView(status: viewModel.llmNarrativeStatus)
+                            .transition(sectionTransition)
+                    }
                 }
 
                 // Match Stats Table (below narrative, for finished matches)
-                if let stats = viewModel.matchStats {
-                    MatchStatsTableView(
-                        stats: stats,
-                        homeTeam: prediction.homeTeam,
-                        awayTeam: prediction.awayTeam
-                    )
+                if prediction.isFinished {
+                    if let stats = viewModel.matchStats {
+                        MatchStatsTableView(
+                            stats: stats,
+                            homeTeam: prediction.homeTeam,
+                            awayTeam: prediction.awayTeam
+                        )
+                        .transition(sectionTransition)
+                    } else if viewModel.statsState.isLoading {
+                        StatsTableSkeleton()
+                    }
                 }
 
                 // Only show insight footer if no narrative and match not finished
@@ -432,10 +552,15 @@ struct MatchDetailView: View {
                    viewModel.llmNarrative == nil,
                    !prediction.isFinished {
                     insightFooter(insight)
+                        .transition(sectionTransition)
                 }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 32)
+            .animation(sectionAnimation, value: viewModel.detailsState)
+            .animation(sectionAnimation, value: viewModel.timelineState)
+            .animation(sectionAnimation, value: viewModel.narrativeState)
+            .animation(sectionAnimation, value: viewModel.statsState)
         }
         .background(Color.black)
         .navigationBarTitleDisplayMode(.inline)
@@ -451,6 +576,9 @@ struct MatchDetailView: View {
         .task {
             await viewModel.loadDetails()
         }
+        .onDisappear {
+            viewModel.cancelLoading()
+        }
         .sheet(isPresented: $showStandings) {
             if let leagueId = viewModel.matchDetails?.match.leagueId {
                 LeagueStandingsView(
@@ -460,6 +588,37 @@ struct MatchDetailView: View {
                 )
             }
         }
+    }
+
+    // MARK: - Error View
+
+    private func errorView(message: String) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.largeTitle)
+                .foregroundStyle(.orange)
+
+            Text("Error loading match")
+                .font(.headline)
+                .foregroundStyle(.white)
+
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.gray)
+                .multilineTextAlignment(.center)
+
+            Button {
+                Task {
+                    await viewModel.loadDetails()
+                }
+            } label: {
+                Label("Retry", systemImage: "arrow.clockwise")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(32)
     }
 
     // MARK: - Match Header
