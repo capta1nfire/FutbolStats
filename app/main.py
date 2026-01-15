@@ -344,6 +344,64 @@ async def _save_standings_to_db(session, league_id: int, season: int, standings:
     await session.commit()
 
 
+async def _generate_placeholder_standings(session, league_id: int, season: int) -> list:
+    """
+    Generate placeholder standings for a league when API data is not yet available.
+
+    Returns all teams from the league (based on recent matches) with zero stats,
+    ordered alphabetically. This provides a clean UX for pre-season scenarios.
+
+    Args:
+        session: Database session
+        league_id: League ID
+        season: Season year (used to determine date range for team lookup)
+
+    Returns:
+        List of standings dicts with all zeros, ordered alphabetically by team name.
+    """
+    # Get distinct teams that played in this league recently (last 2 years)
+    result = await session.execute(
+        text("""
+            SELECT DISTINCT t.id, t.external_id, t.name, t.logo_url
+            FROM teams t
+            JOIN matches m ON (t.id = m.home_team_id OR t.id = m.away_team_id)
+            WHERE m.league_id = :league_id
+              AND m.date > NOW() - INTERVAL '2 years'
+              AND t.team_type = 'club'
+            ORDER BY t.name
+        """),
+        {"league_id": league_id}
+    )
+    teams = result.fetchall()
+
+    if not teams:
+        return []
+
+    # Build placeholder standings ordered alphabetically (position = row number)
+    standings = []
+    for idx, (team_id, external_id, name, logo_url) in enumerate(teams, start=1):
+        standings.append({
+            "position": idx,
+            "team_id": external_id,
+            "team_name": name,
+            "team_logo": logo_url,
+            "points": 0,
+            "played": 0,
+            "won": 0,
+            "drawn": 0,
+            "lost": 0,
+            "goals_for": 0,
+            "goals_against": 0,
+            "goal_diff": 0,
+            "form": "",
+            "group": None,
+            "is_placeholder": True,  # Flag to indicate this is generated, not from API
+        })
+
+    logger.info(f"Generated placeholder standings for league {league_id} season {season}: {len(standings)} teams")
+    return standings
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
@@ -2166,8 +2224,16 @@ async def get_match_details(
                 # Populate L1 cache for next request
                 _set_cached_standings(match.league_id, season, standings)
             else:
-                standings_status = "miss"
-                _incr("standings_source_miss")
+                # L3: Generate placeholder standings (zero stats, alphabetical order)
+                standings = await _generate_placeholder_standings(session, match.league_id, season)
+                if standings:
+                    standings_status = "placeholder"
+                    standings_source = "placeholder"
+                    _incr("standings_source_placeholder")
+                    _set_cached_standings(match.league_id, season, standings)
+                else:
+                    standings_status = "miss"
+                    _incr("standings_source_miss")
     _timings["get_standings"] = int((time.time() - _t0) * 1000)
     _timings["standings_status"] = standings_status
     if standings_source:
@@ -2826,20 +2892,34 @@ async def get_league_standings(
                 finally:
                     await provider.close()
 
+        # L4: Placeholder fallback - generate zero-stats standings from known teams
+        if not standings:
+            standings = await _generate_placeholder_standings(session, league_id, season)
+            if standings:
+                source = "placeholder"
+                # Cache placeholder standings (shorter TTL handled by is_placeholder flag)
+                _set_cached_standings(league_id, season, standings)
+
         if not standings:
             raise HTTPException(
                 status_code=404,
-                detail=f"Standings not available yet for season {season}. The season may not have started.",
+                detail=f"Standings not available yet for season {season}. No teams found for this league.",
             )
 
         elapsed_ms = int((time.time() - _t_start) * 1000)
         logger.info(f"[PERF] get_standings league_id={league_id} season={season} source={source} time_ms={elapsed_ms}")
+
+        # Determine if standings are placeholder (all zeros)
+        is_placeholder = source == "placeholder" or (
+            standings and standings[0].get("is_placeholder", False)
+        )
 
         return {
             "league_id": league_id,
             "season": season,
             "standings": standings,
             "source": source,
+            "is_placeholder": is_placeholder,
         }
     except HTTPException:
         raise
