@@ -1441,7 +1441,7 @@ async def get_predictions(
     }
 
     if with_context:
-        from app.ml.recalibration import RecalibrationEngine, load_team_adjustments
+        from app.ml.recalibration import RecalibrationEngine, load_team_adjustments, get_drift_cache_stats
         _t1 = time.time()
 
         try:
@@ -1454,11 +1454,15 @@ async def get_predictions(
             # Initialize recalibrator for context gathering
             recalibrator = RecalibrationEngine(session)
 
-            # Detect unstable leagues
+            # Detect unstable leagues (with TTL cache)
+            _drift_stats_before = get_drift_cache_stats()
             _t_drift = time.time()
             drift_result = await recalibrator.detect_league_drift()
             unstable_leagues = {alert["league_id"] for alert in drift_result.get("drift_alerts", [])}
             _stage_times["drift_ms"] = (time.time() - _t_drift) * 1000
+            _drift_stats_after = get_drift_cache_stats()
+            _drift_was_hit = _drift_stats_after["hits"] > _drift_stats_before["hits"]
+            _stage_times["drift_cache"] = "HIT" if _drift_was_hit else "MISS"
             context_metadata["unstable_leagues"] = len(unstable_leagues)
 
             # Check odds movements for upcoming matches (batch query, no N+1)

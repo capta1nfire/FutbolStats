@@ -73,6 +73,17 @@ LEAGUE_DRIFT_LOOKBACK_WEEKS = 8     # Historical baseline period
 ODDS_MOVEMENT_THRESHOLD = 0.25      # 25% odds movement triggers tier degradation
 ODDS_MOVEMENT_SEVERE = 0.40         # 40% movement = severe warning
 
+# Drift Detection Cache (P2 Performance)
+DRIFT_CACHE_TTL_SECONDS = 3600      # 1 hour TTL for drift results
+
+# Module-level cache for drift detection (avoids recomputing heavy queries)
+_drift_cache: dict = {
+    "data": None,
+    "timestamp": 0,
+    "hits": 0,
+    "misses": 0,
+}
+
 
 class RecalibrationEngine:
     """
@@ -557,16 +568,39 @@ class RecalibrationEngine:
     # LEAGUE DRIFT DETECTION (Fase 2.2)
     # =========================================================================
 
-    async def detect_league_drift(self) -> dict:
+    async def detect_league_drift(self, use_cache: bool = True) -> dict:
         """
         Detect structural changes in league prediction accuracy.
 
         Compares weekly GOLD accuracy per league against historical baseline.
         If accuracy drops 15%+ from baseline, marks league as 'Unstable'.
 
+        Uses module-level cache with TTL to avoid recomputing heavy queries
+        on every prediction request.
+
+        Args:
+            use_cache: If True, return cached result if valid (default True)
+
         Returns:
             Dictionary with drift analysis per league
         """
+        import time
+        global _drift_cache
+
+        now_ts = time.time()
+
+        # Check cache first (if enabled)
+        if use_cache and _drift_cache["data"] is not None:
+            age = now_ts - _drift_cache["timestamp"]
+            if age < DRIFT_CACHE_TTL_SECONDS:
+                _drift_cache["hits"] += 1
+                logger.debug(f"drift_cache HIT (age={age:.0f}s, hits={_drift_cache['hits']})")
+                return _drift_cache["data"]
+
+        # Cache miss - compute drift
+        _drift_cache["misses"] += 1
+        logger.info(f"drift_cache MISS (misses={_drift_cache['misses']}, computing...)")
+
         now = datetime.utcnow()
         week_ago = now - timedelta(days=7)
         historical_cutoff = now - timedelta(weeks=LEAGUE_DRIFT_LOOKBACK_WEEKS)
@@ -656,13 +690,19 @@ class RecalibrationEngine:
                         "historical_accuracy": round(historical_accuracy * 100, 1),
                     })
 
-        return {
+        result = {
             "leagues_analyzed": len(recent_stats),
             "unstable_leagues": len(drift_alerts),
             "stable_leagues": len(stable_leagues),
             "drift_alerts": drift_alerts,
             "details": stable_leagues,
         }
+
+        # Update cache
+        _drift_cache["data"] = result
+        _drift_cache["timestamp"] = now_ts
+
+        return result
 
     async def get_unstable_leagues(self) -> set[int]:
         """
@@ -1328,6 +1368,25 @@ class RecalibrationEngine:
 # =========================================================================
 # HELPER FUNCTIONS
 # =========================================================================
+
+def get_drift_cache_stats() -> dict:
+    """Get current drift cache statistics for monitoring."""
+    import time
+    global _drift_cache
+
+    age = time.time() - _drift_cache["timestamp"] if _drift_cache["timestamp"] > 0 else None
+    total = _drift_cache["hits"] + _drift_cache["misses"]
+    hit_rate = (_drift_cache["hits"] / total * 100) if total > 0 else 0
+
+    return {
+        "hits": _drift_cache["hits"],
+        "misses": _drift_cache["misses"],
+        "hit_rate_pct": round(hit_rate, 1),
+        "cache_age_seconds": round(age, 0) if age else None,
+        "ttl_seconds": DRIFT_CACHE_TTL_SECONDS,
+        "is_valid": age is not None and age < DRIFT_CACHE_TTL_SECONDS,
+    }
+
 
 async def load_team_adjustments(session: AsyncSession) -> dict:
     """
