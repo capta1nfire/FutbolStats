@@ -785,13 +785,14 @@ class RecalibrationEngine:
         Check odds movements for all upcoming matches.
 
         Returns summary of matches with significant market movement.
+        Uses batch query to avoid N+1 problem.
         """
         now = datetime.utcnow()
         cutoff = now + timedelta(days=days_ahead)
 
-        # Get upcoming matches with predictions
+        # Batch query: get all predictions with their matches in ONE query
         query = (
-            select(Prediction.match_id)
+            select(Prediction, Match)
             .join(Match, Prediction.match_id == Match.id)
             .where(
                 and_(
@@ -800,23 +801,95 @@ class RecalibrationEngine:
                     Match.status == "NS",
                 )
             )
-            .distinct()
+            .order_by(Prediction.created_at.desc())
         )
 
         result = await self.session.execute(query)
-        match_ids = [row[0] for row in result.all()]
+        rows = result.all()
+
+        # Group by match_id, keeping only the latest prediction per match
+        latest_by_match: dict[int, tuple] = {}
+        for prediction, match in rows:
+            if prediction.match_id not in latest_by_match:
+                latest_by_match[prediction.match_id] = (prediction, match)
 
         alerts = []
-        for match_id in match_ids:
-            movement = await self.check_odds_movement(match_id)
+        for match_id, (prediction, match) in latest_by_match.items():
+            movement = self._check_odds_movement_from_data(prediction, match)
             if movement["has_movement"]:
                 alerts.append(movement)
 
         return {
-            "matches_checked": len(match_ids),
+            "matches_checked": len(latest_by_match),
             "movements_detected": len(alerts),
             "alerts": alerts,
         }
+
+    def _check_odds_movement_from_data(self, prediction: Prediction, match: Match) -> dict:
+        """
+        Check odds movement using pre-loaded prediction and match data.
+
+        This is the batch-friendly version that doesn't make additional queries.
+        """
+        # Get current market odds from match
+        if not match.odds_home or not match.odds_draw or not match.odds_away:
+            return {"has_movement": False, "reason": "No market odds available"}
+
+        # Our fair odds at prediction time
+        fair_home = 1 / prediction.home_prob if prediction.home_prob > 0 else 999
+        fair_draw = 1 / prediction.draw_prob if prediction.draw_prob > 0 else 999
+        fair_away = 1 / prediction.away_prob if prediction.away_prob > 0 else 999
+
+        # Calculate movement for each outcome
+        movements = []
+
+        if fair_home < 999:
+            home_movement = abs(match.odds_home - fair_home) / fair_home
+            movements.append(("home", home_movement, match.odds_home, fair_home))
+
+        if fair_draw < 999:
+            draw_movement = abs(match.odds_draw - fair_draw) / fair_draw
+            movements.append(("draw", draw_movement, match.odds_draw, fair_draw))
+
+        if fair_away < 999:
+            away_movement = abs(match.odds_away - fair_away) / fair_away
+            movements.append(("away", away_movement, match.odds_away, fair_away))
+
+        if not movements:
+            return {"has_movement": False, "reason": "Could not calculate movement"}
+
+        max_movement = max(movements, key=lambda x: x[1])
+        outcome, movement_pct, current_odds, fair_odds = max_movement
+
+        result = {
+            "match_id": match.id,
+            "has_movement": False,
+            "max_movement_outcome": outcome,
+            "movement_percentage": round(movement_pct * 100, 1),
+            "current_odds": current_odds,
+            "fair_odds_at_prediction": round(fair_odds, 2),
+            "tier_degradation": None,
+            "insight": None,
+        }
+
+        if movement_pct >= ODDS_MOVEMENT_SEVERE:
+            result["has_movement"] = True
+            result["tier_degradation"] = 2
+            result["insight"] = (
+                f"SEVERE: {movement_pct*100:.1f}% market movement on {outcome}. "
+                f"Odds: {fair_odds:.2f} → {current_odds:.2f}. "
+                f"High risk detected - double tier degradation recommended."
+            )
+        elif movement_pct >= ODDS_MOVEMENT_THRESHOLD:
+            result["has_movement"] = True
+            result["tier_degradation"] = 1
+            result["insight"] = (
+                f"WARNING: {movement_pct*100:.1f}% market movement on {outcome}. "
+                f"Odds: {fair_odds:.2f} → {current_odds:.2f}. "
+                f"Unusual activity detected - tier degradation recommended."
+            )
+
+        return result
 
     def degrade_tier(self, current_tier: str, levels: int = 1) -> str:
         """
@@ -1261,13 +1334,17 @@ async def load_team_adjustments(session: AsyncSession) -> dict:
     Load all team adjustments as home/away dictionaries.
 
     Returns:
-        Dictionary with 'home' and 'away' keys, each mapping team_id to multiplier
+        Dictionary with:
+        - 'home': team_id -> multiplier (for predictions)
+        - 'away': team_id -> multiplier (for predictions)
+        - 'raw': list of TeamAdjustment objects (for building team_details)
     """
     query = select(TeamAdjustment)
     result = await session.execute(query)
-    adjustments = result.scalars().all()
+    adjustments = list(result.scalars().all())
 
     return {
         "home": {adj.team_id: adj.home_multiplier * adj.international_penalty for adj in adjustments},
         "away": {adj.team_id: adj.away_multiplier * adj.international_penalty for adj in adjustments},
+        "raw": adjustments,  # Avoid duplicate query in predictions endpoint
     }

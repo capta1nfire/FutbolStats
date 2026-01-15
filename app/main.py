@@ -1445,31 +1445,35 @@ async def get_predictions(
         _t1 = time.time()
 
         try:
-            # Load team adjustments
+            # Load team adjustments (includes raw data to avoid duplicate query)
+            _t_adj = time.time()
             team_adjustments = await load_team_adjustments(session)
+            _stage_times["adjustments_ms"] = (time.time() - _t_adj) * 1000
             context_metadata["team_adjustments_loaded"] = True
 
             # Initialize recalibrator for context gathering
             recalibrator = RecalibrationEngine(session)
 
             # Detect unstable leagues
+            _t_drift = time.time()
             drift_result = await recalibrator.detect_league_drift()
             unstable_leagues = {alert["league_id"] for alert in drift_result.get("drift_alerts", [])}
+            _stage_times["drift_ms"] = (time.time() - _t_drift) * 1000
             context_metadata["unstable_leagues"] = len(unstable_leagues)
 
-            # Check odds movements for upcoming matches
+            # Check odds movements for upcoming matches (batch query, no N+1)
+            _t_odds = time.time()
             odds_result = await recalibrator.check_all_upcoming_odds_movements(days_ahead=days)
             odds_movements = {
                 alert["match_id"]: alert
                 for alert in odds_result.get("alerts", [])
             }
+            _stage_times["odds_ms"] = (time.time() - _t_odds) * 1000
             context_metadata["odds_movements_detected"] = len(odds_movements)
 
-            # Build team details for insights generation
+            # Build team details from already-loaded adjustments (no duplicate query)
             team_details = {}
-            adj_query = select(TeamAdjustment)
-            adj_result = await session.execute(adj_query)
-            for adj in adj_result.scalars().all():
+            for adj in team_adjustments.get("raw", []):
                 home_anomaly_rate = adj.home_anomalies / adj.home_predictions if adj.home_predictions > 0 else 0
                 away_anomaly_rate = adj.away_anomalies / adj.away_predictions if adj.away_predictions > 0 else 0
                 team_details[adj.team_id] = {
