@@ -1629,6 +1629,78 @@ async def evaluate_shadow_predictions():
         return {"status": "error", "error": str(e)}
 
 
+async def retrain_sensor_model():
+    """
+    Retrain Sensor B (LogReg L2) on recent finished matches.
+    Runs every SENSOR_RETRAIN_INTERVAL_HOURS (default 6h).
+
+    Sensor B is for INTERNAL DIAGNOSTICS ONLY - never affects production picks.
+    """
+    from app.ml.sensor import retrain_sensor
+    from app.config import get_settings
+
+    settings = get_settings()
+    if not settings.SENSOR_ENABLED:
+        return {"status": "disabled", "message": "SENSOR_ENABLED=false"}
+
+    logger.info("[SENSOR] Starting sensor retrain job...")
+
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await retrain_sensor(session)
+
+            if result.get("status") == "READY":
+                logger.info(
+                    f"[SENSOR] Retrain complete: n={result.get('samples')}, "
+                    f"window={result.get('window_size')}, "
+                    f"version={result.get('model_version')}"
+                )
+            elif result.get("status") == "LEARNING":
+                logger.info(f"[SENSOR] Still learning: {result.get('reason')}")
+            else:
+                logger.warning(f"[SENSOR] Retrain issue: {result}")
+
+            return result
+    except Exception as e:
+        logger.error(f"[SENSOR] Retrain failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+async def evaluate_sensor_predictions_job():
+    """
+    Evaluate Sensor B predictions against actual outcomes.
+    Runs every 30 minutes alongside shadow evaluation.
+
+    Updates sensor_predictions records with actual_outcome, correctness, and Brier scores.
+    """
+    from app.ml.sensor import evaluate_sensor_predictions
+    from app.config import get_settings
+
+    settings = get_settings()
+    if not settings.SENSOR_ENABLED:
+        return {"status": "disabled", "message": "SENSOR_ENABLED=false"}
+
+    logger.info("[SENSOR] Starting sensor evaluation job...")
+
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await evaluate_sensor_predictions(session)
+
+            if result.get("evaluated", 0) > 0:
+                logger.info(
+                    f"[SENSOR] Evaluation complete: {result['evaluated']} matches, "
+                    f"A_correct={result.get('a_correct', 0)}, "
+                    f"B_correct={result.get('b_correct', 0)}"
+                )
+            else:
+                logger.debug("[SENSOR] No pending predictions to evaluate")
+
+            return result
+    except Exception as e:
+        logger.error(f"[SENSOR] Evaluation failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 async def daily_refresh_aggregates():
     """
     Daily job to refresh league baselines and team profiles.
@@ -3425,6 +3497,28 @@ def start_scheduler(ml_engine):
         name="Shadow Predictions Evaluation (every 30min)",
         replace_existing=True,
     )
+
+    # Sensor B retrain: Every 6 hours (configurable via SENSOR_RETRAIN_INTERVAL_HOURS)
+    # LogReg L2 calibration diagnostics - INTERNAL ONLY, never affects production
+    from app.config import get_settings
+    sensor_settings = get_settings()
+    if sensor_settings.SENSOR_ENABLED:
+        scheduler.add_job(
+            retrain_sensor_model,
+            trigger=IntervalTrigger(hours=sensor_settings.SENSOR_RETRAIN_INTERVAL_HOURS),
+            id="retrain_sensor_model",
+            name=f"Sensor B Retrain (every {sensor_settings.SENSOR_RETRAIN_INTERVAL_HOURS}h)",
+            replace_existing=True,
+        )
+
+        # Sensor B evaluation: Every 30 minutes (same as shadow)
+        scheduler.add_job(
+            evaluate_sensor_predictions_job,
+            trigger=IntervalTrigger(minutes=30),
+            id="evaluate_sensor_predictions",
+            name="Sensor B Evaluation (every 30min)",
+            replace_existing=True,
+        )
 
     # Weekly recalibration job: Monday at 5:00 AM UTC (before daily sync)
     scheduler.add_job(

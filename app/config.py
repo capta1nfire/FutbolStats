@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     SHADOW_ACCURACY_DROP_MAX: float = 0.01  # Max accuracy drop allowed (1%)
     SHADOW_WINDOW_DAYS: int = 14  # Window for shadow evaluation metrics
 
+    # Sensor B (Calibration Diagnostics) - Internal only, not for production
+    SENSOR_ENABLED: bool = True
+    SENSOR_WINDOW_SIZE: int = 50  # Number of recent FT matches for training
+    SENSOR_MIN_SAMPLES: int = 50  # Minimum evaluated predictions for reporting
+    SENSOR_RETRAIN_INTERVAL_HOURS: int = 6  # How often to retrain sensor
+    SENSOR_SIGNAL_SCORE_GO: float = 1.1  # Signal score above this = A may be stale
+    SENSOR_SIGNAL_SCORE_NOISE: float = 0.9  # Signal score below this = B is overfitting
+    SENSOR_EVAL_WINDOW_DAYS: int = 14  # Window for sensor evaluation metrics
+
     # Development settings
     SKIP_AUTO_TRAIN: bool = False  # Skip auto-training on startup (useful during dev)
 

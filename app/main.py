@@ -1920,6 +1920,33 @@ async def get_shadow_report_endpoint(
     return report
 
 
+@app.get("/model/sensor-report")
+@limiter.limit("30/minute")
+async def get_sensor_report_endpoint(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
+):
+    """
+    Get Sensor B (LogReg L2) calibration diagnostics report.
+
+    Returns Model A vs Model B comparison with Brier scores, accuracy,
+    signal score, and window analysis. INTERNAL USE ONLY - does not affect production.
+    Requires API key authentication.
+    """
+    from app.ml.sensor import get_sensor_report
+    from app.config import settings
+
+    if not settings.SENSOR_ENABLED:
+        return {
+            "status": "disabled",
+            "message": "Sensor B not enabled. Set SENSOR_ENABLED=true to enable.",
+        }
+
+    report = await get_sensor_report(session)
+    return report
+
+
 @app.post("/odds/refresh")
 async def refresh_odds(
     session: AsyncSession = Depends(get_async_session),
@@ -4432,6 +4459,10 @@ async def predictions_trigger_save(request: Request):
     from app.db_utils import upsert
     from app.features import FeatureEngineer
     from app.ml.shadow import is_shadow_enabled, log_shadow_prediction
+    from app.ml.sensor import log_sensor_prediction
+    from app.config import get_settings
+
+    sensor_settings = get_settings()
 
     diagnostics = {
         "status": "unknown",
@@ -4442,6 +4473,8 @@ async def predictions_trigger_save(request: Request):
         "predictions_saved": 0,
         "shadow_logged": 0,
         "shadow_errors": 0,
+        "sensor_logged": 0,
+        "sensor_errors": 0,
         "errors": [],
     }
 
@@ -4478,10 +4511,12 @@ async def predictions_trigger_save(request: Request):
             predictions = ml_engine.predict(df_ns)
             diagnostics["predictions_generated"] = len(predictions)
 
-            # Step 4: Save to database with shadow logging
+            # Step 4: Save to database with shadow + sensor logging
             saved = 0
             shadow_logged = 0
             shadow_errors = 0
+            sensor_logged = 0
+            sensor_errors = 0
             for idx, pred in enumerate(predictions):
                 match_id = pred.get("match_id")
                 if not match_id:
@@ -4520,6 +4555,24 @@ async def predictions_trigger_save(request: Request):
                             shadow_errors += 1
                             logger.warning(f"Shadow prediction failed for match {match_id}: {shadow_err}")
 
+                    # Sensor B: log A vs B predictions (internal diagnostics only)
+                    if sensor_settings.SENSOR_ENABLED:
+                        try:
+                            match_df = df_ns.iloc[[idx]]
+                            model_a_probs = np.array([probs["home"], probs["draw"], probs["away"]])
+                            sensor_result = await log_sensor_prediction(
+                                session=session,
+                                match_id=match_id,
+                                df=match_df,
+                                model_a_probs=model_a_probs,
+                                model_a_version=ml_engine.model_version,
+                            )
+                            if sensor_result:
+                                sensor_logged += 1
+                        except Exception as sensor_err:
+                            sensor_errors += 1
+                            logger.warning(f"Sensor prediction failed for match {match_id}: {sensor_err}")
+
                 except Exception as e:
                     diagnostics["errors"].append(f"Match {match_id}: {str(e)[:50]}")
 
@@ -4527,10 +4580,13 @@ async def predictions_trigger_save(request: Request):
             diagnostics["predictions_saved"] = saved
             diagnostics["shadow_logged"] = shadow_logged
             diagnostics["shadow_errors"] = shadow_errors
+            diagnostics["sensor_logged"] = sensor_logged
+            diagnostics["sensor_errors"] = sensor_errors
             diagnostics["status"] = "ok" if saved > 0 else "no_new_predictions"
 
-            shadow_info = f", shadow: {shadow_logged} logged" if is_shadow_enabled() else ""
-            logger.info(f"Predictions trigger complete: {saved} saved from {len(df_ns)} NS matches{shadow_info}")
+            shadow_info = f", shadow: {shadow_logged}" if is_shadow_enabled() else ""
+            sensor_info = f", sensor: {sensor_logged}" if sensor_settings.SENSOR_ENABLED else ""
+            logger.info(f"Predictions trigger complete: {saved} saved from {len(df_ns)} NS matches{shadow_info}{sensor_info}")
 
     except Exception as e:
         diagnostics["status"] = "error"
@@ -4937,6 +4993,84 @@ async def _calculate_shadow_mode_summary(session) -> dict:
         },
         "recommendation": recommendation,
     }
+
+
+async def _calculate_sensor_b_summary(session) -> dict:
+    """
+    Calculate Sensor B summary for ops dashboard.
+
+    Sensor B is INTERNAL DIAGNOSTICS ONLY - never affects production picks.
+    Returns flat structure for easy card rendering.
+
+    States (Auditor-approved):
+    - DISABLED: SENSOR_ENABLED=false
+    - LEARNING: <min_samples evaluated, not ready to report metrics
+    - TRACKING: >=min_samples, no conclusive signal yet
+    - SIGNAL_DETECTED: signal_score > threshold, A may be stale
+    - OVERFITTING_SUSPECTED: signal_score < threshold, B is noise
+    - ERROR: exception during computation
+    """
+    from app.ml.sensor import get_sensor_report
+    from app.config import get_settings
+
+    sensor_settings = get_settings()
+
+    if not sensor_settings.SENSOR_ENABLED:
+        return {
+            "state": "DISABLED",
+            "reason": "SENSOR_ENABLED=false",
+        }
+
+    try:
+        # Rollback any previous failed transaction
+        await session.rollback()
+
+        report = await get_sensor_report(session)
+
+        # Determine state for card display (Auditor-approved statuses)
+        rec = report.get("recommendation", {})
+        rec_status = rec.get("status", "NO_DATA")
+
+        if report.get("status") == "NO_DATA":
+            state = "LEARNING"
+        elif rec_status in ("SIGNAL_DETECTED", "OVERFITTING_SUSPECTED", "TRACKING"):
+            state = rec_status
+        else:
+            state = "LEARNING"
+
+        # Extract metrics for flat card display
+        metrics = report.get("metrics", {})
+        gating = report.get("gating", {})
+        sensor_info = report.get("sensor_info", {})
+        counts = report.get("counts", {})
+
+        return {
+            "state": state,
+            "reason": rec.get("reason", ""),
+            # Counts
+            "samples_evaluated": counts.get("evaluated", 0),
+            "samples_pending": counts.get("pending", 0),
+            "min_samples": gating.get("min_samples_required", 50),
+            # Metrics (only show if we have enough samples - gating)
+            "signal_score": metrics.get("signal_score") if state != "LEARNING" else None,
+            "brier_a": metrics.get("a_brier") if state != "LEARNING" else None,
+            "brier_b": metrics.get("b_brier") if state != "LEARNING" else None,
+            "delta_brier": metrics.get("delta_brier") if state != "LEARNING" else None,
+            "accuracy_a": metrics.get("a_accuracy") if state != "LEARNING" else None,
+            "accuracy_b": metrics.get("b_accuracy") if state != "LEARNING" else None,
+            # Sensor info
+            "window_size": sensor_info.get("window_size", 50),
+            "last_retrain_at": sensor_info.get("last_trained"),
+            "retrain_interval_hours": sensor_settings.SENSOR_RETRAIN_INTERVAL_HOURS,
+            "model_version": sensor_info.get("model_version"),
+            "is_ready": sensor_info.get("is_ready", False),
+        }
+    except Exception as e:
+        logger.warning(f"Sensor B summary failed: {e}")
+        return {
+            "state": "ERROR",
+            "reason": str(e)[:100],
+        }
 
 
 async def _calculate_predictions_health(session) -> dict:
@@ -6541,6 +6675,11 @@ async def _load_ops_data() -> dict:
         shadow_mode_data = await _calculate_shadow_mode_summary(session)
 
         # =============================================================
+        # SENSOR B (LogReg L2 calibration diagnostics - INTERNAL ONLY)
+        # =============================================================
+        sensor_b_data = await _calculate_sensor_b_summary(session)
+
+        # =============================================================
         # LLM COST (Gemini token usage from PostMatchAudit)
         # =============================================================
         llm_cost_data = {"provider": "gemini", "status": "unavailable"}
@@ -6721,6 +6860,7 @@ async def _load_ops_data() -> dict:
         "telemetry": telemetry_data,
         "llm_cost": llm_cost_data,
         "shadow_mode": shadow_mode_data,
+        "sensor_b": sensor_b_data,
     }
 
 
@@ -6892,6 +7032,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
     telemetry_summary = telemetry.get("summary") or {}
     llm_cost = data.get("llm_cost") or {}
     shadow_mode = data.get("shadow_mode") or {}
+    sensor_b = data.get("sensor_b") or {}
 
     def budget_color() -> str:
         if budget_status in ("unavailable", "error"):
@@ -6960,6 +7101,23 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
             return "yellow"
         if status in ("NO_DATA", "DISABLED", "NOT_LOADED"):
             return "blue"
+        return "blue"
+
+    def sensor_b_color() -> str:
+        """Color for Sensor B card based on state (Auditor-approved statuses)."""
+        state = sensor_b.get("state", "DISABLED")
+        if state == "DISABLED":
+            return "blue"
+        if state == "LEARNING":
+            return "yellow"  # Collecting samples
+        if state == "ERROR":
+            return "red"
+        if state == "TRACKING":
+            return "green"   # Normal operation, no alarm
+        if state == "SIGNAL_DETECTED":
+            return "yellow"  # Attention: A may be stale
+        if state == "OVERFITTING_SUSPECTED":
+            return "blue"    # B is noise, A is fine
         return "blue"
 
     # Tables HTML
@@ -7358,6 +7516,18 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
         <br/><span style="font-size:0.7rem;">Last eval: {_format_timestamp_la((shadow_mode.get("state") or {}).get("last_evaluation_at") or "") or "—"} | Next: every {(shadow_mode.get("state") or {}).get("evaluation_job_interval_minutes", 30)}m</span>
         <br/><span style="font-size:0.75rem;">{(shadow_mode.get("recommendation") or {}).get("reason", "")[:55]}</span>
         <br/><a href="/model/shadow-report" target="_blank" style="font-size:0.75rem;">Full report →</a>
+      </div>
+    </div>
+    <div class="card {sensor_b_color()}">
+      <div class="card-label">Sensor B<span class="info-icon">i<span class="tooltip">LogReg L2 calibration diagnostics (INTERNO). LEARNING: recolectando samples. TRACKING: monitoreando (normal). SIGNAL_DETECTED: revisar Model A. OVERFITTING_SUSPECTED: sensor es ruido. Solo diagnóstico, NO afecta producción.</span></span></div>
+      <div class="card-value">{sensor_b.get("state", "DISABLED")}</div>
+      <div class="card-sub">
+        {f'Evaluated: {sensor_b.get("samples_evaluated", 0)}/{sensor_b.get("min_samples", 50)} | Pending: {sensor_b.get("samples_pending", 0)}' if sensor_b.get("state") not in ("DISABLED", None) else 'Disabled (SENSOR_ENABLED=false)'}
+        {f'<br/>Signal: {sensor_b.get("signal_score"):.3f} | Δ Brier: {sensor_b.get("delta_brier"):+.4f}' if sensor_b.get("signal_score") is not None else ''}
+        {f'<br/>A Brier: {sensor_b.get("brier_a"):.4f} | B Brier: {sensor_b.get("brier_b"):.4f}' if sensor_b.get("brier_a") is not None else ''}
+        {f'<br/><span style="font-size:0.7rem;">Last retrain: {_format_timestamp_la(sensor_b.get("last_retrain_at") or "") or "—"} | Every {sensor_b.get("retrain_interval_hours", 6)}h</span>' if sensor_b.get("state") not in ("DISABLED", None) else ''}
+        {f'<br/><span style="font-size:0.75rem;">{sensor_b.get("reason", "")[:55]}</span>' if sensor_b.get("reason") else ''}
+        <br/><a href="/model/sensor-report" target="_blank" style="font-size:0.75rem;">Full report →</a>
       </div>
     </div>
   </div>
