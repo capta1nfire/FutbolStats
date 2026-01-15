@@ -563,7 +563,7 @@ class APIFootballProvider(DataProvider):
         if not standings_data:
             return []
 
-        results = []
+        results: list[dict] = []
         for league_data in standings_data:
             league_standings = league_data.get("league", {}).get("standings", [])
             # Standings can be nested (for groups) - flatten
@@ -574,7 +574,50 @@ class APIFootballProvider(DataProvider):
                 else:
                     results.append(self._parse_standing(group))
 
-        return results
+        return self._select_primary_standings_group(results)
+
+    def _select_primary_standings_group(self, standings: list[dict]) -> list[dict]:
+        """
+        API-Football can return multiple tables for the same league/season (groups/stages).
+        If we blindly flatten, some leagues show duplicated teams (e.g., Apertura/Clausura).
+
+        Strategy:
+        - If no 'group' info, return as-is.
+        - Group by 'group' and pick a primary group deterministically:
+          1) Most teams (n)
+          2) Highest total played (sum played)
+          3) Preferred group name (Regular Season > Apertura > Clausura)
+        """
+        groups: dict[str, list[dict]] = {}
+        for row in standings:
+            g = row.get("group")
+            if not g:
+                continue
+            groups.setdefault(str(g), []).append(row)
+
+        if not groups:
+            return standings
+
+        preferred = ["Regular Season", "Apertura", "Clausura"]
+
+        def score(item: tuple[str, list[dict]]) -> tuple[int, int, int]:
+            name, rows = item
+            n = len(rows)
+            total_played = 0
+            for r in rows:
+                try:
+                    total_played += int(r.get("played") or 0)
+                except Exception:
+                    pass
+            pref_rank = 0
+            for i, p in enumerate(preferred):
+                if p.lower() in name.lower():
+                    pref_rank = len(preferred) - i
+                    break
+            return (n, total_played, pref_rank)
+
+        best_group, best_rows = sorted(groups.items(), key=score, reverse=True)[0]
+        return best_rows
 
     def _parse_standing(self, standing: dict) -> dict:
         """Parse a single standing entry."""
@@ -593,6 +636,7 @@ class APIFootballProvider(DataProvider):
             "goals_against": standing.get("all", {}).get("goals", {}).get("against", 0),
             "goal_diff": standing.get("goalsDiff", 0),
             "form": standing.get("form", ""),
+            "group": standing.get("group"),
         }
 
     async def get_lineups(self, fixture_id: int) -> Optional[dict]:

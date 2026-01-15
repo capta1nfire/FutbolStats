@@ -1593,6 +1593,7 @@ async def daily_save_predictions():
                                 match_id=match_id,
                                 df=match_df,
                                 baseline_engine=engine,
+                                skip_commit=True,
                             )
                             if shadow_result:
                                 shadow_logged += 1
