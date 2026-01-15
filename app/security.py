@@ -24,6 +24,46 @@ limiter = Limiter(key_func=get_remote_address)
 api_key_header = APIKeyHeader(name=settings.API_KEY_HEADER, auto_error=False)
 
 
+def _has_valid_ops_session(request: Request) -> bool:
+    """
+    Check if request has a valid OPS session cookie.
+
+    This enables browser UX for INTERNAL endpoints (e.g., links inside /dashboard/ops)
+    without requiring manual X-API-Key header injection.
+    """
+    try:
+        session = getattr(request, "session", None)
+        if not session or not session.get("ops_authenticated"):
+            return False
+
+        issued_at = session.get("issued_at")
+        if issued_at:
+            from datetime import datetime, timedelta
+
+            issued = datetime.fromisoformat(issued_at)
+            ttl_hours = settings.OPS_SESSION_TTL_HOURS
+            if datetime.utcnow() - issued > timedelta(hours=ttl_hours):
+                return False
+
+        return True
+    except Exception:
+        return False
+
+
+async def verify_api_key_or_ops_session(
+    request: Request,
+    api_key: Optional[str] = Security(api_key_header),
+) -> bool:
+    """
+    Verify internal access via either:
+    - Valid OPS session cookie (browser)
+    - X-API-Key header (automation/scripts)
+    """
+    if _has_valid_ops_session(request):
+        return True
+    return await verify_api_key(api_key)
+
+
 async def verify_api_key(
     api_key: Optional[str] = Security(api_key_header),
 ) -> bool:
