@@ -348,43 +348,84 @@ async def _generate_placeholder_standings(session, league_id: int, season: int) 
     """
     Generate placeholder standings for a league when API data is not yet available.
 
-    Returns all teams from the league (based on recent matches) with zero stats,
-    ordered alphabetically. This provides a clean UX for pre-season scenarios.
+    Strategy:
+    1. First, try to use teams from the most recent valid standings (previous season).
+       This ensures we get the correct roster including promotions/relegations.
+    2. If no previous standings exist, fall back to teams from recent matches.
+
+    Returns teams with zero stats, ordered alphabetically.
 
     Args:
         session: Database session
         league_id: League ID
-        season: Season year (used to determine date range for team lookup)
+        season: Season year
 
     Returns:
         List of standings dicts with all zeros, ordered alphabetically by team name.
     """
-    # Get distinct teams that played in this league recently (last 2 years)
-    result = await session.execute(
-        text("""
-            SELECT DISTINCT t.id, t.external_id, t.name, t.logo_url
-            FROM teams t
-            JOIN matches m ON (t.id = m.home_team_id OR t.id = m.away_team_id)
-            WHERE m.league_id = :league_id
-              AND m.date > NOW() - INTERVAL '2 years'
-              AND t.team_type = 'club'
-            ORDER BY t.name
-        """),
-        {"league_id": league_id}
-    )
-    teams = result.fetchall()
+    teams_data = []
 
-    if not teams:
+    # Strategy 1: Use teams from the most recent valid standings (e.g., 2025 for 2026)
+    # This respects promotions/relegations from the previous season
+    prev_standings_result = await session.execute(
+        text("""
+            SELECT standings
+            FROM league_standings
+            WHERE league_id = :league_id
+              AND season < :season
+              AND json_array_length(standings) > 0
+            ORDER BY season DESC
+            LIMIT 1
+        """),
+        {"league_id": league_id, "season": season}
+    )
+    prev_row = prev_standings_result.fetchone()
+
+    if prev_row and prev_row[0]:
+        prev_standings = prev_row[0]
+        # Extract team info from previous standings, sort alphabetically
+        for s in prev_standings:
+            teams_data.append({
+                "external_id": s.get("team_id"),
+                "name": s.get("team_name"),
+                "logo_url": s.get("team_logo"),
+            })
+        teams_data.sort(key=lambda x: x.get("name", ""))
+        logger.info(f"Using {len(teams_data)} teams from previous season standings for placeholder")
+
+    # Strategy 2: Fallback to teams from recent matches (less accurate for new season)
+    if not teams_data:
+        result = await session.execute(
+            text("""
+                SELECT DISTINCT t.external_id, t.name, t.logo_url
+                FROM teams t
+                JOIN matches m ON (t.id = m.home_team_id OR t.id = m.away_team_id)
+                WHERE m.league_id = :league_id
+                  AND m.date > NOW() - INTERVAL '1 year'
+                  AND t.team_type = 'club'
+                ORDER BY t.name
+            """),
+            {"league_id": league_id}
+        )
+        for row in result.fetchall():
+            teams_data.append({
+                "external_id": row[0],
+                "name": row[1],
+                "logo_url": row[2],
+            })
+        logger.info(f"Using {len(teams_data)} teams from recent matches for placeholder")
+
+    if not teams_data:
         return []
 
     # Build placeholder standings ordered alphabetically (position = row number)
     standings = []
-    for idx, (team_id, external_id, name, logo_url) in enumerate(teams, start=1):
+    for idx, team in enumerate(teams_data, start=1):
         standings.append({
             "position": idx,
-            "team_id": external_id,
-            "team_name": name,
-            "team_logo": logo_url,
+            "team_id": team["external_id"],
+            "team_name": team["name"],
+            "team_logo": team["logo_url"],
             "points": 0,
             "played": 0,
             "won": 0,
@@ -395,7 +436,7 @@ async def _generate_placeholder_standings(session, league_id: int, season: int) 
             "goal_diff": 0,
             "form": "",
             "group": None,
-            "is_placeholder": True,  # Flag to indicate this is generated, not from API
+            "is_placeholder": True,
         })
 
     logger.info(f"Generated placeholder standings for league {league_id} season {season}: {len(standings)} teams")
