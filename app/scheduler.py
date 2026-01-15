@@ -1535,6 +1535,13 @@ async def daily_save_predictions():
             shadow_logged = 0
             shadow_errors = 0
 
+            # Sensor B: log A vs B predictions (internal diagnostics only)
+            from app.ml.sensor import log_sensor_prediction
+            from app.config import get_settings
+            sensor_settings = get_settings()
+            sensor_logged = 0
+            sensor_errors = 0
+
             # Save to database using generic upsert (only NS matches)
             saved = 0
             skipped = 0
@@ -1582,14 +1589,37 @@ async def daily_save_predictions():
                             shadow_errors += 1
                             logger.warning(f"Shadow prediction failed for match {match_id}: {shadow_err}")
 
+                    # Sensor B: log A vs B predictions (internal diagnostics, never affects main flow)
+                    if sensor_settings.SENSOR_ENABLED:
+                        try:
+                            import numpy as np
+                            match_df = df.iloc[[idx]]
+                            model_a_probs = np.array([probs["home"], probs["draw"], probs["away"]])
+                            sensor_result = await log_sensor_prediction(
+                                session=session,
+                                match_id=match_id,
+                                df=match_df,
+                                model_a_probs=model_a_probs,
+                                model_a_version=engine.model_version,
+                            )
+                            if sensor_result:
+                                sensor_logged += 1
+                        except Exception as sensor_err:
+                            sensor_errors += 1
+                            logger.warning(f"Sensor prediction failed for match {match_id}: {sensor_err}")
+
                 except Exception as e:
                     logger.warning(f"Error saving prediction: {e}")
 
             await session.commit()
-            logger.info(
-                f"Daily prediction save complete: {saved} saved, {skipped} skipped (non-NS)"
-                + (f", shadow: {shadow_logged} logged, {shadow_errors} errors" if is_shadow_enabled() else "")
-            )
+
+            # Build log message with optional shadow/sensor stats
+            log_msg = f"Daily prediction save complete: {saved} saved, {skipped} skipped (non-NS)"
+            if is_shadow_enabled():
+                log_msg += f", shadow: {shadow_logged} logged, {shadow_errors} errors"
+            if sensor_settings.SENSOR_ENABLED:
+                log_msg += f", sensor: {sensor_logged} logged, {sensor_errors} errors"
+            logger.info(log_msg)
 
     except Exception as e:
         logger.error(f"Daily prediction save failed: {e}")
