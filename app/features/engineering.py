@@ -427,6 +427,84 @@ class FeatureEngineer:
 
         return df
 
+    async def get_matches_features_by_ids(
+        self,
+        match_ids: list[int],
+    ) -> pd.DataFrame:
+        """
+        Build features for specific matches by their IDs.
+
+        Used by Sensor B to build training data from recent finished matches.
+        Only processes completed matches (FT, AET, PEN) with valid scores.
+
+        Args:
+            match_ids: List of match IDs to process.
+
+        Returns:
+            DataFrame with features for each match, including home_goals/away_goals.
+        """
+        if not match_ids:
+            return pd.DataFrame()
+
+        # Query matches by ID (only completed with valid scores)
+        result = await self.session.execute(
+            select(Match)
+            .where(
+                Match.id.in_(match_ids),
+                Match.status.in_(["FT", "AET", "PEN"]),
+                Match.home_goals.isnot(None),
+                Match.away_goals.isnot(None),
+                Match.tainted.is_(False),
+            )
+            .order_by(Match.date.desc())
+        )
+        matches = list(result.scalars().all())
+
+        if not matches:
+            return pd.DataFrame()
+
+        logger.info(f"Building features for {len(matches)} matches by ID...")
+
+        # Preload match history cache to avoid N+1 queries
+        team_ids = set()
+        for match in matches:
+            team_ids.add(match.home_team_id)
+            team_ids.add(match.away_team_id)
+
+        self._cache = TeamMatchCache()
+        await self._cache.preload(self.session, team_ids)
+
+        # Build features for each match
+        rows = []
+        for match in matches:
+            try:
+                features = await self.get_match_features(match)
+
+                # Add scores for label computation
+                features["home_goals"] = match.home_goals
+                features["away_goals"] = match.away_goals
+
+                # Add odds if available
+                features["odds_home"] = match.odds_home
+                features["odds_draw"] = match.odds_draw
+                features["odds_away"] = match.odds_away
+
+                rows.append(features)
+
+            except Exception as e:
+                logger.error(f"Error processing match {match.id}: {e}")
+                continue
+
+        # Clear cache to free memory
+        if self._cache is not None:
+            self._cache.clear()
+            self._cache = None
+
+        df = pd.DataFrame(rows)
+        logger.info(f"Built features for {len(df)} matches by ID")
+
+        return df
+
     async def get_upcoming_matches_features(
         self,
         league_ids: Optional[list[int]] = None,

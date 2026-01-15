@@ -4549,6 +4549,7 @@ async def predictions_trigger_save(request: Request):
                                 match_id=match_id,
                                 df=match_df,
                                 baseline_engine=ml_engine,
+                                skip_commit=True,
                             )
                             if shadow_result:
                                 shadow_logged += 1
@@ -7533,7 +7534,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
       <div class="card-value">{pred_health.get("status", "?").upper()}</div>
       <div class="card-sub">
         Preds 24h: {pred_health.get("predictions_saved_last_24h", 0)} |
-        Coverage 48h: {pred_health.get("coverage_last_48h_pct", 0)}%
+        Coverage 48h: {pred_health.get("ft_coverage_pct", 0)}%
         {f"<br/>Missing FT: {pred_health.get('ft_matches_last_48h_missing_prediction', 0)}/{pred_health.get('ft_matches_last_48h', 0)}" if pred_health.get("status") != "ok" else ""}
         {f"<br/><small style='color:var(--red)'>{pred_health.get('status_reason', '')}</small>" if pred_health.get("status_reason") else ""}
       </div>

@@ -917,7 +917,7 @@ class ShadowPrediction(SQLModel, table=True):
 
     __tablename__ = "shadow_predictions"
     __table_args__ = (
-        UniqueConstraint("match_id", "created_at", name="uq_shadow_match_created"),
+        UniqueConstraint("match_id", name="uq_shadow_match_id"),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)

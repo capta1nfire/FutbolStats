@@ -639,7 +639,7 @@ async def get_sensor_health_metrics(session: AsyncSession) -> dict:
     Get health metrics for sensor B telemetry.
 
     Returns:
-        - pending_ft: FT matches with pending sensor evaluations
+        - pending_ft: FT matches with pending sensor evaluations (COUNT DISTINCT match_id)
         - eval_lag_minutes: Minutes since oldest pending prediction (0 if none)
         - state: Current sensor state (disabled, learning, ready, error)
     """
@@ -650,10 +650,10 @@ async def get_sensor_health_metrics(session: AsyncSession) -> dict:
             "state": "disabled",
         }
 
-    # Count pending FT matches and get oldest created_at
+    # Count DISTINCT pending FT matches (not rows, which could have duplicates)
     query = text("""
         SELECT
-            COUNT(*) AS pending,
+            COUNT(DISTINCT sp.match_id) AS pending,
             MIN(sp.created_at) AS oldest_created
         FROM sensor_predictions sp
         JOIN matches m ON sp.match_id = m.id

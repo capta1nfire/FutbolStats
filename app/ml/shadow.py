@@ -101,19 +101,26 @@ async def log_shadow_prediction(
     match_id: int,
     df: pd.DataFrame,
     baseline_engine: XGBoostEngine,
-) -> Optional[ShadowPrediction]:
+    skip_commit: bool = False,
+) -> Optional[int]:
     """
     Generate and log shadow prediction alongside baseline.
+
+    Uses UPSERT (ON CONFLICT DO UPDATE) for idempotency - calling multiple
+    times for the same match_id will update the existing record.
 
     Args:
         session: Async database session.
         match_id: Match ID.
         df: DataFrame with features for prediction.
         baseline_engine: The baseline XGBoostEngine.
+        skip_commit: If True, don't commit (caller will batch commit).
 
     Returns:
-        ShadowPrediction record if successful, None if shadow disabled.
+        Inserted/updated record id if successful, None if shadow disabled/failed.
     """
+    from sqlalchemy import text
+
     if not is_shadow_enabled():
         return None
 
@@ -126,33 +133,60 @@ async def log_shadow_prediction(
         shadow_proba = _shadow_engine.predict_proba(df)
         shadow_pred = ["home", "draw", "away"][np.argmax(shadow_proba[0])]
 
-        # Create record
-        shadow_record = ShadowPrediction(
-            match_id=match_id,
-            baseline_version=baseline_engine.model_version,
-            baseline_home_prob=float(baseline_proba[0][0]),
-            baseline_draw_prob=float(baseline_proba[0][1]),
-            baseline_away_prob=float(baseline_proba[0][2]),
-            baseline_predicted=baseline_pred,
-            shadow_version=_shadow_engine.model_version,
-            shadow_architecture="two_stage",
-            shadow_home_prob=float(shadow_proba[0][0]),
-            shadow_draw_prob=float(shadow_proba[0][1]),
-            shadow_away_prob=float(shadow_proba[0][2]),
-            shadow_predicted=shadow_pred,
-        )
+        # UPSERT using raw SQL for ON CONFLICT DO UPDATE
+        upsert_query = text("""
+            INSERT INTO shadow_predictions (
+                match_id, baseline_version, baseline_home_prob, baseline_draw_prob, baseline_away_prob,
+                baseline_predicted, shadow_version, shadow_architecture, shadow_home_prob,
+                shadow_draw_prob, shadow_away_prob, shadow_predicted, created_at
+            ) VALUES (
+                :match_id, :baseline_version, :baseline_home_prob, :baseline_draw_prob, :baseline_away_prob,
+                :baseline_predicted, :shadow_version, :shadow_architecture, :shadow_home_prob,
+                :shadow_draw_prob, :shadow_away_prob, :shadow_predicted, NOW()
+            )
+            ON CONFLICT (match_id) DO UPDATE SET
+                baseline_version = EXCLUDED.baseline_version,
+                baseline_home_prob = EXCLUDED.baseline_home_prob,
+                baseline_draw_prob = EXCLUDED.baseline_draw_prob,
+                baseline_away_prob = EXCLUDED.baseline_away_prob,
+                baseline_predicted = EXCLUDED.baseline_predicted,
+                shadow_version = EXCLUDED.shadow_version,
+                shadow_architecture = EXCLUDED.shadow_architecture,
+                shadow_home_prob = EXCLUDED.shadow_home_prob,
+                shadow_draw_prob = EXCLUDED.shadow_draw_prob,
+                shadow_away_prob = EXCLUDED.shadow_away_prob,
+                shadow_predicted = EXCLUDED.shadow_predicted,
+                created_at = NOW()
+            RETURNING id
+        """)
 
-        session.add(shadow_record)
-        await session.commit()
-        await session.refresh(shadow_record)
+        result = await session.execute(upsert_query, {
+            "match_id": match_id,
+            "baseline_version": baseline_engine.model_version,
+            "baseline_home_prob": float(baseline_proba[0][0]),
+            "baseline_draw_prob": float(baseline_proba[0][1]),
+            "baseline_away_prob": float(baseline_proba[0][2]),
+            "baseline_predicted": baseline_pred,
+            "shadow_version": _shadow_engine.model_version,
+            "shadow_architecture": "two_stage",
+            "shadow_home_prob": float(shadow_proba[0][0]),
+            "shadow_draw_prob": float(shadow_proba[0][1]),
+            "shadow_away_prob": float(shadow_proba[0][2]),
+            "shadow_predicted": shadow_pred,
+        })
+
+        record_id = result.scalar()
+
+        if not skip_commit:
+            await session.commit()
 
         logger.debug(
-            f"Shadow prediction logged: match={match_id}, "
+            f"Shadow prediction logged: match={match_id}, id={record_id}, "
             f"baseline={baseline_pred}({baseline_proba[0][np.argmax(baseline_proba[0])]:.3f}), "
             f"shadow={shadow_pred}({shadow_proba[0][np.argmax(shadow_proba[0])]:.3f})"
         )
 
-        return shadow_record
+        return int(record_id) if record_id is not None else None
 
     except Exception as e:
         logger.error(f"Failed to log shadow prediction for match {match_id}: {e}")
@@ -274,12 +308,18 @@ async def get_shadow_report(session: AsyncSession) -> dict:
     """
     Generate comprehensive shadow evaluation report.
 
+    Uses SHADOW_WINDOW_DAYS for temporal filtering.
+    Uses SHADOW_BRIER_IMPROVEMENT_MIN, SHADOW_ACCURACY_DROP_MAX for thresholds.
+
     Returns:
         Report with baseline vs shadow comparison metrics.
     """
-    from sqlalchemy import func, and_, case
+    from sqlalchemy import func, and_, case, text
 
-    # Get evaluated predictions
+    window_days = settings.SHADOW_WINDOW_DAYS
+    min_samples = settings.SHADOW_MIN_SAMPLES
+
+    # Get evaluated predictions within window
     result = await session.execute(
         select(
             func.count(ShadowPrediction.id).label("total"),
@@ -288,7 +328,13 @@ async def get_shadow_report(session: AsyncSession) -> dict:
             func.avg(ShadowPrediction.baseline_brier).label("baseline_brier_avg"),
             func.avg(ShadowPrediction.shadow_brier).label("shadow_brier_avg"),
         )
-        .where(ShadowPrediction.actual_result.isnot(None))
+        .where(
+            and_(
+                ShadowPrediction.actual_result.isnot(None),
+                ShadowPrediction.evaluated_at.isnot(None),
+                ShadowPrediction.evaluated_at > text(f"NOW() - INTERVAL '{window_days} days'"),
+            )
+        )
     )
     row = result.one()
 
@@ -301,7 +347,7 @@ async def get_shadow_report(session: AsyncSession) -> dict:
     baseline_brier = row.baseline_brier_avg or 0
     shadow_brier = row.shadow_brier_avg or 0
 
-    # Per-outcome breakdown
+    # Per-outcome breakdown (also within window)
     outcome_stats = {}
     for outcome in ["home", "draw", "away"]:
         out_result = await session.execute(
@@ -313,7 +359,8 @@ async def get_shadow_report(session: AsyncSession) -> dict:
             .where(
                 and_(
                     ShadowPrediction.actual_result == outcome,
-                    ShadowPrediction.actual_result.isnot(None),
+                    ShadowPrediction.evaluated_at.isnot(None),
+                    ShadowPrediction.evaluated_at > text(f"NOW() - INTERVAL '{window_days} days'"),
                 )
             )
         )
@@ -329,6 +376,7 @@ async def get_shadow_report(session: AsyncSession) -> dict:
     return {
         "status": "ok",
         "total_evaluated": total,
+        "window_days": window_days,
         "baseline": {
             "version": settings.MODEL_VERSION,
             "accuracy": baseline_correct / total,
@@ -345,6 +393,11 @@ async def get_shadow_report(session: AsyncSession) -> dict:
             "brier": float(shadow_brier - baseline_brier),
         },
         "by_outcome": outcome_stats,
+        "thresholds": {
+            "brier_improvement_min": settings.SHADOW_BRIER_IMPROVEMENT_MIN,
+            "accuracy_drop_max": settings.SHADOW_ACCURACY_DROP_MAX,
+            "min_samples": min_samples,
+        },
         "recommendation": _get_recommendation(
             baseline_correct / total,
             shadow_correct / total,
@@ -362,14 +415,24 @@ def _get_recommendation(
     shadow_brier: float,
     n: int,
 ) -> str:
-    """Generate recommendation based on shadow evaluation."""
-    if n < 50:
-        return "INSUFFICIENT_DATA: Need at least 50 evaluated predictions"
+    """Generate recommendation based on shadow evaluation.
 
-    brier_improved = shadow_brier < baseline_brier - 0.001
-    brier_ok = shadow_brier <= baseline_brier + 0.002
-    acc_improved = shadow_acc > baseline_acc + 0.01
-    acc_ok = shadow_acc >= baseline_acc - 0.02
+    Uses settings thresholds:
+    - SHADOW_BRIER_IMPROVEMENT_MIN: min brier improvement for GO
+    - SHADOW_ACCURACY_DROP_MAX: max accuracy drop allowed
+    """
+    min_samples = settings.SHADOW_MIN_SAMPLES
+    if n < min_samples:
+        return f"INSUFFICIENT_DATA: Need at least {min_samples} evaluated predictions"
+
+    # Use settings thresholds
+    brier_improvement_min = settings.SHADOW_BRIER_IMPROVEMENT_MIN
+    accuracy_drop_max = settings.SHADOW_ACCURACY_DROP_MAX
+
+    brier_improved = shadow_brier < baseline_brier - brier_improvement_min
+    brier_ok = shadow_brier <= baseline_brier + (brier_improvement_min / 2)  # Allow small regression
+    acc_improved = shadow_acc > baseline_acc + accuracy_drop_max
+    acc_ok = shadow_acc >= baseline_acc - accuracy_drop_max
 
     if brier_improved and acc_ok:
         return "GO: Shadow model improves calibration without hurting accuracy"
@@ -388,7 +451,7 @@ async def get_shadow_health_metrics(session: AsyncSession) -> dict:
     Get health metrics for shadow mode telemetry.
 
     Returns:
-        - pending_ft: FT matches with pending shadow evaluations
+        - pending_ft: FT matches with pending shadow evaluations (COUNT DISTINCT match_id)
         - eval_lag_minutes: Minutes since oldest pending prediction (0 if none)
     """
     from sqlalchemy import func, and_
@@ -396,10 +459,10 @@ async def get_shadow_health_metrics(session: AsyncSession) -> dict:
 
     from app.models import Match
 
-    # Count pending FT matches
+    # Count DISTINCT pending FT matches (not rows, which could have duplicates)
     result = await session.execute(
         select(
-            func.count(ShadowPrediction.id).label("pending"),
+            func.count(func.distinct(ShadowPrediction.match_id)).label("pending"),
             func.min(ShadowPrediction.created_at).label("oldest_created"),
         )
         .join(Match, ShadowPrediction.match_id == Match.id)
