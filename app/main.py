@@ -2827,7 +2827,10 @@ async def get_league_standings(
                     await provider.close()
 
         if not standings:
-            raise HTTPException(status_code=404, detail="No standings found for this league")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Standings not available yet for season {season}. The season may not have started.",
+            )
 
         elapsed_ms = int((time.time() - _t_start) * 1000)
         logger.info(f"[PERF] get_standings league_id={league_id} season={season} source={source} time_ms={elapsed_ms}")
