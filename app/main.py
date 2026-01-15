@@ -2208,16 +2208,16 @@ async def get_match_details(
     standings_status = "skipped"  # skipped | cache_hit | db_hit | miss
     standings_source = None
     if match.league_id:
-        # L1: memory cache
+        # L1: memory cache (check truthiness - empty list means no data)
         standings = _get_cached_standings(match.league_id, season)
-        if standings is not None:
+        if standings:
             standings_status = "cache_hit"
             standings_source = "cache"
             _incr("standings_source_cache")
         else:
             # L2: database
             standings = await _get_standings_from_db(session, match.league_id, season)
-            if standings is not None:
+            if standings:
                 standings_status = "db_hit"
                 standings_source = "db"
                 _incr("standings_source_db")
@@ -2867,14 +2867,14 @@ async def get_league_standings(
             current_date = datetime.now()
             season = _season_for_league(league_id, current_date)
 
-        # L1: Memory cache
+        # L1: Memory cache (check truthiness - empty list means no data)
         standings = _get_cached_standings(league_id, season)
-        if standings is not None:
+        if standings:
             source = "cache"
         else:
             # L2: Database
             standings = await _get_standings_from_db(session, league_id, season)
-            if standings is not None:
+            if standings:
                 source = "db"
                 # Populate L1 cache
                 _set_cached_standings(league_id, season, standings)
