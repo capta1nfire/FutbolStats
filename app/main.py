@@ -4747,6 +4747,9 @@ async def _calculate_shadow_mode_summary(session) -> dict:
     }
 
     try:
+        # Rollback any previous failed transaction state
+        await session.rollback()
+
         # Total predictions
         res = await session.execute(
             text(f"""
