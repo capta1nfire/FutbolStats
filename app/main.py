@@ -348,11 +348,10 @@ async def _generate_placeholder_standings(session, league_id: int, season: int) 
     """
     Generate placeholder standings for a league when API data is not yet available.
 
-    Strategy:
-    1. First, try to use teams from the most recent valid standings (previous season).
-       - Excludes teams with description containing "Relegation" (they went down)
-       - Includes promoted teams from second division (TODO: when available)
-    2. If no previous standings exist, fall back to teams from recent matches.
+    Strategy (in order of priority):
+    1. Use teams from fixtures of the new season (most accurate - reflects actual roster)
+    2. Use teams from previous season standings, filtering relegated teams
+    3. Fall back to teams from recent matches (least accurate)
 
     Returns teams with zero stats, ordered alphabetically.
 
@@ -366,42 +365,64 @@ async def _generate_placeholder_standings(session, league_id: int, season: int) 
     """
     teams_data = []
 
-    # Strategy 1: Use teams from the most recent valid standings (e.g., 2025 for 2026)
-    # Filter out relegated teams based on 'description' field
-    prev_standings_result = await session.execute(
+    # Strategy 1: Use teams from fixtures of the target season (most accurate)
+    # This reflects the actual roster including promotions/relegations
+    new_season_result = await session.execute(
         text("""
-            SELECT standings
-            FROM league_standings
-            WHERE league_id = :league_id
-              AND season < :season
-              AND json_array_length(standings) > 0
-            ORDER BY season DESC
-            LIMIT 1
+            SELECT DISTINCT t.external_id, t.name, t.logo_url
+            FROM teams t
+            JOIN matches m ON (t.id = m.home_team_id OR t.id = m.away_team_id)
+            WHERE m.league_id = :league_id
+              AND EXTRACT(YEAR FROM m.date) = :season
+              AND t.team_type = 'club'
+            ORDER BY t.name
         """),
         {"league_id": league_id, "season": season}
     )
-    prev_row = prev_standings_result.fetchone()
+    for row in new_season_result.fetchall():
+        teams_data.append({
+            "external_id": row[0],
+            "name": row[1],
+            "logo_url": row[2],
+        })
 
-    if prev_row and prev_row[0]:
-        prev_standings = prev_row[0]
-        relegated_teams = []
-        # Extract team info, excluding relegated teams
-        for s in prev_standings:
-            desc = s.get("description") or ""
-            if "relegation" in desc.lower():
-                relegated_teams.append(s.get("team_name"))
-                continue  # Skip relegated teams
-            teams_data.append({
-                "external_id": s.get("team_id"),
-                "name": s.get("team_name"),
-                "logo_url": s.get("team_logo"),
-            })
-        teams_data.sort(key=lambda x: x.get("name", ""))
-        if relegated_teams:
-            logger.info(f"Excluded {len(relegated_teams)} relegated teams: {relegated_teams}")
-        logger.info(f"Using {len(teams_data)} teams from previous season standings for placeholder")
+    if teams_data:
+        logger.info(f"Using {len(teams_data)} teams from {season} fixtures for placeholder")
+    else:
+        # Strategy 2: Use teams from previous season standings, filtering relegated teams
+        prev_standings_result = await session.execute(
+            text("""
+                SELECT standings
+                FROM league_standings
+                WHERE league_id = :league_id
+                  AND season < :season
+                  AND json_array_length(standings) > 0
+                ORDER BY season DESC
+                LIMIT 1
+            """),
+            {"league_id": league_id, "season": season}
+        )
+        prev_row = prev_standings_result.fetchone()
 
-    # Strategy 2: Fallback to teams from recent matches (less accurate for new season)
+        if prev_row and prev_row[0]:
+            prev_standings = prev_row[0]
+            relegated_teams = []
+            for s in prev_standings:
+                desc = s.get("description") or ""
+                if "relegation" in desc.lower():
+                    relegated_teams.append(s.get("team_name"))
+                    continue  # Skip relegated teams
+                teams_data.append({
+                    "external_id": s.get("team_id"),
+                    "name": s.get("team_name"),
+                    "logo_url": s.get("team_logo"),
+                })
+            teams_data.sort(key=lambda x: x.get("name", ""))
+            if relegated_teams:
+                logger.info(f"Excluded {len(relegated_teams)} relegated teams: {relegated_teams}")
+            logger.info(f"Using {len(teams_data)} teams from previous standings for placeholder")
+
+    # Strategy 3: Fallback to teams from recent matches (less accurate)
     if not teams_data:
         result = await session.execute(
             text("""
