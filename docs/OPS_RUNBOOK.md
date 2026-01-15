@@ -14,8 +14,29 @@ Los dashboards están protegidos por `DASHBOARD_TOKEN`:
   - `/dashboard/pit.json`
 
 **Auth**:
-- Header: `X-Dashboard-Token: <token>` (preferido)
-- o query param: `?token=<token>` (menos seguro)
+- Header: `X-Dashboard-Token: <token>` (OBLIGATORIO en producción)
+
+> **IMPORTANTE**: En producción, los query params `?token=` están **deshabilitados** por seguridad.
+
+## Autenticación de Endpoints (Resumen)
+
+| Endpoint | Header | Env Var |
+|----------|--------|---------|
+| `/dashboard/*` | `X-Dashboard-Token` | `DASHBOARD_TOKEN` |
+| `/metrics` (Prometheus) | `Authorization: Bearer <token>` | `METRICS_BEARER_TOKEN` |
+| `/predictions`, `/model/*` | `X-API-Key` | `API_KEY` |
+
+### Ejemplos curl (producción)
+```bash
+# Dashboard ops.json
+curl -s -H "X-Dashboard-Token: $DASHBOARD_TOKEN" "https://web-production-f2de9.up.railway.app/dashboard/ops.json"
+
+# Prometheus metrics (Grafana Cloud)
+curl -s -H "Authorization: Bearer $METRICS_BEARER_TOKEN" "https://web-production-f2de9.up.railway.app/metrics"
+
+# API predictions
+curl -s -H "X-API-Key: $API_KEY" "https://web-production-f2de9.up.railway.app/predictions"
+```
 
 ## Config clave (Railway)
 
@@ -159,4 +180,70 @@ xcrun simctl spawn booted defaults write com.futbolstats.app dashboard_token 'tu
 2. Info.plist `DASHBOARD_TOKEN`
 
 **Importante**: Nunca commitear tokens al repositorio. Usar `.gitignore` para configs locales.
+
+## Telemetría Shadow Mode + Sensor B
+
+### Métricas Prometheus (`/metrics`)
+
+```
+# Shadow Mode (A/B Testing)
+shadow_predictions_logged_total      # Counter: predicciones shadow registradas
+shadow_predictions_evaluated_total   # Counter: predicciones evaluadas vs FT
+shadow_predictions_errors_total      # Counter: errores en logging
+shadow_eval_lag_minutes              # Gauge: minutos desde oldest pending FT
+shadow_pending_ft_to_evaluate        # Gauge: partidos FT con evaluaciones pendientes
+
+# Sensor B (Calibration Diagnostics)
+sensor_predictions_logged_total      # Counter: predicciones sensor registradas
+sensor_predictions_evaluated_total   # Counter: predicciones evaluadas vs FT
+sensor_predictions_errors_total      # Counter: errores en logging
+sensor_retrain_runs_total{status}    # Counter: retrains (ok/learning/error)
+sensor_eval_lag_minutes              # Gauge: minutos desde oldest pending FT
+sensor_pending_ft_to_evaluate        # Gauge: partidos FT con evaluaciones pendientes
+sensor_state                         # Gauge: 0=disabled, 1=learning, 2=ready, 3=error
+```
+
+### Health Blocks en ops.json
+
+```json
+{
+  "shadow_mode": {
+    "health": {
+      "pending_ft_to_evaluate": 0,
+      "eval_lag_minutes": 0.0,
+      "stale_threshold_minutes": 120,
+      "is_stale": false
+    }
+  },
+  "sensor_b": {
+    "health": { /* misma estructura */ }
+  }
+}
+```
+
+### Semántica de `pending_ft_to_evaluate`
+
+**IMPORTANTE**: Esta métrica cuenta **partidos FT/AET/PEN** que tienen predicciones shadow/sensor sin evaluar.
+- NO cuenta predicciones para partidos NS (futuros)
+- Detecta "silent failures": cuando el job de evaluación no procesa partidos terminados
+- Alerta cuando `is_stale=true` (eval_lag > threshold)
+
+### Config env vars
+
+```
+SHADOW_EVAL_STALE_MINUTES=120  # Alerta si oldest pending > esto (default 120)
+SENSOR_EVAL_STALE_MINUTES=120  # Alerta si oldest pending > esto (default 120)
+```
+
+### Troubleshooting
+
+**`pending_ft_to_evaluate > 0` y `is_stale=true`**:
+1. Verificar logs Railway: `railway logs -n 50 --filter "shadow"` o `--filter "sensor"`
+2. Buscar errores en jobs de evaluación (`evaluate_shadow_predictions`, `evaluate_sensor_predictions_job`)
+3. Verificar que los partidos FT tienen `home_goals` y `away_goals` no-null
+
+**Counters en 0 después de mucho tiempo**:
+- Normal si no hay partidos FT recientes con predicciones shadow/sensor
+- Verificar que `MODEL_SHADOW_ARCHITECTURE=two_stage` está configurado
+- Verificar que `SENSOR_ENABLED=true`
 
