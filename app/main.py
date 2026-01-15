@@ -4980,6 +4980,22 @@ async def _calculate_shadow_mode_summary(session) -> dict:
             "reason": "Metrics not available",
         }
 
+    # Health signals for telemetry
+    health = {
+        "pending_ft_to_evaluate": 0,
+        "eval_lag_minutes": 0.0,
+        "stale_threshold_minutes": settings.SHADOW_EVAL_STALE_MINUTES,
+        "is_stale": False,
+    }
+    try:
+        from app.ml.shadow import get_shadow_health_metrics
+        health_data = await get_shadow_health_metrics(session)
+        health["pending_ft_to_evaluate"] = health_data.get("pending_ft", 0)
+        health["eval_lag_minutes"] = health_data.get("eval_lag_minutes", 0.0)
+        health["is_stale"] = health["eval_lag_minutes"] > settings.SHADOW_EVAL_STALE_MINUTES
+    except Exception as e:
+        logger.warning(f"Shadow health metrics query failed: {e}")
+
     return {
         "state": state,
         "counts": counts,
@@ -4994,6 +5010,7 @@ async def _calculate_shadow_mode_summary(session) -> dict:
             "window_days": window_days,
         },
         "recommendation": recommendation,
+        "health": health,
     }
 
 
@@ -5046,6 +5063,22 @@ async def _calculate_sensor_b_summary(session) -> dict:
         sensor_info = report.get("sensor_info", {})
         counts = report.get("counts", {})
 
+        # Health signals for telemetry
+        health = {
+            "pending_ft_to_evaluate": 0,
+            "eval_lag_minutes": 0.0,
+            "stale_threshold_minutes": sensor_settings.SENSOR_EVAL_STALE_MINUTES,
+            "is_stale": False,
+        }
+        try:
+            from app.ml.sensor import get_sensor_health_metrics
+            health_data = await get_sensor_health_metrics(session)
+            health["pending_ft_to_evaluate"] = health_data.get("pending_ft", 0)
+            health["eval_lag_minutes"] = health_data.get("eval_lag_minutes", 0.0)
+            health["is_stale"] = health["eval_lag_minutes"] > sensor_settings.SENSOR_EVAL_STALE_MINUTES
+        except Exception as he:
+            logger.warning(f"Sensor health metrics query failed: {he}")
+
         return {
             "state": state,
             "reason": rec.get("reason", ""),
@@ -5066,6 +5099,8 @@ async def _calculate_sensor_b_summary(session) -> dict:
             "retrain_interval_hours": sensor_settings.SENSOR_RETRAIN_INTERVAL_HOURS,
             "model_version": sensor_info.get("model_version"),
             "is_ready": sensor_info.get("is_ready", False),
+            # Health (telemetry)
+            "health": health,
         }
     except Exception as e:
         logger.warning(f"Sensor B summary failed: {e}")

@@ -30,6 +30,17 @@ except ImportError:  # pragma: no cover
         return {"status": "unavailable"}
 from app.features.engineering import FeatureEngineer
 
+# Telemetry imports for shadow/sensor instrumentation
+from app.telemetry.metrics import (
+    record_shadow_predictions_batch,
+    record_shadow_evaluation_batch,
+    set_shadow_health_metrics,
+    record_sensor_predictions_batch,
+    record_sensor_evaluation_batch,
+    record_sensor_retrain,
+    set_sensor_health_metrics,
+)
+
 logger = logging.getLogger(__name__)
 
 # Top 5 European leagues (core)
@@ -1613,6 +1624,12 @@ async def daily_save_predictions():
 
             await session.commit()
 
+            # Telemetry: record batch counters for shadow/sensor
+            if is_shadow_enabled() and (shadow_logged > 0 or shadow_errors > 0):
+                record_shadow_predictions_batch(logged=shadow_logged, errors=shadow_errors)
+            if sensor_settings.SENSOR_ENABLED and (sensor_logged > 0 or sensor_errors > 0):
+                record_sensor_predictions_batch(logged=sensor_logged, errors=sensor_errors)
+
             # Build log message with optional shadow/sensor stats
             log_msg = f"Daily prediction save complete: {saved} saved, {skipped} skipped (non-NS)"
             if is_shadow_enabled():
@@ -1631,27 +1648,60 @@ async def evaluate_shadow_predictions():
     Runs every 30 minutes to update completed matches.
 
     Updates shadow_predictions records with actual_result, correctness, and Brier scores.
+
+    Telemetry:
+    - selected: FT/AET/PEN candidates found
+    - updated: rows actually updated
+    - Logs only if selected > 0 or error
+    - Warns if pending_ft > 0 AND updated == 0 (silent failure detection)
     """
-    from app.ml.shadow import is_shadow_enabled, evaluate_shadow_outcomes
+    from app.ml.shadow import is_shadow_enabled, evaluate_shadow_outcomes, get_shadow_health_metrics
+    from app.config import get_settings
+
+    settings = get_settings()
 
     if not is_shadow_enabled():
         return {"status": "disabled", "message": "Shadow mode not enabled"}
 
-    logger.info("Starting shadow predictions evaluation...")
-
     try:
         async with AsyncSessionLocal() as session:
             result = await evaluate_shadow_outcomes(session)
+            selected = result.get("selected", 0)
+            updated = result.get("updated", 0)
 
-            if result.get("evaluated", 0) > 0:
-                logger.info(
-                    f"Shadow evaluation complete: {result['evaluated']} matches, "
-                    f"baseline_acc={result['baseline_accuracy']:.1%}, "
-                    f"shadow_acc={result['shadow_accuracy']:.1%}, "
-                    f"delta_brier={result['delta_brier']:+.4f}"
+            # Telemetry: record evaluation batch
+            if updated > 0:
+                record_shadow_evaluation_batch(updated)
+
+            # Log only if there was work or mismatch
+            if selected > 0:
+                if updated > 0:
+                    logger.info(
+                        f"Shadow evaluation complete: selected={selected}, updated={updated}, "
+                        f"baseline_acc={result['baseline_accuracy']:.1%}, "
+                        f"shadow_acc={result['shadow_accuracy']:.1%}, "
+                        f"delta_brier={result['delta_brier']:+.4f}"
+                    )
+                else:
+                    # Silent failure: found FT matches but didn't update any
+                    logger.warning(
+                        f"[SHADOW] Silent failure detected: selected={selected} FT matches but updated=0. "
+                        "Check evaluation logic."
+                    )
+
+            # Update health gauges
+            health = await get_shadow_health_metrics(session)
+            set_shadow_health_metrics(
+                eval_lag_minutes=health["eval_lag_minutes"],
+                pending_ft=health["pending_ft"],
+            )
+
+            # Warn if lag exceeds threshold
+            if health["eval_lag_minutes"] > settings.SHADOW_EVAL_STALE_MINUTES:
+                logger.warning(
+                    f"[SHADOW] Evaluation lag stale: {health['eval_lag_minutes']:.0f}min > "
+                    f"{settings.SHADOW_EVAL_STALE_MINUTES}min threshold"
                 )
-            else:
-                logger.debug("Shadow evaluation: no pending predictions to evaluate")
 
             return result
     except Exception as e:
@@ -1665,6 +1715,8 @@ async def retrain_sensor_model():
     Runs every SENSOR_RETRAIN_INTERVAL_HOURS (default 6h).
 
     Sensor B is for INTERNAL DIAGNOSTICS ONLY - never affects production picks.
+
+    Telemetry: records retrain status (ok, learning, error)
     """
     from app.ml.sensor import retrain_sensor
     from app.config import get_settings
@@ -1678,20 +1730,26 @@ async def retrain_sensor_model():
     try:
         async with AsyncSessionLocal() as session:
             result = await retrain_sensor(session)
+            status = result.get("status", "ERROR").lower()
 
-            if result.get("status") == "READY":
+            # Telemetry: record retrain run
+            if status == "ready":
+                record_sensor_retrain("ok")
                 logger.info(
                     f"[SENSOR] Retrain complete: n={result.get('samples')}, "
                     f"window={result.get('window_size')}, "
                     f"version={result.get('model_version')}"
                 )
-            elif result.get("status") == "LEARNING":
+            elif status == "learning":
+                record_sensor_retrain("learning")
                 logger.info(f"[SENSOR] Still learning: {result.get('reason')}")
             else:
+                record_sensor_retrain("error")
                 logger.warning(f"[SENSOR] Retrain issue: {result}")
 
             return result
     except Exception as e:
+        record_sensor_retrain("error")
         logger.error(f"[SENSOR] Retrain failed: {e}")
         return {"status": "error", "error": str(e)}
 
@@ -1702,28 +1760,59 @@ async def evaluate_sensor_predictions_job():
     Runs every 30 minutes alongside shadow evaluation.
 
     Updates sensor_predictions records with actual_outcome, correctness, and Brier scores.
+
+    Telemetry:
+    - selected: FT/AET/PEN candidates found
+    - updated: rows actually updated
+    - Logs only if selected > 0 or error
+    - Warns if pending_ft > 0 AND updated == 0 (silent failure detection)
     """
-    from app.ml.sensor import evaluate_sensor_predictions
+    from app.ml.sensor import evaluate_sensor_predictions, get_sensor_health_metrics
     from app.config import get_settings
 
     settings = get_settings()
     if not settings.SENSOR_ENABLED:
         return {"status": "disabled", "message": "SENSOR_ENABLED=false"}
 
-    logger.info("[SENSOR] Starting sensor evaluation job...")
-
     try:
         async with AsyncSessionLocal() as session:
             result = await evaluate_sensor_predictions(session)
+            selected = result.get("selected", 0)
+            updated = result.get("updated", 0)
 
-            if result.get("evaluated", 0) > 0:
-                logger.info(
-                    f"[SENSOR] Evaluation complete: {result['evaluated']} matches, "
-                    f"A_correct={result.get('a_correct', 0)}, "
-                    f"B_correct={result.get('b_correct', 0)}"
+            # Telemetry: record evaluation batch
+            if updated > 0:
+                record_sensor_evaluation_batch(updated)
+
+            # Log only if there was work or mismatch
+            if selected > 0:
+                if updated > 0:
+                    logger.info(
+                        f"[SENSOR] Evaluation complete: selected={selected}, updated={updated}, "
+                        f"A_correct={result.get('a_correct', 0)}, "
+                        f"B_correct={result.get('b_correct', 0)}"
+                    )
+                else:
+                    # Silent failure: found FT matches but didn't update any
+                    logger.warning(
+                        f"[SENSOR] Silent failure detected: selected={selected} FT matches but updated=0. "
+                        "Check evaluation logic."
+                    )
+
+            # Update health gauges
+            health = await get_sensor_health_metrics(session)
+            set_sensor_health_metrics(
+                eval_lag_minutes=health["eval_lag_minutes"],
+                pending_ft=health["pending_ft"],
+                state=health["state"],
+            )
+
+            # Warn if lag exceeds threshold
+            if health["eval_lag_minutes"] > settings.SENSOR_EVAL_STALE_MINUTES:
+                logger.warning(
+                    f"[SENSOR] Evaluation lag stale: {health['eval_lag_minutes']:.0f}min > "
+                    f"{settings.SENSOR_EVAL_STALE_MINUTES}min threshold"
                 )
-            else:
-                logger.debug("[SENSOR] No pending predictions to evaluate")
 
             return result
     except Exception as e:

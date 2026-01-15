@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     SENSOR_SIGNAL_SCORE_NOISE: float = 0.9  # Signal score below this = B is overfitting
     SENSOR_EVAL_WINDOW_DAYS: int = 14  # Window for sensor evaluation metrics
 
+    # Telemetry: Stale evaluation thresholds (minutes)
+    SHADOW_EVAL_STALE_MINUTES: int = 120  # Alert if oldest pending > this
+    SENSOR_EVAL_STALE_MINUTES: int = 120  # Alert if oldest pending > this
+
     # Development settings
     SKIP_AUTO_TRAIN: bool = False  # Skip auto-training on startup (useful during dev)
 

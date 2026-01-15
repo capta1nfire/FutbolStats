@@ -166,30 +166,34 @@ async def evaluate_shadow_outcomes(session: AsyncSession) -> dict:
     Updates ShadowPrediction records with actual_result and metrics.
 
     Returns:
-        Summary statistics of shadow vs baseline performance.
+        Summary statistics with:
+        - selected: FT matches found with pending evaluations
+        - updated: rows actually updated
+        - baseline/shadow accuracy and brier metrics
     """
     from sqlalchemy import and_
     from datetime import datetime
 
     from app.models import Match
 
-    # Get shadow predictions without outcomes
+    # Get shadow predictions without outcomes (FT candidates)
     result = await session.execute(
         select(ShadowPrediction, Match)
         .join(Match, ShadowPrediction.match_id == Match.id)
         .where(
             and_(
                 ShadowPrediction.actual_result.is_(None),
-                Match.status == "FT",
+                Match.status.in_(["FT", "AET", "PEN"]),
                 Match.home_goals.isnot(None),
                 Match.away_goals.isnot(None),
             )
         )
     )
     records = result.all()
+    selected = len(records)
 
     if not records:
-        return {"evaluated": 0, "message": "No pending shadow predictions to evaluate"}
+        return {"selected": 0, "updated": 0, "evaluated": 0, "message": "No pending shadow predictions to evaluate"}
 
     evaluated = 0
     baseline_correct = 0
@@ -254,6 +258,8 @@ async def evaluate_shadow_outcomes(session: AsyncSession) -> dict:
     await session.commit()
 
     return {
+        "selected": selected,
+        "updated": evaluated,
         "evaluated": evaluated,
         "baseline_accuracy": baseline_correct / evaluated if evaluated > 0 else 0,
         "shadow_accuracy": shadow_correct / evaluated if evaluated > 0 else 0,
@@ -375,3 +381,47 @@ def _get_recommendation(
         return f"NO_GO: Shadow model degrades Brier (delta={shadow_brier - baseline_brier:+.4f})"
     else:
         return f"NO_GO: Shadow model degrades accuracy (delta={shadow_acc - baseline_acc:+.1%})"
+
+
+async def get_shadow_health_metrics(session: AsyncSession) -> dict:
+    """
+    Get health metrics for shadow mode telemetry.
+
+    Returns:
+        - pending_ft: FT matches with pending shadow evaluations
+        - eval_lag_minutes: Minutes since oldest pending prediction (0 if none)
+    """
+    from sqlalchemy import func, and_
+    from datetime import datetime
+
+    from app.models import Match
+
+    # Count pending FT matches
+    result = await session.execute(
+        select(
+            func.count(ShadowPrediction.id).label("pending"),
+            func.min(ShadowPrediction.created_at).label("oldest_created"),
+        )
+        .join(Match, ShadowPrediction.match_id == Match.id)
+        .where(
+            and_(
+                ShadowPrediction.actual_result.is_(None),
+                Match.status.in_(["FT", "AET", "PEN"]),
+                Match.home_goals.isnot(None),
+                Match.away_goals.isnot(None),
+            )
+        )
+    )
+    row = result.one()
+
+    pending_ft = row.pending or 0
+    eval_lag_minutes = 0.0
+
+    if row.oldest_created:
+        delta = datetime.utcnow() - row.oldest_created
+        eval_lag_minutes = delta.total_seconds() / 60.0
+
+    return {
+        "pending_ft": pending_ft,
+        "eval_lag_minutes": round(eval_lag_minutes, 1),
+    }

@@ -631,7 +631,7 @@ def record_aggregates_refresh(
 
 
 def set_predictions_health_metrics(
-    hours_since_last: float | None,
+    hours_since_last: Optional[float],
     ns_next_48h: int,
     ns_missing_next_48h: int,
     coverage_ns_pct: float,
@@ -664,6 +664,226 @@ def set_predictions_health_metrics(
 
     except Exception as e:
         logger.warning(f"Failed to set predictions health metrics: {e}")
+
+
+# =============================================================================
+# SHADOW MODE METRICS (A/B Testing)
+# =============================================================================
+
+shadow_predictions_logged_total = Counter(
+    "shadow_predictions_logged_total",
+    "Shadow mode: predictions logged per run",
+    [],
+)
+
+shadow_predictions_evaluated_total = Counter(
+    "shadow_predictions_evaluated_total",
+    "Shadow mode: predictions evaluated (matched with FT outcomes)",
+    [],
+)
+
+shadow_predictions_errors_total = Counter(
+    "shadow_predictions_errors_total",
+    "Shadow mode: prediction logging errors",
+    [],
+)
+
+shadow_eval_lag_minutes = Gauge(
+    "shadow_eval_lag_minutes",
+    "Shadow mode: minutes since oldest pending prediction (0 if none pending)",
+    [],
+)
+
+shadow_pending_ft_to_evaluate = Gauge(
+    "shadow_pending_ft_to_evaluate",
+    "Shadow mode: FT matches with pending shadow evaluations",
+    [],
+)
+
+# =============================================================================
+# SENSOR B METRICS (Calibration Diagnostics)
+# =============================================================================
+
+sensor_predictions_logged_total = Counter(
+    "sensor_predictions_logged_total",
+    "Sensor B: predictions logged per run",
+    [],
+)
+
+sensor_predictions_evaluated_total = Counter(
+    "sensor_predictions_evaluated_total",
+    "Sensor B: predictions evaluated (matched with FT outcomes)",
+    [],
+)
+
+sensor_predictions_errors_total = Counter(
+    "sensor_predictions_errors_total",
+    "Sensor B: prediction logging errors",
+    [],
+)
+
+sensor_retrain_runs_total = Counter(
+    "sensor_retrain_runs_total",
+    "Sensor B: retrain job runs",
+    ["status"],  # ok, learning, error
+)
+
+sensor_eval_lag_minutes = Gauge(
+    "sensor_eval_lag_minutes",
+    "Sensor B: minutes since oldest pending prediction (0 if none pending)",
+    [],
+)
+
+sensor_pending_ft_to_evaluate = Gauge(
+    "sensor_pending_ft_to_evaluate",
+    "Sensor B: FT matches with pending sensor evaluations",
+    [],
+)
+
+sensor_state = Gauge(
+    "sensor_state",
+    "Sensor B: current state (0=disabled, 1=learning, 2=ready, 3=error)",
+    [],
+)
+
+
+# =============================================================================
+# SHADOW MODE TELEMETRY HELPERS
+# =============================================================================
+
+
+def record_shadow_predictions_batch(
+    logged: int,
+    errors: int,
+) -> None:
+    """
+    Record shadow predictions batch metrics.
+
+    Args:
+        logged: Number of predictions successfully logged
+        errors: Number of prediction errors
+    """
+    try:
+        if logged > 0:
+            shadow_predictions_logged_total.inc(logged)
+        if errors > 0:
+            shadow_predictions_errors_total.inc(errors)
+    except Exception as e:
+        logger.warning(f"Failed to record shadow batch metrics: {e}")
+
+
+def record_shadow_evaluation_batch(
+    evaluated: int,
+) -> None:
+    """
+    Record shadow evaluation batch metrics.
+
+    Args:
+        evaluated: Number of predictions evaluated
+    """
+    try:
+        if evaluated > 0:
+            shadow_predictions_evaluated_total.inc(evaluated)
+    except Exception as e:
+        logger.warning(f"Failed to record shadow evaluation metrics: {e}")
+
+
+def set_shadow_health_metrics(
+    eval_lag_minutes: float,
+    pending_ft: int,
+) -> None:
+    """
+    Update shadow mode health gauges.
+
+    Args:
+        eval_lag_minutes: Minutes since oldest pending prediction
+        pending_ft: FT matches with pending evaluations
+    """
+    try:
+        shadow_eval_lag_minutes.set(eval_lag_minutes)
+        shadow_pending_ft_to_evaluate.set(pending_ft)
+    except Exception as e:
+        logger.warning(f"Failed to set shadow health metrics: {e}")
+
+
+# =============================================================================
+# SENSOR B TELEMETRY HELPERS
+# =============================================================================
+
+
+def record_sensor_predictions_batch(
+    logged: int,
+    errors: int,
+) -> None:
+    """
+    Record sensor predictions batch metrics.
+
+    Args:
+        logged: Number of predictions successfully logged
+        errors: Number of prediction errors
+    """
+    try:
+        if logged > 0:
+            sensor_predictions_logged_total.inc(logged)
+        if errors > 0:
+            sensor_predictions_errors_total.inc(errors)
+    except Exception as e:
+        logger.warning(f"Failed to record sensor batch metrics: {e}")
+
+
+def record_sensor_evaluation_batch(
+    evaluated: int,
+) -> None:
+    """
+    Record sensor evaluation batch metrics.
+
+    Args:
+        evaluated: Number of predictions evaluated
+    """
+    try:
+        if evaluated > 0:
+            sensor_predictions_evaluated_total.inc(evaluated)
+    except Exception as e:
+        logger.warning(f"Failed to record sensor evaluation metrics: {e}")
+
+
+def record_sensor_retrain(
+    status: str,
+) -> None:
+    """
+    Record sensor retrain job run.
+
+    Args:
+        status: "ok", "learning", or "error"
+    """
+    try:
+        sensor_retrain_runs_total.labels(status=status).inc()
+    except Exception as e:
+        logger.warning(f"Failed to record sensor retrain metrics: {e}")
+
+
+def set_sensor_health_metrics(
+    eval_lag_minutes: float,
+    pending_ft: int,
+    state: str,
+) -> None:
+    """
+    Update sensor B health gauges.
+
+    Args:
+        eval_lag_minutes: Minutes since oldest pending prediction
+        pending_ft: FT matches with pending evaluations
+        state: "disabled", "learning", "ready", "error"
+    """
+    try:
+        sensor_eval_lag_minutes.set(eval_lag_minutes)
+        sensor_pending_ft_to_evaluate.set(pending_ft)
+
+        # State code: disabled=0, learning=1, ready=2, error=3
+        state_code = {"disabled": 0, "learning": 1, "ready": 2, "error": 3}.get(state, 1)
+        sensor_state.set(state_code)
+    except Exception as e:
+        logger.warning(f"Failed to set sensor health metrics: {e}")
 
 
 def get_metrics_text() -> tuple[str, str]:

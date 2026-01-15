@@ -404,9 +404,10 @@ async def evaluate_sensor_predictions(session: AsyncSession) -> dict:
 
     result = await session.execute(query)
     rows = result.fetchall()
+    selected = len(rows)
 
     if not rows:
-        return {"status": "ok", "evaluated": 0, "message": "No pending sensor predictions"}
+        return {"status": "ok", "selected": 0, "updated": 0, "evaluated": 0, "message": "No pending sensor predictions"}
 
     evaluated = 0
     a_correct_count = 0
@@ -469,12 +470,14 @@ async def evaluate_sensor_predictions(session: AsyncSession) -> dict:
     await session.commit()
 
     logger.info(
-        f"[SENSOR] Evaluation complete: {evaluated} predictions, "
-        f"A correct={a_correct_count}, B correct={b_correct_count}"
+        f"[SENSOR] Evaluation complete: selected={selected}, updated={evaluated}, "
+        f"A_correct={a_correct_count}, B_correct={b_correct_count}"
     )
 
     return {
         "status": "ok",
+        "selected": selected,
+        "updated": evaluated,
         "evaluated": evaluated,
         "a_correct": a_correct_count,
         "b_correct": b_correct_count,
@@ -628,4 +631,60 @@ async def get_sensor_report(session: AsyncSession) -> dict:
             "last_trained": _sensor_last_trained.isoformat() if _sensor_last_trained else None,
             "is_ready": is_sensor_ready(),
         },
+    }
+
+
+async def get_sensor_health_metrics(session: AsyncSession) -> dict:
+    """
+    Get health metrics for sensor B telemetry.
+
+    Returns:
+        - pending_ft: FT matches with pending sensor evaluations
+        - eval_lag_minutes: Minutes since oldest pending prediction (0 if none)
+        - state: Current sensor state (disabled, learning, ready, error)
+    """
+    if not settings.SENSOR_ENABLED:
+        return {
+            "pending_ft": 0,
+            "eval_lag_minutes": 0.0,
+            "state": "disabled",
+        }
+
+    # Count pending FT matches and get oldest created_at
+    query = text("""
+        SELECT
+            COUNT(*) AS pending,
+            MIN(sp.created_at) AS oldest_created
+        FROM sensor_predictions sp
+        JOIN matches m ON sp.match_id = m.id
+        WHERE sp.evaluated_at IS NULL
+          AND m.status IN ('FT', 'AET', 'PEN')
+          AND m.home_goals IS NOT NULL
+          AND m.away_goals IS NOT NULL
+    """)
+
+    result = await session.execute(query)
+    row = result.first()
+
+    pending_ft = int(row.pending or 0)
+    eval_lag_minutes = 0.0
+
+    if row.oldest_created:
+        from datetime import datetime
+        delta = datetime.utcnow() - row.oldest_created
+        eval_lag_minutes = delta.total_seconds() / 60.0
+
+    # Determine current state
+    sensor = get_sensor_engine()
+    if sensor is None:
+        state = "learning"
+    elif sensor.is_ready:
+        state = "ready"
+    else:
+        state = "learning"
+
+    return {
+        "pending_ft": pending_ft,
+        "eval_lag_minutes": round(eval_lag_minutes, 1),
+        "state": state,
     }
