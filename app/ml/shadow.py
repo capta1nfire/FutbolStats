@@ -271,14 +271,14 @@ async def get_shadow_report(session: AsyncSession) -> dict:
     Returns:
         Report with baseline vs shadow comparison metrics.
     """
-    from sqlalchemy import func, and_
+    from sqlalchemy import func, and_, case
 
     # Get evaluated predictions
     result = await session.execute(
         select(
             func.count(ShadowPrediction.id).label("total"),
-            func.sum(ShadowPrediction.baseline_correct.cast(int)).label("baseline_correct"),
-            func.sum(ShadowPrediction.shadow_correct.cast(int)).label("shadow_correct"),
+            func.sum(case((ShadowPrediction.baseline_correct == True, 1), else_=0)).label("baseline_correct"),
+            func.sum(case((ShadowPrediction.shadow_correct == True, 1), else_=0)).label("shadow_correct"),
             func.avg(ShadowPrediction.baseline_brier).label("baseline_brier_avg"),
             func.avg(ShadowPrediction.shadow_brier).label("shadow_brier_avg"),
         )
@@ -301,8 +301,8 @@ async def get_shadow_report(session: AsyncSession) -> dict:
         out_result = await session.execute(
             select(
                 func.count(ShadowPrediction.id).label("total"),
-                func.sum(ShadowPrediction.baseline_correct.cast(int)).label("baseline_correct"),
-                func.sum(ShadowPrediction.shadow_correct.cast(int)).label("shadow_correct"),
+                func.sum(case((ShadowPrediction.baseline_correct == True, 1), else_=0)).label("baseline_correct"),
+                func.sum(case((ShadowPrediction.shadow_correct == True, 1), else_=0)).label("shadow_correct"),
             )
             .where(
                 and_(
