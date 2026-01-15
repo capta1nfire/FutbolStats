@@ -354,6 +354,7 @@ class XGBoostEngine:
         self.model: Optional[xgb.XGBClassifier] = None
         self.model_path = Path(settings.MODEL_PATH)
         self.model_path.mkdir(exist_ok=True)
+        self._feature_compat_logged = False  # Log feature truncation only once
 
     def _get_model_filepath(self) -> Path:
         """Get the filepath for the current model version."""
@@ -379,10 +380,12 @@ class XGBoostEngine:
         # If model expects fewer features than current FEATURE_COLUMNS,
         # return only the first N features (they were added in order)
         if n_features < len(self.FEATURE_COLUMNS):
-            logger.info(
-                f"Model expects {n_features} features, current code has {len(self.FEATURE_COLUMNS)}. "
-                f"Using backward-compatible feature selection."
-            )
+            if not self._feature_compat_logged:
+                logger.info(
+                    f"[FEATURE_COMPAT] Model expects {n_features} features, code has {len(self.FEATURE_COLUMNS)}. "
+                    f"Truncating to first {n_features} features for backward compatibility."
+                )
+                self._feature_compat_logged = True
             return self.FEATURE_COLUMNS[:n_features]
 
         return self.FEATURE_COLUMNS
