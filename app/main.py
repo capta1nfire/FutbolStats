@@ -279,6 +279,14 @@ _CALENDAR_YEAR_SEASON_LEAGUES = {
     344,  # Bolivia Primera Division
 }
 
+# Leagues where we should NOT filter teams by "Relegation" in previous standings,
+# because they use different systems (averages) or have no relegation.
+# For these leagues, we use the full previous roster in placeholder generation.
+_NO_RELEGATION_FILTER_LEAGUES = {
+    239,  # Colombia - relegation by multi-season averages (not single table)
+    262,  # Mexico - no relegation (varies by season, assume none)
+}
+
 
 def _season_for_league(league_id: Optional[int], dt: datetime) -> int:
     """
@@ -409,9 +417,12 @@ async def _generate_placeholder_standings(session, league_id: int, season: int) 
             relegated_teams = []
             for s in prev_standings:
                 desc = s.get("description") or ""
-                if "relegation" in desc.lower():
-                    relegated_teams.append(s.get("team_name"))
-                    continue  # Skip relegated teams
+                # Only filter by "Relegation" if the league uses traditional table-based relegation.
+                # Skip filtering for leagues with averages-based or no relegation system.
+                if league_id not in _NO_RELEGATION_FILTER_LEAGUES:
+                    if "relegation" in desc.lower():
+                        relegated_teams.append(s.get("team_name"))
+                        continue  # Skip relegated teams
                 teams_data.append({
                     "external_id": s.get("team_id"),
                     "name": s.get("team_name"),
