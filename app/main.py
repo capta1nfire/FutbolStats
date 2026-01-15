@@ -2465,6 +2465,39 @@ async def get_match_details(
     _timings["total"] = int((time.time() - _t_start) * 1000)
     logger.info(f"[PERF] match_details match_id={match_id} timings={_timings}")
 
+    # Resolve team display names/logos (handles rebranding like La Equidad → Internacional de Bogotá)
+    home_name = home_team.name if home_team else "Unknown"
+    home_logo = home_team.logo_url if home_team else None
+    away_name = away_team.name if away_team else "Unknown"
+    away_logo = away_team.logo_url if away_team else None
+
+    # Apply team overrides if match date is after effective_from
+    if match.date and (home_team or away_team):
+        external_ids = []
+        if home_team and home_team.external_id:
+            external_ids.append(home_team.external_id)
+        if away_team and away_team.external_id:
+            external_ids.append(away_team.external_id)
+
+        if external_ids:
+            overrides = await preload_team_overrides(session, external_ids)
+            if overrides:
+                if home_team and home_team.external_id:
+                    home_display = resolve_team_display(
+                        overrides, home_team.external_id, match.date, home_name, home_logo
+                    )
+                    if home_display.is_override:
+                        home_name = home_display.name
+                        home_logo = home_display.logo_url or home_logo
+
+                if away_team and away_team.external_id:
+                    away_display = resolve_team_display(
+                        overrides, away_team.external_id, match.date, away_name, away_logo
+                    )
+                    if away_display.is_override:
+                        away_name = away_display.name
+                        away_logo = away_display.logo_url or away_logo
+
     return {
         "match": {
             "id": match.id,
@@ -2480,16 +2513,16 @@ async def get_match_details(
         },
         "home_team": {
             "id": home_team.id if home_team else None,
-            "name": home_team.name if home_team else "Unknown",
-            "logo": home_team.logo_url if home_team else None,
+            "name": home_name,
+            "logo": home_logo,
             "history": home_history["matches"],
             "position": home_position,
             "league_points": home_league_points,
         },
         "away_team": {
             "id": away_team.id if away_team else None,
-            "name": away_team.name if away_team else "Unknown",
-            "logo": away_team.logo_url if away_team else None,
+            "name": away_name,
+            "logo": away_logo,
             "history": away_history["matches"],
             "position": away_position,
             "league_points": away_league_points,
