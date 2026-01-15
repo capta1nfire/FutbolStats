@@ -1935,9 +1935,10 @@ async def get_sensor_report_endpoint(
     Requires API key authentication.
     """
     from app.ml.sensor import get_sensor_report
-    from app.config import settings
+    from app.config import get_settings
 
-    if not settings.SENSOR_ENABLED:
+    sensor_settings = get_settings()
+    if not sensor_settings.SENSOR_ENABLED:
         return {
             "status": "disabled",
             "message": "Sensor B not enabled. Set SENSOR_ENABLED=true to enable.",
