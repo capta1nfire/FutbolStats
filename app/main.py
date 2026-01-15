@@ -4559,6 +4559,7 @@ async def predictions_trigger_save(request: Request):
                     # Sensor B: log A vs B predictions (internal diagnostics only)
                     if sensor_settings.SENSOR_ENABLED:
                         try:
+                            import numpy as np
                             match_df = df_ns.iloc[[idx]]
                             model_a_probs = np.array([probs["home"], probs["draw"], probs["away"]])
                             sensor_result = await log_sensor_prediction(
