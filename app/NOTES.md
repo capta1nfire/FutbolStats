@@ -84,9 +84,25 @@ Cuando veas el próximo tick y esos campos, lo marcamos CLOSED. (esto es respect
 - [ ]configurar alerta desde grafana en lugar de email en el codigo.
 
 - [ ] Mensaje "Apuesta con responsabilidad en el footer de la narrativa me gusta", podemos manejar mas mensajes bajo este concepto.
-- [ ]
-- [ ]
-- [ ]
+
+- [ ]Revisar tabla de posiciones de inicio de ligas de sudamerica, deben volver a "Cero".
+- [ ] 
+
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] Supervisar Shadow Mode (2 semanas a partir de Jan 14/25)
+
 
 ---
 

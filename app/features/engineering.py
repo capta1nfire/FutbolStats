@@ -312,6 +312,25 @@ class FeatureEngineer:
             features["home_rest_days"] - features["away_rest_days"]
         )
 
+        # === FASE 1: Competitiveness features for draw prediction ===
+        # These capture how evenly matched teams are (low values → more likely draw)
+
+        # Attack strength difference (absolute)
+        features["abs_attack_diff"] = abs(
+            features["home_goals_scored_avg"] - features["away_goals_scored_avg"]
+        )
+
+        # Defense strength difference (absolute)
+        features["abs_defense_diff"] = abs(
+            features["home_goals_conceded_avg"] - features["away_goals_conceded_avg"]
+        )
+
+        # Combined strength gap: overall team quality difference
+        # Low values indicate evenly matched teams → higher draw probability
+        home_net = features["home_goals_scored_avg"] - features["home_goals_conceded_avg"]
+        away_net = features["away_goals_scored_avg"] - features["away_goals_conceded_avg"]
+        features["abs_strength_gap"] = abs(home_net - away_net)
+
         return features
 
     async def build_training_dataset(

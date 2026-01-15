@@ -131,6 +131,14 @@ class MatchDetailViewModel: ObservableObject {
         // Start loading immediately
         detailsState = .loading
 
+        // For finished matches, start loading timeline/narrative in parallel with details
+        // This ensures timeline doesn't appear "last" after other sections
+        if prediction.isFinished {
+            timelineState = .loading
+            narrativeState = .loading
+            statsState = .loading
+        }
+
         let totalTimer = PerfTimer()
 
         do {
@@ -138,42 +146,39 @@ class MatchDetailViewModel: ObservableObject {
             try Task.checkCancellation()
 
             let detailsTimer = PerfTimer()
-            matchDetails = try await APIClient.shared.getMatchDetails(matchId: matchId)
-            let detailsMs = detailsTimer.elapsedMs
+            let timelineTimer = PerfTimer()
+            let insightsTimer = PerfTimer()
 
-            // Check for cancellation before processing
-            try Task.checkCancellation()
-
-            processTeamHistory()
-            generateInsights()
-
-            // Mark details as loaded (triggers UI transition)
-            detailsState = .loaded
-
-            // Log without match_id to avoid high-cardinality (per auditor guardrails)
-            PerfLogger.shared.log(
-                endpoint: "MatchDetail.loadDetails",
-                message: "basic_data_ready",
-                data: [
-                    "details_ms": detailsMs,
-                    "is_finished": prediction.isFinished
-                ]
-            )
-
-            // Load timeline and narrative insights in background (non-blocking)
+            // For finished matches, load everything in parallel
+            // This ensures timeline appears at the same time as other sections
             if prediction.isFinished {
-                print("Match \(matchId) is finished, loading timeline and insights in background...")
-
-                // Set loading states for background sections
-                timelineState = .loading
-                narrativeState = .loading
-                statsState = .loading
-
-                let timelineTimer = PerfTimer()
-                let insightsTimer = PerfTimer()
-
+                async let detailsTask = APIClient.shared.getMatchDetails(matchId: matchId)
                 async let timelineTask: () = loadTimeline(matchId: matchId)
                 async let narrativeTask: () = loadNarrativeInsights(matchId: matchId)
+
+                // Await details first (needed for UI)
+                matchDetails = try await detailsTask
+                let detailsMs = detailsTimer.elapsedMs
+
+                // Check for cancellation before processing
+                try Task.checkCancellation()
+
+                processTeamHistory()
+                generateInsights()
+
+                // Mark details as loaded (triggers UI transition)
+                detailsState = .loaded
+
+                PerfLogger.shared.log(
+                    endpoint: "MatchDetail.loadDetails",
+                    message: "basic_data_ready",
+                    data: [
+                        "details_ms": detailsMs,
+                        "is_finished": true
+                    ]
+                )
+
+                // Wait for background tasks to complete
                 _ = await (timelineTask, narrativeTask)
 
                 PerfLogger.shared.log(
@@ -186,6 +191,28 @@ class MatchDetailViewModel: ObservableObject {
                     ]
                 )
             } else {
+                // For upcoming matches, just load details
+                matchDetails = try await APIClient.shared.getMatchDetails(matchId: matchId)
+                let detailsMs = detailsTimer.elapsedMs
+
+                // Check for cancellation before processing
+                try Task.checkCancellation()
+
+                processTeamHistory()
+                generateInsights()
+
+                // Mark details as loaded
+                detailsState = .loaded
+
+                PerfLogger.shared.log(
+                    endpoint: "MatchDetail.loadDetails",
+                    message: "basic_data_ready",
+                    data: [
+                        "details_ms": detailsMs,
+                        "is_finished": false
+                    ]
+                )
+
                 print("Match \(matchId) status: \(prediction.status ?? "nil") - not loading timeline/insights")
             }
         } catch is CancellationError {
@@ -468,9 +495,9 @@ struct MatchDetailView: View {
 
     private let valueColor = Color(red: 0.19, green: 0.82, blue: 0.35)  // #30D158
 
-    // Animation for section transitions
-    private let sectionTransition: AnyTransition = .opacity.combined(with: .move(edge: .bottom))
-    private let sectionAnimation: Animation = .easeOut(duration: 0.25)
+    // Animation for section transitions - fade only, no slide
+    private let sectionTransition: AnyTransition = .opacity
+    private let sectionAnimation: Animation = .easeOut(duration: 0.3)
 
     var body: some View {
         ScrollView {
@@ -493,12 +520,13 @@ struct MatchDetailView: View {
                     ProbabilityBarSkeleton()
                 }
 
-                // Timeline for finished matches - shows skeleton while loading
+                // Timeline for finished matches - shows skeleton from idle through loading
                 if prediction.isFinished {
                     if let timeline = viewModel.timeline {
                         PredictionTimelineView(timeline: timeline)
                             .transition(sectionTransition)
-                    } else if viewModel.timelineState.isLoading {
+                    } else if viewModel.timelineState == .idle || viewModel.timelineState.isLoading {
+                        // Show skeleton immediately for finished matches to reserve space
                         TimelineSkeleton()
                     }
                 }
@@ -519,12 +547,13 @@ struct MatchDetailView: View {
                     FormTableSkeleton()
                 }
 
-                // LLM Narrative (post-match analysis) - shows skeleton while loading
+                // LLM Narrative (post-match analysis) - shows skeleton from idle through loading
                 if prediction.isFinished {
                     if let narrative = viewModel.llmNarrative {
                         LLMNarrativeView(narrative: narrative)
                             .transition(sectionTransition)
-                    } else if viewModel.narrativeState.isLoading {
+                    } else if viewModel.narrativeState == .idle || viewModel.narrativeState.isLoading {
+                        // Show skeleton immediately for finished matches to reserve space
                         NarrativeSkeleton()
                     } else if viewModel.narrativeState.isLoaded && viewModel.llmNarrativeStatus != nil {
                         // Show unavailable state for finished matches without narrative
@@ -542,7 +571,8 @@ struct MatchDetailView: View {
                             awayTeam: prediction.awayTeam
                         )
                         .transition(sectionTransition)
-                    } else if viewModel.statsState.isLoading {
+                    } else if viewModel.statsState == .idle || viewModel.statsState.isLoading {
+                        // Show skeleton immediately for finished matches to reserve space
                         StatsTableSkeleton()
                     }
                 }

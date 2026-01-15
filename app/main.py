@@ -4431,6 +4431,7 @@ async def predictions_trigger_save(request: Request):
 
     from app.db_utils import upsert
     from app.features import FeatureEngineer
+    from app.ml.shadow import is_shadow_enabled, log_shadow_prediction
 
     diagnostics = {
         "status": "unknown",
@@ -4439,6 +4440,8 @@ async def predictions_trigger_save(request: Request):
         "ns_matches": 0,
         "predictions_generated": 0,
         "predictions_saved": 0,
+        "shadow_logged": 0,
+        "shadow_errors": 0,
         "errors": [],
     }
 
@@ -4475,9 +4478,11 @@ async def predictions_trigger_save(request: Request):
             predictions = ml_engine.predict(df_ns)
             diagnostics["predictions_generated"] = len(predictions)
 
-            # Step 4: Save to database
+            # Step 4: Save to database with shadow logging
             saved = 0
-            for pred in predictions:
+            shadow_logged = 0
+            shadow_errors = 0
+            for idx, pred in enumerate(predictions):
                 match_id = pred.get("match_id")
                 if not match_id:
                     continue
@@ -4498,14 +4503,34 @@ async def predictions_trigger_save(request: Request):
                         update_columns=["home_prob", "draw_prob", "away_prob"],
                     )
                     saved += 1
+
+                    # Shadow prediction: log parallel two-stage prediction
+                    if is_shadow_enabled():
+                        try:
+                            match_df = df_ns.iloc[[idx]]
+                            shadow_result = await log_shadow_prediction(
+                                session=session,
+                                match_id=match_id,
+                                df=match_df,
+                                baseline_engine=ml_engine,
+                            )
+                            if shadow_result:
+                                shadow_logged += 1
+                        except Exception as shadow_err:
+                            shadow_errors += 1
+                            logger.warning(f"Shadow prediction failed for match {match_id}: {shadow_err}")
+
                 except Exception as e:
                     diagnostics["errors"].append(f"Match {match_id}: {str(e)[:50]}")
 
             await session.commit()
             diagnostics["predictions_saved"] = saved
+            diagnostics["shadow_logged"] = shadow_logged
+            diagnostics["shadow_errors"] = shadow_errors
             diagnostics["status"] = "ok" if saved > 0 else "no_new_predictions"
 
-            logger.info(f"Predictions trigger complete: {saved} saved from {len(df_ns)} NS matches")
+            shadow_info = f", shadow: {shadow_logged} logged" if is_shadow_enabled() else ""
+            logger.info(f"Predictions trigger complete: {saved} saved from {len(df_ns)} NS matches{shadow_info}")
 
     except Exception as e:
         diagnostics["status"] = "error"
