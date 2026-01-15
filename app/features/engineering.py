@@ -482,6 +482,20 @@ class FeatureEngineer:
 
         logger.info(f"Building features for {len(matches)} matches (upcoming + recent)...")
 
+        # Preload match history cache to avoid N+1 queries
+        # Without this: ~480 queries for 240 matches (2 per match for home/away)
+        # With this: 1 query to preload all team history
+        team_ids = set()
+        for match in matches:
+            if match.home_team_id:
+                team_ids.add(match.home_team_id)
+            if match.away_team_id:
+                team_ids.add(match.away_team_id)
+
+        if team_ids:
+            self._cache = TeamMatchCache()
+            await self._cache.preload(self.session, team_ids)
+
         rows = []
         for match in matches:
             try:
@@ -504,5 +518,10 @@ class FeatureEngineer:
             except Exception as e:
                 logger.error(f"Error processing match {match.id}: {e}")
                 continue
+
+        # Clear cache to free memory
+        if self._cache is not None:
+            self._cache.clear()
+            self._cache = None
 
         return pd.DataFrame(rows)

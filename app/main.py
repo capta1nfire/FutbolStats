@@ -1407,19 +1407,22 @@ async def get_predictions(
         logger.info("predictions_cache | cache_bypass | league_ids=%s, save=%s, with_context=%s",
                     league_ids, save, with_context)
 
-    # Track compute time for cache miss
+    # Track compute time for cache miss (with per-stage timing)
     _compute_start = time.time()
+    _stage_times = {}
 
     # Get features for upcoming matches
     # iOS progressive loading:
     #   Priority: days_back=1, days_ahead=1 → yesterday/today/tomorrow (~50-100 matches)
     #   Full: days_back=7, days_ahead=7 → 15-day window (~300 matches)
+    _t0 = time.time()
     feature_engineer = FeatureEngineer(session=session)
     df = await feature_engineer.get_upcoming_matches_features(
         league_ids=league_id_list,
         include_recent_days=fetch_days_back,  # Past N days for finished matches
         days_ahead=fetch_days_ahead,  # Future N days for upcoming matches
     )
+    _stage_times["features_ms"] = (time.time() - _t0) * 1000
     logger.info(f"Predictions query: days_back={fetch_days_back}, days_ahead={fetch_days_ahead}, matches={len(df)}")
 
     if len(df) == 0:
@@ -1439,6 +1442,7 @@ async def get_predictions(
 
     if with_context:
         from app.ml.recalibration import RecalibrationEngine, load_team_adjustments
+        _t1 = time.time()
 
         try:
             # Load team adjustments
@@ -1491,19 +1495,25 @@ async def get_predictions(
                         "days": 3,  # Approximation
                     }
 
+            _stage_times["context_ms"] = (time.time() - _t1) * 1000
             logger.info(
                 f"Context loaded: {len(unstable_leagues)} unstable leagues, "
                 f"{len(odds_movements)} odds movements"
             )
 
         except Exception as e:
+            _stage_times["context_ms"] = (time.time() - _t1) * 1000
             logger.warning(f"Error loading context: {e}. Predictions will be made without context.")
 
     # Make predictions with context
+    _t2 = time.time()
     predictions = ml_engine.predict(df, team_adjustments=team_adjustments, context=context)
+    _stage_times["predict_ms"] = (time.time() - _t2) * 1000
 
     # For finished matches, overlay frozen prediction data if available
+    _t3 = time.time()
     predictions = await _overlay_frozen_predictions(session, predictions)
+    _stage_times["overlay_ms"] = (time.time() - _t3) * 1000
 
     # Save predictions to database if requested
     if save:
@@ -1554,6 +1564,14 @@ async def get_predictions(
 
     # Compute time for telemetry
     _compute_ms = (time.time() - _compute_start) * 1000
+    _stage_times["total_ms"] = _compute_ms
+
+    # Log per-stage timing breakdown for performance monitoring
+    logger.info(
+        "predictions_timing | %s | matches=%d",
+        " | ".join(f"{k}={v:.0f}" for k, v in _stage_times.items()),
+        len(prediction_items)
+    )
 
     # Cache the response (for 7+7 requests or upgraded priority requests)
     # This ensures the cache is always populated with full data
