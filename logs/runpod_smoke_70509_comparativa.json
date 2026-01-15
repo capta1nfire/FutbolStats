@@ -1,0 +1,207 @@
+{
+  "timestamp": "2026-01-14T07:08:59.347951Z",
+  "match_id": 70509,
+  "prompt_version": "v1.4",
+  "prompt_hash": "08e3800735774b95",
+  "prompt_size_chars": 6883,
+  "mode": "async",
+  "runpod": {
+    "endpoint_id": "a49n0iddpgsv7r",
+    "job_id": "b30b04ea-7340-454f-a4f1-8fbc2fbcf1c4-u1",
+    "status": "COMPLETED",
+    "delay_time_ms": 60,
+    "execution_time_ms": 68249,
+    "client_elapsed_ms": 70073.45795631409,
+    "worker_id": "tt6xuktkh0h8ty"
+  },
+  "raw_output_length": 4800,
+  "validation": {
+    "status": "ok",
+    "schema_valid": true,
+    "claim_errors": [],
+    "sanitize_warnings": [
+      {
+        "type": "control_token_stripped",
+        "token": "mitigate_loss"
+      },
+      {
+        "type": "footer_stripped",
+        "pattern": "^\\s*an[áa]lisis\\s+realizado\\s+por.*$"
+      }
+    ],
+    "rejection_reason": null
+  },
+  "tokens": {
+    "input": 2416,
+    "output": 1500
+  },
+  "narrative_preview": {
+    "title": "Derrota en Copa del Rey",
+    "body": "Cultural Leonesa no pudo con los visitantes en la Copa del Rey. Los locales tuvieron un arranque rápido con dos goles en los primeros 27 minutos, pero Athletic Club reaccionó con tres goles propios y un penal en tiempo extra para sellar la victoria.\n\nLa diferencia en el marcador se mantuvo durante todo el partido, con los visitantes demostrando una mayor eficiencia en los remates a puerta.",
+    "body_preview": "Cultural Leonesa no pudo con los visitantes en la Copa del Rey. Los locales tuvieron un arranque rápido con dos goles en los primeros 27 minutos, pero Athletic Club reaccionó con tres goles propios y un penal en tiempo extra para sellar la victoria.\n\nLa diferencia en el marcador se mantuvo durante t...",
+    "word_count": 67,
+    "tone": null
+  },
+  "derived_facts_used": {
+    "result": {
+      "final_score_home": 3,
+      "final_score_away": 4,
+      "ft_score": "3-4",
+      "winner": "away",
+      "period": "AET",
+      "ht_score": null
+    },
+    "discipline": {
+      "red_cards": {
+        "home": null,
+        "away": 1
+      },
+      "first_red_card": {
+        "exists": true,
+        "side": "away",
+        "minute": 56,
+        "team_name": "Athletic Club",
+        "player_name": "A. Paredes"
+      },
+      "minutes_played_with_10_men": 64,
+      "yellow_cards": {
+        "home": null,
+        "away": null
+      },
+      "first_card": {
+        "exists": true,
+        "minute": 56,
+        "side": "away",
+        "card_type": "red",
+        "player_name": "A. Paredes"
+      },
+      "early_card_flag_15": false,
+      "late_card_flag_80p": false
+    },
+    "penalties": {
+      "penalty_goals_total": 3,
+      "penalty_goals_home": 0,
+      "penalty_goals_away": 0,
+      "penalty_minutes": [
+        41,
+        45,
+        104
+      ]
+    },
+    "stats_leaders": {
+      "possession": {
+        "leader": "home",
+        "home_value": 59.0,
+        "away_value": 41.0,
+        "delta_pct": 18.0
+      },
+      "shots_on_goal": {
+        "leader": "away",
+        "home_value": 3,
+        "away_value": 4,
+        "delta": -1
+      }
+    },
+    "timeline": {
+      "score_timeline": [
+        {
+          "minute": 16,
+          "side": "home",
+          "new_score_home": 1,
+          "new_score_away": 0,
+          "is_penalty": false
+        },
+        {
+          "minute": 26,
+          "side": "away",
+          "new_score_home": 1,
+          "new_score_away": 1,
+          "is_penalty": false
+        },
+        {
+          "minute": 27,
+          "side": "home",
+          "new_score_home": 2,
+          "new_score_away": 1,
+          "is_penalty": false
+        },
+        {
+          "minute": 38,
+          "side": "away",
+          "new_score_home": 2,
+          "new_score_away": 2,
+          "is_penalty": false
+        },
+        {
+          "minute": 41,
+          "side": "home",
+          "new_score_home": 3,
+          "new_score_away": 2,
+          "is_penalty": true
+        },
+        {
+          "minute": 45,
+          "side": "away",
+          "new_score_home": 3,
+          "new_score_away": 3,
+          "is_penalty": true
+        },
+        {
+          "minute": 104,
+          "side": "away",
+          "new_score_home": 3,
+          "new_score_away": 4,
+          "is_penalty": true
+        }
+      ],
+      "lead_changes_count": 0,
+      "equalizers_count": 3,
+      "decisive_goal_minute": 104,
+      "late_events": {
+        "goals_76_90p": 1,
+        "reds_76_90p": 0,
+        "pens_76_90p": 1
+      }
+    },
+    "efficiency": {
+      "shots_to_goal_ratio": {
+        "home": 0.6,
+        "away": 0.571
+      },
+      "sog_to_goal_ratio": {
+        "home": 1.0,
+        "away": 1.0
+      }
+    },
+    "market_context": {
+      "market_favorite_side": null,
+      "market_implied_probs_normalized": {
+        "home": null,
+        "draw": null,
+        "away": null
+      },
+      "prediction_vs_market_gap": {
+        "home": null,
+        "draw": null,
+        "away": null
+      }
+    },
+    "betting_context": {
+      "prediction_correct": false,
+      "value_bet_present": false,
+      "value_bet_outcome": null,
+      "value_bet_result": null,
+      "conflict_flag": null
+    },
+    "data_completeness": {
+      "stats_present": true,
+      "events_present": true,
+      "odds_present": false,
+      "standings_present": false,
+      "baselines_present": false,
+      "missing_fields": [
+        "corner_kicks"
+      ]
+    }
+  }
+}

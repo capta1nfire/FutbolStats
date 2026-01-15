@@ -1575,9 +1575,13 @@ async def get_predictions(
     _stage_times["total_ms"] = _compute_ms
 
     # Log per-stage timing breakdown for performance monitoring
+    # Separate numeric timings from string metadata (like drift_cache hit/miss)
+    _timing_parts = [f"{k}={v:.0f}" for k, v in _stage_times.items() if isinstance(v, (int, float))]
+    _meta_parts = [f"{k}={v}" for k, v in _stage_times.items() if isinstance(v, str)]
     logger.info(
-        "predictions_timing | %s | matches=%d",
-        " | ".join(f"{k}={v:.0f}" for k, v in _stage_times.items()),
+        "predictions_timing | %s | %s | matches=%d",
+        " | ".join(_timing_parts),
+        " | ".join(_meta_parts) if _meta_parts else "no_meta",
         len(prediction_items)
     )
 

@@ -1,0 +1,222 @@
+{
+  "timestamp": "2026-01-14T07:12:31.475625Z",
+  "match_id": 70509,
+  "prompt_version": "v1.5",
+  "prompt_hash": "cd432d0bb6447a0a",
+  "prompt_size_chars": 7074,
+  "model": "gemini-2.0-flash",
+  "gemini": {
+    "status": "COMPLETED",
+    "client_elapsed_ms": 3347.378969192505,
+    "model_version": "gemini-2.0-flash"
+  },
+  "raw_output_length": 1688,
+  "tokens": {
+    "input": 2618,
+    "output": 546,
+    "total": 3164
+  },
+  "cost_usd": {
+    "input": 0.0002618,
+    "output": 0.0002184,
+    "total": 0.0004802
+  },
+  "validation": {
+    "status": "warning",
+    "schema_valid": true,
+    "claim_errors": [
+      {
+        "type": "unsupported_claim",
+        "claim": "goal_minute",
+        "claimed_minute": 3,
+        "actual_goal_minutes": [
+          38,
+          104,
+          41,
+          45,
+          16,
+          26,
+          27
+        ],
+        "severity": "warning",
+        "evidence_found": false
+      }
+    ],
+    "sanitize_warnings": [
+      {
+        "type": "control_token_stripped",
+        "token": "mitigate_loss"
+      }
+    ],
+    "rejection_reason": null
+  },
+  "narrative_preview": {
+    "title": "Athletic Club vence en prórroga",
+    "body": "El partido entre Cultural Leonesa y Athletic Club, correspondiente a la Copa del Rey, finalizó con un marcador de 3-4 a favor de los visitantes tras la prórroga. El encuentro fue dinámico, con varios goles durante la primera parte, incluyendo un gol del equipo local al minuto 16. El partido se caracterizó por la cantidad de goles de penalti, 3 en total.\n\nEl Athletic Club jugó con 10 hombres desde el minuto 56 tras una tarjeta roja. El total de tiros fue de 5 vs 7, favorable a Los Leones. El gol decisivo llegó en el minuto 104, también de penalti, inclinando la balanza definitivamente a favor del Athletic Club.\n\nApuestas con responsabilidad.",
+    "body_preview": "El partido entre Cultural Leonesa y Athletic Club, correspondiente a la Copa del Rey, finalizó con un marcador de 3-4 a favor de los visitantes tras la prórroga. El encuentro fue dinámico, con varios goles durante la primera parte, incluyendo un gol del equipo local al minuto 16. El partido se carac...",
+    "word_count": 113,
+    "tone": null
+  },
+  "derived_facts_used": {
+    "result": {
+      "final_score_home": 3,
+      "final_score_away": 4,
+      "ft_score": "3-4",
+      "winner": "away",
+      "period": "AET",
+      "ht_score": null
+    },
+    "discipline": {
+      "red_cards": {
+        "home": null,
+        "away": 1
+      },
+      "first_red_card": {
+        "exists": true,
+        "side": "away",
+        "minute": 56,
+        "team_name": "Athletic Club",
+        "player_name": "A. Paredes"
+      },
+      "minutes_played_with_10_men": 64,
+      "yellow_cards": {
+        "home": null,
+        "away": null
+      },
+      "first_card": {
+        "exists": true,
+        "minute": 56,
+        "side": "away",
+        "card_type": "red",
+        "player_name": "A. Paredes"
+      },
+      "early_card_flag_15": false,
+      "late_card_flag_80p": false
+    },
+    "penalties": {
+      "penalty_goals_total": 3,
+      "penalty_goals_home": 0,
+      "penalty_goals_away": 0,
+      "penalty_minutes": [
+        41,
+        45,
+        104
+      ]
+    },
+    "stats_leaders": {
+      "possession": {
+        "leader": "home",
+        "home_value": 59.0,
+        "away_value": 41.0,
+        "delta_pct": 18.0
+      },
+      "shots_on_goal": {
+        "leader": "away",
+        "home_value": 3,
+        "away_value": 4,
+        "delta": -1
+      }
+    },
+    "timeline": {
+      "score_timeline": [
+        {
+          "minute": 16,
+          "side": "home",
+          "new_score_home": 1,
+          "new_score_away": 0,
+          "is_penalty": false
+        },
+        {
+          "minute": 26,
+          "side": "away",
+          "new_score_home": 1,
+          "new_score_away": 1,
+          "is_penalty": false
+        },
+        {
+          "minute": 27,
+          "side": "home",
+          "new_score_home": 2,
+          "new_score_away": 1,
+          "is_penalty": false
+        },
+        {
+          "minute": 38,
+          "side": "away",
+          "new_score_home": 2,
+          "new_score_away": 2,
+          "is_penalty": false
+        },
+        {
+          "minute": 41,
+          "side": "home",
+          "new_score_home": 3,
+          "new_score_away": 2,
+          "is_penalty": true
+        },
+        {
+          "minute": 45,
+          "side": "away",
+          "new_score_home": 3,
+          "new_score_away": 3,
+          "is_penalty": true
+        },
+        {
+          "minute": 104,
+          "side": "away",
+          "new_score_home": 3,
+          "new_score_away": 4,
+          "is_penalty": true
+        }
+      ],
+      "lead_changes_count": 0,
+      "equalizers_count": 3,
+      "decisive_goal_minute": 104,
+      "late_events": {
+        "goals_76_90p": 1,
+        "reds_76_90p": 0,
+        "pens_76_90p": 1
+      }
+    },
+    "efficiency": {
+      "shots_to_goal_ratio": {
+        "home": 0.6,
+        "away": 0.571
+      },
+      "sog_to_goal_ratio": {
+        "home": 1.0,
+        "away": 1.0
+      }
+    },
+    "market_context": {
+      "market_favorite_side": null,
+      "market_implied_probs_normalized": {
+        "home": null,
+        "draw": null,
+        "away": null
+      },
+      "prediction_vs_market_gap": {
+        "home": null,
+        "draw": null,
+        "away": null
+      }
+    },
+    "betting_context": {
+      "prediction_correct": false,
+      "value_bet_present": false,
+      "value_bet_outcome": null,
+      "value_bet_result": null,
+      "conflict_flag": null
+    },
+    "data_completeness": {
+      "stats_present": true,
+      "events_present": true,
+      "odds_present": false,
+      "standings_present": false,
+      "baselines_present": false,
+      "missing_fields": [
+        "corner_kicks"
+      ]
+    }
+  }
+}

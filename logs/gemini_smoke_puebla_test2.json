@@ -1,0 +1,29 @@
+{
+  "timestamp": "2026-01-14T06:56:58.247446Z",
+  "match_id": 1234567,
+  "prompt_version": "v1.4",
+  "prompt_hash": "0081fa5d4888bda2",
+  "prompt_size_chars": 5912,
+  "model": "gemini-2.0-flash",
+  "gemini": {
+    "status": "COMPLETED",
+    "client_elapsed_ms": 2965.2817249298096,
+    "model_version": "gemini-2.0-flash"
+  },
+  "raw_output_length": 1364,
+  "tokens": {
+    "input": 2185,
+    "output": 450,
+    "total": 2635
+  },
+  "cost_usd": {
+    "input": 0.0002185,
+    "output": 0.00018,
+    "total": 0.0003985
+  },
+  "validation": {
+    "status": "error",
+    "error": "Failed to parse JSON from LLM output"
+  },
+  "raw_output_preview": "```json\n{\n  \"match_id\": 1234567,\n  \"lang\": \"es\",\n  \"result\": {\n    \"ft_score\": \"2-1\",\n    \"outcome\": \"HOME\",\n    \"bet_won\": true\n  },\n  \"prediction\": {\n    \"selection\": \"HOME\",\n    \"confidence\": 0.52,\n    \"probabilities\": {\n      \"home\": 0.52,\n      \"draw\": 0.28,\n      \"away\": 0.2\n    }\n  },\n  \"market_odds\": null,\n  \"narrative\": {\n    \"title\": \"Puebla se lleva la victoria en casa\",\n    \"body\": \"Puebla aseguró la victoria en el Estadio Cuauhtémoc en un partido donde demostró superioridad en la posesión del balón con un 56% frente al 44% de Mazatlán. El equipo local tuvo un arranque rápido, marcando 2 goles en los primeros 15 minutos, ambos de Velázquez y Ormeño. \\n\\nA pesar del dominio de Puebla, Mazatlán logró descontar en el minuto 69, pero no fue suficiente para cambiar el rumbo del partido. El encuentro tuvo un total de 28 disparos, 20 por parte de Puebla y 8 de Mazatlán. El partido tuvo un 'conflict_flag' debido a una apuesta de valor perdida.\",\n    \"key_factors\": [\n      {\n       "
+}

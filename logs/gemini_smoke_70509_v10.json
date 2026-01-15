@@ -1,0 +1,29 @@
+{
+  "timestamp": "2026-01-14T07:12:10.094230Z",
+  "match_id": 70509,
+  "prompt_version": "v1.5",
+  "prompt_hash": "cd432d0bb6447a0a",
+  "prompt_size_chars": 7074,
+  "model": "gemini-2.0-flash",
+  "gemini": {
+    "status": "COMPLETED",
+    "client_elapsed_ms": 3516.9427394866943,
+    "model_version": "gemini-2.0-flash"
+  },
+  "raw_output_length": 1685,
+  "tokens": {
+    "input": 2618,
+    "output": 559,
+    "total": 3177
+  },
+  "cost_usd": {
+    "input": 0.0002618,
+    "output": 0.0002236,
+    "total": 0.0004854
+  },
+  "validation": {
+    "status": "error",
+    "error": "Failed to parse JSON from LLM output"
+  },
+  "raw_output_preview": "```json\n{\n  \"match_id\": 70509,\n  \"lang\": \"es\",\n  \"result\": {\n    \"ft_score\": \"3-4\",\n    \"outcome\": \"AWAY\",\n    \"bet_won\": false\n  },\n  \"prediction\": {\n    \"selection\": \"HOME\",\n    \"confidence\": 0.5288,\n    \"probabilities\": {\n      \"home\": 0.5288,\n      \"draw\": 0.1794,\n      \"away\": 0.2918\n    }\n  },\n  \"market_odds\": {\n    \"home\": null,\n    \"draw\": null,\n    \"away\": null\n  },\n  \"narrative\": {\n    \"title\": \"Athletic Club vence en prórroga\",\n    \"body\": \"El partido entre Cultural Leonesa y Athletic Club, correspondiente a la Copa del Rey, finalizó con un marcador de 3-4 a favor de \"Los Leones\" tras la prórroga. El encuentro fue dinámico, con varios goles durante la primera parte, incluyendo un gol del equipo local al minuto 16. \\n\\nEl partido se caracterizó por la alta cantidad de goles de penalti, con 3 en total. \"Los visitantes\" jugaron con 10 hombres desde el minuto 56 tras una tarjeta roja. El total de tiros fue de 5 vs 7 a favor del Athletic Club. El gol decisivo llegó en el minuto 1"
+}

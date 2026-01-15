@@ -1,0 +1,179 @@
+{
+  "timestamp": "2026-01-14T06:06:04.119608Z",
+  "match_id": 1234567,
+  "prompt_version": "v1.4",
+  "prompt_hash": "0081fa5d4888bda2",
+  "prompt_size_chars": 5912,
+  "mode": "sync",
+  "runpod": {
+    "endpoint_id": "a49n0iddpgsv7r",
+    "job_id": "sync-9019c8dc-2b94-46bf-922d-edb71584ce91-u2",
+    "status": "COMPLETED",
+    "delay_time_ms": 61,
+    "execution_time_ms": 27996,
+    "client_elapsed_ms": 28400.508880615234,
+    "worker_id": "tt6xuktkh0h8ty"
+  },
+  "raw_output_length": 1745,
+  "validation": {
+    "status": "ok",
+    "schema_valid": true,
+    "claim_errors": [],
+    "sanitize_warnings": [
+      {
+        "type": "control_token_stripped",
+        "token": "reinforce_win"
+      },
+      {
+        "type": "footer_stripped",
+        "pattern": "^\\s*an[áa]lisis\\s+realizado\\s+por.*$"
+      }
+    ],
+    "rejection_reason": null
+  },
+  "tokens": {
+    "input": 2067,
+    "output": 600
+  },
+  "narrative_preview": {
+    "title": "Puebla domina en casa",
+    "body": "Los locales comenzaron con un arranque rápido, anotando dos goles en los primeros 12 minutos. Mazatlán logró acortar la distancia en el marcador a través de un gol de Sánchez en el minuto 69, pero no pudo igualar el marcador. Puebla mantuvo el control del juego con un dominio del balón del 56% y 20 tiros totales, frente a los 8 de Mazatlán.",
+    "body_preview": "Los locales comenzaron con un arranque rápido, anotando dos goles en los primeros 12 minutos. Mazatlán logró acortar la distancia en el marcador a través de un gol de Sánchez en el minuto 69, pero no pudo igualar el marcador. Puebla mantuvo el control del juego con un dominio del balón del 56% y 20 ...",
+    "word_count": 63,
+    "tone": null
+  },
+  "derived_facts_used": {
+    "result": {
+      "winner": "Puebla",
+      "winner_side": "home",
+      "margin": 1,
+      "result_type": "win",
+      "clean_sheet_home": false,
+      "clean_sheet_away": false
+    },
+    "goals": {
+      "home_goals": 2,
+      "away_goals": 1,
+      "total_goals": 3,
+      "both_teams_scored": true,
+      "home_scorers": [
+        "Velázquez (2')",
+        "Ormeño (12')"
+      ],
+      "away_scorers": [
+        "Sánchez (69')"
+      ],
+      "first_goal_team": "Puebla",
+      "first_goal_minute": 2,
+      "last_goal_team": "Mazatlán",
+      "last_goal_minute": 69
+    },
+    "timeline": {
+      "score_timeline": [
+        {
+          "minute": 2,
+          "score": "1-0",
+          "team": "Puebla"
+        },
+        {
+          "minute": 12,
+          "score": "2-0",
+          "team": "Puebla"
+        },
+        {
+          "minute": 69,
+          "score": "2-1",
+          "team": "Mazatlán"
+        }
+      ],
+      "lead_changes_count": 0,
+      "equalizers_count": 0,
+      "decisive_goal_minute": 12,
+      "late_events": []
+    },
+    "discipline": {
+      "yellow_cards": {
+        "home": 2,
+        "away": 3
+      },
+      "red_cards": {
+        "home": 0,
+        "away": 0
+      },
+      "first_card": {
+        "team": "Puebla",
+        "minute": 35
+      },
+      "early_card_flag_15": false,
+      "late_card_flag_80p": true
+    },
+    "stats_summary": {
+      "possession": {
+        "home": 56,
+        "away": 44,
+        "dominant_side": "home"
+      },
+      "total_shots": {
+        "home": 20,
+        "away": 8,
+        "dominant_side": "home"
+      },
+      "shots_on_goal": {
+        "home": 7,
+        "away": 6,
+        "dominant_side": "home"
+      },
+      "corners": {
+        "home": 8,
+        "away": 3,
+        "dominant_side": "home"
+      }
+    },
+    "efficiency": {
+      "shots_to_goal_ratio": {
+        "home": 0.1,
+        "away": 0.125
+      },
+      "sog_to_goal_ratio": {
+        "home": 0.286,
+        "away": 0.167
+      }
+    },
+    "market_context": {
+      "market_favorite_side": "home",
+      "market_implied_probs_raw": {
+        "home": 0.588,
+        "draw": 0.263,
+        "away": 0.2
+      },
+      "market_implied_probs_normalized": {
+        "home": 0.56,
+        "draw": 0.25,
+        "away": 0.19
+      },
+      "prediction_vs_market_gap": {
+        "home": -0.04,
+        "draw": 0.03,
+        "away": 0.01
+      }
+    },
+    "betting_context": {
+      "value_bet_present": true,
+      "value_bet_selection": "away",
+      "value_bet_edge": 0.131,
+      "value_bet_outcome": "lost",
+      "conflict_flag": "pred_ok_value_lost"
+    },
+    "data_completeness": {
+      "stats_present": true,
+      "events_present": true,
+      "odds_present": true,
+      "missing_fields": []
+    },
+    "prediction_check": {
+      "predicted_result": "HOME",
+      "actual_result": "HOME",
+      "prediction_correct": true
+    }
+  }
+}

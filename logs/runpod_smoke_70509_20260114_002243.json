@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-01-14T00:22:43.034207Z",
+  "match_id": 70509,
+  "prompt_version": "v1.3",
+  "prompt_hash": "5b95eccefb7f45fa",
+  "prompt_size_chars": 9976,
+  "mode": "sync",
+  "runpod": {
+    "endpoint_id": "a49n0iddpgsv7r",
+    "job_id": "sync-7976a02a-5a66-4e11-91a1-7caa1ba3c622-u1",
+    "status": "IN_QUEUE",
+    "delay_time_ms": null,
+    "execution_time_ms": null,
+    "client_elapsed_ms": 90247.44009971619,
+    "worker_id": null
+  },
+  "validation": {
+    "status": "error",
+    "error": "No text in LLM response"
+  },
+  "raw_output": null
+}

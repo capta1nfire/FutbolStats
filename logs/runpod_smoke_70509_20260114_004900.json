@@ -1,0 +1,88 @@
+{
+  "timestamp": "2026-01-14T00:49:00.895290Z",
+  "match_id": 70509,
+  "prompt_version": "v1.3",
+  "prompt_hash": "5b95eccefb7f45fa",
+  "prompt_size_chars": 9976,
+  "mode": "sync",
+  "runpod": {
+    "endpoint_id": "a49n0iddpgsv7r",
+    "job_id": "sync-3a910128-e6c6-47d1-a51b-192a3117f833-u2",
+    "status": "COMPLETED",
+    "delay_time_ms": 59,
+    "execution_time_ms": 39329,
+    "client_elapsed_ms": 39639.08791542053,
+    "worker_id": "tt6xuktkh0h8ty"
+  },
+  "raw_output_length": 2624,
+  "validation": {
+    "status": "ok",
+    "schema_valid": true,
+    "claim_errors": [],
+    "sanitize_warnings": [
+      {
+        "type": "control_token_stripped",
+        "token": "mitigate_loss"
+      }
+    ],
+    "rejection_reason": null
+  },
+  "tokens": {
+    "input": 3271,
+    "output": 825
+  },
+  "narrative_preview": {
+    "title": "Athletic Club se impone en la prórroga",
+    "body_preview": "El partido entre Cultural Leonesa y Athletic Club fue un encuentro intenso que se decidió en la prórroga. Los locales tuvieron una buena posesión del balón, pero no pudieron concretar en goles. Los visitantes, por su parte, fueron más efectivos en los momentos clave, especialmente en los penales.\n\nL...",
+    "word_count": 88,
+    "tone": null
+  },
+  "derived_facts_used": {
+    "result": {
+      "final_score_home": 3,
+      "final_score_away": 4,
+      "ft_score": "3-4",
+      "winner": "away",
+      "period": "AET",
+      "ht_score": null
+    },
+    "discipline": {
+      "red_cards": {
+        "home": null,
+        "away": 1
+      },
+      "first_red_card": {
+        "exists": true,
+        "side": "away",
+        "minute": 56,
+        "team_name": "Athletic Club",
+        "player_name": "A. Paredes"
+      },
+      "minutes_played_with_10_men": 64
+    },
+    "penalties": {
+      "penalty_goals_total": 3,
+      "penalty_goals_home": 0,
+      "penalty_goals_away": 0,
+      "penalty_minutes": [
+        41,
+        45,
+        104
+      ]
+    },
+    "stats_leaders": {
+      "possession": {
+        "leader": "home",
+        "home_value": 59.0,
+        "away_value": 41.0,
+        "delta_pct": 18.0
+      },
+      "shots_on_goal": {
+        "leader": "away",
+        "home_value": 3,
+        "away_value": 4,
+        "delta": -1
+      }
+    }
+  }
+}

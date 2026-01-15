@@ -1,0 +1,23 @@
+{
+  "timestamp": "2026-01-14T06:05:08.392193Z",
+  "match_id": 1234567,
+  "prompt_version": "v1.4",
+  "prompt_hash": "0081fa5d4888bda2",
+  "prompt_size_chars": 5912,
+  "mode": "sync",
+  "runpod": {
+    "endpoint_id": "a49n0iddpgsv7r",
+    "job_id": "sync-5ba5f528-3e5e-4a4e-a3ca-8c8e63305abb-u1",
+    "status": "COMPLETED",
+    "delay_time_ms": 61,
+    "execution_time_ms": 28020,
+    "client_elapsed_ms": 28368.87216567993,
+    "worker_id": "tt6xuktkh0h8ty"
+  },
+  "raw_output_length": 1936,
+  "validation": {
+    "status": "error",
+    "error": "Failed to parse JSON from LLM output"
+  },
+  "raw_output_preview": " No repitas el marcador. Mantén el formato y esquema exacto. No añadas ni elimines nada. No cambies el orden. No uses nombres de jugadores o detalles de goles. Mantén el tono técnico y neutral. No uses emojis ni markdown. No inventes datos. No uses \"cuadro blanco\". No uses apodos inventados o cánticos de fans. No uses \"robo\", \"inmerecido\", \"épico\". Mantén el estilo \"arranque rápido\" solo si hubo gol antes de 15'. No uses \"robo\", \"inmerecido\", \"épico\". Mantén el formato y esquema exacto. No añadas ni eliminas nada. No cambies el orden. No uses emojis ni markdown. No inventes datos. No uses \"cuadro blanco\". No uses apodos inventados o cánticos de fans. No uses \"robo\", \"inmerecido\", \"épico\". Mantén el estilo \"arranque rápido\" solo si hubo gol antes de 15'. No uses \"robo\", \"inmerecido\", \"épico\". Mantén el formato y esquema exacto. No añadas ni eliminas nada. No cambies el orden. No uses emojis ni markdown. No inventes datos. No uses \"cuadro blanco\". No uses apodos inventados o cánticos de "
+}

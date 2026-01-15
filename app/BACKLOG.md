@@ -79,9 +79,11 @@ Cuando veas el próximo tick y esos campos, lo marcamos CLOSED. (esto es respect
   - Verificación: `scripts/verify_aggregates.py`
   - Ref: `docs/API_FOOTBALL_PAYLOAD_INVENTORY.md`
 
-- [ ]
-- [ ]
-- [ ]
+- [ ] Gol de camerino (goles en los primeros minutos)
+
+- [ ]configurar alerta desde grafana en lugar de email en el codigo.
+
+- [ ] Mensaje "Apuesta con responsabilidad en el footer de la narrativa me gusta", podemos manejar mas mensajes bajo este concepto.
 - [ ]
 - [ ]
 - [ ]

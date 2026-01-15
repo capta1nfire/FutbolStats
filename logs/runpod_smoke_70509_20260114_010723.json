@@ -1,0 +1,108 @@
+{
+  "timestamp": "2026-01-14T01:07:23.399367Z",
+  "match_id": 70509,
+  "prompt_version": "v1.3",
+  "prompt_hash": "5b95eccefb7f45fa",
+  "prompt_size_chars": 9976,
+  "mode": "sync",
+  "runpod": {
+    "endpoint_id": "a49n0iddpgsv7r",
+    "job_id": "sync-43594c7f-c093-4891-8792-6394e218ae9f-u1",
+    "status": "COMPLETED",
+    "delay_time_ms": 691,
+    "execution_time_ms": 39470,
+    "client_elapsed_ms": 40444.92316246033,
+    "worker_id": "tt6xuktkh0h8ty"
+  },
+  "raw_output_length": 2583,
+  "validation": {
+    "status": "rejected",
+    "schema_valid": true,
+    "claim_errors": [
+      {
+        "type": "wrong_team_attribution",
+        "claim": "red_card",
+        "expected_side": "away",
+        "mentioned": "local",
+        "severity": "error"
+      },
+      {
+        "type": "derived_facts_conflict",
+        "claim": "red_card_side",
+        "derived_side": "away",
+        "narrative_says": "local",
+        "severity": "error"
+      }
+    ],
+    "sanitize_warnings": [
+      {
+        "type": "control_token_stripped",
+        "token": "mitigate_loss"
+      },
+      {
+        "type": "footer_stripped",
+        "pattern": "^\\s*an[áa]lisis\\s+realizado\\s+por.*$"
+      }
+    ],
+    "rejection_reason": "Unsupported claims: red_card, red_card_side"
+  },
+  "tokens": {
+    "input": 3271,
+    "output": 825
+  },
+  "narrative_preview": {
+    "title": "Athletic Club se impone en la prórroga",
+    "body": "El partido entre Cultural Leonesa y Athletic Club en la Copa del Rey fue intenso y emocionante. Los locales tuvieron una buena posesión del balón, con un 59% frente al 41% del equipo visitante. Sin embargo, los de \"Los Leones\" fueron más efectivos en la definición, marcando cuatro goles frente a los tres de los locales.\n\nLa expulsión del jugador A. Paredes del Athletic Club en el minuto 56 complicó la situación del equipo visitante, pero lograron mantener la ventaja y ganar en la prórroga.",
+    "body_preview": "El partido entre Cultural Leonesa y Athletic Club en la Copa del Rey fue intenso y emocionante. Los locales tuvieron una buena posesión del balón, con un 59% frente al 41% del equipo visitante. Sin embargo, los de \"Los Leones\" fueron más efectivos en la definición, marcando cuatro goles frente a los...",
+    "word_count": 85,
+    "tone": null
+  },
+  "derived_facts_used": {
+    "result": {
+      "final_score_home": 3,
+      "final_score_away": 4,
+      "ft_score": "3-4",
+      "winner": "away",
+      "period": "AET",
+      "ht_score": null
+    },
+    "discipline": {
+      "red_cards": {
+        "home": null,
+        "away": 1
+      },
+      "first_red_card": {
+        "exists": true,
+        "side": "away",
+        "minute": 56,
+        "team_name": "Athletic Club",
+        "player_name": "A. Paredes"
+      },
+      "minutes_played_with_10_men": 64
+    },
+    "penalties": {
+      "penalty_goals_total": 3,
+      "penalty_goals_home": 0,
+      "penalty_goals_away": 0,
+      "penalty_minutes": [
+        41,
+        45,
+        104
+      ]
+    },
+    "stats_leaders": {
+      "possession": {
+        "leader": "home",
+        "home_value": 59.0,
+        "away_value": 41.0,
+        "delta_pct": 18.0
+      },
+      "shots_on_goal": {
+        "leader": "away",
+        "home_value": 3,
+        "away_value": 4,
+        "delta": -1
+      }
+    }
+  }
+}

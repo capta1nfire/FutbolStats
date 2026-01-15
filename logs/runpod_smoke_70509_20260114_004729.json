@@ -1,0 +1,23 @@
+{
+  "timestamp": "2026-01-14T00:47:29.060736Z",
+  "match_id": 70509,
+  "prompt_version": "v1.3",
+  "prompt_hash": "5b95eccefb7f45fa",
+  "prompt_size_chars": 9976,
+  "mode": "sync",
+  "runpod": {
+    "endpoint_id": "a49n0iddpgsv7r",
+    "job_id": "sync-89068927-5bcf-47e5-9533-199805f53ce2-u1",
+    "status": "COMPLETED",
+    "delay_time_ms": 930,
+    "execution_time_ms": 6813,
+    "client_elapsed_ms": 8000.112295150757,
+    "worker_id": "tt6xuktkh0h8ty"
+  },
+  "raw_output_length": 288,
+  "validation": {
+    "status": "error",
+    "error": "Failed to parse JSON from LLM output"
+  },
+  "raw_output_preview": " Asegúrate de usar exactamente el team_name en tus referencias a equipos.\n{\n  \"match_id\": 70509,\n  \"lang\": \"es\",\n  \"result\": {\n    \"ft_score\": \"3-4\",\n    \"outcome\": \"AWAY\",\n    \"bet_won\": false\n  },\n  \"prediction\": {\n    \"selection\": \"HOME\",\n    \"confidence\": 0.5288,\n    \"probabilities\":"
+}
