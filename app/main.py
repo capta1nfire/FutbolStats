@@ -8256,6 +8256,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
         24h: {llm_cost.get("requests_ok_24h", 0)} req | 7d: ${llm_cost.get("cost_7d_usd", 0):.4f}
         <br/>Tokens 24h: {llm_cost.get("tokens_in_24h", 0):,} in / {llm_cost.get("tokens_out_24h", 0):,} out
         <br/>Avg: ${llm_cost.get("avg_cost_per_ok_24h", 0):.6f}/req
+        <br/><a href="https://aistudio.google.com/u/1/usage?project=gen-lang-client-0385923148&amp;tab=billing" target="_blank" style="font-size:0.75rem;">Gemini Console →</a>
       </div>
     </div>
     <div class="card {shadow_mode_color()}">
