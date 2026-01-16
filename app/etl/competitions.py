@@ -265,6 +265,15 @@ CONMEBOL_SUDAMERICANA = Competition(
     priority=Priority.MEDIUM,
 )
 
+# Spain - Domestic Cup
+COPA_DEL_REY = Competition(
+    league_id=143,
+    name="Copa del Rey",
+    match_type="official",
+    priority=Priority.MEDIUM,
+    match_weight=0.85,
+)
+
 # All competitions dictionary
 COMPETITIONS: dict[int, Competition] = {
     comp.league_id: comp
@@ -304,6 +313,8 @@ COMPETITIONS: dict[int, Competition] = {
         BOLIVIA_PRIMERA,
         CONMEBOL_LIBERTADORES,
         CONMEBOL_SUDAMERICANA,
+        # Domestic Cups
+        COPA_DEL_REY,
     ]
 }
 
