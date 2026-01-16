@@ -2399,8 +2399,7 @@ async def sync_odds_for_upcoming_matches() -> dict:
                             odds_home=odds_home,
                             odds_draw=odds_draw,
                             odds_away=odds_away,
-                            bookmaker=odds_data.get("bookmaker", "unknown"),
-                            match_id=match_id,
+                            book=odds_data.get("bookmaker", "unknown"),
                         )
 
                         if not validation.is_usable:
