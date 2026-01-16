@@ -8480,7 +8480,7 @@ async def predictions_rerun(request: Request, body: PredictionRerunRequest):
                 FROM matches m
                 WHERE m.status = 'NS'
                   AND m.date >= NOW()
-                  AND m.date <= NOW() + INTERVAL :window_hours HOUR
+                  AND m.date <= NOW() + make_interval(hours => :window_hours)
                 ORDER BY m.date ASC
                 LIMIT :max_matches
             """), {
