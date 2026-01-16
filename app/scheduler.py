@@ -39,6 +39,10 @@ from app.telemetry.metrics import (
     record_sensor_evaluation_batch,
     record_sensor_retrain,
     set_sensor_health_metrics,
+    # Job health metrics (P0 jobs instrumentation)
+    record_job_run,
+    record_stats_backfill_result,
+    record_fastpath_tick,
 )
 
 logger = logging.getLogger(__name__)
@@ -2099,12 +2103,14 @@ async def capture_finished_match_stats() -> dict:
     """
     import json
     import os
+    import time
     from datetime import datetime
     from pathlib import Path
 
     from app.config import get_settings
 
     settings = get_settings()
+    start_time = time.time()
 
     # Check if job is enabled
     enabled = os.environ.get("STATS_BACKFILL_ENABLED", str(settings.STATS_BACKFILL_ENABLED)).lower()
@@ -2226,14 +2232,35 @@ async def capture_finished_match_stats() -> dict:
             finally:
                 await provider.close()
 
+        # Query remaining pending FT matches for telemetry
+        async with AsyncSessionLocal() as session2:
+            result_pending = await session2.execute(text("""
+                SELECT COUNT(*) as cnt
+                FROM matches
+                WHERE status IN ('FT', 'AET', 'PEN')
+                  AND date >= NOW() - INTERVAL ':lookback hours'
+                  AND external_id IS NOT NULL
+                  AND (stats IS NULL OR stats::text = '{}' OR stats::text = 'null')
+            """.replace(":lookback", str(lookback_hours))))
+            ft_pending = result_pending.scalar() or 0
+
         # Log summary
+        duration_ms = (time.time() - start_time) * 1000
         metrics["completed_at"] = datetime.utcnow().isoformat()
+        metrics["duration_ms"] = round(duration_ms, 1)
+        metrics["ft_pending"] = ft_pending
+
         logger.info(
             f"Stats backfill complete: "
             f"checked={metrics['checked']}, fetched={metrics['fetched']}, "
             f"updated={metrics['updated']}, api_calls={metrics['api_calls']}, "
-            f"errors_429={metrics['errors_429']}, errors_other={metrics['errors_other']}"
+            f"errors_429={metrics['errors_429']}, errors_other={metrics['errors_other']}, "
+            f"ft_pending={ft_pending}"
         )
+
+        # Record telemetry
+        record_job_run(job="stats_backfill", status="ok", duration_ms=duration_ms)
+        record_stats_backfill_result(rows_updated=metrics["updated"], ft_pending=ft_pending)
 
         # Save log file
         logs_dir = Path("logs")
@@ -2245,11 +2272,15 @@ async def capture_finished_match_stats() -> dict:
         return {**metrics, "status": "completed", "log_file": str(log_file)}
 
     except APIBudgetExceeded as e:
+        duration_ms = (time.time() - start_time) * 1000
         logger.warning(f"Stats backfill stopped: {e}. Budget status: {get_api_budget_status()}")
+        record_job_run(job="stats_backfill", status="budget_exceeded", duration_ms=duration_ms)
         metrics["budget_status"] = get_api_budget_status()
         return {**metrics, "status": "budget_exceeded", "error": str(e)}
     except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
         logger.error(f"Stats backfill failed: {e}")
+        record_job_run(job="stats_backfill", status="error", duration_ms=duration_ms)
         return {**metrics, "status": "error", "error": str(e)}
 
 
@@ -2288,6 +2319,7 @@ async def sync_odds_for_upcoming_matches() -> dict:
         record_odds_sync_request,
         record_odds_sync_batch,
         record_odds_sync_run,
+        record_job_run,
     )
     from app.telemetry.validators import validate_odds_1x2
 
@@ -2357,6 +2389,7 @@ async def sync_odds_for_upcoming_matches() -> dict:
                 )
                 duration_ms = (time.time() - start_time) * 1000
                 record_odds_sync_run("ok", duration_ms)
+                record_job_run(job="odds_sync", status="ok", duration_ms=duration_ms)
                 return {**metrics, "status": "no_matches"}
 
             logger.info(f"Odds sync: Found {len(matches)} matches needing odds")
@@ -2464,6 +2497,7 @@ async def sync_odds_for_upcoming_matches() -> dict:
 
         record_odds_sync_batch(metrics["scanned"], metrics["updated"])
         record_odds_sync_run("ok", duration_ms)
+        record_job_run(job="odds_sync", status="ok", duration_ms=duration_ms)
 
         logger.info(
             f"Odds sync complete: "
@@ -2478,12 +2512,14 @@ async def sync_odds_for_upcoming_matches() -> dict:
         duration_ms = (time.time() - start_time) * 1000
         logger.warning(f"Odds sync stopped: {e}. Budget status: {get_api_budget_status()}")
         record_odds_sync_run("error", duration_ms)
+        record_job_run(job="odds_sync", status="budget_exceeded", duration_ms=duration_ms)
         metrics["budget_status"] = get_api_budget_status()
         return {**metrics, "status": "budget_exceeded", "error": str(e)}
     except Exception as e:
         duration_ms = (time.time() - start_time) * 1000
         logger.error(f"Odds sync failed: {e}")
         record_odds_sync_run("error", duration_ms)
+        record_job_run(job="odds_sync", status="error", duration_ms=duration_ms)
         return {**metrics, "status": "error", "error": str(e)}
 
 
@@ -3669,6 +3705,7 @@ async def fast_postmatch_narratives() -> dict:
     import time
     from app.config import get_settings
     from app.llm.fastpath import FastPathService
+    from app.telemetry.metrics import record_job_run, record_fastpath_tick
 
     settings = get_settings()
     start_time = time.time()
@@ -3734,6 +3771,16 @@ async def fast_postmatch_narratives() -> dict:
                         f"errors={result.get('errors', 0)}"
                     )
 
+                # Record telemetry
+                record_job_run(job="fastpath", status="ok", duration_ms=duration_ms)
+                record_fastpath_tick(
+                    status="ok",
+                    completed_ok=result.get("completed", 0),
+                    completed_rejected=0,
+                    completed_error=result.get("errors", 0),
+                    backlog_ready=result.get("stats_ready", 0),
+                )
+
                 return result
 
             finally:
@@ -3745,6 +3792,10 @@ async def fast_postmatch_narratives() -> dict:
         duration_ms = int((time.time() - start_time) * 1000)
         _fastpath_metrics["last_tick_at"] = now
         _fastpath_metrics["last_tick_result"] = {"status": "error", "error": str(e)}
+
+        # Record telemetry (error case)
+        record_job_run(job="fastpath", status="error", duration_ms=duration_ms)
+        record_fastpath_tick(status="error", completed_error=1)
 
         # Persist error tick to DB (separate session to avoid state issues)
         try:

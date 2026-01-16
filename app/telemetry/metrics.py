@@ -1089,6 +1089,198 @@ def set_rerun_serving_enabled(enabled: bool) -> None:
         logger.warning(f"Failed to set rerun serving enabled metric: {e}")
 
 
+# =============================================================================
+# GENERIC JOB HEALTH METRICS (P0 Jobs)
+# =============================================================================
+
+job_runs_total = Counter(
+    "job_runs_total",
+    "Total job runs by job and status",
+    ["job", "status"],  # job: stats_backfill, odds_sync, fastpath; status: ok, error, rate_limited, budget_exceeded
+)
+
+job_last_success_timestamp = Gauge(
+    "job_last_success_timestamp",
+    "Unix timestamp of last successful job run",
+    ["job"],
+)
+
+job_duration_ms = Histogram(
+    "job_duration_ms",
+    "Job duration in milliseconds",
+    ["job"],
+    buckets=[100, 500, 1000, 5000, 10000, 30000, 60000, 120000, 300000, 600000],
+)
+
+
+# =============================================================================
+# STATS BACKFILL METRICS
+# =============================================================================
+
+stats_backfill_rows_updated_total = Counter(
+    "stats_backfill_rows_updated_total",
+    "Stats backfill: matches updated with stats",
+    [],
+)
+
+stats_backfill_ft_pending_gauge = Gauge(
+    "stats_backfill_ft_pending_gauge",
+    "Stats backfill: FT/AET/PEN matches in lookback window without stats",
+    [],
+)
+
+stats_last_captured_at_timestamp = Gauge(
+    "stats_last_captured_at_timestamp",
+    "Unix timestamp of last stats capture (freshness indicator)",
+    [],
+)
+
+
+# =============================================================================
+# FASTPATH METRICS
+# =============================================================================
+
+fastpath_ticks_total = Counter(
+    "fastpath_ticks_total",
+    "FastPath: tick executions by status",
+    ["status"],  # ok, error
+)
+
+fastpath_completed_total = Counter(
+    "fastpath_completed_total",
+    "FastPath: narratives completed by status",
+    ["status"],  # ok, rejected, error
+)
+
+fastpath_backlog_ready_gauge = Gauge(
+    "fastpath_backlog_ready_gauge",
+    "FastPath: audits ready for narrative generation",
+    [],
+)
+
+fastpath_last_success_timestamp = Gauge(
+    "fastpath_last_success_timestamp",
+    "Unix timestamp of last successful fastpath tick",
+    [],
+)
+
+
+# =============================================================================
+# JOB HEALTH TELEMETRY HELPERS
+# =============================================================================
+
+
+def record_job_run(
+    job: str,
+    status: str,
+    duration_ms: float,
+) -> None:
+    """
+    Record a job run with status and duration.
+
+    Args:
+        job: Job identifier (stats_backfill, odds_sync, fastpath)
+        status: "ok", "error", "rate_limited", "budget_exceeded"
+        duration_ms: Job duration in milliseconds
+    """
+    try:
+        job_runs_total.labels(job=job, status=status).inc()
+        if duration_ms > 0:
+            job_duration_ms.labels(job=job).observe(duration_ms)
+        if status == "ok":
+            job_last_success_timestamp.labels(job=job).set(time.time())
+    except Exception as e:
+        logger.warning(f"Failed to record job run metric: {e}")
+
+
+def set_job_last_success(job: str) -> None:
+    """Set the last success timestamp for a job."""
+    try:
+        job_last_success_timestamp.labels(job=job).set(time.time())
+    except Exception as e:
+        logger.warning(f"Failed to set job last success metric: {e}")
+
+
+# =============================================================================
+# STATS BACKFILL TELEMETRY HELPERS
+# =============================================================================
+
+
+def record_stats_backfill_result(
+    rows_updated: int,
+    ft_pending: int,
+) -> None:
+    """
+    Record stats backfill result metrics.
+
+    Args:
+        rows_updated: Number of matches updated with stats
+        ft_pending: Number of FT/AET/PEN matches still without stats
+    """
+    try:
+        if rows_updated > 0:
+            stats_backfill_rows_updated_total.inc(rows_updated)
+            stats_last_captured_at_timestamp.set(time.time())
+        stats_backfill_ft_pending_gauge.set(ft_pending)
+    except Exception as e:
+        logger.warning(f"Failed to record stats backfill metrics: {e}")
+
+
+def set_stats_backfill_pending(ft_pending: int) -> None:
+    """Set the pending FT matches gauge."""
+    try:
+        stats_backfill_ft_pending_gauge.set(ft_pending)
+    except Exception as e:
+        logger.warning(f"Failed to set stats backfill pending metric: {e}")
+
+
+# =============================================================================
+# FASTPATH TELEMETRY HELPERS
+# =============================================================================
+
+
+def record_fastpath_tick(
+    status: str,
+    completed_ok: int = 0,
+    completed_rejected: int = 0,
+    completed_error: int = 0,
+    backlog_ready: int = 0,
+) -> None:
+    """
+    Record fastpath tick metrics.
+
+    Args:
+        status: "ok" or "error"
+        completed_ok: Narratives completed successfully
+        completed_rejected: Narratives rejected by validation
+        completed_error: Narratives failed with error
+        backlog_ready: Audits ready for narrative generation
+    """
+    try:
+        fastpath_ticks_total.labels(status=status).inc()
+        if status == "ok":
+            fastpath_last_success_timestamp.set(time.time())
+
+        if completed_ok > 0:
+            fastpath_completed_total.labels(status="ok").inc(completed_ok)
+        if completed_rejected > 0:
+            fastpath_completed_total.labels(status="rejected").inc(completed_rejected)
+        if completed_error > 0:
+            fastpath_completed_total.labels(status="error").inc(completed_error)
+
+        fastpath_backlog_ready_gauge.set(backlog_ready)
+    except Exception as e:
+        logger.warning(f"Failed to record fastpath tick metrics: {e}")
+
+
+def set_fastpath_backlog(backlog_ready: int) -> None:
+    """Set the fastpath backlog gauge."""
+    try:
+        fastpath_backlog_ready_gauge.set(backlog_ready)
+    except Exception as e:
+        logger.warning(f"Failed to set fastpath backlog metric: {e}")
+
+
 def get_metrics_text() -> tuple[str, str]:
     """
     Generate Prometheus metrics text output.

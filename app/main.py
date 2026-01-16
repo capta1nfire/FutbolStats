@@ -5626,6 +5626,103 @@ async def _calculate_sensor_b_summary(session) -> dict:
         }
 
 
+async def _calculate_jobs_health_summary(session) -> dict:
+    """
+    Calculate P0 jobs health summary for OPS dashboard.
+
+    Monitors the three critical jobs:
+    - stats_backfill: Fetches match stats for finished matches
+    - odds_sync: Syncs 1X2 odds for upcoming matches
+    - fastpath: Generates LLM narratives for finished matches
+
+    Each job reports:
+    - last_success_at: Timestamp of last OK run
+    - minutes_since_success: Gap since last OK
+    - ft_pending (stats_backfill): FT matches without stats
+    - backlog_ready (fastpath): Audits ready for narratives
+    - status: ok/warn/red based on thresholds
+    """
+    from app.telemetry.metrics import (
+        job_last_success_timestamp,
+        stats_backfill_ft_pending_gauge,
+        fastpath_backlog_ready_gauge,
+    )
+
+    now = datetime.utcnow()
+
+    # Helper to format timestamp and calculate age
+    def job_status(job_name: str, max_gap_minutes: int) -> dict:
+        try:
+            ts = job_last_success_timestamp.labels(job=job_name)._value.get()
+            if ts and ts > 0:
+                last_success = datetime.utcfromtimestamp(ts)
+                gap_minutes = (now - last_success).total_seconds() / 60
+                status = "ok"
+                if gap_minutes > max_gap_minutes * 2:
+                    status = "red"
+                elif gap_minutes > max_gap_minutes:
+                    status = "warn"
+                return {
+                    "last_success_at": last_success.isoformat() + "Z",
+                    "minutes_since_success": round(gap_minutes, 1),
+                    "status": status,
+                }
+        except Exception:
+            pass
+        return {
+            "last_success_at": None,
+            "minutes_since_success": None,
+            "status": "unknown",
+        }
+
+    # Stats backfill: runs hourly, warn if >2h, red if >3h
+    stats_health = job_status("stats_backfill", max_gap_minutes=120)
+    try:
+        ft_pending = int(stats_backfill_ft_pending_gauge._value.get() or 0)
+        stats_health["ft_pending"] = ft_pending
+        # Escalate status based on pending count
+        if ft_pending > 10:
+            stats_health["status"] = "red"
+        elif ft_pending > 5 and stats_health["status"] == "ok":
+            stats_health["status"] = "warn"
+    except Exception:
+        stats_health["ft_pending"] = None
+
+    # Odds sync: runs every 6h, warn if >12h, red if >18h
+    odds_health = job_status("odds_sync", max_gap_minutes=720)
+
+    # Fastpath: runs every 2min, warn if >5min, red if >10min
+    fastpath_health = job_status("fastpath", max_gap_minutes=5)
+    try:
+        backlog_ready = int(fastpath_backlog_ready_gauge._value.get() or 0)
+        fastpath_health["backlog_ready"] = backlog_ready
+        # Escalate status based on backlog
+        if backlog_ready > 5:
+            fastpath_health["status"] = "red"
+        elif backlog_ready > 3 and fastpath_health["status"] == "ok":
+            fastpath_health["status"] = "warn"
+    except Exception:
+        fastpath_health["backlog_ready"] = None
+
+    # Overall status: worst of the three
+    statuses = [stats_health["status"], odds_health["status"], fastpath_health["status"]]
+    if "red" in statuses:
+        overall = "red"
+    elif "warn" in statuses:
+        overall = "warn"
+    elif all(s == "ok" for s in statuses):
+        overall = "ok"
+    else:
+        overall = "unknown"
+
+    return {
+        "status": overall,
+        "stats_backfill": stats_health,
+        "odds_sync": odds_health,
+        "fastpath": fastpath_health,
+    }
+
+
 async def _calculate_rerun_serving_summary(session) -> dict:
     """
     Calculate rerun serving metrics for OPS dashboard.
@@ -7321,6 +7418,11 @@ async def _load_ops_data() -> dict:
         rerun_serving_data = await _calculate_rerun_serving_summary(session)
 
         # =============================================================
+        # JOBS HEALTH (P0 jobs monitoring - stats_backfill, odds_sync, fastpath)
+        # =============================================================
+        jobs_health_data = await _calculate_jobs_health_summary(session)
+
+        # =============================================================
         # LLM COST (Gemini token usage from PostMatchAudit)
         # =============================================================
         llm_cost_data = {"provider": "gemini", "status": "unavailable"}
@@ -7503,6 +7605,7 @@ async def _load_ops_data() -> dict:
         "shadow_mode": shadow_mode_data,
         "sensor_b": sensor_b_data,
         "rerun_serving": rerun_serving_data,
+        "jobs_health": jobs_health_data,
     }
 
 
