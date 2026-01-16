@@ -490,6 +490,14 @@ async def get_sensor_report(session: AsyncSession) -> dict:
 
     Returns:
         Report with A vs B comparison metrics and signal score.
+
+    Counts semantics:
+        - evaluated_total: All predictions with evaluated_at set (evaluator ran)
+        - evaluated_with_b: Evaluated predictions where sensor produced probs (not LEARNING)
+        - pending_total: Predictions awaiting evaluation
+        - pending_with_b: Pending where sensor produced probs
+
+    Gating for A vs B comparison uses evaluated_with_b (need sensor predictions to compare).
     """
     if not settings.SENSOR_ENABLED:
         return {"status": "DISABLED", "reason": "SENSOR_ENABLED=false"}
@@ -497,8 +505,76 @@ async def get_sensor_report(session: AsyncSession) -> dict:
     window_days = settings.SENSOR_EVAL_WINDOW_DAYS
     min_samples = settings.SENSOR_MIN_SAMPLES
 
-    # Get evaluated predictions in window
-    query = text(f"""
+    # Get all counts in one query for efficiency
+    counts_query = text(f"""
+        SELECT
+            -- Total counts
+            COUNT(*) AS total,
+            -- Evaluated counts (evaluator has run)
+            COUNT(*) FILTER (WHERE evaluated_at IS NOT NULL) AS evaluated_total,
+            -- Evaluated with B probs (sensor was READY, not LEARNING)
+            COUNT(*) FILTER (WHERE evaluated_at IS NOT NULL AND b_home_prob IS NOT NULL) AS evaluated_with_b,
+            -- Pending counts
+            COUNT(*) FILTER (WHERE evaluated_at IS NULL) AS pending_total,
+            COUNT(*) FILTER (WHERE evaluated_at IS NULL AND b_home_prob IS NOT NULL) AS pending_with_b,
+            -- Sensor state distribution
+            COUNT(*) FILTER (WHERE sensor_state = 'LEARNING') AS state_learning,
+            COUNT(*) FILTER (WHERE sensor_state = 'READY') AS state_ready
+        FROM sensor_predictions
+        WHERE created_at > NOW() - INTERVAL '{window_days} days'
+    """)
+    counts_result = await session.execute(counts_query)
+    counts_row = counts_result.first()
+
+    evaluated_total = int(counts_row.evaluated_total or 0)
+    evaluated_with_b = int(counts_row.evaluated_with_b or 0)
+    pending_total = int(counts_row.pending_total or 0)
+    pending_with_b = int(counts_row.pending_with_b or 0)
+    state_learning = int(counts_row.state_learning or 0)
+    state_ready = int(counts_row.state_ready or 0)
+
+    # Gating uses evaluated_with_b (need sensor predictions to compare A vs B)
+    if evaluated_with_b < min_samples:
+        # Determine current sensor state for messaging
+        if state_ready > 0:
+            sensor_state = "READY"
+            state_msg = f"Sensor is READY, {evaluated_with_b} samples evaluated with B predictions"
+        elif state_learning > 0:
+            sensor_state = "LEARNING"
+            state_msg = f"Sensor is LEARNING (needs {settings.SENSOR_MIN_SAMPLES} training samples), {evaluated_total} matches evaluated but B had no predictions"
+        else:
+            sensor_state = "UNKNOWN"
+            state_msg = "No sensor predictions recorded yet"
+
+        return {
+            "status": "INSUFFICIENT_DATA",
+            "reason": f"Need {min_samples} evaluated_with_b samples, have {evaluated_with_b}",
+            "sensor_state": sensor_state,
+            "counts": {
+                "total": int(counts_row.total or 0),
+                "evaluated_total": evaluated_total,
+                "evaluated_with_b": evaluated_with_b,
+                "pending_total": pending_total,
+                "pending_with_b": pending_with_b,
+            },
+            "state_distribution": {
+                "learning": state_learning,
+                "ready": state_ready,
+            },
+            "gating": {
+                "min_samples_required": min_samples,
+                "samples_evaluated_with_b": evaluated_with_b,
+                "samples_evaluated_total": evaluated_total,
+                "window_days": window_days,
+            },
+            "recommendation": {
+                "status": "LEARNING" if sensor_state == "LEARNING" else "INSUFFICIENT_DATA",
+                "reason": state_msg,
+            },
+        }
+
+    # Get metrics for evaluated_with_b samples only (where we can compare A vs B)
+    metrics_query = text(f"""
         SELECT
             COUNT(*) AS total,
             COUNT(*) FILTER (WHERE a_correct) AS a_correct,
@@ -508,46 +584,17 @@ async def get_sensor_report(session: AsyncSession) -> dict:
             COUNT(*) FILTER (WHERE a_correct AND b_correct) AS both_correct,
             COUNT(*) FILTER (WHERE NOT a_correct AND NOT b_correct) AS both_wrong,
             AVG(a_brier) AS a_brier_avg,
-            AVG(b_brier) FILTER (WHERE b_brier IS NOT NULL) AS b_brier_avg
+            AVG(b_brier) AS b_brier_avg
         FROM sensor_predictions
         WHERE evaluated_at IS NOT NULL
           AND created_at > NOW() - INTERVAL '{window_days} days'
           AND b_home_prob IS NOT NULL
     """)
 
-    result = await session.execute(query)
+    result = await session.execute(metrics_query)
     row = result.first()
 
     total = int(row.total or 0)
-
-    if total < min_samples:
-        # Get counts for pending
-        pending_query = text(f"""
-            SELECT COUNT(*) FROM sensor_predictions
-            WHERE evaluated_at IS NULL
-              AND created_at > NOW() - INTERVAL '{window_days} days'
-        """)
-        pending_result = await session.execute(pending_query)
-        pending = int(pending_result.scalar() or 0)
-
-        return {
-            "status": "NO_DATA",
-            "reason": f"Need {min_samples} evaluated samples, have {total}",
-            "counts": {
-                "total": total,
-                "pending": pending,
-                "evaluated": total,
-            },
-            "gating": {
-                "min_samples_required": min_samples,
-                "samples_evaluated": total,
-                "window_days": window_days,
-            },
-            "recommendation": {
-                "status": "NO_DATA",
-                "reason": f"Need {min_samples} evaluated samples with sensor predictions",
-            },
-        }
 
     # Calculate metrics
     a_brier = float(row.a_brier_avg or 0)
@@ -584,21 +631,19 @@ async def get_sensor_report(session: AsyncSession) -> dict:
         rec_status = "TRACKING"
         rec_reason = f"B and A comparable (score={signal_score:.2f}), continue monitoring"
 
-    # Counts
-    pending_query = text(f"""
-        SELECT COUNT(*) FROM sensor_predictions
-        WHERE evaluated_at IS NULL
-          AND created_at > NOW() - INTERVAL '{window_days} days'
-    """)
-    pending_result = await session.execute(pending_query)
-    pending = int(pending_result.scalar() or 0)
-
     return {
         "status": "ok",
+        "sensor_state": "READY",
         "counts": {
-            "total": total + pending,
-            "evaluated": total,
-            "pending": pending,
+            "total": int(counts_row.total or 0),
+            "evaluated_total": evaluated_total,
+            "evaluated_with_b": evaluated_with_b,
+            "pending_total": pending_total,
+            "pending_with_b": pending_with_b,
+        },
+        "state_distribution": {
+            "learning": state_learning,
+            "ready": state_ready,
         },
         "metrics": {
             "a_accuracy": round(a_correct / total, 4) if total > 0 else 0,
@@ -616,7 +661,8 @@ async def get_sensor_report(session: AsyncSession) -> dict:
         },
         "gating": {
             "min_samples_required": min_samples,
-            "samples_evaluated": total,
+            "samples_evaluated_with_b": evaluated_with_b,
+            "samples_evaluated_total": evaluated_total,
             "window_days": window_days,
             "signal_go_threshold": signal_go,
             "signal_noise_threshold": signal_noise,
