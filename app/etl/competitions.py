@@ -171,6 +171,60 @@ LIGUE_1 = Competition(
     priority=Priority.HIGH,
 )
 
+# Europe - Secondary Leagues (ML volume)
+EFL_CHAMPIONSHIP = Competition(
+    league_id=40,
+    name="EFL Championship",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
+EREDIVISIE = Competition(
+    league_id=88,
+    name="Eredivisie",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
+PRIMEIRA_LIGA = Competition(
+    league_id=94,
+    name="Primeira Liga",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
+# UEFA Club Competitions
+CHAMPIONS_LEAGUE = Competition(
+    league_id=2,
+    name="UEFA Champions League",
+    match_type="official",
+    priority=Priority.HIGH,
+)
+
+EUROPA_LEAGUE = Competition(
+    league_id=3,
+    name="UEFA Europa League",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
+CONFERENCE_LEAGUE = Competition(
+    league_id=848,
+    name="UEFA Conference League",
+    match_type="official",
+    priority=Priority.MEDIUM,
+    match_weight=0.9,
+)
+
+# England - Domestic Cup
+FA_CUP = Competition(
+    league_id=45,
+    name="FA Cup",
+    match_type="official",
+    priority=Priority.MEDIUM,
+    match_weight=0.85,
+)
+
 # LATAM - Pack1 (Domestic leagues)
 BRAZIL_SERIE_A = Competition(
     league_id=71,
@@ -293,12 +347,20 @@ COMPETITIONS: dict[int, Competition] = {
         AFRICA_CUP,
         AFC_ASIAN_CUP,
         INTERNATIONAL_FRIENDLIES,
-        # Club Leagues
+        # Club Leagues - Top 5
         PREMIER_LEAGUE,
         LA_LIGA,
         SERIE_A,
         BUNDESLIGA,
         LIGUE_1,
+        # Club Leagues - Secondary (ML volume)
+        EFL_CHAMPIONSHIP,
+        EREDIVISIE,
+        PRIMEIRA_LIGA,
+        # UEFA Club Competitions
+        CHAMPIONS_LEAGUE,
+        EUROPA_LEAGUE,
+        CONFERENCE_LEAGUE,
         # LATAM / CONMEBOL
         BRAZIL_SERIE_A,
         MEXICO_LIGA_MX,
@@ -315,6 +377,7 @@ COMPETITIONS: dict[int, Competition] = {
         CONMEBOL_SUDAMERICANA,
         # Domestic Cups
         COPA_DEL_REY,
+        FA_CUP,
     ]
 }
 

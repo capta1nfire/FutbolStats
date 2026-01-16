@@ -56,6 +56,7 @@ TOP5_LEAGUES = [39, 140, 135, 78, 61]  # EPL, La Liga, Serie A, Bundesliga, Ligu
 # Extended leagues for lineup monitoring (more volume)
 EXTENDED_LEAGUES = [
     39, 140, 135, 78, 61,  # Top 5
+    40,   # England - EFL Championship (2nd division, high ML volume)
     94,   # Portugal - Primeira Liga
     88,   # Netherlands - Eredivisie
     203,  # Turkey - Super Lig
