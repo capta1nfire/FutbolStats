@@ -937,6 +937,10 @@ class PredictionItem(BaseModel):
     frozen_at: Optional[str] = None  # ISO datetime when prediction was frozen
     frozen_ev: Optional[dict] = None  # EV values at freeze time
 
+    # Rerun serving (DB-first gated)
+    served_from_rerun: Optional[bool] = None  # True if served from DB rerun prediction
+    rerun_model_version: Optional[str] = None  # Model version of rerun prediction
+
 
 class PredictionsResponse(BaseModel):
     predictions: list[PredictionItem]
@@ -1760,6 +1764,9 @@ async def get_predictions(
             is_frozen=pred.get("is_frozen", False),
             frozen_at=pred.get("frozen_at"),
             frozen_ev=pred.get("frozen_ev"),
+            # Rerun serving fields
+            served_from_rerun=pred.get("served_from_rerun"),
+            rerun_model_version=pred.get("rerun_model_version"),
         )
         prediction_items.append(item)
 
