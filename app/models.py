@@ -2,8 +2,10 @@
 
 from datetime import datetime
 from typing import Optional
+from uuid import UUID
 
 from sqlalchemy import JSON, Column, LargeBinary, UniqueConstraint
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -115,6 +117,13 @@ class Prediction(SQLModel, table=True):
     away_prob: float = Field(description="Probability of away win")
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Rerun tracking (nullable for legacy predictions)
+    run_id: Optional[UUID] = Field(
+        default=None,
+        sa_column=Column(PG_UUID(as_uuid=True), nullable=True, index=True),
+        description="UUID of the prediction rerun that generated this prediction"
+    )
 
     # Frozen prediction fields - preserves original prediction before match starts
     is_frozen: bool = Field(default=False, description="Whether prediction is locked")
@@ -1064,3 +1073,77 @@ class TeamOverride(SQLModel, table=True):
     )
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PredictionRerun(SQLModel, table=True):
+    """
+    Audit log for manual prediction reruns.
+
+    Tracks before/after stats when re-predicting NS matches with a different
+    model architecture. Used for controlled model promotion and A/B analysis.
+
+    The is_active flag controls serving preference:
+    - True: serve predictions from this rerun (two-stage)
+    - False: rollback to baseline (serve baseline predictions)
+    """
+
+    __tablename__ = "prediction_reruns"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    run_id: UUID = Field(
+        sa_column=Column(PG_UUID(as_uuid=True), nullable=False, unique=True),
+        description="Unique identifier for this rerun"
+    )
+    run_type: str = Field(
+        max_length=50,
+        description="'manual_rerun', 'model_promotion', 'rollback'"
+    )
+
+    # Configuration
+    window_hours: int = Field(description="Time window for NS matches")
+    architecture_before: str = Field(max_length=50, description="e.g., 'baseline'")
+    architecture_after: str = Field(max_length=50, description="e.g., 'two_stage'")
+    model_version_before: str = Field(max_length=50, description="e.g., 'v1.0.0'")
+    model_version_after: str = Field(max_length=50, description="e.g., 'v1.1.0-twostage'")
+
+    # Scope
+    matches_total: int = Field(description="Total NS matches in window")
+    matches_with_odds: int = Field(description="Matches with odds coverage")
+
+    # Before/After stats (JSON)
+    stats_before: dict = Field(
+        sa_column=Column(JSON, nullable=False),
+        description="Stats snapshot before rerun"
+    )
+    stats_after: dict = Field(
+        sa_column=Column(JSON, nullable=False),
+        description="Stats snapshot after rerun"
+    )
+
+    # Top changes for review
+    top_deltas: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="Top N matches with largest probability changes"
+    )
+
+    # Outcome metrics (filled when matches complete)
+    evaluation_window_days: int = Field(default=14, description="Days to wait for evaluation")
+    evaluated_matches: int = Field(default=0, description="Matches evaluated so far")
+    evaluation_report: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="Accuracy/Brier comparison after matches complete"
+    )
+
+    # Status for serving preference (rollback without deleting)
+    is_active: bool = Field(
+        default=True,
+        description="If False, rollback: serve baseline instead of rerun predictions"
+    )
+
+    # Metadata
+    triggered_by: Optional[str] = Field(default=None, max_length=100)
+    notes: Optional[str] = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    evaluated_at: Optional[datetime] = Field(default=None)

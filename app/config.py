@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # Draw threshold for two-stage (None = use argmax, 0.30 = threshold override)
     MODEL_DRAW_THRESHOLD: float = 0.0  # 0.0 = disabled (argmax), >0 = threshold
 
+    # Prediction Rerun Serving Preference
+    # When True, serve two-stage predictions from active reruns for NS matches
+    # When False (or no active rerun), serve baseline predictions
+    # This allows A/B testing and rollback via flag toggle without deleting data
+    PREFER_RERUN_PREDICTIONS: bool = False  # Default: serve baseline
+
     # Shadow Mode Evaluation Thresholds
     SHADOW_MIN_SAMPLES: int = 50  # Minimum evaluated predictions for GO/NO_GO decision
     SHADOW_BRIER_IMPROVEMENT_MIN: float = 0.005  # Shadow must improve brier by this much for GO

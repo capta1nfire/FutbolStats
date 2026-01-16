@@ -8424,6 +8424,359 @@ async def trigger_odds_sync(request: Request):
 
 
 # =============================================================================
+# PREDICTION RERUN (controlled two-stage model promotion)
+# =============================================================================
+
+
+class PredictionRerunRequest(BaseModel):
+    """Request body for predictions rerun endpoint."""
+    window_hours: int = Field(default=168, ge=24, le=336, description="Time window (24-336h)")
+    dry_run: bool = Field(default=True, description="If True, compute stats but don't save")
+    architecture: str = Field(default="two_stage", description="Target architecture")
+    max_matches: int = Field(default=500, ge=1, le=1000, description="Max matches to rerun")
+    notes: Optional[str] = Field(default=None, description="Optional notes for audit")
+
+
+@app.post("/dashboard/ops/predictions_rerun")
+async def predictions_rerun(request: Request, body: PredictionRerunRequest):
+    """
+    Manual re-prediction of NS matches with two-stage architecture.
+
+    ONE-OFF operation for controlled model promotion. Requires:
+    - Dashboard token authentication
+    - dry_run=true first to review changes
+    - Saves before/after stats to prediction_reruns table
+
+    Rollback: Set is_active=false on the rerun record (or PREFER_RERUN_PREDICTIONS=false).
+    """
+    import uuid
+    from sqlalchemy import text
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from app.ml.shadow import get_shadow_engine, is_shadow_enabled
+    from app.models import Prediction, PredictionRerun
+    from app.features import FeatureEngineer
+
+    settings = get_settings()
+    run_id = uuid.uuid4()
+
+    async with AsyncSessionLocal() as session:
+        try:
+            # 1. Validate shadow engine is available
+            shadow_engine = get_shadow_engine()
+            if not shadow_engine or not shadow_engine.is_loaded:
+                return {
+                    "status": "error",
+                    "error": "Shadow engine (two-stage) not loaded. Train it first.",
+                    "hint": "Set MODEL_SHADOW_ARCHITECTURE=two_stage and trigger shadow training."
+                }
+
+            # 2. Query NS matches in window
+            result = await session.execute(text("""
+                SELECT m.id, m.external_id, m.date, m.league_id,
+                       m.odds_home, m.odds_draw, m.odds_away
+                FROM matches m
+                WHERE m.status = 'NS'
+                  AND m.date >= NOW()
+                  AND m.date <= NOW() + INTERVAL :window_hours HOUR
+                ORDER BY m.date ASC
+                LIMIT :max_matches
+            """), {
+                "window_hours": body.window_hours,
+                "max_matches": body.max_matches,
+            })
+            ns_matches = result.fetchall()
+
+            if not ns_matches:
+                return {
+                    "status": "no_matches",
+                    "message": f"No NS matches found in {body.window_hours}h window",
+                    "run_id": str(run_id),
+                }
+
+            match_ids = [m[0] for m in ns_matches]
+            matches_with_odds = sum(1 for m in ns_matches if m[4] is not None)
+
+            # 3. Get BEFORE predictions (baseline)
+            result = await session.execute(text("""
+                SELECT p.match_id, p.model_version, p.home_prob, p.draw_prob, p.away_prob
+                FROM predictions p
+                WHERE p.match_id = ANY(:match_ids)
+                  AND p.model_version = :version
+            """), {
+                "match_ids": match_ids,
+                "version": settings.MODEL_VERSION,
+            })
+            before_preds = {row[0]: {"home": row[2], "draw": row[3], "away": row[4]} for row in result.fetchall()}
+
+            # 4. Compute BEFORE stats
+            before_stats = _compute_prediction_stats(before_preds, "before")
+
+            # 5. Get features for NS matches
+            feature_engineer = FeatureEngineer(session=session)
+            df = await feature_engineer.get_upcoming_matches_features()
+
+            # Filter to our NS matches
+            df_ns = df[df["match_id"].isin(match_ids)].copy()
+
+            if len(df_ns) == 0:
+                return {
+                    "status": "no_features",
+                    "error": "Could not compute features for NS matches",
+                    "matches_total": len(match_ids),
+                }
+
+            # 6. Generate AFTER predictions (two-stage)
+            after_preds = {}
+            after_probas = shadow_engine.predict_proba(df_ns)
+
+            for idx, (_, row) in enumerate(df_ns.iterrows()):
+                match_id = row["match_id"]
+                after_preds[match_id] = {
+                    "home": float(after_probas[idx][0]),
+                    "draw": float(after_probas[idx][1]),
+                    "away": float(after_probas[idx][2]),
+                }
+
+            # 7. Compute AFTER stats
+            after_stats = _compute_prediction_stats(after_preds, "after")
+
+            # 8. Compute top deltas (largest draw probability changes)
+            top_deltas = []
+            for match_id in after_preds:
+                if match_id in before_preds:
+                    delta_draw = after_preds[match_id]["draw"] - before_preds[match_id]["draw"]
+                    top_deltas.append({
+                        "match_id": match_id,
+                        "delta_draw": round(delta_draw, 4),
+                        "before": {k: round(v, 4) for k, v in before_preds[match_id].items()},
+                        "after": {k: round(v, 4) for k, v in after_preds[match_id].items()},
+                    })
+
+            top_deltas.sort(key=lambda x: abs(x["delta_draw"]), reverse=True)
+            top_deltas = top_deltas[:20]  # Keep top 20
+
+            # 9. Build response
+            response = {
+                "status": "dry_run" if body.dry_run else "executed",
+                "run_id": str(run_id),
+                "window_hours": body.window_hours,
+                "architecture_before": settings.MODEL_ARCHITECTURE,
+                "architecture_after": body.architecture,
+                "model_version_before": settings.MODEL_VERSION,
+                "model_version_after": f"v1.1.0-{body.architecture}",
+                "matches_total": len(match_ids),
+                "matches_with_features": len(df_ns),
+                "matches_with_odds": matches_with_odds,
+                "matches_with_before_pred": len(before_preds),
+                "stats_before": before_stats,
+                "stats_after": after_stats,
+                "top_deltas": top_deltas[:10],  # Show top 10 in response
+            }
+
+            # 10. If not dry_run, save to database
+            if not body.dry_run:
+                # Save new predictions with run_id
+                saved = 0
+                errors = 0
+                model_version_after = f"v1.1.0-{body.architecture}"
+
+                for match_id, probs in after_preds.items():
+                    try:
+                        # Insert new prediction (with different model_version, so no conflict)
+                        await session.execute(text("""
+                            INSERT INTO predictions (match_id, model_version, home_prob, draw_prob, away_prob, run_id, created_at)
+                            VALUES (:match_id, :model_version, :home_prob, :draw_prob, :away_prob, :run_id, NOW())
+                            ON CONFLICT (match_id, model_version)
+                            DO UPDATE SET
+                                home_prob = EXCLUDED.home_prob,
+                                draw_prob = EXCLUDED.draw_prob,
+                                away_prob = EXCLUDED.away_prob,
+                                run_id = EXCLUDED.run_id,
+                                created_at = NOW()
+                        """), {
+                            "match_id": match_id,
+                            "model_version": model_version_after,
+                            "home_prob": probs["home"],
+                            "draw_prob": probs["draw"],
+                            "away_prob": probs["away"],
+                            "run_id": run_id,
+                        })
+                        saved += 1
+                    except Exception as e:
+                        errors += 1
+                        logger.warning(f"Rerun: failed to save match {match_id}: {e}")
+
+                # Create audit record
+                rerun_record = PredictionRerun(
+                    run_id=run_id,
+                    run_type="manual_rerun",
+                    window_hours=body.window_hours,
+                    architecture_before=settings.MODEL_ARCHITECTURE,
+                    architecture_after=body.architecture,
+                    model_version_before=settings.MODEL_VERSION,
+                    model_version_after=model_version_after,
+                    matches_total=len(match_ids),
+                    matches_with_odds=matches_with_odds,
+                    stats_before=before_stats,
+                    stats_after=after_stats,
+                    top_deltas=top_deltas,
+                    is_active=True,
+                    triggered_by="dashboard_ops",
+                    notes=body.notes,
+                )
+                session.add(rerun_record)
+                await session.commit()
+
+                response["saved"] = saved
+                response["errors"] = errors
+                response["audit_record_created"] = True
+
+                logger.info(
+                    f"[RERUN] Predictions rerun complete: run_id={run_id}, "
+                    f"saved={saved}, errors={errors}, matches={len(match_ids)}"
+                )
+
+            return response
+
+        except Exception as e:
+            logger.error(f"[RERUN] Predictions rerun failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Rerun failed: {str(e)}")
+
+
+def _compute_prediction_stats(preds: dict, label: str) -> dict:
+    """Compute stats for a set of predictions."""
+    if not preds:
+        return {"n": 0, "label": label}
+
+    home_probs = [p["home"] for p in preds.values()]
+    draw_probs = [p["draw"] for p in preds.values()]
+    away_probs = [p["away"] for p in preds.values()]
+
+    # Max prob for each prediction (confidence)
+    max_probs = [max(p["home"], p["draw"], p["away"]) for p in preds.values()]
+
+    # Count picks
+    picks = {"home": 0, "draw": 0, "away": 0}
+    for p in preds.values():
+        if p["home"] >= p["draw"] and p["home"] >= p["away"]:
+            picks["home"] += 1
+        elif p["draw"] >= p["home"] and p["draw"] >= p["away"]:
+            picks["draw"] += 1
+        else:
+            picks["away"] += 1
+
+    n = len(preds)
+    return {
+        "label": label,
+        "n": n,
+        "avg_p_home": round(sum(home_probs) / n, 4),
+        "avg_p_draw": round(sum(draw_probs) / n, 4),
+        "avg_p_away": round(sum(away_probs) / n, 4),
+        "avg_p_max": round(sum(max_probs) / n, 4),
+        "draw_share_pct": round(100.0 * picks["draw"] / n, 2),
+        "home_picks": picks["home"],
+        "draw_picks": picks["draw"],
+        "away_picks": picks["away"],
+    }
+
+
+@app.post("/dashboard/ops/predictions_rerun_rollback")
+async def predictions_rerun_rollback(request: Request, run_id: str):
+    """
+    Rollback a prediction rerun by setting is_active=False.
+
+    This doesn't delete data - it just marks the rerun as inactive,
+    so the serving logic will prefer baseline predictions.
+    """
+    import uuid
+    from sqlalchemy import text
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    try:
+        parsed_run_id = uuid.UUID(run_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid run_id format")
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(text("""
+            UPDATE prediction_reruns
+            SET is_active = FALSE
+            WHERE run_id = :run_id
+            RETURNING id, run_type, matches_total
+        """), {"run_id": parsed_run_id})
+
+        row = result.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Rerun not found")
+
+        await session.commit()
+
+        logger.info(f"[RERUN] Rollback executed: run_id={run_id}")
+
+        return {
+            "status": "rolled_back",
+            "run_id": run_id,
+            "rerun_id": row[0],
+            "run_type": row[1],
+            "matches_affected": row[2],
+            "message": "Rerun deactivated. Baseline predictions will be served.",
+        }
+
+
+@app.get("/dashboard/ops/predictions_reruns.json")
+async def list_prediction_reruns(request: Request):
+    """List all prediction reruns with their status."""
+    from sqlalchemy import text
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(text("""
+            SELECT
+                run_id, run_type, window_hours,
+                architecture_before, architecture_after,
+                model_version_before, model_version_after,
+                matches_total, matches_with_odds,
+                stats_before, stats_after,
+                is_active, triggered_by, notes,
+                created_at, evaluated_at, evaluated_matches
+            FROM prediction_reruns
+            ORDER BY created_at DESC
+            LIMIT 20
+        """))
+
+        reruns = []
+        for row in result.fetchall():
+            reruns.append({
+                "run_id": str(row[0]),
+                "run_type": row[1],
+                "window_hours": row[2],
+                "architecture_before": row[3],
+                "architecture_after": row[4],
+                "model_version_before": row[5],
+                "model_version_after": row[6],
+                "matches_total": row[7],
+                "matches_with_odds": row[8],
+                "draw_share_before": row[9].get("draw_share_pct") if row[9] else None,
+                "draw_share_after": row[10].get("draw_share_pct") if row[10] else None,
+                "is_active": row[11],
+                "triggered_by": row[12],
+                "notes": row[13],
+                "created_at": row[14].isoformat() if row[14] else None,
+                "evaluated_at": row[15].isoformat() if row[15] else None,
+                "evaluated_matches": row[16],
+            })
+
+        return {"reruns": reruns, "count": len(reruns)}
+
+
+# =============================================================================
 # ALPHA PROGRESS SNAPSHOTS (track Re-test/Alpha evolution over time)
 # =============================================================================
 
