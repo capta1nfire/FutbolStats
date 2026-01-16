@@ -449,3 +449,10 @@ WHERE league_id = {LEAGUE_ID}
 | Fecha | Competition | league_id | Tipo | P0 Status | Notas |
 |-------|-------------|-----------|------|-----------|-------|
 | 2026-01-16 | Copa del Rey | 143 | UX-only | PASS | weight=0.85, priority=MEDIUM, cup sin standings (esperado) |
+| 2026-01-16 | EFL Championship | 40 | Analítica | PASS | 37 fixtures, odds 32%, stats pending (sin FT aún) |
+| 2026-01-16 | Eredivisie | 88 | Analítica | PASS | 3K+ fixtures, odds 47%, stats 100% |
+| 2026-01-16 | Primeira Liga | 94 | Analítica | PASS | 3K+ fixtures, odds 7% (bajo), stats 100% |
+| 2026-01-16 | Champions League | 2 | Analítica | PASS | 1.5K fixtures, priority HIGH |
+| 2026-01-16 | Europa League | 3 | Analítica | PASS | 1.9K fixtures, priority MEDIUM |
+| 2026-01-16 | Conference League | 848 | UX-only | PASS | 2K fixtures, odds 0% (bajo), weight=0.9 |
+| 2026-01-16 | FA Cup | 45 | UX-only | PASS | 5K fixtures, odds 100%, weight=0.85 |
