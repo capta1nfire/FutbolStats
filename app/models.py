@@ -1147,3 +1147,81 @@ class PredictionRerun(SQLModel, table=True):
     notes: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     evaluated_at: Optional[datetime] = Field(default=None)
+
+
+class OpsAuditLog(SQLModel, table=True):
+    """
+    Audit log for OPS dashboard actions.
+
+    Tracks manual triggers, syncs, and other operational actions
+    for accountability and debugging.
+    """
+
+    __tablename__ = "ops_audit_log"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    # Action identification
+    action: str = Field(
+        max_length=100,
+        index=True,
+        description="Action type: predictions_trigger, odds_sync, sync_window, etc."
+    )
+    request_id: str = Field(
+        max_length=36,
+        description="UUID for request correlation"
+    )
+
+    # Actor identification
+    actor: str = Field(
+        max_length=100,
+        description="Actor type: dashboard_token, scheduler, api_key"
+    )
+    actor_id: str = Field(
+        max_length=32,
+        index=True,
+        description="Short hash of token/session for identification"
+    )
+
+    # Request context
+    ip_address: Optional[str] = Field(
+        default=None,
+        max_length=45,
+        description="Client IP address (IPv4 or IPv6)"
+    )
+    user_agent: Optional[str] = Field(
+        default=None,
+        max_length=500,
+        description="Client user agent"
+    )
+
+    # Action parameters and result
+    params: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="Action parameters"
+    )
+    result: str = Field(
+        max_length=20,
+        description="Result: ok, error, rejected"
+    )
+    result_detail: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="Detailed result/response summary"
+    )
+    error_message: Optional[str] = Field(
+        default=None,
+        max_length=500,
+        description="Error message if result=error"
+    )
+
+    # Timestamps
+    created_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        index=True
+    )
+    duration_ms: Optional[int] = Field(
+        default=None,
+        description="Action duration in milliseconds"
+    )

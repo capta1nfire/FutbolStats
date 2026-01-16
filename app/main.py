@@ -1235,9 +1235,32 @@ async def etl_sync_window(
 
     Requires API key authentication.
     """
+    from app.ops.audit import log_ops_action
+
     logger.info(f"[ETL] sync-window request: days_back={days_back}, days_ahead={days_ahead}")
 
+    start_time = time.time()
     result = await global_sync_window(days_ahead=days_ahead, days_back=days_back)
+    duration_ms = int((time.time() - start_time) * 1000)
+
+    # Audit log
+    try:
+        async with AsyncSessionLocal() as audit_session:
+            await log_ops_action(
+                session=audit_session,
+                request=request,
+                action="sync_window",
+                params={"days_ahead": days_ahead, "days_back": days_back},
+                result="ok" if not result.get("error") else "error",
+                result_detail={
+                    "matches_synced": result.get("matches_synced", 0),
+                    "days_processed": result.get("days_processed", 0),
+                },
+                error_message=result.get("error"),
+                duration_ms=duration_ms,
+            )
+    except Exception as audit_err:
+        logger.warning(f"Failed to log audit for sync_window: {audit_err}")
 
     return {
         "status": "ok",
@@ -4958,8 +4981,10 @@ async def predictions_trigger_save(request: Request):
     from app.ml.shadow import is_shadow_enabled, log_shadow_prediction
     from app.ml.sensor import log_sensor_prediction
     from app.config import get_settings
+    from app.ops.audit import log_ops_action, OpsActionTimer
 
     sensor_settings = get_settings()
+    start_time = time.time()
 
     diagnostics = {
         "status": "unknown",
@@ -5091,6 +5116,28 @@ async def predictions_trigger_save(request: Request):
         diagnostics["status"] = "error"
         diagnostics["errors"].append(str(e))
         logger.error(f"Predictions trigger failed: {e}")
+
+    # Audit log
+    duration_ms = int((time.time() - start_time) * 1000)
+    try:
+        async with AsyncSessionLocal() as audit_session:
+            await log_ops_action(
+                session=audit_session,
+                request=request,
+                action="predictions_trigger",
+                params=None,
+                result="ok" if diagnostics["status"] == "ok" else "error",
+                result_detail={
+                    "predictions_saved": diagnostics.get("predictions_saved", 0),
+                    "ns_matches": diagnostics.get("ns_matches", 0),
+                    "shadow_logged": diagnostics.get("shadow_logged", 0),
+                    "sensor_logged": diagnostics.get("sensor_logged", 0),
+                },
+                error_message=diagnostics["errors"][0] if diagnostics["errors"] else None,
+                duration_ms=duration_ms,
+            )
+    except Exception as audit_err:
+        logger.warning(f"Failed to log audit for predictions_trigger: {audit_err}")
 
     return diagnostics
 
@@ -7607,6 +7654,49 @@ async def _load_ops_data() -> dict:
         if isinstance(lid, int):
             item["league_name"] = league_name_by_id.get(lid)
 
+    # =============================================================
+    # COVERAGE BY LEAGUE (NS matches in next 48h with predictions/odds)
+    # =============================================================
+    coverage_by_league = []
+    try:
+        async with AsyncSessionLocal() as session:
+            res = await session.execute(
+                text(
+                    """
+                    SELECT
+                        m.league_id,
+                        COUNT(*) AS total_ns,
+                        COUNT(p.id) AS with_prediction,
+                        COUNT(m.odds_home) AS with_odds
+                    FROM matches m
+                    LEFT JOIN predictions p ON p.match_id = m.id
+                    WHERE m.status = 'NS'
+                      AND m.date >= NOW()
+                      AND m.date < NOW() + INTERVAL '48 hours'
+                      AND m.league_id IS NOT NULL
+                    GROUP BY m.league_id
+                    ORDER BY COUNT(*) DESC
+                    LIMIT 15
+                    """
+                )
+            )
+            for row in res.fetchall():
+                lid = int(row[0])
+                total = int(row[1])
+                with_pred = int(row[2])
+                with_odds = int(row[3])
+                coverage_by_league.append({
+                    "league_id": lid,
+                    "league_name": league_name_by_id.get(lid, f"League {lid}"),
+                    "total_ns": total,
+                    "with_prediction": with_pred,
+                    "with_odds": with_odds,
+                    "pred_pct": round(with_pred / total * 100, 1) if total > 0 else 0,
+                    "odds_pct": round(with_odds / total * 100, 1) if total > 0 else 0,
+                })
+    except Exception as e:
+        logger.warning(f"Could not calculate coverage by league: {e}")
+
     return {
         "generated_at": now.isoformat(),
         "league_mode": league_mode,
@@ -7640,6 +7730,7 @@ async def _load_ops_data() -> dict:
         "sensor_b": sensor_b_data,
         "rerun_serving": rerun_serving_data,
         "jobs_health": jobs_health_data,
+        "coverage_by_league": coverage_by_league,
     }
 
 
@@ -7779,7 +7870,7 @@ def _render_history_rows(history: list) -> str:
     return rows
 
 
-def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
+def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_logs: list | None = None) -> str:
     budget = data.get("budget") or {}
     budget_status = budget.get("status", "unknown")
     # New API account status fields
@@ -7812,6 +7903,8 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
     llm_cost = data.get("llm_cost") or {}
     shadow_mode = data.get("shadow_mode") or {}
     sensor_b = data.get("sensor_b") or {}
+    jobs_health = data.get("jobs_health") or {}
+    coverage_by_league = data.get("coverage_by_league") or []
 
     def budget_color() -> str:
         if budget_status in ("unavailable", "error"):
@@ -7899,6 +7992,17 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
             return "blue"    # B is noise, A is fine
         return "blue"
 
+    def jobs_health_color() -> str:
+        """Color for Jobs Health card."""
+        status = jobs_health.get("status", "unknown")
+        if status == "red":
+            return "red"
+        if status == "warn":
+            return "yellow"
+        if status == "ok":
+            return "green"
+        return "blue"
+
     # Tables HTML
     upcoming_rows = ""
     for r in upcoming:
@@ -7935,6 +8039,46 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
         )
     if not latest_rows:
         latest_rows = "<tr><td colspan='8'>Sin snapshots PIT</td></tr>"
+
+    # Audit log rows
+    audit_logs = audit_logs or []
+    audit_rows = ""
+    for log in audit_logs:
+        result_color = ""
+        if log.get("result") == "ok":
+            result_color = "color: var(--green);"
+        elif log.get("result") == "error":
+            result_color = "color: var(--red);"
+        audit_time = _format_timestamp_la(log.get("created_at") or "")
+        duration = f'{log.get("duration_ms")}ms' if log.get("duration_ms") else "—"
+        audit_rows += (
+            "<tr>"
+            f"<td>{audit_time}</td>"
+            f"<td>{log.get('action', '—')}</td>"
+            f"<td>{log.get('actor_id', '—')[:8]}</td>"
+            f"<td style='{result_color}'>{log.get('result', '—').upper()}</td>"
+            f"<td>{log.get('result_summary', '') or '—'}</td>"
+            f"<td>{duration}</td>"
+            "</tr>"
+        )
+    if not audit_rows:
+        audit_rows = "<tr><td colspan='6' style='text-align:center; color:var(--muted);'>— Sin acciones recientes —</td></tr>"
+
+    # Coverage by league rows
+    coverage_rows = ""
+    for cov in coverage_by_league:
+        pred_color = "color: var(--green);" if cov.get("pred_pct", 0) >= 90 else "color: var(--yellow);" if cov.get("pred_pct", 0) >= 70 else "color: var(--red);"
+        odds_color = "color: var(--green);" if cov.get("odds_pct", 0) >= 90 else "color: var(--yellow);" if cov.get("odds_pct", 0) >= 50 else "color: var(--muted);"
+        coverage_rows += (
+            "<tr>"
+            f"<td>{cov.get('league_name', 'Unknown')} ({cov.get('league_id')})</td>"
+            f"<td>{cov.get('total_ns', 0)}</td>"
+            f"<td style='{pred_color}'>{cov.get('with_prediction', 0)} ({cov.get('pred_pct', 0)}%)</td>"
+            f"<td style='{odds_color}'>{cov.get('with_odds', 0)} ({cov.get('odds_pct', 0)}%)</td>"
+            "</tr>"
+        )
+    if not coverage_rows:
+        coverage_rows = "<tr><td colspan='4' style='text-align:center; color:var(--muted);'>— No hay partidos NS en próximas 48h —</td></tr>"
 
     html = f"""<!DOCTYPE html>
 <html lang="es">
@@ -8176,6 +8320,142 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
     .copy-json-btn:last-child {{
       border-radius: 0 0 0.5rem 0.5rem;
     }}
+    /* Debug Pack button */
+    .debug-pack-btn {{
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.4rem 0.75rem;
+      border-radius: 0.6rem;
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #f87171;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }}
+    .debug-pack-btn:hover {{
+      background: rgba(239, 68, 68, 0.25);
+      border-color: rgba(239, 68, 68, 0.6);
+      color: #fca5a5;
+    }}
+    .debug-pack-btn.success {{
+      background: rgba(34, 197, 94, 0.15);
+      border-color: rgba(34, 197, 94, 0.4);
+      color: var(--green);
+    }}
+    /* Controls section */
+    .controls-section {{
+      margin-top: 1.5rem;
+      padding: 1rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+    }}
+    .controls-section h3 {{
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: var(--text);
+    }}
+    .controls-grid {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }}
+    .control-btn {{
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.6rem 1rem;
+      border-radius: 0.5rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      transition: all 0.2s;
+    }}
+    .control-btn:hover {{
+      border-color: var(--blue);
+      background: rgba(59, 130, 246, 0.1);
+    }}
+    .control-btn:disabled {{
+      opacity: 0.5;
+      cursor: not-allowed;
+    }}
+    .control-btn.danger {{
+      border-color: rgba(239, 68, 68, 0.4);
+      color: #f87171;
+    }}
+    .control-btn.danger:hover {{
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.6);
+    }}
+    .control-btn.success {{
+      background: rgba(34, 197, 94, 0.15);
+      border-color: rgba(34, 197, 94, 0.4);
+      color: var(--green);
+    }}
+    .control-result {{
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 0.5rem;
+    }}
+    /* Confirmation modal */
+    .confirm-overlay {{
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }}
+    .confirm-overlay.show {{
+      display: flex;
+    }}
+    .confirm-modal {{
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1.5rem;
+      max-width: 400px;
+      width: 90%;
+    }}
+    .confirm-modal h4 {{
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+    }}
+    .confirm-modal p {{
+      color: var(--muted);
+      font-size: 0.875rem;
+      margin-bottom: 1rem;
+    }}
+    .confirm-modal .buttons {{
+      display: flex;
+      gap: 0.75rem;
+      justify-content: flex-end;
+    }}
+    .confirm-modal .btn-cancel {{
+      padding: 0.5rem 1rem;
+      border-radius: 0.5rem;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+    }}
+    .confirm-modal .btn-confirm {{
+      padding: 0.5rem 1rem;
+      border-radius: 0.5rem;
+      border: none;
+      background: var(--blue);
+      color: white;
+      cursor: pointer;
+    }}
+    .confirm-modal .btn-confirm.danger {{
+      background: var(--red);
+    }}
   </style>
 </head>
 <body>
@@ -8197,6 +8477,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
           <a class="nav-link" data-path="/dashboard/ops/history" href="/dashboard/ops/history">History</a>
           <a class="nav-link" data-path="/dashboard/ops/logs" href="/dashboard/ops/logs">Logs (debug)</a>
           <a class="nav-link" href="/ops/logout" style="margin-left: auto; color: #f87171;">Logout</a>
+          <button class="debug-pack-btn" id="debugPackBtn">📦 Copy Debug Pack</button>
           <div class="json-dropdown">
             <span class="json-dropdown-btn">JSON ▾</span>
             <div class="json-dropdown-content">
@@ -8319,6 +8600,16 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
         <br/><a href="/model/sensor-report" target="_blank" style="font-size:0.75rem;">Full report →</a>
       </div>
     </div>
+    <div class="card {jobs_health_color()}">
+      <div class="card-label">Jobs Health (P0)<span class="info-icon">i<span class="tooltip">Estado de los 3 jobs P0 del scheduler. stats_backfill: fetch stats de partidos FT (cada 60min). odds_sync: sync odds 1X2 (cada 6h). fastpath: narrativas LLM (cada 2min). RED: job falló o acumuló backlog.</span></span></div>
+      <div class="card-value">{jobs_health.get("status", "?").upper()}</div>
+      <div class="card-sub">
+        Stats: {(jobs_health.get("stats_backfill") or {}).get("status", "?").upper()} ({(jobs_health.get("stats_backfill") or {}).get("ft_pending", "?")} pending)
+        <br/>Odds: {(jobs_health.get("odds_sync") or {}).get("status", "?").upper()} | FastPath: {(jobs_health.get("fastpath") or {}).get("status", "?").upper()}
+        {f'<br/><span style="font-size:0.7rem;">Stats last: {_format_timestamp_la((jobs_health.get("stats_backfill") or {}).get("last_success_at") or "") or "—"}</span>' if jobs_health.get("stats_backfill") else ''}
+        <br/><a href="docs/GRAFANA_ALERTS_CHECKLIST.md#p0-jobs-health-scheduler-jobs" target="_blank" style="font-size:0.75rem;">Runbook →</a>
+      </div>
+    </div>
   </div>
 
   <div class="tables">
@@ -8327,6 +8618,14 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
       <table>
         <thead><tr><th>Liga (ID)</th><th>Upcoming</th></tr></thead>
         <tbody>{upcoming_rows}</tbody>
+      </table>
+    </div>
+
+    <div class="table-card">
+      <h3>Coverage by League (48h)<span class="info-icon">i<span class="tooltip">Cobertura de predicciones y odds para partidos NS en las próximas 48 horas. VERDE: ≥90% pred / ≥90% odds. AMARILLO: ≥70% pred / ≥50% odds. ROJO: &lt;70% predicciones.</span></span></h3>
+      <table>
+        <thead><tr><th>Liga (ID)</th><th>NS</th><th>Predictions</th><th>Odds</th></tr></thead>
+        <tbody>{coverage_rows}</tbody>
       </table>
     </div>
 
@@ -8398,6 +8697,43 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
         <tbody>{latest_rows}</tbody>
       </table>
     </div>
+
+    <div class="table-card" style="grid-column: 1 / -1;">
+      <h3>Recent Actions (Audit Log)<span class="info-icon">i<span class="tooltip">Registro de acciones manuales ejecutadas desde el dashboard OPS. Incluye: predictions_trigger, odds_sync, sync_window. Actor ID es hash del token usado.</span></span></h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Timestamp</th><th>Action</th><th>Actor</th><th>Result</th><th>Summary</th><th>Duration</th>
+          </tr>
+        </thead>
+        <tbody>{audit_rows}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="controls-section">
+    <h3>Controls<span class="info-icon">i<span class="tooltip">Acciones manuales del dashboard. Cada acción requiere confirmación y se registra en el Audit Log. Usar con precaución.</span></span></h3>
+    <div class="controls-grid">
+      <button class="control-btn" id="triggerPredictionsBtn" data-action="predictions_trigger" data-endpoint="/dashboard/predictions/trigger" data-method="POST" data-confirm="Esto generará predicciones para todos los partidos NS sin predicción. Puede tomar varios segundos.">
+        Trigger Predictions
+      </button>
+      <button class="control-btn" id="syncOddsBtn" data-action="odds_sync" data-endpoint="/dashboard/ops/odds_sync" data-method="POST" data-confirm="Esto sincronizará odds 1X2 de API-Football para partidos próximos. Consume budget de API.">
+        Sync Odds
+      </button>
+    </div>
+    <div id="controlResult" class="control-result"></div>
+  </div>
+
+  <!-- Confirmation Modal -->
+  <div class="confirm-overlay" id="confirmOverlay">
+    <div class="confirm-modal">
+      <h4 id="confirmTitle">Confirmar acción</h4>
+      <p id="confirmMessage">¿Estás seguro?</p>
+      <div class="buttons">
+        <button class="btn-cancel" id="confirmCancel">Cancelar</button>
+        <button class="btn-confirm" id="confirmOk">Ejecutar</button>
+      </div>
+    </div>
   </div>
 
   <div class="footer">
@@ -8443,6 +8779,150 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
         }}
       }});
     }});
+
+    // Copy Debug Pack (combines ops.json + pit.json + logs.json)
+    document.getElementById('debugPackBtn')?.addEventListener('click', async () => {{
+      const btn = document.getElementById('debugPackBtn');
+      const orig = btn.textContent;
+      btn.textContent = '⏳ Loading...';
+      btn.disabled = true;
+
+      try {{
+        const params = new URLSearchParams(window.location.search);
+        const token = params.get('token');
+        const addToken = (url) => token ? url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token) : url;
+
+        // Fetch all endpoints in parallel
+        const [opsRes, pitRes, logsRes] = await Promise.all([
+          fetch(addToken('/dashboard/ops.json')),
+          fetch(addToken('/dashboard/pit.json')),
+          fetch(addToken('/dashboard/ops/logs.json?limit=50'))
+        ]);
+
+        const [opsJson, pitJson, logsJson] = await Promise.all([
+          opsRes.json(),
+          pitRes.json(),
+          logsRes.json()
+        ]);
+
+        // Combine into debug pack
+        const debugPack = {{
+          _meta: {{
+            generated_at: new Date().toISOString(),
+            source: 'OPS Dashboard Debug Pack',
+            version: '1.0'
+          }},
+          ops: opsJson,
+          pit: pitJson,
+          logs: logsJson
+        }};
+
+        await navigator.clipboard.writeText(JSON.stringify(debugPack, null, 2));
+        btn.textContent = '✅ Copied!';
+        btn.classList.add('success');
+        setTimeout(() => {{
+          btn.textContent = orig;
+          btn.classList.remove('success');
+          btn.disabled = false;
+        }}, 2000);
+      }} catch (e) {{
+        console.error('Debug pack error:', e);
+        btn.textContent = '❌ Error';
+        setTimeout(() => {{
+          btn.textContent = orig;
+          btn.disabled = false;
+        }}, 2000);
+      }}
+    }});
+
+    // Controls with confirmation
+    (function() {{
+      const overlay = document.getElementById('confirmOverlay');
+      const confirmTitle = document.getElementById('confirmTitle');
+      const confirmMessage = document.getElementById('confirmMessage');
+      const confirmOk = document.getElementById('confirmOk');
+      const confirmCancel = document.getElementById('confirmCancel');
+      const controlResult = document.getElementById('controlResult');
+      let pendingAction = null;
+
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get('token');
+
+      // Setup control buttons
+      document.querySelectorAll('.control-btn').forEach(btn => {{
+        btn.addEventListener('click', () => {{
+          const action = btn.getAttribute('data-action');
+          const endpoint = btn.getAttribute('data-endpoint');
+          const method = btn.getAttribute('data-method') || 'POST';
+          const confirmMsg = btn.getAttribute('data-confirm') || '¿Ejecutar esta acción?';
+
+          pendingAction = {{ btn, action, endpoint, method }};
+          confirmTitle.textContent = `Confirmar: ${{action}}`;
+          confirmMessage.textContent = confirmMsg;
+          overlay.classList.add('show');
+        }});
+      }});
+
+      // Cancel confirmation
+      confirmCancel.addEventListener('click', () => {{
+        overlay.classList.remove('show');
+        pendingAction = null;
+      }});
+
+      // Clicking overlay background cancels
+      overlay.addEventListener('click', (e) => {{
+        if (e.target === overlay) {{
+          overlay.classList.remove('show');
+          pendingAction = null;
+        }}
+      }});
+
+      // Execute confirmed action
+      confirmOk.addEventListener('click', async () => {{
+        if (!pendingAction) return;
+
+        const {{ btn, action, endpoint, method }} = pendingAction;
+        overlay.classList.remove('show');
+
+        const orig = btn.textContent;
+        btn.textContent = '⏳ Running...';
+        btn.disabled = true;
+        controlResult.textContent = '';
+
+        try {{
+          const url = token ? endpoint + (endpoint.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token) : endpoint;
+          const res = await fetch(url, {{
+            method: method,
+            headers: {{ 'Content-Type': 'application/json' }}
+          }});
+
+          const data = await res.json();
+
+          if (res.ok) {{
+            btn.textContent = '✅ Done';
+            btn.classList.add('success');
+            controlResult.textContent = `✅ ${{action}}: ${{data.message || JSON.stringify(data).slice(0, 100)}}`;
+            controlResult.style.color = 'var(--green)';
+          }} else {{
+            btn.textContent = '❌ Error';
+            controlResult.textContent = `❌ ${{action}}: ${{data.detail || data.error || 'Unknown error'}}`;
+            controlResult.style.color = 'var(--red)';
+          }}
+        }} catch (e) {{
+          btn.textContent = '❌ Error';
+          controlResult.textContent = `❌ ${{action}}: ${{e.message}}`;
+          controlResult.style.color = 'var(--red)';
+        }}
+
+        setTimeout(() => {{
+          btn.textContent = orig;
+          btn.classList.remove('success');
+          btn.disabled = false;
+        }}, 3000);
+
+        pendingAction = null;
+      }});
+    }})();
   </script>
 </body>
 </html>"""
@@ -8467,7 +8947,16 @@ async def ops_dashboard_html(request: Request):
     # Fetch KPI history (last 14 days for dashboard display)
     history = await _get_ops_history(days=14)
 
-    html = _render_ops_dashboard_html(data, history=history)
+    # Fetch recent audit logs for dashboard display
+    audit_logs = []
+    try:
+        from app.ops.audit import get_recent_audit_logs
+        async with AsyncSessionLocal() as session:
+            audit_logs = await get_recent_audit_logs(session, limit=10)
+    except Exception as e:
+        logger.warning(f"Could not fetch audit logs: {e}")
+
+    html = _render_ops_dashboard_html(data, history=history, audit_logs=audit_logs)
     return HTMLResponse(content=html)
 
 
@@ -8812,8 +9301,31 @@ async def trigger_odds_sync(request: Request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
     from app.scheduler import sync_odds_for_upcoming_matches
+    from app.ops.audit import log_ops_action
 
+    start_time = time.time()
     result = await sync_odds_for_upcoming_matches()
+    duration_ms = int((time.time() - start_time) * 1000)
+
+    # Audit log
+    try:
+        async with AsyncSessionLocal() as audit_session:
+            await log_ops_action(
+                session=audit_session,
+                request=request,
+                action="odds_sync",
+                params=None,
+                result="ok" if result.get("status") == "completed" else "error",
+                result_detail={
+                    "scanned": result.get("scanned", 0),
+                    "updated": result.get("updated", 0),
+                    "api_calls": result.get("api_calls", 0),
+                },
+                duration_ms=duration_ms,
+            )
+    except Exception as audit_err:
+        logger.warning(f"Failed to log audit for odds_sync: {audit_err}")
+
     return {
         "status": "executed",
         "result": result,
