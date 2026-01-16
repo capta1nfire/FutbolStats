@@ -8404,6 +8404,25 @@ async def trigger_ops_rollup(request: Request):
     }
 
 
+@app.post("/dashboard/ops/odds_sync")
+async def trigger_odds_sync(request: Request):
+    """
+    Manually trigger the odds sync job for upcoming matches.
+
+    Protected by dashboard token. Use for testing/validation or immediate sync.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from app.scheduler import sync_odds_for_upcoming_matches
+
+    result = await sync_odds_for_upcoming_matches()
+    return {
+        "status": "executed",
+        "result": result,
+    }
+
+
 # =============================================================================
 # ALPHA PROGRESS SNAPSHOTS (track Re-test/Alpha evolution over time)
 # =============================================================================
