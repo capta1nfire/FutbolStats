@@ -97,6 +97,13 @@ class Settings(BaseSettings):
     FASTPATH_LOOKBACK_MINUTES: int = 90
     FASTPATH_MAX_CONCURRENT_JOBS: int = 10
 
+    # Odds Sync Job Configuration
+    ODDS_SYNC_ENABLED: bool = True  # Kill-switch for odds sync job
+    ODDS_SYNC_WINDOW_HOURS: int = 48  # Sync odds for matches in next N hours
+    ODDS_SYNC_MAX_FIXTURES: int = 100  # Max fixtures per run (API budget control)
+    ODDS_SYNC_FRESHNESS_HOURS: int = 6  # Skip if odds updated within N hours
+    ODDS_SYNC_INTERVAL_HOURS: int = 6  # How often to run the job
+
     # Telemetry / Observability
     METRICS_BEARER_TOKEN: str = ""  # Bearer token for /metrics endpoint (Grafana Cloud scraping)
 

@@ -2254,6 +2254,241 @@ async def capture_finished_match_stats() -> dict:
 
 
 # =============================================================================
+# ODDS SYNC JOB (Auditor Decision 2026-01-16)
+# =============================================================================
+# Dedicated job to sync 1X2 odds for upcoming matches.
+# Solves: API-Football DOES provide LATAM odds, but we weren't fetching them.
+# Budget: ~250-400 requests/day with 48h window, 6h interval, 100 cap.
+
+
+async def sync_odds_for_upcoming_matches() -> dict:
+    """
+    Sync 1X2 odds for upcoming matches from API-Football.
+
+    This job:
+    1. Selects NS matches in configurable window (default 48h ahead)
+    2. Skips matches with recent odds (freshness check)
+    3. Fetches 1X2 odds from API-Football
+    4. Updates matches.odds_* columns with validated odds
+
+    Guardrails:
+    - ODDS_SYNC_ENABLED: Kill-switch (default True)
+    - ODDS_SYNC_WINDOW_HOURS: Look-ahead window (default 48h)
+    - ODDS_SYNC_MAX_FIXTURES: Cap per run (default 100)
+    - ODDS_SYNC_FRESHNESS_HOURS: Skip if odds < N hours old (default 6h)
+    - Respects global API budget (APIBudgetExceeded)
+    - Auto-throttle on 429 errors
+
+    Run frequency: Every 6 hours (configurable via ODDS_SYNC_INTERVAL_HOURS)
+    """
+    import time
+    from datetime import datetime
+    from app.config import get_settings
+    from app.telemetry.metrics import (
+        record_odds_sync_request,
+        record_odds_sync_batch,
+        record_odds_sync_run,
+    )
+    from app.telemetry.validators import validate_odds_1x2
+
+    settings = get_settings()
+    start_time = time.time()
+
+    # Check kill-switch
+    if not settings.ODDS_SYNC_ENABLED:
+        logger.info("Odds sync job disabled via ODDS_SYNC_ENABLED=false")
+        record_odds_sync_run("disabled", 0)
+        return {"status": "disabled"}
+
+    # Configuration
+    window_hours = settings.ODDS_SYNC_WINDOW_HOURS
+    max_fixtures = settings.ODDS_SYNC_MAX_FIXTURES
+    freshness_hours = settings.ODDS_SYNC_FRESHNESS_HOURS
+
+    # Metrics tracking
+    metrics = {
+        "scanned": 0,
+        "updated": 0,
+        "skipped_fresh": 0,
+        "skipped_no_external_id": 0,
+        "api_calls": 0,
+        "api_empty": 0,
+        "api_errors": 0,
+        "errors_429": 0,
+        "started_at": datetime.utcnow().isoformat(),
+    }
+
+    try:
+        async with AsyncSessionLocal() as session:
+            now = datetime.utcnow()
+
+            # Select NS matches needing odds:
+            # - status = 'NS' (not started)
+            # - date >= NOW() AND date <= NOW() + window_hours
+            # - external_id IS NOT NULL
+            # - odds_recorded_at IS NULL OR odds_recorded_at < NOW() - freshness_hours
+            # ORDER BY date ASC (soonest first - prioritize imminent matches)
+            # LIMIT max_fixtures
+            result = await session.execute(text("""
+                SELECT id, external_id, date, league_id,
+                       odds_home, odds_draw, odds_away, odds_recorded_at
+                FROM matches
+                WHERE status = 'NS'
+                  AND date >= NOW()
+                  AND date <= NOW() + INTERVAL ':window hours'
+                  AND external_id IS NOT NULL
+                  AND (
+                      odds_recorded_at IS NULL
+                      OR odds_recorded_at < NOW() - INTERVAL ':freshness hours'
+                  )
+                ORDER BY date ASC
+                LIMIT :max_fixtures
+            """.replace(":window", str(window_hours)).replace(":freshness", str(freshness_hours))), {
+                "max_fixtures": max_fixtures,
+            })
+
+            matches = result.fetchall()
+            metrics["scanned"] = len(matches)
+
+            if not matches:
+                logger.info(
+                    f"Odds sync: No matches need odds update "
+                    f"(window={window_hours}h, freshness={freshness_hours}h)"
+                )
+                duration_ms = (time.time() - start_time) * 1000
+                record_odds_sync_run("ok", duration_ms)
+                return {**metrics, "status": "no_matches"}
+
+            logger.info(f"Odds sync: Found {len(matches)} matches needing odds")
+
+            # Use APIFootballProvider to fetch odds
+            provider = APIFootballProvider()
+
+            try:
+                for match in matches:
+                    match_id = match.id
+                    external_id = match.external_id
+
+                    if not external_id:
+                        metrics["skipped_no_external_id"] += 1
+                        continue
+
+                    # Check API call cap
+                    if metrics["api_calls"] >= max_fixtures:
+                        logger.info(f"Odds sync: Hit call cap ({max_fixtures}), stopping")
+                        break
+
+                    try:
+                        # Fetch odds from API
+                        odds_data = await provider.get_odds(external_id)
+                        metrics["api_calls"] += 1
+
+                        if not odds_data:
+                            # API returned no odds (not available for this fixture)
+                            metrics["api_empty"] += 1
+                            record_odds_sync_request("empty", 0)
+                            logger.debug(f"No odds available for match {match_id} (external: {external_id})")
+                            continue
+
+                        # Validate odds before writing
+                        odds_home = odds_data.get("odds_home")
+                        odds_draw = odds_data.get("odds_draw")
+                        odds_away = odds_data.get("odds_away")
+
+                        validation = validate_odds_1x2(
+                            odds_home=odds_home,
+                            odds_draw=odds_draw,
+                            odds_away=odds_away,
+                            bookmaker=odds_data.get("bookmaker", "unknown"),
+                            match_id=match_id,
+                        )
+
+                        if not validation.is_usable:
+                            logger.warning(
+                                f"Odds sync: Rejecting invalid odds for match {match_id}: "
+                                f"H={odds_home}, D={odds_draw}, A={odds_away}, "
+                                f"violations={validation.violations}"
+                            )
+                            record_odds_sync_request("error", 0)
+                            metrics["api_errors"] += 1
+                            continue
+
+                        # Update match with validated odds
+                        await session.execute(text("""
+                            UPDATE matches
+                            SET odds_home = :odds_home,
+                                odds_draw = :odds_draw,
+                                odds_away = :odds_away,
+                                odds_recorded_at = NOW()
+                            WHERE id = :match_id
+                        """), {
+                            "match_id": match_id,
+                            "odds_home": odds_home,
+                            "odds_draw": odds_draw,
+                            "odds_away": odds_away,
+                        })
+                        metrics["updated"] += 1
+                        record_odds_sync_request("ok", 0)
+
+                        logger.debug(
+                            f"Odds sync: Updated match {match_id}: "
+                            f"H={odds_home:.2f}, D={odds_draw:.2f}, A={odds_away:.2f} "
+                            f"(source: {odds_data.get('bookmaker', 'unknown')})"
+                        )
+
+                    except APIBudgetExceeded as e:
+                        logger.warning(f"Odds sync: Budget exceeded, stopping. {e}")
+                        break
+
+                    except Exception as e:
+                        error_str = str(e).lower()
+                        if "429" in error_str or "rate limit" in error_str:
+                            metrics["errors_429"] += 1
+                            record_odds_sync_request("rate_limited", 0)
+                            logger.warning("Odds sync: 429 rate limit hit, stopping run")
+                            break
+                        else:
+                            metrics["api_errors"] += 1
+                            record_odds_sync_request("error", 0)
+                            logger.warning(f"Error fetching odds for match {match_id}: {e}")
+                            continue
+
+                await session.commit()
+
+            finally:
+                await provider.close()
+
+        # Log summary
+        duration_ms = (time.time() - start_time) * 1000
+        metrics["completed_at"] = datetime.utcnow().isoformat()
+        metrics["duration_ms"] = round(duration_ms, 1)
+
+        record_odds_sync_batch(metrics["scanned"], metrics["updated"])
+        record_odds_sync_run("ok", duration_ms)
+
+        logger.info(
+            f"Odds sync complete: "
+            f"scanned={metrics['scanned']}, updated={metrics['updated']}, "
+            f"api_calls={metrics['api_calls']}, empty={metrics['api_empty']}, "
+            f"errors_429={metrics['errors_429']}, duration={duration_ms:.0f}ms"
+        )
+
+        return {**metrics, "status": "completed"}
+
+    except APIBudgetExceeded as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.warning(f"Odds sync stopped: {e}. Budget status: {get_api_budget_status()}")
+        record_odds_sync_run("error", duration_ms)
+        metrics["budget_status"] = get_api_budget_status()
+        return {**metrics, "status": "budget_exceeded", "error": str(e)}
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(f"Odds sync failed: {e}")
+        record_odds_sync_run("error", duration_ms)
+        return {**metrics, "status": "error", "error": str(e)}
+
+
+# =============================================================================
 # PIT EVALUATION JOBS (Protocol 2026-01-07 v2.1)
 # =============================================================================
 
@@ -3730,6 +3965,20 @@ def start_scheduler(ml_engine):
         replace_existing=True,
     )
 
+    # Odds Sync: Every 6 hours (configurable via ODDS_SYNC_INTERVAL_HOURS)
+    # Fetches 1X2 odds for upcoming NS matches in 48h window
+    # Guardrails: ODDS_SYNC_ENABLED, ODDS_SYNC_MAX_FIXTURES (100), freshness 6h
+    # Budget: ~250-400 requests/day (well within Pro plan 7,500/day)
+    _odds_settings = get_settings()
+    if _odds_settings.ODDS_SYNC_ENABLED:
+        scheduler.add_job(
+            sync_odds_for_upcoming_matches,
+            trigger=IntervalTrigger(hours=_odds_settings.ODDS_SYNC_INTERVAL_HOURS),
+            id="odds_sync_upcoming",
+            name=f"Odds Sync (every {_odds_settings.ODDS_SYNC_INTERVAL_HOURS}h)",
+            replace_existing=True,
+        )
+
     # Fast-Path LLM Narratives: Every 2 minutes (configurable via FASTPATH_INTERVAL_SECONDS)
     # Generates narratives within minutes of match completion instead of daily audit
     # Guardrails: FASTPATH_ENABLED, FASTPATH_MAX_CONCURRENT_JOBS (10), lookback 90 min
@@ -3838,6 +4087,7 @@ def start_scheduler(ml_engine):
         f"  - Market movement tracking: Every 5 min (T-60/T-30/T-15/T-5 pre-kickoff)\n"
         f"  - Lineup-relative movement: Every 3 min (L-30 to L+10 around lineup)\n"
         f"  - Finished match stats backfill: Every 60 min\n"
+        f"  - Odds sync: Every {_odds_settings.ODDS_SYNC_INTERVAL_HOURS}h (1X2 for NS matches)\n"
         f"  - Fast-path narratives: Every {_fp_settings.FASTPATH_INTERVAL_SECONDS}s (post-match LLM)\n"
         f"  - Daily results sync: 6:00 AM UTC\n"
         f"  - Daily save predictions: 7:00 AM UTC\n"
