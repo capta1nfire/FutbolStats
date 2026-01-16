@@ -8601,12 +8601,12 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
       </div>
     </div>
     <div class="card {jobs_health_color()}">
-      <div class="card-label">Jobs Health (P0)<span class="info-icon">i<span class="tooltip">Estado de los 3 jobs P0 del scheduler. stats_backfill: fetch stats de partidos FT (cada 60min). odds_sync: sync odds 1X2 (cada 6h). fastpath: narrativas LLM (cada 2min). RED: job falló o acumuló backlog.</span></span></div>
+      <div class="card-label">Jobs Health (P0)<span class="info-icon">i<span class="tooltip">Estado de los 3 jobs P0 del scheduler. stats_backfill: fetch stats de partidos FT (cada 60min). odds_sync: sync odds 1X2 (cada 6h). fastpath: narrativas LLM (cada 2min). RED: job falló o backlog. UNKNOWN: awaiting first run after deploy.</span></span></div>
       <div class="card-value">{jobs_health.get("status", "?").upper()}</div>
       <div class="card-sub">
-        Stats: {(jobs_health.get("stats_backfill") or {}).get("status", "?").upper()} ({(jobs_health.get("stats_backfill") or {}).get("ft_pending", "?")} pending)
-        <br/>Odds: {(jobs_health.get("odds_sync") or {}).get("status", "?").upper()} | FastPath: {(jobs_health.get("fastpath") or {}).get("status", "?").upper()}
-        {f'<br/><span style="font-size:0.7rem;">Stats last: {_format_timestamp_la((jobs_health.get("stats_backfill") or {}).get("last_success_at") or "") or "—"}</span>' if jobs_health.get("stats_backfill") else ''}
+        Stats: {(jobs_health.get("stats_backfill") or {}).get("status", "?").upper()} | Odds: {(jobs_health.get("odds_sync") or {}).get("status", "?").upper()} | FP: {(jobs_health.get("fastpath") or {}).get("status", "?").upper()}
+        <br/><span style="font-size:0.7rem;">Stats pending: {(jobs_health.get("stats_backfill") or {}).get("ft_pending", "?")} | FP backlog: {(jobs_health.get("fastpath") or {}).get("backlog_ready", "?")}</span>
+        <br/><span style="font-size:0.7rem;">Stats last: {_format_timestamp_la((jobs_health.get("stats_backfill") or {}).get("last_success_at") or "") or "awaiting (runs every 60m)"}</span>
         <br/><a href="https://github.com/capta1nfire/FutbolStats/blob/main/docs/GRAFANA_ALERTS_CHECKLIST.md#p0-jobs-health-scheduler-jobs" target="_blank" style="font-size:0.75rem;">Runbook →</a>
       </div>
     </div>
