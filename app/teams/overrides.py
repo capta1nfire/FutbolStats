@@ -203,3 +203,81 @@ def apply_team_overrides_to_match(
                 match_data["away_team_logo"] = away_display.logo_url
 
     return match_data
+
+
+async def apply_team_overrides_to_standings(
+    session: AsyncSession,
+    standings: list[dict],
+    league_id: int,
+    season: int,
+    provider: str = "api_football",
+) -> list[dict]:
+    """
+    Apply team identity overrides to standings data (batch, no N+1).
+
+    Resolves team_name and team_logo for each entry based on effective_from date.
+
+    Args:
+        session: Database session.
+        standings: List of standings dicts with team_id, team_name, team_logo.
+        league_id: League ID to determine season date logic.
+        season: Season year (e.g., 2026).
+        provider: Data provider name.
+
+    Returns:
+        Modified standings list with overrides applied.
+    """
+    if not standings:
+        return standings
+
+    # Determine as_of date based on league type
+    # Calendar-year leagues (LATAM): season starts Jan 1
+    # European leagues: season starts Jul 1
+    from app.etl.competitions import COMPETITIONS
+
+    league_info = COMPETITIONS.get(league_id, {})
+    is_european = league_info.get("region") == "europe"
+
+    if is_european:
+        # European: 2025-26 season means it started Jul 2025
+        as_of = datetime(season, 7, 1)
+    else:
+        # Calendar year (LATAM): 2026 season starts Jan 2026
+        as_of = datetime(season, 1, 1)
+
+    # Extract all team_ids for batch preload
+    team_ids = [s.get("team_id") for s in standings if s.get("team_id")]
+    if not team_ids:
+        return standings
+
+    # Preload overrides in batch (no N+1)
+    overrides = await preload_team_overrides(session, team_ids, provider)
+
+    if not overrides:
+        return standings
+
+    # Apply overrides to each standing entry
+    for entry in standings:
+        team_id = entry.get("team_id")
+        if not team_id:
+            continue
+
+        team_name = entry.get("team_name", "Unknown")
+        team_logo = entry.get("team_logo")
+
+        display = resolve_team_display(
+            overrides,
+            team_id,
+            as_of,
+            team_name,
+            team_logo,
+        )
+
+        if display.is_override:
+            entry["team_name"] = display.name
+            if display.logo_url:
+                entry["team_logo"] = display.logo_url
+            # Optional: mark as overridden for debugging
+            entry["_identity_override"] = True
+
+    return standings

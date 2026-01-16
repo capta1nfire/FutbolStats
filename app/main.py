@@ -3279,6 +3279,12 @@ async def get_league_standings(
                 detail=f"Standings not available yet for season {season}. No teams found for this league.",
             )
 
+        # Apply team identity overrides (e.g., La Equidad -> Internacional de Bogotá)
+        from app.teams.overrides import apply_team_overrides_to_standings
+        standings = await apply_team_overrides_to_standings(
+            session, standings, league_id, season
+        )
+
         elapsed_ms = int((time.time() - _t_start) * 1000)
         logger.info(f"[PERF] get_standings league_id={league_id} season={season} source={source} time_ms={elapsed_ms}")
 
