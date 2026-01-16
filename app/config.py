@@ -129,6 +129,11 @@ class Settings(BaseSettings):
     OPS_SESSION_SECRET: str = ""  # Secret key for session signing (required in prod)
     OPS_SESSION_TTL_HOURS: int = 8  # Session duration
 
+    # OPS Dashboard External Links (for drill-down)
+    SENTRY_ISSUES_URL: str = ""  # e.g. https://sentry.io/organizations/YOUR_ORG/issues/?project=YOUR_PROJECT
+    GRAFANA_BASE_URL: str = ""  # e.g. https://YOUR_ORG.grafana.net
+    GITHUB_REPO_URL: str = "https://github.com/capta1nfire/FutbolStats"  # For runbook links
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

@@ -7871,6 +7871,17 @@ def _render_history_rows(history: list) -> str:
 
 
 def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_logs: list | None = None) -> str:
+    # External URLs from settings (with fallbacks)
+    sentry_base = settings.SENTRY_ISSUES_URL or "https://sentry.io/issues/"
+    grafana_base = settings.GRAFANA_BASE_URL or "https://grafana.com"
+    github_repo = settings.GITHUB_REPO_URL or "https://github.com/capta1nfire/FutbolStats"
+
+    # Helper to build Sentry search URL
+    def sentry_url(query: str) -> str:
+        if settings.SENTRY_ISSUES_URL:
+            return f"{settings.SENTRY_ISSUES_URL}&query={query}"
+        return f"https://sentry.io/issues/?query={query}"
+
     budget = data.get("budget") or {}
     budget_status = budget.get("status", "unknown")
     # New API account status fields
@@ -8578,7 +8589,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
         {f"<br/>Missing FT: {pred_health.get('ft_matches_last_48h_missing_prediction', 0)}/{pred_health.get('ft_matches_last_48h', 0)}" if pred_health.get("status") != "ok" else ""}
         {f"<br/><small style='color:var(--red)'>{pred_health.get('status_reason', '')}</small>" if pred_health.get("status_reason") else ""}
         <div class="card-links">
-          <a href="https://sentry.io/issues/?query=predictions" target="_blank">Sentry</a>
+          <a href="{sentry_url('predictions')}" target="_blank">Sentry</a>
         </div>
       </div>
     </div>
@@ -8591,7 +8602,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
         {f"<br/>Pending: {fp_health.get('pending_ready', 0)}" if fp_health.get('pending_ready', 0) > 0 else ""}
         {f"<br/><small style='color:var(--red)'>{fp_health.get('status_reason', '')}</small>" if fp_health.get("status_reason") else ""}
         <div class="card-links">
-          <a href="https://sentry.io/issues/?query=fastpath+OR+gemini+OR+llm" target="_blank">Sentry</a>
+          <a href="{sentry_url('fastpath+OR+gemini+OR+llm')}" target="_blank">Sentry</a>
           <a href="https://aistudio.google.com/u/1/usage" target="_blank">Gemini</a>
         </div>
       </div>
@@ -8604,8 +8615,8 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
         Tainted: {telemetry_summary.get("tainted_matches_24h", 0)} |
         Unmapped: {telemetry_summary.get("unmapped_entities_24h", 0)}
         <div class="card-links">
-          <a href="https://sentry.io/issues/?query=telemetry+OR+quarantine" target="_blank">Sentry</a>
-          {f'<a href="{telemetry.get("links", [{{}}])[0].get("url", "#")}" target="_blank">Grafana</a>' if telemetry.get("links") else ""}
+          <a href="{sentry_url('telemetry+OR+quarantine')}" target="_blank">Sentry</a>
+          {f'<a href="{telemetry.get("links", [{{}}])[0].get("url", grafana_base)}" target="_blank">Grafana</a>' if telemetry.get("links") or grafana_base else ""}
         </div>
       </div>
     </div>
@@ -8660,8 +8671,8 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
         <br/><span style="font-size:0.7rem;">Stats pending: {(jobs_health.get("stats_backfill") or {}).get("ft_pending", "?")} | FP backlog: {(jobs_health.get("fastpath") or {}).get("backlog_ready", "?")}</span>
         <br/><span style="font-size:0.7rem;">Stats last: {_format_timestamp_la((jobs_health.get("stats_backfill") or {}).get("last_success_at") or "") or "awaiting (runs every 60m)"}</span>
         <div class="card-links">
-          <a href="https://github.com/capta1nfire/FutbolStats/blob/main/docs/GRAFANA_ALERTS_CHECKLIST.md#p0-jobs-health-scheduler-jobs" target="_blank">Runbook</a>
-          <a href="https://sentry.io/issues/?query=scheduler" target="_blank">Sentry</a>
+          <a href="{github_repo}/blob/main/docs/GRAFANA_ALERTS_CHECKLIST.md#p0-jobs-health-scheduler-jobs" target="_blank">Runbook</a>
+          <a href="{sentry_url('scheduler')}" target="_blank">Sentry</a>
         </div>
       </div>
     </div>
@@ -8794,8 +8805,8 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
   <div class="footer">
     <span class="refresh-countdown"><span class="dot"></span> Auto-refresh in <span id="countdown">60</span>s</span>
     | Cache TTL: {_ops_dashboard_cache["ttl"]}s
-    | <a href="https://sentry.io" target="_blank">Sentry</a>
-    | <a href="https://grafana.com" target="_blank">Grafana</a>
+    | <a href="{sentry_base}" target="_blank">Sentry</a>
+    | <a href="{grafana_base}" target="_blank">Grafana</a>
   </div>
 
   <script>
