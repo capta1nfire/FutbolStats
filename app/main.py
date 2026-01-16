@@ -8618,7 +8618,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
         Unmapped: {telemetry_summary.get("unmapped_entities_24h", 0)}
         <div class="card-links">
           <a href="{sentry_url('telemetry+OR+quarantine')}" target="_blank">Sentry</a>
-          {f'<a href="{telemetry.get("links", [{{}}])[0].get("url", grafana_base)}" target="_blank">Grafana</a>' if telemetry.get("links") or grafana_base else ""}
+          <a href="{grafana_base}" target="_blank">Grafana</a>
         </div>
       </div>
     </div>
