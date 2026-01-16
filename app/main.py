@@ -8087,6 +8087,9 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="refresh" content="60">
   <title>Ops Dashboard - FutbolStats</title>
+  <!-- Sentry/Grafana URLs for deep-linking -->
+  <!-- Sentry: https://sentry.io/organizations/YOUR_ORG/issues/?project=YOUR_PROJECT -->
+  <!-- Grafana: https://YOUR_ORG.grafana.net/d/DASHBOARD_ID -->
   <style>
     :root {{
       --bg: #0f172a;
@@ -8456,6 +8459,45 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
     .confirm-modal .btn-confirm.danger {{
       background: var(--red);
     }}
+    /* Countdown indicator */
+    .refresh-countdown {{
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.25rem 0.6rem;
+      background: rgba(59, 130, 246, 0.12);
+      border: 1px solid rgba(59, 130, 246, 0.25);
+      border-radius: 0.5rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }}
+    .refresh-countdown .dot {{
+      width: 6px;
+      height: 6px;
+      background: var(--green);
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }}
+    @keyframes pulse {{
+      0%, 100% {{ opacity: 1; }}
+      50% {{ opacity: 0.4; }}
+    }}
+    /* External links in cards */
+    .card-links {{
+      display: flex;
+      gap: 0.75rem;
+      margin-top: 0.35rem;
+      font-size: 0.75rem;
+    }}
+    .card-links a {{
+      color: var(--muted);
+      text-decoration: none;
+      opacity: 0.8;
+    }}
+    .card-links a:hover {{
+      color: var(--blue);
+      opacity: 1;
+    }}
   </style>
 </head>
 <body>
@@ -8535,6 +8577,9 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
         Coverage 48h: {pred_health.get("ft_coverage_pct", 0)}%
         {f"<br/>Missing FT: {pred_health.get('ft_matches_last_48h_missing_prediction', 0)}/{pred_health.get('ft_matches_last_48h', 0)}" if pred_health.get("status") != "ok" else ""}
         {f"<br/><small style='color:var(--red)'>{pred_health.get('status_reason', '')}</small>" if pred_health.get("status_reason") else ""}
+        <div class="card-links">
+          <a href="https://sentry.io/issues/?query=predictions" target="_blank">Sentry</a>
+        </div>
       </div>
     </div>
     <div class="card {fastpath_health_color()}">
@@ -8545,6 +8590,10 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
         <br/>60m: {fp_60m.get('ok', 0)} ok, {fp_60m.get('error', 0)} err, {fp_60m.get('skipped', 0)} skip
         {f"<br/>Pending: {fp_health.get('pending_ready', 0)}" if fp_health.get('pending_ready', 0) > 0 else ""}
         {f"<br/><small style='color:var(--red)'>{fp_health.get('status_reason', '')}</small>" if fp_health.get("status_reason") else ""}
+        <div class="card-links">
+          <a href="https://sentry.io/issues/?query=fastpath+OR+gemini+OR+llm" target="_blank">Sentry</a>
+          <a href="https://aistudio.google.com/u/1/usage" target="_blank">Gemini</a>
+        </div>
       </div>
     </div>
     <div class="card {telemetry_color()}">
@@ -8554,7 +8603,10 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
         Quarantine: {telemetry_summary.get("quarantined_odds_24h", 0)} |
         Tainted: {telemetry_summary.get("tainted_matches_24h", 0)} |
         Unmapped: {telemetry_summary.get("unmapped_entities_24h", 0)}
-        {f'<br/><a href="{telemetry.get("links", [{}])[0].get("url", "#")}" target="_blank" style="font-size:0.75rem;">Grafana →</a>' if telemetry.get("links") else ""}
+        <div class="card-links">
+          <a href="https://sentry.io/issues/?query=telemetry+OR+quarantine" target="_blank">Sentry</a>
+          {f'<a href="{telemetry.get("links", [{{}}])[0].get("url", "#")}" target="_blank">Grafana</a>' if telemetry.get("links") else ""}
+        </div>
       </div>
     </div>
     <div class="card {llm_cost_color()}">
@@ -8607,7 +8659,10 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
         Stats: {(jobs_health.get("stats_backfill") or {}).get("status", "?").upper()} | Odds: {(jobs_health.get("odds_sync") or {}).get("status", "?").upper()} | FP: {(jobs_health.get("fastpath") or {}).get("status", "?").upper()}
         <br/><span style="font-size:0.7rem;">Stats pending: {(jobs_health.get("stats_backfill") or {}).get("ft_pending", "?")} | FP backlog: {(jobs_health.get("fastpath") or {}).get("backlog_ready", "?")}</span>
         <br/><span style="font-size:0.7rem;">Stats last: {_format_timestamp_la((jobs_health.get("stats_backfill") or {}).get("last_success_at") or "") or "awaiting (runs every 60m)"}</span>
-        <br/><a href="https://github.com/capta1nfire/FutbolStats/blob/main/docs/GRAFANA_ALERTS_CHECKLIST.md#p0-jobs-health-scheduler-jobs" target="_blank" style="font-size:0.75rem;">Runbook →</a>
+        <div class="card-links">
+          <a href="https://github.com/capta1nfire/FutbolStats/blob/main/docs/GRAFANA_ALERTS_CHECKLIST.md#p0-jobs-health-scheduler-jobs" target="_blank">Runbook</a>
+          <a href="https://sentry.io/issues/?query=scheduler" target="_blank">Sentry</a>
+        </div>
       </div>
     </div>
   </div>
@@ -8737,7 +8792,10 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
   </div>
 
   <div class="footer">
-    Refresh: 60s | Cache TTL: {_ops_dashboard_cache["ttl"]}s
+    <span class="refresh-countdown"><span class="dot"></span> Auto-refresh in <span id="countdown">60</span>s</span>
+    | Cache TTL: {_ops_dashboard_cache["ttl"]}s
+    | <a href="https://sentry.io" target="_blank">Sentry</a>
+    | <a href="https://grafana.com" target="_blank">Grafana</a>
   </div>
 
   <script>
@@ -8922,6 +8980,19 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
 
         pendingAction = null;
       }});
+    }})();
+
+    // Countdown timer for auto-refresh
+    (function() {{
+      let seconds = 60;
+      const countdownEl = document.getElementById('countdown');
+      if (!countdownEl) return;
+
+      setInterval(() => {{
+        seconds--;
+        if (seconds < 0) seconds = 60;
+        countdownEl.textContent = seconds;
+      }}, 1000);
     }})();
   </script>
 </body>
