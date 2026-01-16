@@ -28,6 +28,7 @@ from app.models import Match, OddsHistory, PITReport, PostMatchAudit, Prediction
 from app.teams.overrides import preload_team_overrides, resolve_team_display
 from app.scheduler import start_scheduler, stop_scheduler, get_last_sync_time, get_sync_leagues, SYNC_LEAGUES, global_sync_window
 from app.security import limiter, verify_api_key, verify_api_key_or_ops_session
+from app.telemetry.sentry import init_sentry, sentry_job_context, is_sentry_enabled
 
 # Configure logging
 logging.basicConfig(
@@ -35,6 +36,10 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Initialize Sentry for error tracking (before FastAPI app creation)
+# Only activates if SENTRY_DSN is set in environment
+init_sentry()
 
 settings = get_settings()
 

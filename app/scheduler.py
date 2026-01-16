@@ -45,6 +45,9 @@ from app.telemetry.metrics import (
     record_fastpath_tick,
 )
 
+# Sentry context for job error tracking
+from app.telemetry.sentry import sentry_job_context, capture_exception as sentry_capture_exception
+
 logger = logging.getLogger(__name__)
 
 # Top 5 European leagues (core)
@@ -2280,6 +2283,7 @@ async def capture_finished_match_stats() -> dict:
     except Exception as e:
         duration_ms = (time.time() - start_time) * 1000
         logger.error(f"Stats backfill failed: {e}")
+        sentry_capture_exception(e, job_id="stats_backfill", metrics=metrics)
         record_job_run(job="stats_backfill", status="error", duration_ms=duration_ms)
         return {**metrics, "status": "error", "error": str(e)}
 
@@ -2518,6 +2522,7 @@ async def sync_odds_for_upcoming_matches() -> dict:
     except Exception as e:
         duration_ms = (time.time() - start_time) * 1000
         logger.error(f"Odds sync failed: {e}")
+        sentry_capture_exception(e, job_id="odds_sync", metrics=metrics)
         record_odds_sync_run("error", duration_ms)
         record_job_run(job="odds_sync", status="error", duration_ms=duration_ms)
         return {**metrics, "status": "error", "error": str(e)}
@@ -3788,6 +3793,7 @@ async def fast_postmatch_narratives() -> dict:
 
     except Exception as e:
         logger.error(f"[FASTPATH] tick failed: {e}", exc_info=True)
+        sentry_capture_exception(e, job_id="fastpath")
         now = datetime.utcnow()
         duration_ms = int((time.time() - start_time) * 1000)
         _fastpath_metrics["last_tick_at"] = now
