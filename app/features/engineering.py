@@ -539,6 +539,14 @@ class FeatureEngineer:
 
         logger.info(f"Date cutoffs: today={today_start.isoformat()}, recent={recent_cutoff.isoformat()}, future={future_cutoff.isoformat() if future_cutoff else 'None'}")
 
+        # Live match statuses (in-progress games that should remain visible)
+        # These are matches that transitioned from NS and are currently being played
+        LIVE_STATUSES = ["1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT", "SUSP"]
+
+        # Guardrail: don't include "stuck" live matches older than 24h
+        # (these are likely data errors or abandoned matches)
+        live_guardrail_cutoff = today_start - timedelta(days=1)
+
         # Build upcoming condition
         # Note: NS matches should only include those from recent_cutoff forward
         # (older NS matches are stale/postponed and shouldn't be shown)
@@ -548,18 +556,28 @@ class FeatureEngineer:
                 Match.date >= recent_cutoff,  # Don't show stale NS matches
                 Match.date <= future_cutoff,
             )
+            live_condition = and_(
+                Match.status.in_(LIVE_STATUSES),
+                Match.date >= live_guardrail_cutoff,  # Guardrail: no stuck live > 24h
+                Match.date <= future_cutoff,
+            )
         else:
             upcoming_condition = and_(
                 Match.status == "NS",
                 Match.date >= recent_cutoff,  # Don't show stale NS matches
             )
+            live_condition = and_(
+                Match.status.in_(LIVE_STATUSES),
+                Match.date >= live_guardrail_cutoff,  # Guardrail: no stuck live > 24h
+            )
 
-        # Get upcoming matches (NS) AND recent finished matches (FT, AET, PEN)
+        # Get upcoming matches (NS), live matches, AND recent finished matches (FT, AET, PEN)
         query = (
             select(Match)
             .where(
                 or_(
                     upcoming_condition,  # Upcoming (with optional future limit)
+                    live_condition,  # Live/in-progress matches
                     and_(
                         Match.status.in_(["FT", "AET", "PEN"]),  # Finished
                         Match.date >= recent_cutoff,  # Recent
