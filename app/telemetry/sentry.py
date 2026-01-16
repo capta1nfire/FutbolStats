@@ -168,6 +168,14 @@ def init_sentry() -> bool:
         f"traces_sample_rate={traces_sample_rate}"
     )
 
+    # One-time smoke test (controlled via env var, auto-disables after first run)
+    if os.getenv("SENTRY_SMOKE_TEST", "").lower() == "true":
+        sentry_sdk.capture_message(
+            "SENTRY_SMOKE_TEST: Integration verified",
+            level="warning"
+        )
+        logger.info("Sentry smoke test sent. Set SENTRY_SMOKE_TEST=false to disable.")
+
     return True
 
 
