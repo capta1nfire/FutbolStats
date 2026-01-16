@@ -2146,7 +2146,7 @@ async def capture_finished_match_stats() -> dict:
                 WHERE status IN ('FT', 'AET', 'PEN')
                   AND date >= NOW() - INTERVAL ':lookback hours'
                   AND external_id IS NOT NULL
-                  AND (stats IS NULL OR stats = '{}' OR stats::text = 'null')
+                  AND (stats IS NULL OR stats::text = '{}' OR stats::text = 'null')
                 ORDER BY date DESC
                 LIMIT :max_matches
             """.replace(":lookback", str(lookback_hours))), {
