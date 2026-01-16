@@ -5133,14 +5133,14 @@ async def _calculate_telemetry_summary(session) -> dict:
     except Exception:
         pass  # Table may not exist yet
 
-    # 2) Tainted matches in last 24h (matches marked tainted recently)
+    # 2) Tainted matches (recent matches that are tainted)
     tainted_matches_24h = 0
     try:
         res = await session.execute(
             text("""
                 SELECT COUNT(*) FROM matches
                 WHERE tainted = true
-                  AND updated_at > NOW() - INTERVAL '24 hours'
+                  AND date > NOW() - INTERVAL '7 days'
             """)
         )
         tainted_matches_24h = int(res.scalar() or 0)
