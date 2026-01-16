@@ -7483,6 +7483,26 @@ async def _load_ops_data() -> dict:
             tokens_out_7d = int(row_7d[2] or 0) if row_7d else 0
             cost_7d = (tokens_in_7d * GEMINI_PRICE_IN + tokens_out_7d * GEMINI_PRICE_OUT) / 1_000_000
 
+            # Total accumulated cost (all time)
+            res_total = await session.execute(
+                text(
+                    """
+                    SELECT
+                        COUNT(*) AS ok_count,
+                        COALESCE(SUM(llm_narrative_tokens_in), 0) AS tokens_in,
+                        COALESCE(SUM(llm_narrative_tokens_out), 0) AS tokens_out
+                    FROM post_match_audits
+                    WHERE llm_narrative_model LIKE 'gemini%'
+                      AND llm_narrative_status IN ('ok', 'completed_sync')
+                    """
+                )
+            )
+            row_total = res_total.first()
+            ok_total = int(row_total[0] or 0) if row_total else 0
+            tokens_in_total = int(row_total[1] or 0) if row_total else 0
+            tokens_out_total = int(row_total[2] or 0) if row_total else 0
+            cost_total = (tokens_in_total * GEMINI_PRICE_IN + tokens_out_total * GEMINI_PRICE_OUT) / 1_000_000
+
             # Calculate avg cost per OK request
             avg_cost_per_ok = cost_24h / ok_24h if ok_24h > 0 else 0.0
 
@@ -7493,8 +7513,10 @@ async def _load_ops_data() -> dict:
 
             llm_cost_data = {
                 "provider": "gemini",
+                "cost_total_usd": round(cost_total, 2),
                 "cost_24h_usd": round(cost_24h, 4),
                 "cost_7d_usd": round(cost_7d, 4),
+                "requests_ok_total": ok_total,
                 "requests_ok_24h": ok_24h,
                 "requests_ok_7d": ok_7d,
                 "avg_cost_per_ok_24h": round(avg_cost_per_ok, 6),
@@ -7502,6 +7524,8 @@ async def _load_ops_data() -> dict:
                 "tokens_out_24h": tokens_out_24h,
                 "tokens_in_7d": tokens_in_7d,
                 "tokens_out_7d": tokens_out_7d,
+                "tokens_in_total": tokens_in_total,
+                "tokens_out_total": tokens_out_total,
                 "status": status,
                 "note": "Estimated from token usage. Gemini 2.0 Flash: $0.075/1M in, $0.30/1M out",
             }
@@ -8250,12 +8274,11 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None) -> str:
       </div>
     </div>
     <div class="card {llm_cost_color()}">
-      <div class="card-label">LLM Cost ({settings.GEMINI_MODEL})<span class="info-icon">i<span class="tooltip">Costo estimado de llamadas a {settings.GEMINI_MODEL}. Pricing: ${settings.GEMINI_PRICE_INPUT}/1M tokens entrada, ${settings.GEMINI_PRICE_OUTPUT}/1M tokens salida. AMARILLO: &gt;$1/día o &gt;$0.01/request.</span></span></div>
-      <div class="card-value">${llm_cost.get("cost_24h_usd", 0):.4f}</div>
+      <div class="card-label">LLM Cost ({settings.GEMINI_MODEL})<span class="info-icon">i<span class="tooltip">Costo total acumulado de {settings.GEMINI_MODEL}. Pricing: ${settings.GEMINI_PRICE_INPUT}/1M tokens entrada, ${settings.GEMINI_PRICE_OUTPUT}/1M tokens salida. AMARILLO: &gt;$1/día o &gt;$0.01/request.</span></span></div>
+      <div class="card-value">${llm_cost.get("cost_total_usd", 0):.2f}</div>
       <div class="card-sub">
-        24h: {llm_cost.get("requests_ok_24h", 0)} req | 7d: ${llm_cost.get("cost_7d_usd", 0):.4f}
-        <br/>Tokens 24h: {llm_cost.get("tokens_in_24h", 0):,} in / {llm_cost.get("tokens_out_24h", 0):,} out
-        <br/>Avg: ${llm_cost.get("avg_cost_per_ok_24h", 0):.6f}/req
+        24h: ${llm_cost.get("cost_24h_usd", 0):.4f} ({llm_cost.get("requests_ok_24h", 0)} req) | 7d: ${llm_cost.get("cost_7d_usd", 0):.4f}
+        <br/>Total: {llm_cost.get("requests_ok_total", 0):,} req | {(llm_cost.get("tokens_in_total", 0) + llm_cost.get("tokens_out_total", 0)):,} tokens
         <br/><a href="https://aistudio.google.com/u/1/usage?project=gen-lang-client-0385923148&amp;tab=billing" target="_blank" style="font-size:0.75rem;">Gemini Console →</a>
       </div>
     </div>
