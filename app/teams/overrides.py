@@ -231,19 +231,31 @@ async def apply_team_overrides_to_standings(
         return standings
 
     # Determine as_of date based on league type
-    # Calendar-year leagues (LATAM): season starts Jan 1
+    # Calendar-year leagues (LATAM/MLS): season starts Jan 1
     # European leagues: season starts Jul 1
-    from app.etl.competitions import COMPETITIONS
+    # Using the same list as main.py for consistency
+    CALENDAR_YEAR_SEASON_LEAGUES = {
+        71,   # Brazil - Serie A
+        128,  # Argentina - Primera División
+        239,  # Colombia Primera A
+        242,  # Ecuador Liga Pro
+        253,  # USA - MLS (calendar)
+        265,  # Chile Primera Division
+        268,  # Uruguay Primera - Apertura
+        270,  # Uruguay Primera - Clausura
+        281,  # Peru Primera Division
+        299,  # Venezuela Primera Division
+        344,  # Bolivia Primera Division
+    }
 
-    league_info = COMPETITIONS.get(league_id, {})
-    is_european = league_info.get("region") == "europe"
+    is_calendar_year = league_id in CALENDAR_YEAR_SEASON_LEAGUES
 
-    if is_european:
-        # European: 2025-26 season means it started Jul 2025
-        as_of = datetime(season, 7, 1)
-    else:
+    if is_calendar_year:
         # Calendar year (LATAM): 2026 season starts Jan 2026
         as_of = datetime(season, 1, 1)
+    else:
+        # European: 2025-26 season means it started Jul 2025
+        as_of = datetime(season, 7, 1)
 
     # Extract all team_ids for batch preload
     team_ids = [s.get("team_id") for s in standings if s.get("team_id")]
