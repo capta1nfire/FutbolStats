@@ -7872,15 +7872,17 @@ def _render_history_rows(history: list) -> str:
 
 def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_logs: list | None = None) -> str:
     # External URLs from settings (with fallbacks)
-    sentry_base = settings.SENTRY_ISSUES_URL or "https://sentry.io/issues/"
     grafana_base = settings.GRAFANA_BASE_URL or "https://grafana.com"
     github_repo = settings.GITHUB_REPO_URL or "https://github.com/capta1nfire/FutbolStats"
 
     # Helper to build Sentry search URL
     def sentry_url(query: str) -> str:
-        if settings.SENTRY_ISSUES_URL:
-            return f"{settings.SENTRY_ISSUES_URL}&query={query}"
+        if settings.SENTRY_ORG and settings.SENTRY_PROJECT_ID:
+            return f"https://{settings.SENTRY_ORG}.sentry.io/issues/?project={settings.SENTRY_PROJECT_ID}&query={query}"
         return f"https://sentry.io/issues/?query={query}"
+
+    # Sentry base URL for footer link
+    sentry_base = f"https://{settings.SENTRY_ORG}.sentry.io/issues/?project={settings.SENTRY_PROJECT_ID}" if settings.SENTRY_ORG else "https://sentry.io"
 
     budget = data.get("budget") or {}
     budget_status = budget.get("status", "unknown")

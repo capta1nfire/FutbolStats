@@ -130,8 +130,10 @@ class Settings(BaseSettings):
     OPS_SESSION_TTL_HOURS: int = 8  # Session duration
 
     # OPS Dashboard External Links (for drill-down)
-    SENTRY_ISSUES_URL: str = ""  # e.g. https://sentry.io/organizations/YOUR_ORG/issues/?project=YOUR_PROJECT
-    GRAFANA_BASE_URL: str = ""  # e.g. https://YOUR_ORG.grafana.net
+    # Sentry: org slug and project ID (avoids URL encoding issues with ?)
+    SENTRY_ORG: str = ""  # e.g. devseqio
+    SENTRY_PROJECT_ID: str = ""  # e.g. 4510721108869120
+    GRAFANA_BASE_URL: str = ""  # e.g. https://capta1nfire.grafana.net
     GITHUB_REPO_URL: str = "https://github.com/capta1nfire/FutbolStats"  # For runbook links
 
     class Config:
