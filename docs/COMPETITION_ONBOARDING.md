@@ -1,6 +1,6 @@
 # Competition Onboarding Protocol
 
-> Checklist para agregar una nueva competición al sistema FutbolStats.
+> Checklist auditable para agregar una nueva competición al sistema FutbolStats.
 
 ## Quick Reference
 
@@ -68,8 +68,6 @@ GROUP BY t.id
 HAVING t.logo_url IS NULL;
 ```
 
-**Criterio OK**: Partidos aparecen en DB y visibles en iOS.
-
 ### 3. Verificar Odds Sync
 
 ```sql
@@ -85,8 +83,6 @@ WHERE m.league_id = 143
   AND m.date <= NOW() + INTERVAL '48 hours'
 ORDER BY m.date;
 ```
-
-**Criterio OK**: Partidos en ventana 48h tienen odds (o API no los provee).
 
 ### 4. Verificar Stats Backfill
 
@@ -105,8 +101,6 @@ WHERE m.league_id = 143
 ORDER BY m.date DESC;
 ```
 
-**Criterio OK**: Jobs captura stats de partidos FT dentro del lookback (72h).
-
 ### 5. Monitoring Check
 
 ```bash
@@ -119,29 +113,108 @@ curl -s -H "X-Dashboard-Token: $TOKEN" \
 # https://futbolstats.sentry.io/issues/?query=league_id%3A143
 ```
 
-**Criterio OK**:
-- `jobs_health.status = "ok"`
-- Sin nuevos errores en Sentry con el league_id
+---
+
+## P0 Exit Checklist
+
+> **Criterio de cierre**: Todos los checks deben ser OK o tener justificación documentada.
+
+| # | Check | Verificación | Expected Output | Status |
+|---|-------|--------------|-----------------|--------|
+| 1 | **Código desplegado** | `git log -1 --oneline` en prod | Commit con `competitions.py` | OK / FAIL |
+| 2 | **Fixtures en DB** | Query SQL abajo | >= 1 partido con `league_id=X` | OK / FAIL |
+| 3 | **Visible en iOS** | `GET /predictions?days_ahead=30` | Partidos de la competición aparecen | OK / FAIL |
+| 4 | **Odds sync** | Query SQL abajo | Partidos 48h tienen odds, o documentar "N/A - API no provee" | OK / N/A |
+| 5 | **Stats backfill** | Query SQL abajo | FT en últimas 72h tienen stats, o "N/A - sin FT recientes" | OK / N/A |
+| 6 | **jobs_health** | `curl .../ops.json \| jq '.data.jobs_health.status'` | `"ok"` | OK / FAIL |
+| 7 | **Sentry** | Revisar issues últimas 24h | Sin errores nuevos con `league_id:X` | OK / FAIL |
+
+### Queries de verificación
+
+```sql
+-- Check 2: Fixtures en DB
+SELECT COUNT(*) as fixtures_count
+FROM matches
+WHERE league_id = {LEAGUE_ID}
+  AND date >= NOW() - INTERVAL '30 days'
+  AND date <= NOW() + INTERVAL '30 days';
+-- Expected: >= 1
+
+-- Check 4: Odds coverage (partidos próximos 48h)
+SELECT
+  COUNT(*) as total_upcoming,
+  COUNT(odds_home) as with_odds,
+  COUNT(*) - COUNT(odds_home) as missing_odds
+FROM matches
+WHERE league_id = {LEAGUE_ID}
+  AND status = 'NS'
+  AND date <= NOW() + INTERVAL '48 hours';
+-- Expected: missing_odds = 0, o documentar razón
+
+-- Check 5: Stats backfill (FT últimas 72h)
+SELECT
+  COUNT(*) as total_ft,
+  SUM(CASE WHEN stats IS NOT NULL AND stats::text != '{}' THEN 1 ELSE 0 END) as with_stats
+FROM matches
+WHERE league_id = {LEAGUE_ID}
+  AND status IN ('FT', 'AET', 'PEN')
+  AND date > NOW() - INTERVAL '72 hours';
+-- Expected: with_stats = total_ft, o "N/A" si total_ft = 0
+```
+
+### Comandos de verificación
+
+```bash
+# Check 3: Visible en iOS
+curl -s -H "X-API-Key: $API_KEY" \
+  "https://web-production-f2de9.up.railway.app/predictions?days_ahead=30" \
+  | jq '[.predictions[] | select(.league_id == {LEAGUE_ID})] | length'
+# Expected: >= 1 (si hay partidos programados)
+
+# Check 6: jobs_health
+curl -s -H "X-Dashboard-Token: $TOKEN" \
+  "https://web-production-f2de9.up.railway.app/dashboard/ops.json" \
+  | jq '.data.jobs_health.status'
+# Expected: "ok"
+
+# Check 7: Sentry (manual)
+# Visitar: https://futbolstats.sentry.io/issues/?query=league_id:{LEAGUE_ID}
+# Expected: 0 issues en últimas 24h
+```
 
 ---
 
 ## P1: Opcional (Analítica/ML)
 
 > Solo ejecutar si la competición requiere:
-> - Entrenar modelo con historial
+> - Entrenar modelo con historial específico
 > - Market skill analysis (odds closing)
 > - Feature engineering con stats históricas
 
-### Criterio de Decisión: ¿UX-only vs Analítica?
+### Heurísticas de Decisión: ¿UX-only vs Analítica?
 
-| Señal | UX-only | Analítica/ML |
-|-------|---------|--------------|
-| match_weight | < 0.9 | >= 0.9 |
+> **IMPORTANTE**: Estas son heurísticas orientativas, NO reglas absolutas.
+> Si el torneo es estratégicamente importante (alto tráfico, mercado clave, sponsor)
+> o tiene características únicas que justifiquen análisis profundo, se puede elevar
+> a Analítica aunque cumpla criterios de UX-only.
+
+| Señal | Sugiere UX-only | Sugiere Analítica/ML |
+|-------|-----------------|----------------------|
+| match_weight configurado | < 0.9 | >= 0.9 |
 | Volumen partidos/año | < 50 | > 100 |
-| Equipos también en ligas top | Sí | No |
-| Requiere predicciones calibradas | No | Sí |
+| Equipos también en ligas top | Sí (datos redundantes) | No (datos únicos) |
+| Requiere predicciones altamente calibradas | No | Sí |
+| Tráfico/engagement esperado | Bajo/medio | Alto |
+| Mercado estratégico | No | Sí |
 
-**Ejemplo Copa del Rey**: UX-only (weight=0.85, equipos ya en La Liga, <100 partidos/año)
+**Ejemplo Copa del Rey (2026-01-16)**:
+- Heurísticas: weight=0.85, equipos en La Liga, <100 partidos/año → sugieren UX-only
+- Decisión final: **UX-only** (sin factores estratégicos que justifiquen Analítica)
+
+**Contraejemplo hipotético - Liga Saudí**:
+- Heurísticas: weight=0.9, equipos únicos, ~300 partidos/año → sugieren Analítica
+- Factor adicional: Alto tráfico esperado por fichajes mediáticos
+- Decisión final: **Analítica** (backfill histórico justificado)
 
 ### Stats Backfill Histórico
 
@@ -151,7 +224,7 @@ SELECT COUNT(*) as pending,
        MIN(date) as oldest,
        MAX(date) as newest
 FROM matches
-WHERE league_id = 143
+WHERE league_id = {LEAGUE_ID}
   AND status IN ('FT', 'AET', 'PEN')
   AND date > NOW() - INTERVAL '90 days'
   AND (stats IS NULL OR stats::text = '{}');
@@ -178,7 +251,7 @@ SELECT
   COUNT(m.odds_home) as with_odds,
   ROUND(100.0 * COUNT(m.odds_home) / COUNT(*), 1) as coverage_pct
 FROM matches m
-WHERE m.league_id = 143
+WHERE m.league_id = {LEAGUE_ID}
   AND m.status IN ('FT', 'AET', 'PEN')
   AND m.date > NOW() - INTERVAL '12 months'
 GROUP BY 1
@@ -189,33 +262,172 @@ ORDER BY 1 DESC;
 
 ---
 
+## Riesgos Típicos y Mitigaciones
+
+### 1. Cups/Knockouts sin Standings (404 esperado)
+
+**Síntoma**: Warmup de standings falla con 404 para la competición.
+
+**Causa**: Copas y torneos knockout no tienen tabla de posiciones tradicional.
+
+**Mitigación**:
+- El código actual maneja esto gracefully (try/except por liga, logging warning)
+- No requiere acción inmediata
+- Opcional P2: Agregar flag `has_standings=False` en Competition para suprimir warnings
+
+```sql
+-- Verificar si es cup/knockout
+SELECT league_id, name, match_type
+FROM competitions
+WHERE league_id = {LEAGUE_ID};
+-- Si es copa, 404 en standings es esperado
+```
+
+### 2. Ligas con Múltiples Grupos/Fases
+
+**Síntoma**: Standings devuelve múltiples grupos, duplicados en UI.
+
+**Causa**: Competiciones con fase de grupos (Champions League, Libertadores, etc.)
+
+**Mitigación**:
+- Verificar cómo API-Football estructura los datos
+- Si hay múltiples grupos, el código actual toma el primero
+- Para torneos con fases, puede requerir lógica específica
+
+```sql
+-- Ver estructura de standings guardada
+SELECT league_id, season,
+       jsonb_typeof(standings) as type,
+       jsonb_array_length(standings) as groups_count
+FROM league_standings
+WHERE league_id = {LEAGUE_ID}
+ORDER BY captured_at DESC
+LIMIT 1;
+```
+
+### 3. Season Calendar-Year vs European
+
+**Síntoma**: Partidos no aparecen porque season está mal calculado.
+
+**Causa**: Ligas LATAM usan año calendario (2026), europeas usan temporada (2025-26 = "2025").
+
+**Mitigación**:
+- Verificar `_season_for_league()` en main.py
+- Ligas LATAM (league_id en lista específica) usan año actual
+- Europeas usan año anterior si estamos en primera mitad del año
+
+```python
+# Ver lógica actual
+def _season_for_league(league_id: int, now: datetime) -> int:
+    # LATAM leagues use calendar year
+    latam_leagues = [71, 128, 239, 242, 250, 262, 265, 268, 281, 299, 344]
+    if league_id in latam_leagues:
+        return now.year
+    # European leagues: if Jan-Jul, use previous year
+    return now.year if now.month >= 8 else now.year - 1
+```
+
+**Acción si falla**: Agregar league_id a `latam_leagues` si es competición calendario-year.
+
+### 4. Rebrandings y TeamOverride
+
+**Síntoma**: Equipo aparece con nombre/logo incorrecto o duplicado.
+
+**Causa**: API-Football cambió ID o nombre del equipo (rebrand, fusión, etc.)
+
+**Mitigación**:
+- Tabla `team_overrides` permite mapear IDs y nombres
+- Verificar si el equipo tiene override configurado
+
+```sql
+-- Buscar overrides existentes
+SELECT * FROM team_overrides
+WHERE old_team_id IN (
+  SELECT DISTINCT home_team_id FROM matches WHERE league_id = {LEAGUE_ID}
+  UNION
+  SELECT DISTINCT away_team_id FROM matches WHERE league_id = {LEAGUE_ID}
+);
+
+-- Si necesitas agregar override
+INSERT INTO team_overrides (old_team_id, new_team_id, old_name, new_name, reason)
+VALUES (123, 456, 'Nombre Viejo', 'Nombre Nuevo', 'Rebranding 2026');
+```
+
+### 5. Odds Coverage Bajo o Nulo
+
+**Síntoma**: Partidos próximos no tienen odds.
+
+**Causas posibles**:
+1. API-Football no cubre odds para esa liga
+2. Job odds_sync no incluye la liga en su ventana
+3. Partidos muy lejanos (>48h) aún no tienen odds publicados
+
+**Diagnóstico**:
+```sql
+-- Verificar cobertura general de la liga
+SELECT
+  COUNT(*) as total_matches,
+  COUNT(odds_home) as with_odds,
+  ROUND(100.0 * COUNT(odds_home) / NULLIF(COUNT(*), 0), 1) as coverage_pct
+FROM matches
+WHERE league_id = {LEAGUE_ID}
+  AND status IN ('FT', 'AET', 'PEN')
+  AND date > NOW() - INTERVAL '30 days';
+
+-- Si coverage = 0%, probablemente API no cubre
+-- Si coverage > 0% pero upcoming no tiene, verificar timing
+```
+
+**Mitigación**:
+- Si API no cubre: Documentar "N/A - odds no disponibles" en checklist
+- Si es timing: Los odds aparecerán más cerca del partido
+- Si es bug en job: Revisar logs `railway logs -n 30 --filter "odds_sync"`
+
+---
+
 ## Checklist Final (Copy-Paste)
 
 ```markdown
 ## Competition Onboarding: [NOMBRE] (league_id=[ID])
 
-### P0 Obligatorio
-- [ ] `competitions.py`: Competition definida con priority/weight
-- [ ] `scheduler.py`: league_id en EXTENDED_LEAGUES
-- [ ] Deploy completado
-- [ ] Fixtures visibles en DB (`SELECT ... WHERE league_id=X`)
-- [ ] Partidos aparecen en iOS
-- [ ] Odds sync: partidos 48h tienen odds (o N/A)
-- [ ] Stats backfill: FT recientes tienen stats
-- [ ] jobs_health: status=ok
-- [ ] Sentry: sin errores nuevos
+**Fecha**: YYYY-MM-DD
+**Responsable**: [nombre]
+**Decisión**: UX-only / Analítica (justificación: ...)
+
+### P0 Exit Checklist
+
+| # | Check | Status | Notas |
+|---|-------|--------|-------|
+| 1 | Código desplegado | OK/FAIL | commit: abc123 |
+| 2 | Fixtures en DB | OK/FAIL | N partidos encontrados |
+| 3 | Visible en iOS | OK/FAIL | verificado en /predictions |
+| 4 | Odds sync | OK/N/A | cobertura X% o "API no provee" |
+| 5 | Stats backfill | OK/N/A | X/Y FT con stats o "sin FT recientes" |
+| 6 | jobs_health | OK/FAIL | status="ok" |
+| 7 | Sentry | OK/FAIL | 0 errores nuevos |
+
+**P0 Resultado**: PASS / FAIL (si FAIL, documentar blockers)
 
 ### P1 Analítica (si aplica)
-- [ ] Decisión: UX-only / Analítica
-- [ ] Stats backfill histórico: N partidos procesados
-- [ ] Odds backfill histórico: cobertura X%
+
+| Check | Status | Notas |
+|-------|--------|-------|
+| Stats backfill histórico | OK/SKIP | N partidos procesados |
+| Odds backfill histórico | OK/SKIP | cobertura X% |
+
+### Riesgos Identificados
+
+- [ ] Cup sin standings: esperado / no aplica
+- [ ] Múltiples grupos: no aplica / requiere atención
+- [ ] Season calendar-year: verificado / agregado a latam_leagues
+- [ ] Team overrides: no requeridos / agregados (IDs: ...)
+- [ ] Odds coverage: OK / bajo (documentado)
 ```
 
 ---
 
 ## Registro de Onboardings
 
-| Fecha | Competition | league_id | Tipo | Notas |
-|-------|-------------|-----------|------|-------|
-| 2026-01-16 | Copa del Rey | 143 | UX-only | weight=0.85, priority=MEDIUM |
-
+| Fecha | Competition | league_id | Tipo | P0 Status | Notas |
+|-------|-------------|-----------|------|-----------|-------|
+| 2026-01-16 | Copa del Rey | 143 | UX-only | PASS | weight=0.85, priority=MEDIUM, cup sin standings (esperado) |
