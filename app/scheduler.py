@@ -64,6 +64,8 @@ EXTENDED_LEAGUES = [
     262,  # Mexico - Liga MX
     128,  # Argentina - Primera División
     253,  # USA - MLS
+    144,  # Belgium - Pro League
+    307,  # Saudi Arabia - Pro League
     2,    # Champions League
     3,    # Europa League
     848,  # Conference League

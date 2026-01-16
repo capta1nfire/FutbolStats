@@ -225,6 +225,30 @@ FA_CUP = Competition(
     match_weight=0.85,
 )
 
+# Europe - Additional Leagues (ML volume)
+BELGIAN_PRO_LEAGUE = Competition(
+    league_id=144,
+    name="Belgian Pro League",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
+# North America
+MLS = Competition(
+    league_id=253,
+    name="MLS",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
+# Middle East
+SAUDI_PRO_LEAGUE = Competition(
+    league_id=307,
+    name="Saudi Pro League",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
 # LATAM - Pack1 (Domestic leagues)
 BRAZIL_SERIE_A = Competition(
     league_id=71,
@@ -357,6 +381,11 @@ COMPETITIONS: dict[int, Competition] = {
         EFL_CHAMPIONSHIP,
         EREDIVISIE,
         PRIMEIRA_LIGA,
+        BELGIAN_PRO_LEAGUE,
+        # North America
+        MLS,
+        # Middle East
+        SAUDI_PRO_LEAGUE,
         # UEFA Club Competitions
         CHAMPIONS_LEAGUE,
         EUROPA_LEAGUE,
