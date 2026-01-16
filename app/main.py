@@ -5126,7 +5126,7 @@ async def _calculate_telemetry_summary(session) -> dict:
             text("""
                 SELECT COUNT(*) FROM odds_history
                 WHERE quarantined = true
-                  AND captured_at > NOW() - INTERVAL '24 hours'
+                  AND recorded_at > NOW() - INTERVAL '24 hours'
             """)
         )
         quarantined_odds_24h = int(res.scalar() or 0)
