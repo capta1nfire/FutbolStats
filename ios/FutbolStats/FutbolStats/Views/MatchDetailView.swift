@@ -261,8 +261,9 @@ class MatchDetailViewModel: ObservableObject {
                 narrativeState = .loaded
                 print("LLM narrative loaded: \(narrative.narrative?.title ?? "no title")")
             } else {
-                // No LLM narrative available
-                llmNarrativeStatus = response.llmNarrativeStatus ?? "pending"
+                // No LLM narrative available - use "no_prediction" if backend didn't provide a status
+                // "no_prediction" means there was no pre-match prediction, so no narrative will ever exist
+                llmNarrativeStatus = response.llmNarrativeStatus ?? "no_prediction"
                 narrativeState = .loaded  // Still "loaded" even if no narrative
                 print("LLM narrative not available, status: \(llmNarrativeStatus ?? "unknown")")
             }

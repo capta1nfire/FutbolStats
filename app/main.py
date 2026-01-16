@@ -2863,6 +2863,8 @@ async def get_match_insights(
             "deviation_type": "pending_audit",
             "insights": narrative_result.get("insights") or [],
             "momentum_analysis": narrative_result.get("momentum_analysis"),
+            # No LLM narrative available - indicates match had no pre-match prediction
+            "llm_narrative_status": "no_prediction",
         }
         # Include match stats for UI stats table
         if match.stats:

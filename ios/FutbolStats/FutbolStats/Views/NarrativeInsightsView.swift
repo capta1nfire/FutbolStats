@@ -178,8 +178,10 @@ struct LLMNarrativeUnavailableView: View {
             return "Narrativa no disponible para este partido"
         case "error":
             return "Error al generar la narrativa"
+        case "no_prediction":
+            return "Sin narrativa disponible"
         default:
-            return "Narrativa no disponible aún"
+            return "Sin narrativa disponible"
         }
     }
 
@@ -191,8 +193,10 @@ struct LLMNarrativeUnavailableView: View {
             return "minus.circle.fill"
         case "error":
             return "exclamationmark.triangle.fill"
+        case "no_prediction":
+            return "doc.text.magnifyingglass"
         default:
-            return "doc.text.fill"
+            return "doc.text.magnifyingglass"
         }
     }
 
