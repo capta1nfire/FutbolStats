@@ -5147,16 +5147,14 @@ async def _calculate_telemetry_summary(session) -> dict:
     except Exception:
         pass  # Column may not exist yet
 
-    # 3) Unmapped entities (teams without internal mapping, first seen in last 24h)
-    # This checks for external teams that were seen but not yet mapped
+    # 3) Unmapped entities (teams without logo - proxy for incomplete data)
     unmapped_entities_24h = 0
     try:
-        # Check for teams referenced in matches but missing logo_url (proxy for unmapped)
+        # Check for teams missing logo_url (proxy for unmapped/incomplete)
         res = await session.execute(
             text("""
                 SELECT COUNT(DISTINCT t.id) FROM teams t
                 WHERE t.logo_url IS NULL
-                  AND t.created_at > NOW() - INTERVAL '24 hours'
             """)
         )
         unmapped_entities_24h = int(res.scalar() or 0)
