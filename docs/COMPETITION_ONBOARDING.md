@@ -31,10 +31,15 @@ COPA_DEL_REY = Competition(
     match_weight=0.85,          # Liga=1.0, Copa=0.85, Friendly=0.6
 )
 
-# Agregar al dict COMPETITIONS
+# Agregar al dict COMPETITIONS (ver app/etl/competitions.py para estructura completa)
+# El dict se construye con comprehension: {comp.league_id: comp for comp in [...]}
+# Solo agregar la instancia a la lista dentro del dict comprehension:
 COMPETITIONS: dict[int, Competition] = {
-    ...
-    COPA_DEL_REY,
+    comp.league_id: comp
+    for comp in [
+        ...
+        COPA_DEL_REY,  # Agregar aquí
+    ]
 }
 ```
 
@@ -123,7 +128,7 @@ curl -s -H "X-Dashboard-Token: $TOKEN" \
 |---|-------|--------------|-----------------|--------|
 | 1 | **Código desplegado** | `git log -1 --oneline` en prod | Commit con `competitions.py` | OK / FAIL |
 | 2 | **Fixtures en DB** | Query SQL abajo | >= 1 partido con `league_id=X` | OK / FAIL |
-| 3 | **Visible en iOS** | `GET /predictions?days_ahead=30` | Partidos de la competición aparecen | OK / FAIL |
+| 3 | **Visible en iOS** | `GET /predictions/upcoming?days_ahead=30` | Partidos de la competición aparecen | OK / FAIL |
 | 4 | **Odds sync** | Query SQL abajo | Partidos 48h tienen odds, o documentar "N/A - API no provee" | OK / N/A |
 | 5 | **Stats backfill** | Query SQL abajo | FT en últimas 72h tienen stats, o "N/A - sin FT recientes" | OK / N/A |
 | 6 | **jobs_health** | `curl .../ops.json \| jq '.data.jobs_health.status'` | `"ok"` | OK / FAIL |
@@ -165,11 +170,11 @@ WHERE league_id = {LEAGUE_ID}
 ### Comandos de verificación
 
 ```bash
-# Check 3: Visible en iOS
+# Check 3: Visible en iOS (endpoint real que consume el cliente)
 curl -s -H "X-API-Key: $API_KEY" \
-  "https://web-production-f2de9.up.railway.app/predictions?days_ahead=30" \
+  "https://web-production-f2de9.up.railway.app/predictions/upcoming?days_back=7&days_ahead=30" \
   | jq '[.predictions[] | select(.league_id == {LEAGUE_ID})] | length'
-# Expected: >= 1 (si hay partidos programados)
+# Expected: >= 1 (si hay partidos programados en la ventana)
 
 # Check 6: jobs_health
 curl -s -H "X-Dashboard-Token: $TOKEN" \
@@ -312,46 +317,59 @@ LIMIT 1;
 **Causa**: Ligas LATAM usan año calendario (2026), europeas usan temporada (2025-26 = "2025").
 
 **Mitigación**:
-- Verificar `_season_for_league()` en main.py
-- Ligas LATAM (league_id en lista específica) usan año actual
-- Europeas usan año anterior si estamos en primera mitad del año
+- Ver implementación actual en `app/main.py` → `_season_for_league()` y `_CALENDAR_YEAR_SEASON_LEAGUES`
+- Ligas en `_CALENDAR_YEAR_SEASON_LEAGUES` usan `dt.year` directamente
+- El resto usa lógica europea: `dt.year if dt.month >= 7 else dt.year - 1`
 
-```python
-# Ver lógica actual
-def _season_for_league(league_id: int, now: datetime) -> int:
-    # LATAM leagues use calendar year
-    latam_leagues = [71, 128, 239, 242, 250, 262, 265, 268, 281, 299, 344]
-    if league_id in latam_leagues:
-        return now.year
-    # European leagues: if Jan-Jul, use previous year
-    return now.year if now.month >= 8 else now.year - 1
+```sql
+-- Verificar si la liga usa calendar-year (buscar en código)
+-- Ligas actuales en _CALENDAR_YEAR_SEASON_LEAGUES:
+-- 71 (Brazil), 128 (Argentina), 239 (Colombia), 242 (Ecuador),
+-- 253 (MLS), 265 (Chile), 268/270 (Uruguay), 281 (Peru),
+-- 299 (Venezuela), 344 (Bolivia)
+
+-- Si partidos no aparecen, verificar qué season tienen:
+SELECT DISTINCT season, COUNT(*) as matches
+FROM matches
+WHERE league_id = {LEAGUE_ID}
+GROUP BY season
+ORDER BY season DESC;
 ```
 
-**Acción si falla**: Agregar league_id a `latam_leagues` si es competición calendario-year.
+**Acción si falla**: Agregar league_id a `_CALENDAR_YEAR_SEASON_LEAGUES` en `app/main.py` si es competición calendario-year.
 
 ### 4. Rebrandings y TeamOverride
 
 **Síntoma**: Equipo aparece con nombre/logo incorrecto o duplicado.
 
-**Causa**: API-Football cambió ID o nombre del equipo (rebrand, fusión, etc.)
+**Causa**: API-Football no ha actualizado nombre/logo del equipo tras rebrand.
+
+**Arquitectura**: La tabla `team_overrides` permite sobrescribir display_name/logo por `external_team_id` con fecha de vigencia (`effective_from`/`effective_to`). NO mapea IDs entre sí.
+
+**Schema real** (ver `app/models.py` → `TeamOverride`):
+- `provider`: "api_football" (default)
+- `external_team_id`: ID del equipo en API-Football
+- `display_name`: Nombre a mostrar en lugar del original
+- `display_logo_url`: Logo a mostrar (opcional)
+- `effective_from`: Fecha desde la cual aplica el override
+- `effective_to`: Fecha hasta la cual aplica (NULL = indefinido)
 
 **Mitigación**:
-- Tabla `team_overrides` permite mapear IDs y nombres
-- Verificar si el equipo tiene override configurado
-
 ```sql
--- Buscar overrides existentes
-SELECT * FROM team_overrides
-WHERE old_team_id IN (
-  SELECT DISTINCT home_team_id FROM matches WHERE league_id = {LEAGUE_ID}
-  UNION
-  SELECT DISTINCT away_team_id FROM matches WHERE league_id = {LEAGUE_ID}
+-- Buscar overrides existentes para equipos de la competición
+SELECT to2.* FROM team_overrides to2
+WHERE to2.external_team_id IN (
+  SELECT DISTINCT t.external_id FROM teams t
+  JOIN matches m ON t.id IN (m.home_team_id, m.away_team_id)
+  WHERE m.league_id = {LEAGUE_ID}
 );
 
--- Si necesitas agregar override
-INSERT INTO team_overrides (old_team_id, new_team_id, old_name, new_name, reason)
-VALUES (123, 456, 'Nombre Viejo', 'Nombre Nuevo', 'Rebranding 2026');
+-- Si necesitas agregar override (ejemplo: La Equidad → Internacional de Bogotá)
+INSERT INTO team_overrides (provider, external_team_id, display_name, display_logo_url, effective_from)
+VALUES ('api_football', 1134, 'Internacional de Bogotá', 'https://...logo.png', '2026-01-01');
 ```
+
+**Código de resolución**: Ver `app/teams/overrides.py` → `resolve_team_display()`
 
 ### 5. Odds Coverage Bajo o Nulo
 
