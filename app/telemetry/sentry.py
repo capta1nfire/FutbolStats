@@ -14,6 +14,7 @@ Security:
 - PII is disabled by default
 """
 
+import asyncio
 import os
 import re
 import logging
@@ -155,10 +156,11 @@ def init_sentry() -> bool:
         # Performance
         enable_tracing=True,
 
-        # Ignore common non-errors
+        # Ignore common non-errors (shutdown/cancellation noise)
         ignore_errors=[
             KeyboardInterrupt,
             SystemExit,
+            asyncio.CancelledError,  # Normal during deploys/restarts
         ],
     )
 
