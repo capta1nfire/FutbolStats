@@ -5620,6 +5620,89 @@ async def _calculate_sensor_b_summary(session) -> dict:
         }
 
 
+async def _calculate_rerun_serving_summary(session) -> dict:
+    """
+    Calculate rerun serving metrics for OPS dashboard.
+
+    Shows canary status: how many predictions are served from DB (two-stage)
+    vs live baseline, plus active rerun info.
+    """
+    settings = get_settings()
+    try:
+        # Check if enabled
+        enabled = settings.PREFER_RERUN_PREDICTIONS
+        freshness_hours = settings.RERUN_FRESHNESS_HOURS
+
+        # Get active rerun info
+        res = await session.execute(
+            text("""
+                SELECT run_id, architecture_after, model_version_after,
+                       matches_total, created_at
+                FROM prediction_reruns
+                WHERE is_active = true
+                ORDER BY created_at DESC
+                LIMIT 1
+            """)
+        )
+        active_rerun = res.fetchone()
+
+        # Count NS matches with rerun predictions (fresh)
+        res = await session.execute(
+            text("""
+                SELECT COUNT(DISTINCT p.match_id)
+                FROM predictions p
+                JOIN matches m ON m.id = p.match_id
+                WHERE p.run_id IS NOT NULL
+                  AND m.status = 'NS'
+                  AND m.date > NOW()
+                  AND p.created_at > NOW() - make_interval(hours => :hours)
+            """),
+            {"hours": freshness_hours * 2}  # Use 2x freshness for counting
+        )
+        ns_with_rerun = int(res.scalar() or 0)
+
+        # Total NS matches in window
+        res = await session.execute(
+            text("""
+                SELECT COUNT(*)
+                FROM matches
+                WHERE status = 'NS'
+                  AND date > NOW()
+                  AND date < NOW() + INTERVAL '7 days'
+            """)
+        )
+        total_ns = int(res.scalar() or 0)
+
+        # Get in-memory serving stats
+        from_rerun_pct = round(100.0 * ns_with_rerun / total_ns, 1) if total_ns > 0 else 0.0
+        from_baseline_pct = round(100.0 - from_rerun_pct, 1)
+
+        return {
+            "enabled": enabled,
+            "freshness_hours": freshness_hours,
+            "active_rerun": {
+                "run_id": str(active_rerun[0]) if active_rerun else None,
+                "architecture": active_rerun[1] if active_rerun else None,
+                "model_version": active_rerun[2] if active_rerun else None,
+                "matches_total": active_rerun[3] if active_rerun else None,
+                "created_at": active_rerun[4].isoformat() if active_rerun else None,
+            } if active_rerun else None,
+            "coverage": {
+                "ns_with_rerun": ns_with_rerun,
+                "total_ns_7d": total_ns,
+                "from_rerun_pct": from_rerun_pct,
+                "from_baseline_pct": from_baseline_pct,
+            },
+            "in_memory_stats": _rerun_serving_stats.copy(),
+        }
+    except Exception as e:
+        logger.warning(f"Rerun serving summary failed: {e}")
+        return {
+            "enabled": settings.PREFER_RERUN_PREDICTIONS,
+            "error": str(e)[:100],
+        }
+
+
 async def _calculate_predictions_health(session) -> dict:
     """
     Calculate predictions health metrics for P0 observability.
@@ -7227,6 +7310,11 @@ async def _load_ops_data() -> dict:
         sensor_b_data = await _calculate_sensor_b_summary(session)
 
         # =============================================================
+        # RERUN SERVING (DB-first canary for two-stage)
+        # =============================================================
+        rerun_serving_data = await _calculate_rerun_serving_summary(session)
+
+        # =============================================================
         # LLM COST (Gemini token usage from PostMatchAudit)
         # =============================================================
         llm_cost_data = {"provider": "gemini", "status": "unavailable"}
@@ -7408,6 +7496,7 @@ async def _load_ops_data() -> dict:
         "llm_cost": llm_cost_data,
         "shadow_mode": shadow_mode_data,
         "sensor_b": sensor_b_data,
+        "rerun_serving": rerun_serving_data,
     }
 
 
