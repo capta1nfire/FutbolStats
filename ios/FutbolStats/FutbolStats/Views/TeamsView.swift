@@ -108,7 +108,7 @@ struct TeamRowView: View {
     let team: TeamItem
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 16) {
             // Team Logo placeholder
             if let logoUrl = team.logoUrl, let url = URL(string: logoUrl) {
                 AsyncImage(url: url) { image in
@@ -118,18 +118,19 @@ struct TeamRowView: View {
                 } placeholder: {
                     teamPlaceholder
                 }
-                .frame(width: 40, height: 40)
+                .frame(width: 56, height: 56)
             } else {
                 teamPlaceholder
             }
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(team.name)
-                    .font(.headline)
+                    .font(.title3)
+                    .fontWeight(.semibold)
 
                 if let country = team.country {
                     Text(country)
-                        .font(.caption)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -137,19 +138,19 @@ struct TeamRowView: View {
             Spacer()
 
             Image(systemName: "chevron.right")
-                .font(.caption)
+                .font(.body)
                 .foregroundStyle(.tertiary)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 12)
     }
 
     private var teamPlaceholder: some View {
         Image(systemName: team.teamType == "national" ? "flag.fill" : "shield.fill")
-            .font(.title2)
+            .font(.title)
             .foregroundStyle(.secondary)
-            .frame(width: 40, height: 40)
+            .frame(width: 56, height: 56)
             .background(Color(.systemGray5))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 

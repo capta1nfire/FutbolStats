@@ -1078,6 +1078,7 @@ struct MatchDetailView: View {
             status: "FT",
             homeGoals: 2,
             awayGoals: 1,
+            leagueId: 140,
             probabilities: Probabilities(home: 0.45, draw: 0.30, away: 0.25),
             fairOdds: FairOdds(home: 2.47, draw: 3.39, away: 3.33),
             marketOdds: MarketOdds(home: 1.45, draw: 4.50, away: 7.00),

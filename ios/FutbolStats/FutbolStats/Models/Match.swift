@@ -26,6 +26,7 @@ struct MatchPrediction: Codable, Identifiable {
     let status: String?           // Match status: NS, FT, 1H, 2H, HT, etc.
     let homeGoals: Int?           // Final score (nil if not played)
     let awayGoals: Int?           // Final score (nil if not played)
+    let leagueId: Int?            // League ID for grouping
     let probabilities: Probabilities
     let fairOdds: FairOdds
     let marketOdds: MarketOdds?
@@ -38,6 +39,54 @@ struct MatchPrediction: Codable, Identifiable {
         matchId ?? matchExternalId ?? UUID().hashValue
     }
 
+    /// League logo URL (derived from leagueId)
+    var leagueLogo: String? {
+        guard let id = leagueId else { return nil }
+        return "https://media.api-sports.io/football/leagues/\(id).png"
+    }
+
+    /// League name (fallback mapping for common leagues)
+    var leagueName: String {
+        guard let id = leagueId else { return "Other" }
+        return Self.leagueNames[id] ?? "League \(id)"
+    }
+
+    /// Common league names mapping
+    private static let leagueNames: [Int: String] = [
+        // International
+        1: "World Cup",
+        4: "Euro",
+        5: "UEFA Nations League",
+        6: "Africa Cup of Nations",
+        9: "Copa America",
+        10: "Friendlies",
+        // South America
+        128: "Liga Argentina",
+        129: "Copa Argentina",
+        239: "Liga Colombia",
+        71: "Brasileirão",
+        73: "Copa Brasil",
+        13: "Libertadores",
+        11: "Sudamericana",
+        // Europe - Top 5 Leagues
+        39: "Premier League",
+        40: "Championship",
+        45: "FA Cup",
+        140: "La Liga",
+        143: "Copa del Rey",
+        135: "Serie A",
+        78: "Bundesliga",
+        88: "Eredivisie",
+        61: "Ligue 1",
+        94: "Primeira Liga",
+        2: "Champions League",
+        3: "Europa League",
+        848: "Conference League",
+        // Mexico & CONCACAF
+        262: "Liga MX",
+        16: "Concacaf Champions",
+    ]
+
     /// Check if match is finished
     var isFinished: Bool {
         status == "FT" || status == "AET" || status == "PEN"
@@ -47,6 +96,11 @@ struct MatchPrediction: Codable, Identifiable {
     var isLive: Bool {
         guard let s = status else { return false }
         return ["1H", "2H", "HT", "ET", "BT", "P", "LIVE"].contains(s)
+    }
+
+    /// Check if match has a score to display (finished or live)
+    var hasScore: Bool {
+        (isFinished || isLive) && homeGoals != nil && awayGoals != nil
     }
 
     /// Score display for finished matches
@@ -143,6 +197,7 @@ struct MatchPrediction: Codable, Identifiable {
         case status
         case homeGoals = "home_goals"
         case awayGoals = "away_goals"
+        case leagueId = "league_id"
         case probabilities
         case fairOdds = "fair_odds"
         case marketOdds = "market_odds"

@@ -6,13 +6,19 @@ struct DashboardView: View {
     @State private var snapshots: AlphaProgressSnapshotsResponse?
     @State private var isLoading = true
     @State private var error: String?
+    @State private var showingLogin = false
+    @State private var tokenInput = ""
+    @State private var isAuthenticated = false
 
     var body: some View {
         NavigationStack {
             ZStack {
                 Color.black.ignoresSafeArea()
 
-                if isLoading {
+                if !isAuthenticated && AppConfiguration.dashboardToken == nil {
+                    // Login screen
+                    loginView
+                } else if isLoading {
                     ProgressView("Loading dashboard…")
                         .tint(.white)
                 } else if let error = error {
@@ -23,15 +29,13 @@ struct DashboardView: View {
                         Text(error)
                             .multilineTextAlignment(.center)
                             .foregroundStyle(.gray)
-                        if AppConfiguration.dashboardToken == nil {
-                            Text("Missing DASHBOARD_TOKEN. Set Info.plist key `DASHBOARD_TOKEN` or UserDefaults `dashboard_token` (dev).")
-                                .font(.caption)
-                                .foregroundStyle(.gray.opacity(0.8))
-                                .multilineTextAlignment(.center)
-                                .padding(.top, 6)
-                        }
                         Button("Retry") { Task { await load() } }
                             .buttonStyle(.borderedProminent)
+                        Button("Change Token") {
+                            clearToken()
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.gray)
                     }
                     .padding()
                 } else {
@@ -42,9 +46,80 @@ struct DashboardView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Color.black, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                if isAuthenticated || AppConfiguration.dashboardToken != nil {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(action: clearToken) {
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
+                                .foregroundStyle(.gray)
+                        }
+                    }
+                }
+            }
             .refreshable { await load() }
-            .task { await load() }
+            .task {
+                if AppConfiguration.dashboardToken != nil {
+                    isAuthenticated = true
+                    await load()
+                }
+            }
         }
+    }
+
+    private var loginView: some View {
+        VStack(spacing: 24) {
+            Image(systemName: "lock.shield")
+                .font(.system(size: 60))
+                .foregroundStyle(.blue)
+
+            Text("Dashboard Access")
+                .font(.title2)
+                .fontWeight(.semibold)
+                .foregroundStyle(.white)
+
+            Text("Ingresa el token de acceso")
+                .font(.subheadline)
+                .foregroundStyle(.gray)
+
+            SecureField("Token", text: $tokenInput)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal, 40)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+
+            Button(action: submitToken) {
+                Text("Acceder")
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.horizontal, 40)
+            .disabled(tokenInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .padding()
+    }
+
+    private func submitToken() {
+        let token = tokenInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else { return }
+
+        // Save to UserDefaults
+        UserDefaults.standard.set(token, forKey: "dashboard_token")
+        isAuthenticated = true
+        tokenInput = ""
+
+        // Load dashboard
+        Task { await load() }
+    }
+
+    private func clearToken() {
+        UserDefaults.standard.removeObject(forKey: "dashboard_token")
+        isAuthenticated = false
+        ops = nil
+        pit = nil
+        snapshots = nil
+        error = nil
     }
 
     private var content: some View {

@@ -7,7 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		D1000001233456780000001 /* SkeletonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001233456780000011 /* SkeletonView.swift */; };
+		714E11E42F1A0F6D00B428DF /* RobotoCondensed-Light.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 714E11DF2F1A0F6D00B428DF /* RobotoCondensed-Light.ttf */; };
+		714E11E52F1A0F6D00B428DF /* RobotoCondensed-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 714E11E02F1A0F6D00B428DF /* RobotoCondensed-Medium.ttf */; };
+		714E11E62F1A0F6D00B428DF /* RobotoCondensed-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 714E11E12F1A0F6D00B428DF /* RobotoCondensed-Regular.ttf */; };
+		714E11E72F1A0F6D00B428DF /* SF-Pro.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 714E11E22F1A0F6D00B428DF /* SF-Pro.ttf */; };
+		714E11E92F1A109500B428DF /* BebasNeue-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 714E11E82F1A109500B428DF /* BebasNeue-Regular.ttf */; };
 		719D7CFA2F146E7500F0D8C5 /* MatchStatsTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 719D7CF92F146E7500F0D8C5 /* MatchStatsTableView.swift */; };
 		71DFDAFE2F0A0F3000B3351D /* CachedAsyncImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71DFDAFD2F0A0F3000B3351D /* CachedAsyncImage.swift */; };
 		A1000001233456780000001 /* FutbolStatsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001233456780000011 /* FutbolStatsApp.swift */; };
@@ -27,10 +31,15 @@
 		B1000001233456780000003 /* AppConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001233456780000013 /* AppConfiguration.swift */; };
 		B1000001233456780000004 /* AlphaStatusBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001233456780000014 /* AlphaStatusBadge.swift */; };
 		C1000001233456780000001 /* PerfLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000001233456780000011 /* PerfLogger.swift */; };
+		D1000001233456780000001 /* SkeletonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001233456780000011 /* SkeletonView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		D1000001233456780000011 /* SkeletonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkeletonView.swift; sourceTree = "<group>"; };
+		714E11DF2F1A0F6D00B428DF /* RobotoCondensed-Light.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "RobotoCondensed-Light.ttf"; sourceTree = "<group>"; };
+		714E11E02F1A0F6D00B428DF /* RobotoCondensed-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "RobotoCondensed-Medium.ttf"; sourceTree = "<group>"; };
+		714E11E12F1A0F6D00B428DF /* RobotoCondensed-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "RobotoCondensed-Regular.ttf"; sourceTree = "<group>"; };
+		714E11E22F1A0F6D00B428DF /* SF-Pro.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "SF-Pro.ttf"; sourceTree = "<group>"; };
+		714E11E82F1A109500B428DF /* BebasNeue-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "BebasNeue-Regular.ttf"; sourceTree = "<group>"; };
 		719D7CF92F146E7500F0D8C5 /* MatchStatsTableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatchStatsTableView.swift; sourceTree = "<group>"; };
 		71DFDAFD2F0A0F3000B3351D /* CachedAsyncImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CachedAsyncImage.swift; sourceTree = "<group>"; };
 		A1000001233456780000010 /* FutbolStats.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FutbolStats.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -51,6 +60,7 @@
 		B1000001233456780000013 /* AppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfiguration.swift; sourceTree = "<group>"; };
 		B1000001233456780000014 /* AlphaStatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlphaStatusBadge.swift; sourceTree = "<group>"; };
 		C1000001233456780000011 /* PerfLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerfLogger.swift; sourceTree = "<group>"; };
+		D1000001233456780000011 /* SkeletonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkeletonView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -64,6 +74,18 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		714E11E32F1A0F6D00B428DF /* Fonts */ = {
+			isa = PBXGroup;
+			children = (
+				714E11E82F1A109500B428DF /* BebasNeue-Regular.ttf */,
+				714E11DF2F1A0F6D00B428DF /* RobotoCondensed-Light.ttf */,
+				714E11E02F1A0F6D00B428DF /* RobotoCondensed-Medium.ttf */,
+				714E11E12F1A0F6D00B428DF /* RobotoCondensed-Regular.ttf */,
+				714E11E22F1A0F6D00B428DF /* SF-Pro.ttf */,
+			);
+			path = Fonts;
+			sourceTree = "<group>";
+		};
 		A1000001233456780000020 = {
 			isa = PBXGroup;
 			children = (
@@ -75,6 +97,7 @@
 		A1000001233456780000021 /* FutbolStats */ = {
 			isa = PBXGroup;
 			children = (
+				714E11E32F1A0F6D00B428DF /* Fonts */,
 				A1000001233456780000011 /* FutbolStatsApp.swift */,
 				A1000001233456780000022 /* Views */,
 				A1000001233456780000023 /* ViewModels */,
@@ -207,6 +230,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1000001233456780000007 /* Assets.xcassets in Resources */,
+				714E11E42F1A0F6D00B428DF /* RobotoCondensed-Light.ttf in Resources */,
+				714E11E92F1A109500B428DF /* BebasNeue-Regular.ttf in Resources */,
+				714E11E52F1A0F6D00B428DF /* RobotoCondensed-Medium.ttf in Resources */,
+				714E11E62F1A0F6D00B428DF /* RobotoCondensed-Regular.ttf in Resources */,
+				714E11E72F1A0F6D00B428DF /* SF-Pro.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

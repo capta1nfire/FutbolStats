@@ -1,4 +1,24 @@
 import SwiftUI
+import UIKit
+
+// MARK: - SF Pro Condensed Font Helper
+
+extension Font {
+    /// SF Pro Condensed - uses variable font width axis
+    /// Width values: 30 (ultra compressed) to 100 (normal) to 150 (expanded)
+    static func sfProCondensed(size: CGFloat, weight: UIFont.Weight = .light, width: CGFloat = 75) -> Font {
+        // Use system font with width trait
+        let systemFont = UIFont.systemFont(ofSize: size, weight: weight)
+        let traits: [UIFontDescriptor.TraitKey: Any] = [
+            .width: (width - 100) / 100  // Convert 30-150 scale to -0.7 to 0.5
+        ]
+        let descriptor = systemFont.fontDescriptor.addingAttributes([
+            .traits: traits
+        ])
+        let uiFont = UIFont(descriptor: descriptor, size: size)
+        return Font(uiFont)
+    }
+}
 
 struct PredictionsListView: View {
     @StateObject private var viewModel = PredictionsViewModel()
@@ -21,7 +41,6 @@ struct PredictionsListView: View {
                 VStack(spacing: 0) {
                     // Date selector
                     dateSelector
-                        .padding(.top, 8)
 
                     // Alpha readiness (non-blocking, only show if data available)
                     if viewModel.opsProgress != nil {
@@ -50,31 +69,7 @@ struct PredictionsListView: View {
                     }
                 }
             }
-            .navigationTitle("Predictions")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Label("Leagues filter coming soon", systemImage: "slider.horizontal.3")
-                    } label: {
-                        Image(systemName: "line.3.horizontal.decrease.circle")
-                            .foregroundStyle(.gray)
-                    }
-                }
-
-                ToolbarItem(placement: .topBarLeading) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(viewModel.modelLoaded ? .green : .red)
-                            .frame(width: 6, height: 6)
-                        Text(viewModel.modelLoaded ? "Ready" : "Offline")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .toolbarBackground(Color.black, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .navigationBarHidden(true)
             .refreshable {
                 await viewModel.refresh()
             }
@@ -131,6 +126,8 @@ struct PredictionsListView: View {
     private var localCalendar: Calendar {
         Calendar.current
     }
+
+    // MARK: - Date Selector
 
     private var dateSelector: some View {
         let _ = print("[Render] dateSelector body evaluated")
@@ -197,39 +194,61 @@ struct PredictionsListView: View {
 
     // MARK: - Predictions List
 
+    /// League group for display
+    private struct LeagueGroup: Identifiable {
+        let id: String  // Use leagueName as stable ID
+        let leagueId: Int?
+        let leagueName: String
+        let leagueLogo: String?
+        let predictions: [MatchPrediction]
+    }
+
+    /// Group predictions by league
+    private func groupedByLeague(_ predictions: [MatchPrediction]) -> [LeagueGroup] {
+        let grouped = Dictionary(grouping: predictions) { $0.leagueId }
+        let result = grouped.map { key, value in
+            LeagueGroup(
+                id: value.first?.leagueName ?? "Other_\(key ?? -1)",
+                leagueId: key,
+                leagueName: value.first?.leagueName ?? "Other",
+                leagueLogo: value.first?.leagueLogo,
+                predictions: value
+            )
+        }
+        .sorted { ($0.leagueId ?? Int.max) < ($1.leagueId ?? Int.max) }
+
+        print("[Group] groupedByLeague: \(predictions.count) matches -> \(result.count) groups: \(result.map { "\($0.leagueName)(\($0.predictions.count))" }.joined(separator: ", "))")
+        return result
+    }
+
     private var predictionsList: some View {
         let allPredictions = viewModel.predictionsForSelectedDate
-        let valueBets = viewModel.valueBetPredictionsForSelectedDate
-        let regularMatches = viewModel.regularPredictionsForSelectedDate
         let totalCount = allPredictions.count
-        let _ = print("[Render] predictionsList body - \(totalCount) matches, showing \(min(displayLimit, totalCount))")
+        let leagueIds = Set(allPredictions.compactMap { $0.leagueId })
+        let _ = print("[Render] predictionsList body - \(totalCount) matches, \(leagueIds.count) leagues: \(leagueIds.sorted())")
 
-        // Limit regular matches to displayLimit (value bets always shown)
-        let limitedRegular = Array(regularMatches.prefix(max(0, displayLimit - valueBets.count)))
-        let hasMore = (valueBets.count + regularMatches.count) > displayLimit
+        // Limit matches to displayLimit
+        let limitedMatches = Array(allPredictions.prefix(displayLimit))
+        let hasMore = allPredictions.count > displayLimit
+
+        // Group all matches by league (including value bets)
+        let groupedMatches = groupedByLeague(limitedMatches)
 
         return ScrollView {
             LazyVStack(spacing: 12) {
-                // Value Bets Section (always show all - typically few)
-                if !valueBets.isEmpty {
-                    sectionHeader(title: "Value Bets", icon: "star.fill", color: Color(red: 0.2, green: 1.0, blue: 0.4))
+                // All matches grouped by league
+                ForEach(groupedMatches) { group in
+                    leagueHeader(
+                        title: group.leagueName,
+                        logoUrl: group.leagueLogo,
+                        isValueBets: false
+                    )
+                    .padding(.top, 8)
 
-                    ForEach(valueBets) { prediction in
+                    ForEach(group.predictions) { prediction in
+                        let isValueBet = (prediction.valueBets?.count ?? 0) > 0
                         NavigationLink(destination: MatchDetailView(prediction: prediction)) {
-                            MatchCard(prediction: prediction, showValueBadge: true)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                // All Matches Section (paginated)
-                if !limitedRegular.isEmpty {
-                    sectionHeader(title: "Matches", icon: "sportscourt", color: .gray)
-                        .padding(.top, valueBets.isEmpty ? 0 : 8)
-
-                    ForEach(limitedRegular) { prediction in
-                        NavigationLink(destination: MatchDetailView(prediction: prediction)) {
-                            MatchCard(prediction: prediction, showValueBadge: false)
+                            MatchCard(prediction: prediction, showValueBadge: isValueBet)
                         }
                         .buttonStyle(.plain)
                     }
@@ -269,26 +288,44 @@ struct PredictionsListView: View {
                     }
                     .padding(.vertical, 8)
                 }
+
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 20)
         }
     }
 
-    private func sectionHeader(title: String, icon: String, color: Color) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.caption)
-                .foregroundStyle(color)
+    private func leagueHeader(title: String, logoUrl: String?, isValueBets: Bool) -> some View {
+        HStack(spacing: 10) {
+            if isValueBets {
+                Image(systemName: "star.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(Color(red: 0.2, green: 1.0, blue: 0.4))
+                    .frame(width: 24, height: 24)
+            } else if let logoUrl = logoUrl, let url = URL(string: logoUrl) {
+                CachedAsyncImage(url: url) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                } placeholder: {
+                    Image(systemName: "trophy.fill")
+                        .foregroundStyle(.gray)
+                }
+                .frame(width: 24, height: 24)
+            } else {
+                Image(systemName: "trophy.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.gray)
+                    .frame(width: 24, height: 24)
+            }
 
             Text(title)
                 .font(.subheadline)
                 .fontWeight(.semibold)
-                .foregroundStyle(.white)
+                .foregroundStyle(isValueBets ? Color(red: 0.2, green: 1.0, blue: 0.4) : .white)
 
             Spacer()
         }
-        .padding(.top, 8)
     }
 }
 
@@ -381,60 +418,54 @@ struct MatchCard: View {
     let showValueBadge: Bool
 
     var body: some View {
-        VStack(spacing: 12) {
-            // Value bet banner
-            if showValueBadge, let best = prediction.bestValueBet {
-                let neonGreen = Color(red: 0.2, green: 1.0, blue: 0.4)
-                HStack {
-                    Image(systemName: "star.fill")
-                        .font(.caption2)
-                        .foregroundStyle(neonGreen)
+        VStack(spacing: 10) {
+            // Teams side by side: Logo | Score ... Center ... Score | Logo
+            HStack(spacing: 0) {
+                // Home team (left side) - logo near edge, score near center
+                HStack(spacing: 28) {
+                    teamLogo(url: prediction.homeTeamLogo)
 
-                    Text("VALUE BET")
-                        .font(.caption2)
-                        .fontWeight(.bold)
-                        .foregroundStyle(neonGreen)
-
-                    Spacer()
-
-                    Text("\(best.outcome.uppercased()) \(best.evDisplay)")
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .foregroundStyle(neonGreen)
+                    if prediction.hasScore {
+                        Text("\(prediction.homeGoals ?? 0)")
+                            .font(.custom("Bebas Neue", size: 42))
+                            .foregroundStyle(.white)
+                    }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(neonGreen.opacity(0.15))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                Spacer(minLength: 12)
+
+                // Center: Final/Live status or Time
+                centerStatusView
+
+                Spacer(minLength: 12)
+
+                // Away team (right side) - score near center, logo near edge
+                HStack(spacing: 28) {
+                    if prediction.hasScore {
+                        Text("\(prediction.awayGoals ?? 0)")
+                            .font(.custom("Bebas Neue", size: 42))
+                            .foregroundStyle(.white)
+                    }
+
+                    teamLogo(url: prediction.awayTeamLogo)
+                }
             }
 
-            // Teams and odds
+            // Team names below
             HStack {
-                // Teams with logos and optional scores
-                VStack(alignment: .leading, spacing: 6) {
-                    teamRowWithScore(
-                        name: prediction.homeTeam,
-                        logoUrl: prediction.homeTeamLogo,
-                        goals: prediction.isFinished ? prediction.homeGoals : nil
-                    )
-                    teamRowWithScore(
-                        name: prediction.awayTeam,
-                        logoUrl: prediction.awayTeamLogo,
-                        goals: prediction.isFinished ? prediction.awayGoals : nil
-                    )
-                }
+                Text(prediction.homeTeam)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.white.opacity(0.5))
+                    .lineLimit(1)
 
                 Spacer()
 
-                // Match status/time badge
-                matchStatusBadge
-            }
-
-            // Probabilities bar
-            HStack(spacing: 4) {
-                probabilityPill(label: "H", value: prediction.probabilities.home, odds: prediction.marketOdds?.home, isValueBet: isValueBet(for: "home"))
-                probabilityPill(label: "D", value: prediction.probabilities.draw, odds: prediction.marketOdds?.draw, isValueBet: isValueBet(for: "draw"))
-                probabilityPill(label: "A", value: prediction.probabilities.away, odds: prediction.marketOdds?.away, isValueBet: isValueBet(for: "away"))
+                Text(prediction.awayTeam)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.white.opacity(0.5))
+                    .lineLimit(1)
             }
         }
         .padding(14)
@@ -442,9 +473,10 @@ struct MatchCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
-    private func teamRowWithScore(name: String, logoUrl: String?, goals: Int?) -> some View {
-        HStack(spacing: 8) {
-            if let logoUrl = logoUrl, let url = URL(string: logoUrl) {
+    /// Team logo only
+    private func teamLogo(url: String?) -> some View {
+        Group {
+            if let logoUrl = url, let url = URL(string: logoUrl) {
                 CachedAsyncImage(url: url) { image in
                     image
                         .resizable()
@@ -453,77 +485,60 @@ struct MatchCard: View {
                     Circle()
                         .fill(Color(white: 0.2))
                 }
-                .frame(width: 22, height: 22)
+                .frame(width: 40, height: 40)
             } else {
                 Circle()
                     .fill(Color(white: 0.2))
-                    .frame(width: 22, height: 22)
-            }
-
-            Text(name)
-                .font(.subheadline)
-                .fontWeight(.semibold)
-                .foregroundStyle(.white)
-                .lineLimit(1)
-
-            Spacer()
-
-            // Show goals if match is finished
-            if let goals = goals {
-                Text("\(goals)")
-                    .font(.subheadline)
-                    .fontWeight(.bold)
-                    .foregroundStyle(.white)
-                    .frame(width: 24)
+                    .frame(width: 40, height: 40)
             }
         }
     }
 
-    /// Match status badge - shows FT with result indicator, LIVE, or time with tier
-    private var matchStatusBadge: some View {
-        VStack(alignment: .trailing, spacing: 4) {
-            // Status badge
-            if prediction.isFinished {
-                HStack(spacing: 4) {
-                    // Prediction result indicator
-                    if let correct = prediction.predictionCorrect {
-                        Image(systemName: correct ? "checkmark.circle.fill" : "xmark.circle.fill")
-                            .font(.caption)
-                            .foregroundStyle(correct ? .green : .red)
-                    }
-                    Text("FT")
-                        .font(.caption)
+    /// Center status view (Final, Live badge, or Time for upcoming)
+    private var centerStatusView: some View {
+        VStack(spacing: 4) {
+            // Value bet badge (if applicable)
+            if showValueBadge {
+                HStack(spacing: 3) {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 8))
+                        .foregroundStyle(neonGreen)
+
+                    Text("Value Bet")
+                        .font(.system(size: 9))
                         .fontWeight(.semibold)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(neonGreen)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.green.opacity(0.15))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(neonGreen.opacity(0.15))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+
+            // Status
+            if prediction.isFinished {
+                Text("Final")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white)
             } else if prediction.isLive {
                 Text(prediction.status ?? "LIVE")
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .fontWeight(.semibold)
                     .foregroundStyle(.red)
                     .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 3)
                     .background(Color.red.opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
             } else if let date = prediction.matchDate {
                 Text(formatTime(date))
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundStyle(.gray)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color(white: 0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
 
-            // Confidence tier badge
-            if prediction.confidenceTier != nil {
-                Text(prediction.tierEmoji)
-                    .font(.caption)
+                if prediction.confidenceTier != nil {
+                    Text(prediction.tierEmoji)
+                        .font(.caption)
+                }
             }
         }
     }
@@ -534,39 +549,7 @@ struct MatchCard: View {
         return formatter.string(from: date)
     }
 
-    private func isValueBet(for outcome: String) -> Bool {
-        prediction.bestValueBet?.outcome.lowercased() == outcome.lowercased()
-    }
-
     private let neonGreen = Color(red: 0.2, green: 1.0, blue: 0.4)
-
-    private func probabilityPill(label: String, value: Double, odds: Double?, isValueBet: Bool) -> some View {
-        HStack(spacing: 4) {
-            Text(label)
-                .font(.caption2)
-                .fontWeight(.bold)
-                .foregroundStyle(isValueBet ? neonGreen : .gray)
-
-            Text(String(format: "%.0f%%", value * 100))
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundStyle(isValueBet ? neonGreen : .white)
-
-            if let odds = odds {
-                Text(String(format: "%.2f", odds))
-                    .font(.caption2)
-                    .foregroundStyle(isValueBet ? neonGreen.opacity(0.8) : .gray)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .background(isValueBet ? neonGreen.opacity(0.15) : Color(white: 0.15))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(isValueBet ? neonGreen.opacity(0.5) : Color.clear, lineWidth: 1)
-        )
-    }
 }
 
 // MARK: - Match Row View

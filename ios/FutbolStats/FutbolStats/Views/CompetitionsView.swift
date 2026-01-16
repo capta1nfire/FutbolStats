@@ -147,29 +147,30 @@ struct CompetitionRowView: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 16) {
             // Competition icon
             Image(systemName: competition.matchType == "international" ? "flag.2.crossed.fill" : "soccerball")
-                .font(.title2)
+                .font(.title)
                 .foregroundStyle(priorityColor)
-                .frame(width: 40, height: 40)
+                .frame(width: 56, height: 56)
                 .background(priorityColor.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(competition.name)
-                    .font(.headline)
+                    .font(.title3)
+                    .fontWeight(.semibold)
 
                 HStack(spacing: 8) {
                     Text(competition.matchType.capitalized)
-                        .font(.caption)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
 
                     Text("•")
                         .foregroundStyle(.secondary)
 
                     Text("Weight: \(String(format: "%.1f", competition.matchWeight))")
-                        .font(.caption)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -178,15 +179,15 @@ struct CompetitionRowView: View {
 
             // Priority badge
             Text(competition.priority.capitalized)
-                .font(.caption2)
-                .fontWeight(.medium)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
                 .background(priorityColor.opacity(0.2))
                 .foregroundStyle(priorityColor)
                 .clipShape(Capsule())
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 12)
     }
 }
 
