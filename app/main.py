@@ -8607,7 +8607,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
         Stats: {(jobs_health.get("stats_backfill") or {}).get("status", "?").upper()} ({(jobs_health.get("stats_backfill") or {}).get("ft_pending", "?")} pending)
         <br/>Odds: {(jobs_health.get("odds_sync") or {}).get("status", "?").upper()} | FastPath: {(jobs_health.get("fastpath") or {}).get("status", "?").upper()}
         {f'<br/><span style="font-size:0.7rem;">Stats last: {_format_timestamp_la((jobs_health.get("stats_backfill") or {}).get("last_success_at") or "") or "—"}</span>' if jobs_health.get("stats_backfill") else ''}
-        <br/><a href="docs/GRAFANA_ALERTS_CHECKLIST.md#p0-jobs-health-scheduler-jobs" target="_blank" style="font-size:0.75rem;">Runbook →</a>
+        <br/><a href="https://github.com/capta1nfire/FutbolStats/blob/main/docs/GRAFANA_ALERTS_CHECKLIST.md#p0-jobs-health-scheduler-jobs" target="_blank" style="font-size:0.75rem;">Runbook →</a>
       </div>
     </div>
   </div>
