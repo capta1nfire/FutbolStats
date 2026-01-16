@@ -886,6 +886,138 @@ def set_sensor_health_metrics(
         logger.warning(f"Failed to set sensor health metrics: {e}")
 
 
+# =============================================================================
+# ODDS SYNC METRICS
+# =============================================================================
+
+odds_sync_requests_total = Counter(
+    "odds_sync_requests_total",
+    "Odds sync: API requests by status",
+    ["status"],  # ok, empty, error, rate_limited
+)
+
+odds_sync_fixtures_scanned_total = Counter(
+    "odds_sync_fixtures_scanned_total",
+    "Odds sync: total fixtures scanned",
+    [],
+)
+
+odds_sync_fixtures_updated_total = Counter(
+    "odds_sync_fixtures_updated_total",
+    "Odds sync: fixtures successfully updated with odds",
+    [],
+)
+
+odds_sync_payload_bytes_total = Counter(
+    "odds_sync_payload_bytes_total",
+    "Odds sync: total bytes received from API (for monitoring large responses)",
+    [],
+)
+
+odds_sync_runs_total = Counter(
+    "odds_sync_runs_total",
+    "Odds sync: job runs by status",
+    ["status"],  # ok, error, disabled
+)
+
+odds_sync_duration_ms = Histogram(
+    "odds_sync_duration_ms",
+    "Odds sync: job duration in milliseconds",
+    [],
+    buckets=[1000, 5000, 10000, 30000, 60000, 120000, 300000],
+)
+
+odds_coverage_ns_pct = Gauge(
+    "odds_coverage_ns_pct",
+    "Odds coverage: percentage of NS matches in 48h window with odds",
+    ["region"],  # latam, europe, other
+)
+
+
+# =============================================================================
+# ODDS SYNC TELEMETRY HELPERS
+# =============================================================================
+
+
+def record_odds_sync_request(
+    status: str,
+    payload_bytes: int = 0,
+) -> None:
+    """
+    Record an odds sync API request.
+
+    Args:
+        status: "ok", "empty", "error", "rate_limited"
+        payload_bytes: Response size in bytes (for monitoring)
+    """
+    try:
+        odds_sync_requests_total.labels(status=status).inc()
+        if payload_bytes > 0:
+            odds_sync_payload_bytes_total.inc(payload_bytes)
+    except Exception as e:
+        logger.warning(f"Failed to record odds sync request metric: {e}")
+
+
+def record_odds_sync_batch(
+    scanned: int,
+    updated: int,
+) -> None:
+    """
+    Record odds sync batch metrics.
+
+    Args:
+        scanned: Number of fixtures scanned
+        updated: Number of fixtures updated with odds
+    """
+    try:
+        if scanned > 0:
+            odds_sync_fixtures_scanned_total.inc(scanned)
+        if updated > 0:
+            odds_sync_fixtures_updated_total.inc(updated)
+    except Exception as e:
+        logger.warning(f"Failed to record odds sync batch metrics: {e}")
+
+
+def record_odds_sync_run(
+    status: str,
+    duration_ms: float,
+) -> None:
+    """
+    Record odds sync job run.
+
+    Args:
+        status: "ok", "error", "disabled"
+        duration_ms: Job duration in milliseconds
+    """
+    try:
+        odds_sync_runs_total.labels(status=status).inc()
+        if duration_ms > 0:
+            odds_sync_duration_ms.observe(duration_ms)
+    except Exception as e:
+        logger.warning(f"Failed to record odds sync run metrics: {e}")
+
+
+def set_odds_coverage_metrics(
+    latam_pct: float,
+    europe_pct: float,
+    other_pct: float,
+) -> None:
+    """
+    Update odds coverage gauges by region.
+
+    Args:
+        latam_pct: Coverage percentage for LATAM leagues (0-100)
+        europe_pct: Coverage percentage for European leagues (0-100)
+        other_pct: Coverage percentage for other leagues (0-100)
+    """
+    try:
+        odds_coverage_ns_pct.labels(region="latam").set(latam_pct)
+        odds_coverage_ns_pct.labels(region="europe").set(europe_pct)
+        odds_coverage_ns_pct.labels(region="other").set(other_pct)
+    except Exception as e:
+        logger.warning(f"Failed to set odds coverage metrics: {e}")
+
+
 def get_metrics_text() -> tuple[str, str]:
     """
     Generate Prometheus metrics text output.
