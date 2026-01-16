@@ -5715,8 +5715,15 @@ async def _calculate_jobs_health_summary(session) -> dict:
     else:
         overall = "unknown"
 
+    # Add help URLs for oncall quick reference
+    runbook_base = "docs/GRAFANA_ALERTS_CHECKLIST.md"
+    stats_health["help_url"] = f"{runbook_base}#stats-backfill-job"
+    odds_health["help_url"] = f"{runbook_base}#odds-sync-job"
+    fastpath_health["help_url"] = f"{runbook_base}#fastpath-llm-narratives-job"
+
     return {
         "status": overall,
+        "runbook_url": f"{runbook_base}#p0-jobs-health-scheduler-jobs",
         "stats_backfill": stats_health,
         "odds_sync": odds_health,
         "fastpath": fastpath_health,
