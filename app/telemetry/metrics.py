@@ -1018,6 +1018,77 @@ def set_odds_coverage_metrics(
         logger.warning(f"Failed to set odds coverage metrics: {e}")
 
 
+# =============================================================================
+# RERUN SERVING METRICS
+# =============================================================================
+
+rerun_serving_db_hits_total = Counter(
+    "rerun_serving_db_hits_total",
+    "Rerun serving: predictions served from DB (two-stage)",
+    [],
+)
+
+rerun_serving_db_stale_total = Counter(
+    "rerun_serving_db_stale_total",
+    "Rerun serving: DB predictions rejected as stale",
+    [],
+)
+
+rerun_serving_live_fallback_total = Counter(
+    "rerun_serving_live_fallback_total",
+    "Rerun serving: fell back to live baseline",
+    [],
+)
+
+rerun_serving_ns_total = Counter(
+    "rerun_serving_ns_total",
+    "Rerun serving: total NS matches processed",
+    [],
+)
+
+rerun_serving_enabled = Gauge(
+    "rerun_serving_enabled",
+    "Rerun serving: 1 if PREFER_RERUN_PREDICTIONS is enabled, 0 otherwise",
+    [],
+)
+
+
+def record_rerun_serving_batch(
+    db_hits: int,
+    db_stale: int,
+    live_fallback: int,
+    total_ns: int,
+) -> None:
+    """
+    Record rerun serving metrics for a batch of predictions.
+
+    Args:
+        db_hits: Predictions served from DB (two-stage)
+        db_stale: DB predictions rejected as stale
+        live_fallback: Predictions served from live baseline
+        total_ns: Total NS matches in batch
+    """
+    try:
+        if db_hits > 0:
+            rerun_serving_db_hits_total.inc(db_hits)
+        if db_stale > 0:
+            rerun_serving_db_stale_total.inc(db_stale)
+        if live_fallback > 0:
+            rerun_serving_live_fallback_total.inc(live_fallback)
+        if total_ns > 0:
+            rerun_serving_ns_total.inc(total_ns)
+    except Exception as e:
+        logger.warning(f"Failed to record rerun serving metrics: {e}")
+
+
+def set_rerun_serving_enabled(enabled: bool) -> None:
+    """Set the rerun serving enabled gauge."""
+    try:
+        rerun_serving_enabled.set(1 if enabled else 0)
+    except Exception as e:
+        logger.warning(f"Failed to set rerun serving enabled metric: {e}")
+
+
 def get_metrics_text() -> tuple[str, str]:
     """
     Generate Prometheus metrics text output.

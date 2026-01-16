@@ -1699,6 +1699,24 @@ async def get_predictions(
     predictions = await _overlay_frozen_predictions(session, predictions)
     _stage_times["overlay_ms"] = (time.time() - _t3) * 1000
 
+    # For NS matches, overlay rerun predictions if PREFER_RERUN_PREDICTIONS=true
+    _t3b = time.time()
+    # Build match_dates dict from DataFrame for freshness check
+    match_dates = {}
+    if "match_id" in df.columns and "date" in df.columns:
+        for _, row in df.iterrows():
+            mid = row.get("match_id")
+            mdate = row.get("date")
+            if mid and mdate:
+                match_dates[int(mid)] = mdate if isinstance(mdate, datetime) else datetime.fromisoformat(str(mdate).replace("Z", "+00:00"))
+    predictions, rerun_stats = await _overlay_rerun_predictions(session, predictions, match_dates)
+    _stage_times["rerun_overlay_ms"] = (time.time() - _t3b) * 1000
+    if rerun_stats.get("db_hits", 0) > 0 or rerun_stats.get("db_stale", 0) > 0:
+        logger.info(
+            f"rerun_serving | db_hits={rerun_stats['db_hits']} db_stale={rerun_stats['db_stale']} "
+            f"live_fallback={rerun_stats['live_fallback']} total_ns={rerun_stats['total_ns']}"
+        )
+
     # Apply team identity overrides (rebranding, e.g., La Equidad → Internacional de Bogotá)
     _t4 = time.time()
     predictions = await _apply_team_overrides(session, predictions)
@@ -1832,6 +1850,146 @@ async def _save_predictions_to_db(
 
     await session.commit()
     return saved
+
+
+# Metrics counters for rerun serving (DB-first vs live fallback)
+_rerun_serving_stats = {
+    "db_hits": 0,
+    "db_stale": 0,
+    "live_fallback": 0,
+    "total_ns_served": 0,
+}
+
+
+async def _overlay_rerun_predictions(
+    session: AsyncSession,
+    predictions: list[dict],
+    match_dates: dict[int, datetime],  # match_id -> match date for freshness check
+) -> tuple[list[dict], dict]:
+    """
+    Overlay rerun predictions from DB for NS matches when PREFER_RERUN_PREDICTIONS=true.
+
+    This implements "DB-first gated" serving:
+    1. If PREFER_RERUN_PREDICTIONS=false: return predictions unchanged (baseline)
+    2. If true: for each NS match, try to serve from DB if:
+       - A prediction with run_id exists (from a rerun)
+       - The prediction is "fresh" (created within RERUN_FRESHNESS_HOURS of match kickoff)
+    3. If no fresh DB prediction: fall back to live baseline
+
+    Returns:
+        tuple: (modified predictions, serving stats dict)
+    """
+    settings = get_settings()
+    stats = {"db_hits": 0, "db_stale": 0, "live_fallback": 0, "total_ns": 0}
+
+    # If flag is off, return unchanged
+    if not settings.PREFER_RERUN_PREDICTIONS:
+        return predictions, stats
+
+    if not predictions:
+        return predictions, stats
+
+    # Get NS match IDs
+    ns_match_ids = [
+        p.get("match_id") for p in predictions
+        if p.get("match_id") and p.get("status") == "NS"
+    ]
+    if not ns_match_ids:
+        return predictions, stats
+
+    stats["total_ns"] = len(ns_match_ids)
+
+    # Query rerun predictions (those with run_id, most recent per match)
+    # Using a subquery to get the latest prediction per match_id with run_id
+    result = await session.execute(
+        text("""
+            SELECT DISTINCT ON (match_id)
+                match_id, model_version, home_prob, draw_prob, away_prob,
+                created_at, run_id
+            FROM predictions
+            WHERE match_id = ANY(:match_ids)
+              AND run_id IS NOT NULL
+            ORDER BY match_id, created_at DESC
+        """),
+        {"match_ids": ns_match_ids}
+    )
+    rerun_preds = {row[0]: row for row in result.fetchall()}
+
+    if not rerun_preds:
+        stats["live_fallback"] = len(ns_match_ids)
+        return predictions, stats
+
+    # Freshness threshold
+    freshness_hours = settings.RERUN_FRESHNESS_HOURS
+    now = datetime.utcnow()
+
+    # Overlay rerun predictions where fresh
+    for pred in predictions:
+        match_id = pred.get("match_id")
+        status = pred.get("status")
+
+        if status != "NS" or match_id not in rerun_preds:
+            if status == "NS":
+                stats["live_fallback"] += 1
+            continue
+
+        db_pred = rerun_preds[match_id]
+        pred_created_at = db_pred[5]  # created_at
+        match_date = match_dates.get(match_id)
+
+        # Freshness check: prediction must be within RERUN_FRESHNESS_HOURS of now
+        # OR within RERUN_FRESHNESS_HOURS before match kickoff
+        is_fresh = False
+        hours_since_pred = (now - pred_created_at).total_seconds() / 3600
+
+        if hours_since_pred <= freshness_hours:
+            is_fresh = True
+        elif match_date:
+            # Also fresh if match is soon and pred was made recently enough
+            hours_to_kickoff = (match_date - now).total_seconds() / 3600
+            if hours_to_kickoff > 0 and hours_since_pred <= freshness_hours * 2:
+                is_fresh = True
+
+        if is_fresh:
+            # Overlay DB prediction
+            pred["probabilities"] = {
+                "home": float(db_pred[2]),
+                "draw": float(db_pred[3]),
+                "away": float(db_pred[4]),
+            }
+            # Recalculate fair odds from new probabilities
+            pred["fair_odds"] = {
+                "home": round(1.0 / db_pred[2], 2) if db_pred[2] > 0 else None,
+                "draw": round(1.0 / db_pred[3], 2) if db_pred[3] > 0 else None,
+                "away": round(1.0 / db_pred[4], 2) if db_pred[4] > 0 else None,
+            }
+            # Mark as served from rerun
+            pred["served_from_rerun"] = True
+            pred["rerun_model_version"] = db_pred[1]
+            stats["db_hits"] += 1
+        else:
+            stats["db_stale"] += 1
+            stats["live_fallback"] += 1
+
+    # Update global counters
+    _rerun_serving_stats["db_hits"] += stats["db_hits"]
+    _rerun_serving_stats["db_stale"] += stats["db_stale"]
+    _rerun_serving_stats["live_fallback"] += stats["live_fallback"]
+    _rerun_serving_stats["total_ns_served"] += stats["total_ns"]
+
+    # Record Prometheus metrics
+    try:
+        from app.telemetry.metrics import record_rerun_serving_batch
+        record_rerun_serving_batch(
+            db_hits=stats["db_hits"],
+            db_stale=stats["db_stale"],
+            live_fallback=stats["live_fallback"],
+            total_ns=stats["total_ns"],
+        )
+    except Exception as e:
+        logger.warning(f"Failed to record rerun serving metrics: {e}")
+
+    return predictions, stats
 
 
 async def _overlay_frozen_predictions(

@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     # When False (or no active rerun), serve baseline predictions
     # This allows A/B testing and rollback via flag toggle without deleting data
     PREFER_RERUN_PREDICTIONS: bool = False  # Default: serve baseline
+    RERUN_FRESHNESS_HOURS: int = 6  # Max age of DB prediction before falling back to live
 
     # Shadow Mode Evaluation Thresholds
     SHADOW_MIN_SAMPLES: int = 50  # Minimum evaluated predictions for GO/NO_GO decision
