@@ -21,6 +21,9 @@ class PredictionsViewModel: ObservableObject {
     /// Current time - updated every 60s to trigger UI refresh for live matches
     @Published private(set) var clockTick: Date = Date()
     private var clockTimer: Timer?
+
+    // MARK: - Match Cache Observer
+    private var cacheObserver: NSObjectProtocol?
     @Published var selectedDate: Date {
         didSet {
             let formatter = ISO8601DateFormatter()
@@ -70,10 +73,37 @@ class PredictionsViewModel: ObservableObject {
         // User expects "Today" to mean their local day, not UTC
         self.selectedDate = Calendar.current.startOfDay(for: Date())
         startClockTimer()
+        setupCacheObserver()
     }
 
     deinit {
         clockTimer?.invalidate()
+        if let observer = cacheObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    // MARK: - Cache Observer
+
+    /// Subscribe to MatchCache updates to trigger UI refresh for live match overlays
+    private func setupCacheObserver() {
+        cacheObserver = NotificationCenter.default.addObserver(
+            forName: MatchCache.didUpdateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let matchId = notification.object as? Int else { return }
+            // Dispatch to MainActor for thread safety (Swift 6 strict concurrency)
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                // Only trigger refresh if this match is in the current view
+                if self.cachedPredictionsForDate.contains(where: { $0.matchId == matchId }) {
+                    // Trigger clockTick to force UI refresh (minimal re-render)
+                    self.clockTick = Date()
+                    print("[CacheObserver] Match \(matchId) updated, triggering refresh")
+                }
+            }
+        }
     }
 
     // MARK: - Live Clock Timer
@@ -89,11 +119,20 @@ class PredictionsViewModel: ObservableObject {
     }
 
     /// Calculate the current elapsed minute for a live match
-    /// Uses the API elapsed as base and adds local time passed since load
+    /// Uses cached data if fresher, otherwise falls back to API elapsed + local time
     /// - Parameter prediction: The match prediction
-    /// - Returns: Formatted elapsed string (e.g., "32'", "45+", "90+", or status like "HT")
+    /// - Returns: Formatted elapsed string (e.g., "32'", "45+2'", "90+3'", or status like "HT")
     func calculatedElapsedDisplay(for prediction: MatchPrediction) -> String {
-        guard let status = prediction.status else { return "LIVE" }
+        // Check cache overlay first (fresher data from MatchDetailView polling)
+        let (status, elapsed, elapsedExtra, loadedAt): (String?, Int?, Int?, Date) = {
+            if let matchId = prediction.matchId,
+               let cached = MatchCache.shared.get(matchId: matchId) {
+                return (cached.status, cached.elapsed, cached.elapsedExtra, cached.updatedAt)
+            }
+            return (prediction.status, prediction.elapsed, prediction.elapsedExtra, predictionsLoadedAt)
+        }()
+
+        guard let status = status else { return "LIVE" }
 
         // Only calculate for active play statuses
         let activeStatuses = ["1H", "2H", "LIVE"]
@@ -102,28 +141,76 @@ class PredictionsViewModel: ObservableObject {
             return status
         }
 
-        guard let baseElapsed = prediction.elapsed else {
+        guard let baseElapsed = elapsed else {
             return status
         }
 
-        // Calculate minutes passed since predictions were loaded
-        let minutesPassed = Int(clockTick.timeIntervalSince(predictionsLoadedAt) / 60)
+        // If we have injury/added time from API, show it directly (e.g., "90+3'")
+        if let extra = elapsedExtra, extra > 0 {
+            return "\(baseElapsed)+\(extra)'"
+        }
+
+        // Calculate minutes passed since data was loaded (local clock estimation)
+        let minutesPassed = Int(clockTick.timeIntervalSince(loadedAt) / 60)
         let calculatedElapsed = baseElapsed + minutesPassed
 
         // Apply caps based on status
         if status == "1H" {
-            // Cap at 45+ for first half
+            // Cap at 45+ for first half (injury time will come from API)
             if calculatedElapsed > 45 {
                 return "45+"
             }
         } else if status == "2H" {
-            // Cap at 90+ for second half
+            // Cap at 90+ for second half (injury time will come from API)
             if calculatedElapsed > 90 {
                 return "90+"
             }
         }
 
         return "\(calculatedElapsed)'"
+    }
+
+    /// Get overlayed score for a prediction (uses cache if fresher)
+    /// - Parameter prediction: The match prediction
+    /// - Returns: Tuple of (homeGoals, awayGoals) with cache overlay applied
+    func overlayedScore(for prediction: MatchPrediction) -> (home: Int?, away: Int?) {
+        if let matchId = prediction.matchId,
+           let cached = MatchCache.shared.get(matchId: matchId) {
+            return (cached.homeGoals, cached.awayGoals)
+        }
+        return (prediction.homeGoals, prediction.awayGoals)
+    }
+
+    /// Get overlayed status for a prediction (uses cache if fresher)
+    /// - Parameter prediction: The match prediction
+    /// - Returns: Status string with cache overlay applied
+    func overlayedStatus(for prediction: MatchPrediction) -> String? {
+        if let matchId = prediction.matchId,
+           let cached = MatchCache.shared.get(matchId: matchId) {
+            return cached.status
+        }
+        return prediction.status
+    }
+
+    /// Check if prediction is live (uses cache if fresher)
+    func isLive(for prediction: MatchPrediction) -> Bool {
+        let status = overlayedStatus(for: prediction)
+        guard let s = status else { return false }
+        return ["1H", "2H", "HT", "ET", "BT", "P", "LIVE"].contains(s)
+    }
+
+    /// Check if prediction is finished (uses cache if fresher)
+    func isFinished(for prediction: MatchPrediction) -> Bool {
+        let status = overlayedStatus(for: prediction)
+        return status == "FT" || status == "AET" || status == "PEN"
+    }
+
+    /// Check if prediction has score to display (uses cache if fresher)
+    func hasScore(for prediction: MatchPrediction) -> Bool {
+        let live = isLive(for: prediction)
+        let finished = isFinished(for: prediction)
+        let (home, away) = overlayedScore(for: prediction)
+        return (live || finished) && home != nil && away != nil
     }
 
     // MARK: - Load Predictions

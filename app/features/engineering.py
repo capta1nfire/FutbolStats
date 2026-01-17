@@ -628,6 +628,7 @@ class FeatureEngineer:
                 # Include match status and score for iOS display
                 features["status"] = match.status
                 features["elapsed"] = match.elapsed  # Current minute for live matches
+                features["elapsed_extra"] = match.elapsed_extra  # Added/injury time (e.g., 3 for 90+3)
                 features["home_goals"] = match.home_goals
                 features["away_goals"] = match.away_goals
                 # Include venue for LLM narrative enrichment

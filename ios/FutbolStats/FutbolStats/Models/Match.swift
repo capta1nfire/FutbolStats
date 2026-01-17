@@ -25,6 +25,7 @@ struct MatchPrediction: Codable, Identifiable {
     let date: String?
     let status: String?           // Match status: NS, FT, 1H, 2H, HT, etc.
     let elapsed: Int?             // Current minute for live matches (e.g., 32)
+    let elapsedExtra: Int?        // Added/injury time minutes (e.g., 3 for 90+3)
     let homeGoals: Int?           // Final score (nil if not played)
     let awayGoals: Int?           // Final score (nil if not played)
     let leagueId: Int?            // League ID for grouping
@@ -108,6 +109,15 @@ struct MatchPrediction: Codable, Identifiable {
     var scoreDisplay: String? {
         guard let home = homeGoals, let away = awayGoals else { return nil }
         return "\(home) - \(away)"
+    }
+
+    /// Elapsed time display with injury time (e.g., "90+3'" or "45'")
+    var elapsedDisplay: String? {
+        guard let mins = elapsed else { return nil }
+        if let extra = elapsedExtra, extra > 0 {
+            return "\(mins)+\(extra)'"
+        }
+        return "\(mins)'"
     }
 
     /// Quick check if this prediction has a value betting opportunity
@@ -197,6 +207,7 @@ struct MatchPrediction: Codable, Identifiable {
         case date
         case status
         case elapsed
+        case elapsedExtra = "elapsed_extra"
         case homeGoals = "home_goals"
         case awayGoals = "away_goals"
         case leagueId = "league_id"

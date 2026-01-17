@@ -1,8 +1,11 @@
 """Async database connection using SQLAlchemy (supports SQLite and PostgreSQL)."""
 
+import asyncio
 import logging
+from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
+from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -46,10 +49,11 @@ if is_sqlite:
     engine_kwargs["poolclass"] = StaticPool
 else:
     # PostgreSQL-specific settings
-    engine_kwargs["pool_pre_ping"] = True
+    engine_kwargs["pool_pre_ping"] = True  # Verify connection before checkout
     engine_kwargs["pool_size"] = 5
     engine_kwargs["max_overflow"] = 10
-    engine_kwargs["pool_recycle"] = 1800  # Recycle connections every 30 min to avoid stale connections
+    engine_kwargs["pool_recycle"] = 300  # Recycle connections every 5 min (Railway can drop idle connections)
+    engine_kwargs["pool_timeout"] = 30  # Timeout waiting for connection from pool
 
 async_engine = create_async_engine(DATABASE_URL, **engine_kwargs)
 
@@ -84,3 +88,49 @@ async def close_db() -> None:
     logger.info("Closing database connections...")
     await async_engine.dispose()
     logger.info("Database connections closed.")
+
+
+@asynccontextmanager
+async def get_session_with_retry(max_retries: int = 3, retry_delay: float = 1.0):
+    """
+    Context manager that provides a session with automatic retry on connection errors.
+
+    Use this for scheduled jobs that may encounter stale connections after Railway
+    restarts or network interruptions.
+
+    Example:
+        async with get_session_with_retry() as session:
+            result = await session.execute(...)
+            await session.commit()
+    """
+    last_error = None
+
+    for attempt in range(max_retries):
+        try:
+            async with AsyncSessionLocal() as session:
+                yield session
+                return  # Success, exit the retry loop
+        except (InterfaceError, OperationalError) as e:
+            last_error = e
+            error_msg = str(e)
+
+            # Check if this is a connection-closed error worth retrying
+            if "closed" in error_msg.lower() or "connection" in error_msg.lower():
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Database connection error (attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Retrying in {retry_delay}s..."
+                    )
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    continue
+
+            # Non-retryable error or max retries reached
+            raise
+        except Exception:
+            # Non-connection errors should not be retried
+            raise
+
+    # If we get here, all retries failed
+    if last_error:
+        raise last_error

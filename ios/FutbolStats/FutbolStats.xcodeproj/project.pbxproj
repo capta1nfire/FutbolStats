@@ -31,6 +31,7 @@
 		B1000001233456780000003 /* AppConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001233456780000013 /* AppConfiguration.swift */; };
 		B1000001233456780000004 /* AlphaStatusBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001233456780000014 /* AlphaStatusBadge.swift */; };
 		C1000001233456780000001 /* PerfLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000001233456780000011 /* PerfLogger.swift */; };
+		C1000001233456780000002 /* MatchCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000001233456780000012 /* MatchCache.swift */; };
 		D1000001233456780000001 /* SkeletonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001233456780000011 /* SkeletonView.swift */; };
 /* End PBXBuildFile section */
 
@@ -60,6 +61,7 @@
 		B1000001233456780000013 /* AppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfiguration.swift; sourceTree = "<group>"; };
 		B1000001233456780000014 /* AlphaStatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlphaStatusBadge.swift; sourceTree = "<group>"; };
 		C1000001233456780000011 /* PerfLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerfLogger.swift; sourceTree = "<group>"; };
+		C1000001233456780000012 /* MatchCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatchCache.swift; sourceTree = "<group>"; };
 		D1000001233456780000011 /* SkeletonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkeletonView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -149,6 +151,7 @@
 			children = (
 				A1000001233456780000015 /* APIClient.swift */,
 				B1000001233456780000013 /* AppConfiguration.swift */,
+				C1000001233456780000012 /* MatchCache.swift */,
 				C1000001233456780000011 /* PerfLogger.swift */,
 			);
 			path = Services;
@@ -264,6 +267,7 @@
 				B1000001233456780000003 /* AppConfiguration.swift in Sources */,
 				B1000001233456780000004 /* AlphaStatusBadge.swift in Sources */,
 				C1000001233456780000001 /* PerfLogger.swift in Sources */,
+				C1000001233456780000002 /* MatchCache.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -250,9 +250,23 @@ struct PredictionsListView: View {
 
                     ForEach(group.predictions) { prediction in
                         let isValueBet = (prediction.valueBets?.count ?? 0) > 0
-                        let elapsed = prediction.isLive ? viewModel.calculatedElapsedDisplay(for: prediction) : nil
+                        // Use viewModel overlay methods for cache-aware data
+                        let isLive = viewModel.isLive(for: prediction)
+                        let elapsed = isLive ? viewModel.calculatedElapsedDisplay(for: prediction) : nil
+                        let score = viewModel.overlayedScore(for: prediction)
+                        let hasScore = viewModel.hasScore(for: prediction)
+                        let isFinished = viewModel.isFinished(for: prediction)
                         NavigationLink(destination: MatchDetailView(prediction: prediction)) {
-                            MatchCard(prediction: prediction, showValueBadge: isValueBet, calculatedElapsed: elapsed)
+                            MatchCard(
+                                prediction: prediction,
+                                showValueBadge: isValueBet,
+                                calculatedElapsed: elapsed,
+                                overlayedHomeGoals: score.home,
+                                overlayedAwayGoals: score.away,
+                                overlayedHasScore: hasScore,
+                                overlayedIsLive: isLive,
+                                overlayedIsFinished: isFinished
+                            )
                         }
                         .buttonStyle(.plain)
                     }
@@ -423,6 +437,24 @@ struct MatchCard: View {
     /// Calculated elapsed display from ViewModel (for live clock)
     var calculatedElapsed: String?
 
+    // Overlay values from cache (take precedence over prediction values)
+    var overlayedHomeGoals: Int?
+    var overlayedAwayGoals: Int?
+    var overlayedHasScore: Bool?
+    var overlayedIsLive: Bool?
+    var overlayedIsFinished: Bool?
+
+    /// Effective home goals (overlay or prediction)
+    private var homeGoals: Int? { overlayedHomeGoals ?? prediction.homeGoals }
+    /// Effective away goals (overlay or prediction)
+    private var awayGoals: Int? { overlayedAwayGoals ?? prediction.awayGoals }
+    /// Effective hasScore (overlay or prediction)
+    private var hasScore: Bool { overlayedHasScore ?? prediction.hasScore }
+    /// Effective isLive (overlay or prediction)
+    private var isLive: Bool { overlayedIsLive ?? prediction.isLive }
+    /// Effective isFinished (overlay or prediction)
+    private var isFinished: Bool { overlayedIsFinished ?? prediction.isFinished }
+
     var body: some View {
         VStack(spacing: 5) {
             // Teams side by side: Logo | Score ... Center ... Score | Logo
@@ -431,8 +463,8 @@ struct MatchCard: View {
                 HStack(spacing: 28) {
                     teamLogo(url: prediction.homeTeamLogo)
 
-                    if prediction.hasScore {
-                        Text("\(prediction.homeGoals ?? 0)")
+                    if hasScore {
+                        Text("\(homeGoals ?? 0)")
                             .font(.custom("Bebas Neue", size: 42))
                             .foregroundStyle(.white)
                     }
@@ -447,8 +479,8 @@ struct MatchCard: View {
 
                 // Away team (right side) - score near center, logo near edge
                 HStack(spacing: 28) {
-                    if prediction.hasScore {
-                        Text("\(prediction.awayGoals ?? 0)")
+                    if hasScore {
+                        Text("\(awayGoals ?? 0)")
                             .font(.custom("Bebas Neue", size: 42))
                             .foregroundStyle(.white)
                     }
@@ -521,15 +553,15 @@ struct MatchCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: 4))
             }
 
-            // Status
-            if prediction.isFinished {
+            // Status (uses effective isFinished/isLive from overlay)
+            if isFinished {
                 Text("Final")
                     .font(.system(size: 12))
                     .foregroundStyle(.white)
-            } else if prediction.isLive {
+            } else if isLive {
                 Text(liveStatusDisplay)
-                    .font(.custom("Bebas Neue", size: 16))
-                    .foregroundStyle(.red)
+                    .font(.custom("Bebas Neue", size: 18))
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(Color.red.opacity(0.15))

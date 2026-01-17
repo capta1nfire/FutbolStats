@@ -193,6 +193,9 @@ class MatchDetailViewModel: ObservableObject {
                 liveDataLoadedAt = Date()
                 print("[LivePolling] Updated match \(matchId): status=\(updated.status ?? "nil"), elapsed=\(updated.elapsed ?? -1)")
 
+                // Write to shared cache so PredictionsListView can overlay
+                MatchCache.shared.update(from: updated)
+
                 // Stop polling if match finished
                 if updated.isFinished {
                     stopLivePolling()
@@ -204,6 +207,7 @@ class MatchDetailViewModel: ObservableObject {
     }
 
     /// Calculate the current elapsed minute for display (with local clock)
+    /// Returns formatted string like "32'", "45+2'", "90+3'", or status like "HT"
     func calculatedElapsedDisplay() -> String {
         let pred = currentPrediction
         guard let status = pred.status else { return "LIVE" }
@@ -218,11 +222,16 @@ class MatchDetailViewModel: ObservableObject {
             return status
         }
 
-        // Calculate minutes passed since data was loaded
+        // If we have injury/added time from API, show it directly (e.g., "90+3'")
+        if let extra = pred.elapsedExtra, extra > 0 {
+            return "\(baseElapsed)+\(extra)'"
+        }
+
+        // Calculate minutes passed since data was loaded (local clock estimation)
         let minutesPassed = Int(clockTick.timeIntervalSince(liveDataLoadedAt) / 60)
         let calculatedElapsed = baseElapsed + minutesPassed
 
-        // Apply caps based on status
+        // Apply caps based on status (injury time will come from API)
         if status == "1H" && calculatedElapsed > 45 {
             return "45+"
         } else if status == "2H" && calculatedElapsed > 90 {
@@ -600,12 +609,21 @@ class MatchDetailViewModel: ObservableObject {
 
 // MARK: - Main View
 
+// MARK: - Detail Card Tab
+
+enum DetailCardTab: String, CaseIterable {
+    case prediction = "Prediction"
+    case stats = "Stats"
+    case table = "Table"
+}
+
 struct MatchDetailView: View {
     let prediction: MatchPrediction
     @StateObject private var viewModel: MatchDetailViewModel
     @State private var isFavoriteHome = false
     @State private var isFavoriteAway = false
     @State private var showStandings = false
+    @State private var selectedTab: DetailCardTab = .prediction
 
     init(prediction: MatchPrediction) {
         self.prediction = prediction
@@ -663,14 +681,6 @@ struct MatchDetailView: View {
                     OddsCardsSkeleton()
                 }
 
-                // Form table - shows skeleton until details loaded
-                if viewModel.homeTeamForm != nil || viewModel.awayTeamForm != nil {
-                    formTable
-                        .transition(sectionTransition)
-                } else if viewModel.detailsState.isLoading || viewModel.detailsState == .idle {
-                    FormTableSkeleton()
-                }
-
                 // LLM Narrative (post-match analysis) - shows skeleton from idle through loading
                 if prediction.isFinished {
                     if let narrative = viewModel.llmNarrative {
@@ -683,21 +693,6 @@ struct MatchDetailView: View {
                         // Show unavailable state for finished matches without narrative
                         LLMNarrativeUnavailableView(status: viewModel.llmNarrativeStatus)
                             .transition(sectionTransition)
-                    }
-                }
-
-                // Match Stats Table (below narrative, for finished matches)
-                if prediction.isFinished {
-                    if let stats = viewModel.matchStats {
-                        MatchStatsTableView(
-                            stats: stats,
-                            homeTeam: prediction.homeTeam,
-                            awayTeam: prediction.awayTeam
-                        )
-                        .transition(sectionTransition)
-                    } else if viewModel.statsState == .idle || viewModel.statsState.isLoading {
-                        // Show skeleton immediately for finished matches to reserve space
-                        StatsTableSkeleton()
                     }
                 }
 
@@ -781,9 +776,9 @@ struct MatchDetailView: View {
 
     private var matchHeader: some View {
         VStack(spacing: 16) {
-            HStack(alignment: .top, spacing: 0) {
-                // Home team with score (for live/finished)
-                HStack(spacing: 4) {
+            ZStack {
+                // Team columns at fixed positions (top-aligned, full height)
+                HStack(spacing: 0) {
                     teamColumn(
                         name: prediction.homeTeam,
                         logo: viewModel.matchDetails?.homeTeam.logo,
@@ -791,48 +786,67 @@ struct MatchDetailView: View {
                         role: "Home",
                         isFavorite: $isFavoriteHome
                     )
+                    Spacer()
+                    teamColumn(
+                        name: prediction.awayTeam,
+                        logo: viewModel.matchDetails?.awayTeam.logo,
+                        position: viewModel.awayTeamForm?.position ?? 4,
+                        role: "Away",
+                        isFavorite: $isFavoriteAway
+                    )
+                }
 
-                    // Home score - next to team column
-                    if viewModel.currentPrediction.isLive || prediction.isFinished {
+                // Score row: centered vertically, scores + status aligned together
+                if viewModel.currentPrediction.isLive || prediction.isFinished {
+                    HStack(spacing: 0) {
+                        // Spacer to push past home team column
+                        Spacer()
+                            .frame(width: 120)
+
+                        // Home score
                         Text("\(viewModel.currentPrediction.homeGoals ?? 0)")
                             .font(.custom("Bebas Neue", size: 68))
                             .foregroundStyle(.white)
                             .frame(minWidth: 40)
-                    }
-                }
 
-                Spacer()
+                        Spacer()
 
-                // Center: status indicator
-                VStack(spacing: 4) {
-                    Spacer()
-                    if prediction.isFinished {
-                        HStack(spacing: 6) {
-                            // Prediction result indicator
-                            if let correct = prediction.predictionCorrect {
-                                Image(systemName: correct ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        // Center: status indicator (same baseline as scores)
+                        if prediction.isFinished {
+                            HStack(spacing: 6) {
+                                if let correct = prediction.predictionCorrect {
+                                    Image(systemName: correct ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(correct ? .green : .red)
+                                }
+                                Text("Final")
                                     .font(.caption)
-                                    .foregroundStyle(correct ? .green : .red)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(.gray)
                             }
-                            Text("FT")
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(.green)
-                            // Tier emoji
-                            if !prediction.tierEmoji.isEmpty {
-                                Text(prediction.tierEmoji)
-                                    .font(.caption)
-                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(Color.gray.opacity(0.2))
+                            .clipShape(Capsule())
+                        } else {
+                            PulsingLiveMinute(text: liveStatusDisplay)
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(Color.green.opacity(0.2))
-                        .clipShape(Capsule())
-                    } else if viewModel.currentPrediction.isLive {
-                        // Pulsing minute in center
-                        PulsingLiveMinute(text: liveStatusDisplay)
-                    } else {
-                        // Tier emoji for upcoming matches
+
+                        Spacer()
+
+                        // Away score
+                        Text("\(viewModel.currentPrediction.awayGoals ?? 0)")
+                            .font(.custom("Bebas Neue", size: 68))
+                            .foregroundStyle(.white)
+                            .frame(minWidth: 40)
+
+                        // Spacer to balance away team column
+                        Spacer()
+                            .frame(width: 120)
+                    }
+                } else {
+                    // For upcoming matches: VS and date centered
+                    VStack(spacing: 4) {
                         if !prediction.tierEmoji.isEmpty {
                             Text(prediction.tierEmoji)
                                 .font(.title2)
@@ -846,33 +860,9 @@ struct MatchDetailView: View {
                             .foregroundStyle(.gray.opacity(0.8))
                             .multilineTextAlignment(.center)
                     }
-                    Spacer()
-                }
-
-                Spacer()
-
-                // Away team with score (for live/finished)
-                HStack(spacing: 4) {
-                    // Away score - next to team column
-                    if viewModel.currentPrediction.isLive || prediction.isFinished {
-                        Text("\(viewModel.currentPrediction.awayGoals ?? 0)")
-                            .font(.custom("Bebas Neue", size: 68))
-                            .foregroundStyle(.white)
-                            .frame(minWidth: 40)
-                    }
-
-                    teamColumn(
-                        name: prediction.awayTeam,
-                        logo: viewModel.matchDetails?.awayTeam.logo,
-                        position: viewModel.awayTeamForm?.position ?? 4,
-                        role: "Away",
-                        isFavorite: $isFavoriteAway
-                    )
                 }
             }
             .frame(height: 160)
-
-            predictionBadge
         }
         .padding(.top, 8)
     }
@@ -927,7 +917,7 @@ struct MatchDetailView: View {
                     .foregroundStyle(.gray)
             }
         }
-        .frame(width: 90)
+        .frame(width: 120)
     }
 
     private var teamPlaceholder: some View {
@@ -937,42 +927,171 @@ struct MatchDetailView: View {
             .frame(width: 72, height: 72)
     }
 
-    private var predictionBadge: some View {
-        Text(prediction.probabilities.predictedOutcome)
-            .font(.subheadline)
-            .fontWeight(.semibold)
-            .foregroundStyle(.blue)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(Color.blue.opacity(0.15))
-            .clipShape(Capsule())
-    }
-
     // MARK: - Probability Bar
 
+    /// Returns the predicted outcome: "home", "draw", or "away"
+    private var predictedOutcome: String {
+        let home = prediction.probabilities.home
+        let draw = prediction.probabilities.draw
+        let away = prediction.probabilities.away
+
+        if home >= draw && home >= away {
+            return "home"
+        } else if away >= home && away >= draw {
+            return "away"
+        } else {
+            return "draw"
+        }
+    }
+
+    /// Color for the prediction indicator based on predicted outcome
+    private var predictionIndicatorColor: Color {
+        switch predictedOutcome {
+        case "home": return .blue
+        case "away": return .red
+        default: return .gray
+        }
+    }
+
+    /// Calculate indicator position based on the predicted outcome and confidence
+    /// - Low confidence (e.g., 36% vs 34%): indicator near the border with other zones
+    /// - High confidence (e.g., 70%): indicator deeper into its zone
+    private var predictionIndicatorPosition: CGFloat {
+        let home = prediction.probabilities.home
+        let draw = prediction.probabilities.draw
+        let away = prediction.probabilities.away
+
+        // Find the winning prediction and its margin over the second place
+        let sorted = [(home, "home"), (draw, "draw"), (away, "away")].sorted { $0.0 > $1.0 }
+        let winner = sorted[0]
+        let runnerUp = sorted[1]
+
+        // Confidence factor: how much the winner beats the runner-up
+        // Range: 0 (tied) to ~0.7 (dominant 70% vs 15% vs 15%)
+        // Normalized to 0...1 for positioning within the zone
+        let margin = winner.0 - runnerUp.0
+        let confidenceFactor = min(margin / 0.4, 1.0)  // 40% margin = max confidence
+
+        switch winner.1 {
+        case "home":
+            // Blue zone: 0 to home
+            // Low confidence → near border (closer to home)
+            // High confidence → deeper into zone (closer to 0)
+            let zoneBorder = home
+            let zoneCenter = home / 2.0
+            return zoneBorder - (confidenceFactor * (zoneBorder - zoneCenter))
+
+        case "away":
+            // Red zone: home+draw to 1.0
+            // Low confidence → near border (closer to zoneStart)
+            // High confidence → deeper into zone (closer to 1.0)
+            let zoneStart = home + draw
+            let zoneCenter = zoneStart + (away / 2.0)
+            return zoneStart + (confidenceFactor * (zoneCenter - zoneStart))
+
+        default: // draw
+            // Gray zone: home to home+draw (center is fine for draw predictions)
+            return home + (draw / 2.0)
+        }
+    }
+
     private var probabilityBar: some View {
-        VStack(spacing: 16) {
-            // Segmented probability bar - thicker
-            GeometryReader { geo in
-                HStack(spacing: 0) {
-                    Rectangle()
-                        .fill(Color.blue)
-                        .frame(width: geo.size.width * prediction.probabilities.home)
-
-                    Rectangle()
-                        .fill(Color.gray.opacity(0.6))
-                        .frame(width: geo.size.width * prediction.probabilities.draw)
-
-                    Rectangle()
-                        .fill(Color.red)
-                        .frame(width: geo.size.width * prediction.probabilities.away)
+        VStack(spacing: 12) {
+            // Tab selector
+            HStack(spacing: 0) {
+                ForEach(DetailCardTab.allCases, id: \.self) { tab in
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedTab = tab
+                        }
+                    } label: {
+                        Text(tab.rawValue)
+                            .font(.subheadline)
+                            .fontWeight(selectedTab == tab ? .semibold : .regular)
+                            .foregroundStyle(selectedTab == tab ? .white : .gray)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                    }
+                    .background(
+                        selectedTab == tab ?
+                        Color.white.opacity(0.1) : Color.clear
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
-                .frame(height: 16)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            .padding(.horizontal, 4)
+
+            // Separator
+            Divider()
+                .background(Color.gray.opacity(0.3))
+
+            // Tab content
+            switch selectedTab {
+            case .prediction:
+                predictionTabContent
+
+            case .stats:
+                statsTabContent
+
+            case .table:
+                tableTabContent
+            }
+        }
+        .padding(16)
+        .modifier(GlassEffectModifier())
+    }
+
+    // MARK: - Prediction Tab Content
+
+    private var predictionTabContent: some View {
+        VStack(spacing: 4) {
+            // Prediction indicator (arrow pointing down)
+            GeometryReader { geo in
+                let position = predictionIndicatorPosition
+                let xOffset = geo.size.width * position
+
+                Image(systemName: "arrowtriangle.down.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(predictionIndicatorColor)
+                    .position(x: xOffset, y: 6)
+            }
+            .frame(height: 12)
+
+            // Segmented probability bar with gradient transitions + vertical indicator line
+            GeometryReader { geo in
+                let home = prediction.probabilities.home
+                let draw = prediction.probabilities.draw
+                let blendWidth: CGFloat = 0.04
+                let indicatorX = geo.size.width * predictionIndicatorPosition
+
+                ZStack {
+                    Rectangle()
+                        .fill(
+                            LinearGradient(
+                                stops: [
+                                    .init(color: .blue, location: 0),
+                                    .init(color: .blue, location: max(0, home - blendWidth)),
+                                    .init(color: Color.gray.opacity(0.6), location: home + blendWidth),
+                                    .init(color: Color.gray.opacity(0.6), location: max(home + blendWidth, home + draw - blendWidth)),
+                                    .init(color: .red, location: min(1, home + draw + blendWidth)),
+                                    .init(color: .red, location: 1)
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(height: 16)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                    Rectangle()
+                        .fill(Color.white.opacity(0.8))
+                        .frame(width: 1, height: 22)
+                        .position(x: indicatorX, y: 8)
+                }
             }
             .frame(height: 16)
 
-            // Labels below only
+            // Labels
             HStack {
                 probabilityLabel("Home", value: prediction.probabilities.homePercent, color: .blue)
                 Spacer()
@@ -983,14 +1102,202 @@ struct MatchDetailView: View {
         }
     }
 
-    private func probabilityLabel(_ label: String, value: String, color: Color) -> some View {
-        VStack(spacing: 4) {
-            Circle()
-                .fill(color)
-                .frame(width: 10, height: 10)
+    // MARK: - Stats Tab Content
+
+    private var statsTabContent: some View {
+        Group {
+            if let stats = viewModel.matchStats {
+                statsTabRows(stats: stats)
+            } else if prediction.isFinished {
+                if viewModel.statsState.isLoading || viewModel.statsState == .idle {
+                    ProgressView()
+                        .frame(height: 100)
+                } else {
+                    Text("Estadísticas no disponibles")
+                        .font(.subheadline)
+                        .foregroundStyle(.gray)
+                        .frame(height: 100)
+                }
+            } else {
+                Text("Disponible post-partido")
+                    .font(.subheadline)
+                    .foregroundStyle(.gray)
+                    .frame(height: 100)
+            }
+        }
+    }
+
+    private func statsTabRows(stats: MatchStats) -> some View {
+        VStack(spacing: 10) {
+            // Possession
+            if let homePoss = stats.home?.ballPossession,
+               let awayPoss = stats.away?.ballPossession {
+                statRow(label: "Posesión", homeValue: "\(Int(homePoss))%", awayValue: "\(Int(awayPoss))%")
+            }
+
+            // xG
+            if let homeXG = stats.home?.expectedGoals,
+               let awayXG = stats.away?.expectedGoals {
+                statRow(label: "xG", homeValue: homeXG, awayValue: awayXG)
+            }
+
+            // Shots on Target
+            if let homeSoT = stats.home?.shotsOnGoal,
+               let awaySoT = stats.away?.shotsOnGoal {
+                statRow(label: "Tiros a puerta", homeValue: "\(homeSoT)", awayValue: "\(awaySoT)")
+            }
+
+            // Total Shots
+            if let homeShots = stats.home?.totalShots,
+               let awayShots = stats.away?.totalShots {
+                statRow(label: "Tiros totales", homeValue: "\(homeShots)", awayValue: "\(awayShots)")
+            }
+
+            // Corners
+            if let homeCorners = stats.home?.cornerKicks,
+               let awayCorners = stats.away?.cornerKicks {
+                statRow(label: "Corners", homeValue: "\(homeCorners)", awayValue: "\(awayCorners)")
+            }
+
+            // Fouls
+            if let homeFouls = stats.home?.fouls,
+               let awayFouls = stats.away?.fouls {
+                statRow(label: "Faltas", homeValue: "\(homeFouls)", awayValue: "\(awayFouls)")
+            }
+        }
+    }
+
+    private func statRow(label: String, homeValue: String, awayValue: String) -> some View {
+        HStack {
+            Text(homeValue)
+                .font(.custom("Bebas Neue", size: 16))
+                .foregroundStyle(.white)
+                .frame(width: 50, alignment: .leading)
+
+            Spacer()
+
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.gray)
+
+            Spacer()
+
+            Text(awayValue)
+                .font(.custom("Bebas Neue", size: 16))
+                .foregroundStyle(.white)
+                .frame(width: 50, alignment: .trailing)
+        }
+    }
+
+    // MARK: - Table Tab Content
+
+    private var tableTabContent: some View {
+        VStack(spacing: 0) {
+            if let homeForm = viewModel.homeTeamForm {
+                compactFormRow(data: homeForm)
+            }
+
+            Divider()
+                .background(Color.gray.opacity(0.3))
+
+            if let awayForm = viewModel.awayTeamForm {
+                compactFormRow(data: awayForm)
+            }
+
+            // Tap hint
+            Button {
+                showStandings = true
+            } label: {
+                HStack {
+                    Text("Ver clasificación completa")
+                        .font(.caption)
+                        .foregroundStyle(.cyan)
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.cyan)
+                }
+                .padding(.top, 12)
+            }
+        }
+    }
+
+    private func compactFormRow(data: TeamFormData) -> some View {
+        HStack(spacing: 8) {
+            // Position
+            Text(data.position > 0 ? "#\(data.position)" : "-")
+                .font(.custom("Bebas Neue", size: 16))
+                .foregroundStyle(.white.opacity(0.8))
+                .frame(width: 30, alignment: .leading)
+
+            // Team logo
+            if let logoUrl = data.logoUrl, let url = URL(string: logoUrl) {
+                CachedAsyncImage(url: url) { image in
+                    image.resizable().aspectRatio(contentMode: .fit)
+                } placeholder: {
+                    Image(systemName: "shield.fill").foregroundStyle(.gray)
+                }
+                .frame(width: 24, height: 24)
+            } else {
+                Image(systemName: "shield.fill")
+                    .font(.caption)
+                    .foregroundStyle(.gray)
+                    .frame(width: 24, height: 24)
+            }
+
+            Spacer()
+
+            // Form pills (last 5)
+            HStack(spacing: 4) {
+                let formResults = Array(data.form.prefix(5))
+                ForEach(0..<5, id: \.self) { index in
+                    if index < formResults.count {
+                        compactFormPill(result: formResults[index])
+                    } else {
+                        compactFormPill(result: "-")
+                    }
+                }
+            }
+
+            Spacer()
+
+            // Points
+            HStack(spacing: 2) {
+                Text("\(data.points)")
+                    .font(.custom("Bebas Neue", size: 18))
+                    .foregroundStyle(.white)
+                Text("Pts")
+                    .font(.caption2)
+                    .foregroundStyle(.gray)
+            }
+            .frame(width: 45, alignment: .trailing)
+        }
+        .padding(.vertical, 10)
+    }
+
+    private func compactFormPill(result: String) -> some View {
+        let color: Color = {
+            switch result {
+            case "W": return .green
+            case "L": return .red
+            case "D": return .gray
+            default: return Color(white: 0.2)
+            }
+        }()
+
+        return Text(result == "-" ? "" : result)
+            .font(.caption2)
+            .fontWeight(.bold)
+            .foregroundStyle(.white)
+            .frame(width: 20, height: 20)
+            .background(color)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+
+    private func probabilityLabel(_ label: String, value: String, color: Color) -> some View {
+        VStack(spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(color)
             Text(value)
                 .font(.custom("Bebas Neue", size: 22))
                 .foregroundStyle(.white)
@@ -1073,119 +1380,11 @@ struct MatchDetailView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
-        .background(Color(white: 0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .modifier(GlassEffectModifier())
         .overlay(
             RoundedRectangle(cornerRadius: 16)
                 .stroke(isValue ? valueColor.opacity(0.5) : Color.clear, lineWidth: 1.5)
         )
-    }
-
-    // MARK: - Form Table
-
-    private var formTable: some View {
-        Button {
-            showStandings = true
-        } label: {
-            VStack(spacing: 0) {
-                if let homeForm = viewModel.homeTeamForm {
-                    formRow(data: homeForm)
-                }
-
-                Divider()
-                    .background(Color.gray.opacity(0.3))
-
-                if let awayForm = viewModel.awayTeamForm {
-                    formRow(data: awayForm)
-                }
-
-                // Hint to tap for full standings
-                Image(systemName: "chevron.down")
-                    .font(.caption)
-                    .foregroundStyle(.gray)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-            }
-            .background(Color(white: 0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func formRow(data: TeamFormData) -> some View {
-        HStack(spacing: 0) {
-            // Position
-            Text(data.position > 0 ? "#\(data.position)" : "-")
-                .font(.custom("Bebas Neue", size: 18))
-                .foregroundStyle(.white.opacity(0.8))
-                .frame(width: 36, alignment: .leading)
-
-            // Team logo (cached)
-            if let logoUrl = data.logoUrl, let url = URL(string: logoUrl) {
-                CachedAsyncImage(url: url) { image in
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                } placeholder: {
-                    Image(systemName: "shield.fill")
-                        .foregroundStyle(.gray)
-                }
-                .frame(width: 32, height: 32)
-            } else {
-                Image(systemName: "shield.fill")
-                    .font(.title3)
-                    .foregroundStyle(.gray)
-                    .frame(width: 32, height: 32)
-            }
-
-            Spacer()
-
-            // Form pills - always show 5, pad with empty if needed
-            HStack(spacing: 6) {
-                let formResults = Array(data.form.prefix(5))
-                ForEach(0..<5, id: \.self) { index in
-                    if index < formResults.count {
-                        formPill(result: formResults[index])
-                    } else {
-                        formPill(result: "-")
-                    }
-                }
-            }
-
-            Spacer()
-
-            // Points
-            HStack(spacing: 4) {
-                Text("\(data.points)")
-                    .font(.custom("Bebas Neue", size: 22))
-                    .foregroundStyle(.white)
-                Text("Pts")
-                    .font(.caption)
-                    .foregroundStyle(.gray)
-            }
-            .frame(width: 56, alignment: .trailing)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-    }
-
-    private func formPill(result: String) -> some View {
-        let color: Color = {
-            switch result {
-            case "W": return .green
-            case "L": return .red
-            case "D": return .gray
-            default: return Color(white: 0.2)
-            }
-        }()
-
-        return Text(result == "-" ? "" : result)
-            .font(.caption)
-            .fontWeight(.bold)
-            .foregroundStyle(.white)
-            .frame(width: 28, height: 28)
-            .background(color)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     // MARK: - Insight Footer
@@ -1219,6 +1418,7 @@ struct MatchDetailView: View {
             date: "2026-01-03T07:00:00",
             status: "FT",
             elapsed: nil,
+            elapsedExtra: nil,
             homeGoals: 2,
             awayGoals: 1,
             leagueId: 140,
@@ -1232,4 +1432,18 @@ struct MatchDetailView: View {
         ))
     }
     .preferredColorScheme(.dark)
+}
+
+// MARK: - Glass Effect Modifier (iOS 26+)
+
+private struct GlassEffectModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+        } else {
+            content
+                .background(Color(white: 0.1), in: RoundedRectangle(cornerRadius: 16))
+        }
+    }
 }

@@ -66,6 +66,9 @@ class Match(SQLModel, table=True):
     elapsed: Optional[int] = Field(
         default=None, description="Current minute for live matches (from API)"
     )
+    elapsed_extra: Optional[int] = Field(
+        default=None, description="Added/injury time minutes (e.g., 3 for 90+3)"
+    )
     match_type: str = Field(
         max_length=20, default="official", description="'official' or 'friendly'"
     )

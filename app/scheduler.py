@@ -14,7 +14,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select, and_, text
 from sqlalchemy.orm import selectinload
 
-from app.database import AsyncSessionLocal
+from app.database import AsyncSessionLocal, get_session_with_retry
 from app.etl.pipeline import create_etl_pipeline, ETLPipeline
 
 # NOTE: This import is intentionally defensive. In case of a partial deploy/version skew,
@@ -212,7 +212,8 @@ async def global_sync_today() -> dict:
     yesterday = today - timedelta(days=1)
 
     try:
-        async with AsyncSessionLocal() as session:
+        # Use retry context manager to handle stale connections (Railway can drop idle connections)
+        async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
             provider = APIFootballProvider()
 
             league_ids = await resolve_live_sync_leagues(session)
@@ -1866,6 +1867,7 @@ async def live_tick():
     - live_tick_matches_updated_total: matches updated
     - live_tick_matches_live_gauge: current live match count
     """
+    import time
     from sqlalchemy import text
     from app.telemetry.metrics import record_job_run
     from app.etl import APIFootballProvider
@@ -1922,6 +1924,7 @@ async def live_tick():
                             match_id = id_map[ext_id]
                             new_status = f.get("status")
                             new_elapsed = f.get("elapsed")
+                            new_elapsed_extra = f.get("elapsed_extra")  # Injury time
                             new_home = f.get("home_goals")
                             new_away = f.get("away_goals")
 
@@ -1931,6 +1934,7 @@ async def live_tick():
                                     UPDATE matches
                                     SET status = :status,
                                         elapsed = :elapsed,
+                                        elapsed_extra = :elapsed_extra,
                                         home_goals = :home_goals,
                                         away_goals = :away_goals
                                     WHERE id = :match_id
@@ -1939,6 +1943,7 @@ async def live_tick():
                                     "match_id": match_id,
                                     "status": new_status,
                                     "elapsed": new_elapsed,
+                                    "elapsed_extra": new_elapsed_extra,
                                     "home_goals": new_home,
                                     "away_goals": new_away,
                                 }

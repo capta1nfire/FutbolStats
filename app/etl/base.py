@@ -32,8 +32,9 @@ class MatchData:
     stats: Optional[dict]
     status: str
     elapsed: Optional[int]  # Current minute for live matches
-    match_type: str  # "official" or "friendly"
-    match_weight: float
+    elapsed_extra: Optional[int] = None  # Added/injury time (e.g., 3 for 90+3)
+    match_type: str = "official"  # "official" or "friendly"
+    match_weight: float = 1.0
     odds_home: Optional[float] = None
     odds_draw: Optional[float] = None
     odds_away: Optional[float] = None
