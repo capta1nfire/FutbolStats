@@ -247,3 +247,70 @@ SENSOR_EVAL_STALE_MINUTES=120  # Alerta si oldest pending > esto (default 120)
 - Verificar que `MODEL_SHADOW_ARCHITECTURE=two_stage` está configurado
 - Verificar que `SENSOR_ENABLED=true`
 
+---
+
+## Release Readiness Checklist
+
+Verificar antes de cada deploy a producción:
+
+### 1. ML Model
+```bash
+# Verificar modelo blessed está commiteado
+ls -la models/xgb_v*.json
+
+# Post-deploy: verificar en OPS
+curl -s -H "X-Dashboard-Token: $DASHBOARD_TOKEN" \
+  "https://web-production-f2de9.up.railway.app/dashboard/ops.json" | jq '.data.ml_model'
+```
+- [ ] `loaded: true`
+- [ ] `version` coincide con `MODEL_VERSION` en config
+- [ ] `n_features` coincide con features esperados (17 para v1.0.0)
+
+### 2. Jobs Health
+```bash
+curl -s -H "X-Dashboard-Token: $DASHBOARD_TOKEN" \
+  "https://web-production-f2de9.up.railway.app/dashboard/ops.json" | jq '.data.jobs_health'
+```
+- [ ] `status: "ok"` (no warn/red)
+- [ ] `stats_backfill.status: "ok"`
+- [ ] `odds_sync.status: "ok"`
+- [ ] `fastpath.status: "ok"`
+
+### 3. Sentry
+```bash
+sentry-cli issues list --org devseqio --project python-fastapi -s unresolved
+```
+- [ ] 0 issues unresolved nuevos post-deploy
+- [ ] Si hay issues, evaluar si son críticos o transitorios
+
+### 4. API Budget
+```bash
+curl -s -H "X-Dashboard-Token: $DASHBOARD_TOKEN" \
+  "https://web-production-f2de9.up.railway.app/dashboard/ops.json" | jq '.data.budget'
+```
+- [ ] `status: "ok"`
+- [ ] `requests_remaining` > 1000 (buffer seguro)
+
+### 5. Quick Smoke Test
+```bash
+# Health endpoint
+curl -s "https://web-production-f2de9.up.railway.app/health" | jq
+
+# Predictions (requiere API key)
+curl -s -H "X-API-Key: $API_KEY" \
+  "https://web-production-f2de9.up.railway.app/predictions?days_ahead=1" | jq '.total'
+```
+- [ ] `/health` retorna 200
+- [ ] `/predictions` retorna datos
+
+### Notas sobre Modelos
+
+**Solo commitear modelos "blessed":**
+- Nomenclatura: `xgb_v{VERSION}_{YYYYMMDD}.json`
+- Ignorados en `.gitignore`: `*_experimental*.json`, `*_temp*.json`
+- Un solo modelo por versión major (el más reciente)
+
+**Feature compatibility:**
+- El engine selecciona features dinámicamente según `model.n_features_in_`
+- Si el modelo espera 14 y runtime produce 17, se truncan automáticamente
+- OPS muestra `n_features` para diagnóstico rápido
