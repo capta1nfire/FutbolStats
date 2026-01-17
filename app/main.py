@@ -254,10 +254,11 @@ def _incr(key: str) -> None:
 
 
 # Simple in-memory cache for predictions
+# TTL reduced to 60s for better live match updates (elapsed, goals)
 _predictions_cache = {
     "data": None,
     "timestamp": 0,
-    "ttl": 300,  # 5 minutes cache
+    "ttl": 60,  # 1 minute cache (was 5 min, reduced for live matches)
 }
 
 # Standings cache: keyed by (league_id, season), stores standings list
