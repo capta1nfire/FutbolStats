@@ -1281,6 +1281,57 @@ def set_fastpath_backlog(backlog_ready: int) -> None:
         logger.warning(f"Failed to set fastpath backlog metric: {e}")
 
 
+# =============================================================================
+# LIVE SUMMARY METRICS (iOS Live Score Polling)
+# =============================================================================
+
+live_summary_requests_total = Counter(
+    "live_summary_requests_total",
+    "Live summary: requests by status",
+    ["status"],  # ok, error
+)
+
+live_summary_latency_ms = Histogram(
+    "live_summary_latency_ms",
+    "Live summary: endpoint latency in milliseconds",
+    [],
+    buckets=[1, 5, 10, 25, 50, 100, 250, 500],
+)
+
+live_summary_matches_count = Gauge(
+    "live_summary_matches_count",
+    "Live summary: number of live matches in response",
+    [],
+)
+
+
+# =============================================================================
+# LIVE SUMMARY TELEMETRY HELPERS
+# =============================================================================
+
+
+def record_live_summary_request(
+    status: str,
+    latency_ms: float,
+    matches_count: int = 0,
+) -> None:
+    """
+    Record a live summary request.
+
+    Args:
+        status: "ok" or "error"
+        latency_ms: Request latency in milliseconds
+        matches_count: Number of live matches returned
+    """
+    try:
+        live_summary_requests_total.labels(status=status).inc()
+        if latency_ms > 0:
+            live_summary_latency_ms.observe(latency_ms)
+        live_summary_matches_count.set(matches_count)
+    except Exception as e:
+        logger.warning(f"Failed to record live summary metrics: {e}")
+
+
 def get_metrics_text() -> tuple[str, str]:
     """
     Generate Prometheus metrics text output.

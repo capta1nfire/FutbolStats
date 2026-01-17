@@ -150,24 +150,26 @@ class PredictionsViewModel: ObservableObject {
             return "\(baseElapsed)+\(extra)'"
         }
 
-        // Calculate minutes passed since data was loaded (local clock estimation)
-        let minutesPassed = Int(clockTick.timeIntervalSince(loadedAt) / 60)
-        let calculatedElapsed = baseElapsed + minutesPassed
-
-        // Apply caps based on status
-        if status == "1H" {
-            // Cap at 45+ for first half (injury time will come from API)
-            if calculatedElapsed > 45 {
-                return "45+"
-            }
-        } else if status == "2H" {
-            // Cap at 90+ for second half (injury time will come from API)
-            if calculatedElapsed > 90 {
-                return "90+"
-            }
+        // At regulation time limits, don't calculate locally - wait for API injury time
+        if status == "1H" && baseElapsed >= 45 {
+            return "45'"
+        } else if status == "2H" && baseElapsed >= 90 {
+            return "90'"
         }
 
-        return "\(calculatedElapsed)'"
+        // Calculate time passed since data was loaded (local clock estimation)
+        let secondsPassed = clockTick.timeIntervalSince(loadedAt)
+        let totalSeconds = (baseElapsed * 60) + Int(secondsPassed)
+        let displayMinutes = totalSeconds / 60
+
+        // Apply caps - stop local calculation at regulation time
+        if status == "1H" && displayMinutes >= 45 {
+            return "45'"
+        } else if status == "2H" && displayMinutes >= 90 {
+            return "90'"
+        }
+
+        return "\(displayMinutes)'"
     }
 
     /// Get overlayed score for a prediction (uses cache if fresher)
@@ -211,6 +213,20 @@ class PredictionsViewModel: ObservableObject {
         let finished = isFinished(for: prediction)
         let (home, away) = overlayedScore(for: prediction)
         return (live || finished) && home != nil && away != nil
+    }
+
+    // MARK: - LiveScoreManager Integration
+
+    /// Extract live match IDs and update LiveScoreManager for gating
+    /// Called after predictions are loaded to enable/disable live polling
+    private func updateLiveScoreManagerGating() {
+        let liveMatchIds = Set(
+            predictions
+                .filter { isLive(for: $0) }
+                .compactMap { $0.matchId }
+        )
+        LiveScoreManager.shared.updateLiveMatchIds(liveMatchIds)
+        print("[LiveScore] Updated gating with \(liveMatchIds.count) live matches")
     }
 
     // MARK: - Load Predictions
@@ -257,6 +273,9 @@ class PredictionsViewModel: ObservableObject {
             print("[Perf] loadPredictions(\(mode)) ASSIGN done: \(String(format: "%.0f", assignMs))ms (\(predictions.count) items)")
 
             lastUpdated = Date()
+
+            // Update LiveScoreManager with current live match IDs (gating requirement)
+            updateLiveScoreManagerGating()
 
             let logMode = mode == "priority" ? "TTFC_priority" : "TTFC_full"
             print("[Perf] loadPredictions \(logMode) END - network: \(String(format: "%.0f", networkMs))ms, assign: \(String(format: "%.0f", assignMs))ms, total: \(String(format: "%.0f", totalTimer.elapsedMs))ms")

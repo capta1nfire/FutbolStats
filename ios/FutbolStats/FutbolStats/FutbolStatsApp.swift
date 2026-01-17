@@ -15,9 +15,16 @@ struct FutbolStatsApp: App {
             MainTabView()
         }
         .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .background {
-                // Log telemetry when app goes to background
+            switch newPhase {
+            case .active:
+                // Resume live score polling when app becomes active
+                LiveScoreManager.shared.onAppBecameActive()
+            case .inactive, .background:
+                // Stop polling and log telemetry when app goes to background
+                LiveScoreManager.shared.onAppBecameInactive()
                 ImageCache.shared.logStats()
+            @unknown default:
+                break
             }
         }
     }

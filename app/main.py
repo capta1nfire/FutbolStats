@@ -2420,6 +2420,124 @@ async def get_match_prediction(
     return predictions[0]
 
 
+# =============================================================================
+# LIVE SUMMARY ENDPOINT (iOS Live Score Polling)
+# =============================================================================
+
+# Cache for live summary (L1 cache with 5s TTL per Auditor requirement)
+_live_summary_cache: dict = {
+    "data": None,
+    "timestamp": 0.0,
+    "ttl": 5.0,  # 5 second TTL
+}
+
+# Live statuses that indicate a match is currently being played
+LIVE_STATUSES = frozenset(["1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT", "SUSP"])
+
+
+@app.get("/live-summary")
+@limiter.limit("60/minute")  # Rate limit: 60 req/min per IP (4 req/15s is comfortable)
+async def get_live_summary(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),  # Require API key authentication
+):
+    """
+    Ultra-light endpoint for live score polling (iOS LiveScoreManager).
+
+    Returns only LIVE matches with minimal payload (~50 bytes/match).
+    Designed for 15s polling interval from iOS clients.
+
+    Response schema:
+    {
+        "ts": 1705500000,  // Unix timestamp of cache
+        "matches": {
+            "12345": {"s": "2H", "e": 67, "ex": 0, "h": 2, "a": 1},
+            "12346": {"s": "HT", "e": 45, "ex": 2, "h": 0, "a": 0}
+        }
+    }
+
+    Fields:
+    - s: status (1H, HT, 2H, ET, FT, etc.)
+    - e: elapsed minutes
+    - ex: elapsed_extra (injury time, e.g., 3 for 90+3)
+    - h: home goals
+    - a: away goals
+
+    Auth: Requires X-API-Key header.
+    Rate limit: 60 requests/minute per IP.
+    """
+    from app.telemetry.metrics import record_live_summary_request
+
+    start_time = time.time()
+    now = time.time()
+
+    try:
+        # Check L1 cache (5s TTL)
+        if (
+            _live_summary_cache["data"] is not None
+            and now - _live_summary_cache["timestamp"] < _live_summary_cache["ttl"]
+        ):
+            # Cache hit - return immediately
+            cached_data = _live_summary_cache["data"]
+            latency_ms = (time.time() - start_time) * 1000
+            record_live_summary_request(
+                status="ok",
+                latency_ms=latency_ms,
+                matches_count=len(cached_data.get("matches", {})),
+            )
+            return cached_data
+
+        # Cache miss - query DB (ultra-light: only live matches, minimal columns)
+        query = text("""
+            SELECT id, status, elapsed, elapsed_extra, home_goals, away_goals
+            FROM matches
+            WHERE status IN ('1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT', 'SUSP')
+            LIMIT 50
+        """)
+
+        result = await session.execute(query)
+        rows = result.fetchall()
+
+        # Build compact response (keyed by internal match_id per Auditor requirement)
+        matches_dict = {}
+        for row in rows:
+            match_id = row[0]
+            matches_dict[match_id] = {
+                "s": row[1],  # status
+                "e": row[2] or 0,  # elapsed
+                "ex": row[3] or 0,  # elapsed_extra
+                "h": row[4] or 0,  # home_goals
+                "a": row[5] or 0,  # away_goals
+            }
+
+        response_data = {
+            "ts": int(now),
+            "matches": matches_dict,
+        }
+
+        # Update L1 cache
+        _live_summary_cache["data"] = response_data
+        _live_summary_cache["timestamp"] = now
+
+        latency_ms = (time.time() - start_time) * 1000
+        record_live_summary_request(
+            status="ok",
+            latency_ms=latency_ms,
+            matches_count=len(matches_dict),
+        )
+
+        logger.debug(f"[live-summary] Returned {len(matches_dict)} live matches in {latency_ms:.1f}ms")
+
+        return response_data
+
+    except Exception as e:
+        latency_ms = (time.time() - start_time) * 1000
+        record_live_summary_request(status="error", latency_ms=latency_ms, matches_count=0)
+        logger.error(f"[live-summary] Error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 @app.get("/teams")
 async def list_teams(
     team_type: Optional[str] = None,
@@ -7878,6 +7996,16 @@ async def _load_ops_data() -> dict:
             item["league_name"] = league_name_by_id.get(lid)
 
     # =============================================================
+    # LIVE SUMMARY STATS (iOS Live Score Polling)
+    # =============================================================
+    live_summary_stats = {
+        "cache_ttl_seconds": _live_summary_cache["ttl"],
+        "cache_timestamp": _live_summary_cache["timestamp"],
+        "cache_age_seconds": round(time.time() - _live_summary_cache["timestamp"], 1) if _live_summary_cache["timestamp"] else None,
+        "cached_live_matches": len(_live_summary_cache["data"]["matches"]) if _live_summary_cache["data"] else 0,
+    }
+
+    # =============================================================
     # ML MODEL STATUS
     # =============================================================
     ml_model_info = {
@@ -7970,6 +8098,7 @@ async def _load_ops_data() -> dict:
         "jobs_health": jobs_health_data,
         "coverage_by_league": coverage_by_league,
         "ml_model": ml_model_info,
+        "live_summary": live_summary_stats,
     }
 
 
