@@ -927,7 +927,7 @@ struct MatchDetailView: View {
                     .foregroundStyle(.gray)
             }
         }
-        .frame(width: 80)
+        .frame(width: 90)
     }
 
     private var teamPlaceholder: some View {
