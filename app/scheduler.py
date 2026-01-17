@@ -4300,15 +4300,15 @@ def start_scheduler(ml_engine):
         replace_existing=True,
     )
 
-    # Live Tick: Every 15 seconds (batch update for live matches)
+    # Live Tick: Every 10 seconds (batch update for live matches)
     # Only runs if there are matches in progress (status IN LIVE_STATUSES)
     # Uses batch API calls: 1-20 matches = 1 req, 21-40 = 2 req, etc.
-    # Budget (ULTRA 75K/day): ~4 req/min peak = ~2K req/day (2.7% of limit)
+    # Budget (ULTRA 75K/day): ~6 req/min peak = ~3K req/day (4% of limit)
     scheduler.add_job(
         live_tick,
-        trigger=IntervalTrigger(seconds=15),
+        trigger=IntervalTrigger(seconds=10),
         id="live_tick",
-        name="Live Tick (every 15s, batch update)",
+        name="Live Tick (every 10s, batch update)",
         replace_existing=True,
     )
 
