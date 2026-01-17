@@ -926,12 +926,11 @@ struct MatchDetailView: View {
                 if anyHasValue {
                     if isValue, let ev = evResult {
                         Text(ev.evDisplay)
-                            .font(.caption)
-                            .fontWeight(.bold)
+                            .font(.custom("Bebas Neue", size: 14))
                             .foregroundStyle(valueColor)
                     } else {
                         Text(" ")
-                            .font(.caption)
+                            .font(.custom("Bebas Neue", size: 14))
                     }
                 }
             }
