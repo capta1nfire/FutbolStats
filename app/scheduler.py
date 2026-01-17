@@ -2184,7 +2184,9 @@ async def capture_finished_match_stats() -> dict:
             metrics["checked"] = len(matches)
 
             if not matches:
+                duration_ms = (time.time() - start_time) * 1000
                 logger.info(f"Stats backfill: No matches need stats (lookback={lookback_hours}h)")
+                record_job_run(job="stats_backfill", status="ok", duration_ms=duration_ms)
                 return {**metrics, "status": "no_matches"}
 
             logger.info(f"Stats backfill: Found {len(matches)} matches needing stats")
