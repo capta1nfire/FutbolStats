@@ -795,7 +795,7 @@ struct MatchDetailView: View {
                     // Show score if match is finished, otherwise show VS
                     if prediction.isFinished, let score = prediction.scoreDisplay {
                         Text(score)
-                            .font(.custom("Bebas Neue", size: 32))
+                            .font(.custom("Bebas Neue", size: 42))
                             .foregroundStyle(.white)
                         HStack(spacing: 6) {
                             // Prediction result indicator
@@ -820,13 +820,13 @@ struct MatchDetailView: View {
                         .clipShape(Capsule())
                     } else if viewModel.currentPrediction.isLive {
                         // Live score with pulsing minute as separator
-                        HStack(spacing: 8) {
+                        HStack(spacing: 6) {
                             Text("\(viewModel.currentPrediction.homeGoals ?? 0)")
-                                .font(.custom("Bebas Neue", size: 32))
+                                .font(.custom("Bebas Neue", size: 42))
                                 .foregroundStyle(.white)
                             PulsingLiveMinute(text: liveStatusDisplay)
                             Text("\(viewModel.currentPrediction.awayGoals ?? 0)")
-                                .font(.custom("Bebas Neue", size: 32))
+                                .font(.custom("Bebas Neue", size: 42))
                                 .foregroundStyle(.white)
                         }
                     } else {
