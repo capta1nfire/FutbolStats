@@ -151,7 +151,8 @@ class MatchDetailViewModel: ObservableObject {
 
     deinit {
         loadTask?.cancel()
-        stopLivePolling()
+        livePollingTimer?.invalidate()
+        clockTimer?.invalidate()
     }
 
     // MARK: - Live Polling (30s)

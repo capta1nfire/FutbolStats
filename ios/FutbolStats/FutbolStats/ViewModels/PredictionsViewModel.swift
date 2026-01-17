@@ -108,7 +108,7 @@ class PredictionsViewModel: ObservableObject {
 
         // Calculate minutes passed since predictions were loaded
         let minutesPassed = Int(clockTick.timeIntervalSince(predictionsLoadedAt) / 60)
-        var calculatedElapsed = baseElapsed + minutesPassed
+        let calculatedElapsed = baseElapsed + minutesPassed
 
         // Apply caps based on status
         if status == "1H" {
