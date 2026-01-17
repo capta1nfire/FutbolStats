@@ -241,7 +241,7 @@ def build_narrative_prompt(match_data: dict) -> tuple[str, dict, dict]:
 
     prompt = f"""You are a football analyst. Write in SPANISH (español), human but technical voice, no emojis.
 
-RULES (v10):
+RULES (v11):
 1) Return ONLY valid JSON. No text before/after. Ensure valid JSON syntax.
 2) Use digits: "1", "2", "54%", never words for numbers.
 3) Don't repeat score in body. Focus on WHY.
@@ -254,9 +254,10 @@ RULES (v10):
 8) tone: "reinforce_win" if prediction correct, "mitigate_loss" if wrong. NEVER in body text.
 9) DERIVED_FACTS is primary source. Don't recalculate stats.
 10) MANDATORY: mention total_shots ("X vs Y"), early goals if <15'.
-11) STYLE v10: "arranque rápido" only if goal<15'. FORBIDDEN: "robo", "inmerecido", "épico". Max 2 editorial phrases.
+11) STYLE v11: "arranque rápido" only if goal<15'. FORBIDDEN: "robo", "inmerecido", "épico". Max 2 editorial phrases.
 12) LENGTH: 120-150 words. title max 8 words.
 13) ANTI-LEAK: NEVER write JSON field names literally in body (conflict_flag, betting_context, etc). Express ideas in natural language instead.
+14) PLAYER NAMES: Use ONLY surname (last name). Never "K. Mbappé" or "R. Asensio" - write "Mbappé", "Asensio".
 
 FORMATO DE SALIDA (SCHEMA OBLIGATORIO):
 
