@@ -31,6 +31,7 @@ class GeminiResult:
     model_version: str
     raw_output: dict
     error: Optional[str] = None
+    finish_reason: Optional[str] = None  # STOP, MAX_TOKENS, SAFETY, RECITATION, OTHER
 
 
 class GeminiError(Exception):
@@ -125,9 +126,16 @@ class GeminiClient:
 
             data = response.json()
 
-            # Extract text from response
-            text = self._extract_text(data)
+            # Extract text and finish reason from response
+            text, finish_reason = self._extract_text_and_reason(data)
             usage = data.get("usageMetadata", {})
+
+            # Log warning if finish_reason indicates potential truncation
+            if finish_reason and finish_reason != "STOP":
+                logger.warning(
+                    f"Gemini finishReason={finish_reason} (tokens_out={usage.get('candidatesTokenCount', 0)}, "
+                    f"max_tokens={max_tokens or self.max_tokens}, text_len={len(text)})"
+                )
 
             return GeminiResult(
                 status="COMPLETED",
@@ -137,6 +145,7 @@ class GeminiClient:
                 exec_ms=elapsed_ms,
                 model_version=data.get("modelVersion", self.model),
                 raw_output=data,
+                finish_reason=finish_reason,
             )
 
         except httpx.TimeoutException:
@@ -166,16 +175,20 @@ class GeminiClient:
                 error=str(e),
             )
 
-    def _extract_text(self, response: dict) -> str:
-        """Extract text from Gemini response."""
+    def _extract_text_and_reason(self, response: dict) -> tuple[str, Optional[str]]:
+        """Extract text and finishReason from Gemini response."""
         candidates = response.get("candidates", [])
         if not candidates:
-            return ""
+            return "", None
 
-        content = candidates[0].get("content", {})
+        candidate = candidates[0]
+        finish_reason = candidate.get("finishReason")
+
+        content = candidate.get("content", {})
         parts = content.get("parts", [])
 
         if not parts:
-            return ""
+            return "", finish_reason
 
-        return parts[0].get("text", "")
+        text = parts[0].get("text", "")
+        return text, finish_reason
