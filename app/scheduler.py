@@ -1668,6 +1668,181 @@ async def daily_save_predictions():
         logger.error(f"Daily prediction save failed: {e}")
 
 
+async def prediction_gap_safety_net():
+    """
+    Safety net job to catch matches without predictions before kickoff.
+
+    Runs every 30 minutes to detect NS matches in the next 2 hours that
+    don't have a prediction yet, and generates predictions for them.
+
+    This covers edge cases like:
+    - Isolated midweek matches that fall between daily batch runs
+    - Matches added after the daily prediction job ran
+    - Any timing gaps in the prediction pipeline
+
+    Safety: Only generates predictions for matches that haven't started yet.
+
+    Telemetry:
+    - prediction_gap_safety_net_runs_total{status}: ok, no_gaps, error
+    - prediction_gap_safety_net_generated_total: predictions generated
+    """
+    from sqlalchemy import text
+    from app.telemetry.metrics import record_job_run
+
+    start_time = time.time()
+    job_name = "prediction_gap_safety_net"
+
+    try:
+        from app.db_utils import upsert
+        from app.ml import XGBoostEngine
+        from app.models import Prediction, Match
+
+        async with AsyncSessionLocal() as session:
+            # Find NS matches in next 2 hours without any prediction
+            lookahead_hours = 2
+            result = await session.execute(
+                text("""
+                    SELECT m.id, m.external_id, m.date, m.league_id,
+                           ht.name as home_team, at.name as away_team
+                    FROM matches m
+                    JOIN teams ht ON ht.id = m.home_team_id
+                    JOIN teams at ON at.id = m.away_team_id
+                    WHERE m.status = 'NS'
+                      AND m.date > NOW()
+                      AND m.date <= NOW() + INTERVAL '2 hours'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM predictions p WHERE p.match_id = m.id
+                      )
+                    ORDER BY m.date ASC
+                """)
+            )
+            gaps = result.fetchall()
+
+            if not gaps:
+                duration_ms = (time.time() - start_time) * 1000
+                logger.debug(f"[SAFETY-NET] No prediction gaps in next {lookahead_hours}h")
+                record_job_run(job=job_name, status="ok", duration_ms=duration_ms)
+                return {"status": "no_gaps", "checked": True}
+
+            logger.info(f"[SAFETY-NET] Found {len(gaps)} matches without predictions in next {lookahead_hours}h")
+
+            # Load ML engine
+            engine = XGBoostEngine()
+            if not engine.load_model():
+                logger.error("[SAFETY-NET] Could not load ML model")
+                record_job_run(job=job_name, status="error", duration_ms=(time.time() - start_time) * 1000)
+                return {"status": "error", "error": "model_not_loaded"}
+
+            # Get features for these specific matches
+            match_ids = [g[0] for g in gaps]
+            feature_engineer = FeatureEngineer(session=session)
+            df = await feature_engineer.get_upcoming_matches_features()
+
+            # Filter to only our gap matches
+            if len(df) > 0:
+                df = df[df["match_id"].isin(match_ids)]
+
+            if len(df) == 0:
+                logger.warning(f"[SAFETY-NET] No features available for gap matches: {match_ids}")
+                record_job_run(job=job_name, status="ok", duration_ms=(time.time() - start_time) * 1000)
+                return {"status": "no_features", "match_ids": match_ids}
+
+            # Generate predictions
+            predictions = engine.predict(df)
+
+            # Shadow/Sensor imports for parallel logging
+            from app.ml.shadow import is_shadow_enabled, log_shadow_prediction
+            from app.ml.sensor import log_sensor_prediction
+            from app.config import get_settings
+            sensor_settings = get_settings()
+
+            saved = 0
+            for idx, pred in enumerate(predictions):
+                match_id = pred.get("match_id")
+                if not match_id:
+                    continue
+
+                # Double-check match is still NS (safety)
+                match_status = pred.get("status", "")
+                if match_status != "NS":
+                    logger.debug(f"[SAFETY-NET] Skipping {match_id}, status={match_status}")
+                    continue
+
+                probs = pred["probabilities"]
+                try:
+                    await upsert(
+                        session,
+                        Prediction,
+                        values={
+                            "match_id": match_id,
+                            "model_version": engine.model_version,
+                            "home_prob": probs["home"],
+                            "draw_prob": probs["draw"],
+                            "away_prob": probs["away"],
+                        },
+                        conflict_columns=["match_id", "model_version"],
+                        update_columns=["home_prob", "draw_prob", "away_prob"],
+                    )
+                    saved += 1
+
+                    # Log match info for debugging
+                    gap_info = next((g for g in gaps if g[0] == match_id), None)
+                    if gap_info:
+                        logger.info(
+                            f"[SAFETY-NET] Generated prediction for {gap_info[4]} vs {gap_info[5]} "
+                            f"(id={match_id}, kickoff={gap_info[2]})"
+                        )
+
+                    # Shadow prediction (if enabled)
+                    if is_shadow_enabled():
+                        try:
+                            match_df = df[df["match_id"] == match_id]
+                            if len(match_df) > 0:
+                                await log_shadow_prediction(
+                                    session=session,
+                                    match_id=match_id,
+                                    df=match_df,
+                                    baseline_engine=engine,
+                                    skip_commit=True,
+                                )
+                        except Exception as shadow_err:
+                            logger.warning(f"[SAFETY-NET] Shadow failed for {match_id}: {shadow_err}")
+
+                    # Sensor B prediction (if enabled)
+                    if sensor_settings.SENSOR_ENABLED:
+                        try:
+                            import numpy as np
+                            match_df = df[df["match_id"] == match_id]
+                            if len(match_df) > 0:
+                                model_a_probs = np.array([probs["home"], probs["draw"], probs["away"]])
+                                await log_sensor_prediction(
+                                    session=session,
+                                    match_id=match_id,
+                                    df=match_df,
+                                    model_a_probs=model_a_probs,
+                                    model_a_version=engine.model_version,
+                                )
+                        except Exception as sensor_err:
+                            logger.warning(f"[SAFETY-NET] Sensor failed for {match_id}: {sensor_err}")
+
+                except Exception as e:
+                    logger.warning(f"[SAFETY-NET] Error saving prediction for {match_id}: {e}")
+
+            await session.commit()
+
+            duration_ms = (time.time() - start_time) * 1000
+            logger.info(f"[SAFETY-NET] Complete: {saved} predictions generated for gap matches")
+            record_job_run(job=job_name, status="ok", duration_ms=duration_ms)
+
+            return {"status": "ok", "generated": saved, "gaps_found": len(gaps)}
+
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(f"[SAFETY-NET] Failed: {e}")
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        return {"status": "error", "error": str(e)}
+
+
 async def evaluate_shadow_predictions():
     """
     Evaluate shadow predictions against actual outcomes.
@@ -3907,6 +4082,17 @@ def start_scheduler(ml_engine):
         trigger=IntervalTrigger(hours=6),
         id="predictions_safety_net",
         name="Predictions Safety Net (every 6h)",
+        replace_existing=True,
+    )
+
+    # Prediction gap safety net: Every 30 minutes to catch isolated matches
+    # Detects NS matches in next 2h without predictions and generates them
+    # Covers midweek isolated matches that fall between daily batch runs
+    scheduler.add_job(
+        prediction_gap_safety_net,
+        trigger=IntervalTrigger(minutes=30),
+        id="prediction_gap_safety_net",
+        name="Prediction Gap Safety Net (every 30min)",
         replace_existing=True,
     )
 

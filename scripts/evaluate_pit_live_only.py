@@ -12,6 +12,9 @@ Output:
     logs/pit_evaluation_live_only_YYYYMMDD_HHMMSS.json
 """
 
+from __future__ import annotations
+
+import argparse
 import asyncio
 import json
 import os
@@ -64,12 +67,19 @@ BOOTSTRAP_ITERATIONS = 1000
 MIN_BETS_FOR_CI = 30
 
 
-async def fetch_pit_data(conn) -> list[dict]:
+async def fetch_pit_data(conn, min_snapshot_date: str | None = None) -> list[dict]:
     """
     Fetch PIT-eligible snapshots with match results.
     Only reads from odds_snapshots + matches.
+
+    Args:
+        min_snapshot_date: Optional ISO date string (e.g., '2026-01-13') to filter snapshots
     """
-    query = """
+    where_clause = "WHERE os.snapshot_type = 'lineup_confirmed'"
+    if min_snapshot_date:
+        where_clause += f" AND os.snapshot_at >= '{min_snapshot_date}'"
+
+    query = f"""
         SELECT
             os.id as snapshot_id,
             os.match_id,
@@ -92,7 +102,7 @@ async def fetch_pit_data(conn) -> list[dict]:
             m.season
         FROM odds_snapshots os
         JOIN matches m ON m.id = os.match_id
-        WHERE os.snapshot_type = 'lineup_confirmed'
+        {where_clause}
         ORDER BY os.snapshot_at DESC
     """
     rows = await conn.fetch(query)
@@ -406,8 +416,12 @@ def generate_interpretation(phase: str, brier: dict, betting: dict) -> dict:
     }
 
 
-async def run_evaluation() -> dict:
-    """Main evaluation logic."""
+async def run_evaluation(min_snapshot_date: str | None = None) -> dict:
+    """Main evaluation logic.
+
+    Args:
+        min_snapshot_date: Optional ISO date string (e.g., '2026-01-13') to filter snapshots
+    """
     database_url = os.environ.get('DATABASE_URL', '')
     if not database_url:
         return {
@@ -420,7 +434,7 @@ async def run_evaluation() -> dict:
 
     try:
         # Fetch data
-        snapshots = await fetch_pit_data(conn)
+        snapshots = await fetch_pit_data(conn, min_snapshot_date)
         predictions_list, pred_metadata = await fetch_predictions(conn)
 
         # Coverage stats
@@ -634,16 +648,20 @@ async def run_evaluation() -> dict:
         interpretation = generate_interpretation(phase, brier_results, betting_metrics)
 
         # Build report
+        filters_dict = {
+            'snapshot_type': 'lineup_confirmed',
+            'odds_freshness': 'live',
+            'timing_window_valid': f'{TIMING_WINDOW_VALID_MIN}-{TIMING_WINDOW_VALID_MAX} min',
+            'timing_window_ideal': f'{TIMING_WINDOW_IDEAL_MIN}-{TIMING_WINDOW_IDEAL_MAX} min',
+            'edge_threshold': EDGE_THRESHOLD,
+        }
+        if min_snapshot_date:
+            filters_dict['min_snapshot_date'] = min_snapshot_date
+
         report = {
             'generated_at': datetime.now().isoformat(),
             'protocol_version': PROTOCOL_VERSION,
-            'filters': {
-                'snapshot_type': 'lineup_confirmed',
-                'odds_freshness': 'live',
-                'timing_window_valid': f'{TIMING_WINDOW_VALID_MIN}-{TIMING_WINDOW_VALID_MAX} min',
-                'timing_window_ideal': f'{TIMING_WINDOW_IDEAL_MIN}-{TIMING_WINDOW_IDEAL_MAX} min',
-                'edge_threshold': EDGE_THRESHOLD,
-            },
+            'filters': filters_dict,
             'counts': {
                 'n_total_snapshots': n_total,
                 'n_live': n_live,
@@ -720,12 +738,24 @@ def print_summary(report: dict):
 
 
 async def main():
+    parser = argparse.ArgumentParser(description='PIT Evaluation - Live Odds Only')
+    parser.add_argument(
+        '--min-snapshot-date',
+        type=str,
+        default=None,
+        help='Minimum snapshot date (ISO format, e.g., 2026-01-13). Excludes earlier snapshots.'
+    )
+    args = parser.parse_args()
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    print("Running PIT evaluation (live odds only)...")
+    if args.min_snapshot_date:
+        print(f"Running PIT evaluation (live odds only, snapshot >= {args.min_snapshot_date})...")
+    else:
+        print("Running PIT evaluation (live odds only)...")
 
     try:
-        report = await run_evaluation()
+        report = await run_evaluation(min_snapshot_date=args.min_snapshot_date)
     except Exception as e:
         report = {
             'generated_at': datetime.now().isoformat(),
@@ -741,7 +771,8 @@ async def main():
     logs_dir = Path(__file__).parent.parent / "logs"
     logs_dir.mkdir(exist_ok=True)
 
-    json_path = logs_dir / f"pit_evaluation_live_only_{timestamp}.json"
+    suffix = f"_from_{args.min_snapshot_date}" if args.min_snapshot_date else ""
+    json_path = logs_dir / f"pit_evaluation_live_only_{timestamp}{suffix}.json"
     with open(json_path, "w") as f:
         json.dump(report, f, indent=2, default=str)
 
