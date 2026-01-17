@@ -7680,6 +7680,21 @@ async def _load_ops_data() -> dict:
             item["league_name"] = league_name_by_id.get(lid)
 
     # =============================================================
+    # ML MODEL STATUS
+    # =============================================================
+    ml_model_info = {
+        "loaded": ml_engine.model is not None,
+        "version": ml_engine.model_version,
+        "source": "file",  # Currently only file-based loading
+        "model_path": str(ml_engine.model_path),
+    }
+    if ml_engine.model is not None:
+        try:
+            ml_model_info["n_features"] = ml_engine.model.n_features_in_
+        except AttributeError:
+            pass
+
+    # =============================================================
     # COVERAGE BY LEAGUE (NS matches in next 48h with predictions/odds)
     # =============================================================
     coverage_by_league = []
@@ -7756,6 +7771,7 @@ async def _load_ops_data() -> dict:
         "rerun_serving": rerun_serving_data,
         "jobs_health": jobs_health_data,
         "coverage_by_league": coverage_by_league,
+        "ml_model": ml_model_info,
     }
 
 
