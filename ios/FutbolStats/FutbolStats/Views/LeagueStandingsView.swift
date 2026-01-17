@@ -268,8 +268,7 @@ struct LeagueStandingsView: View {
 
             // Position
             Text("\(entry.position)")
-                .font(.subheadline)
-                .fontWeight(.medium)
+                .font(.custom("Bebas Neue", size: 16))
                 .foregroundStyle(isHighlighted ? .white : .gray)
                 .frame(width: positionWidth, alignment: .center)
 
@@ -340,22 +339,21 @@ struct LeagueStandingsView: View {
 
     private func statCell(_ value: Int) -> some View {
         Text("\(value)")
-            .font(.subheadline)
+            .font(.custom("Bebas Neue", size: 16))
             .foregroundStyle(.white.opacity(0.8))
             .frame(width: statColumnWidth)
     }
 
     private func goalDiffCell(_ value: Int) -> some View {
         Text(value > 0 ? "+\(value)" : "\(value)")
-            .font(.subheadline)
+            .font(.custom("Bebas Neue", size: 16))
             .foregroundStyle(value > 0 ? .green : (value < 0 ? .red : .white.opacity(0.8)))
             .frame(width: statColumnWidth)
     }
 
     private func pointsCell(_ value: Int) -> some View {
         Text("\(value)")
-            .font(.subheadline)
-            .fontWeight(.bold)
+            .font(.custom("Bebas Neue", size: 18))
             .foregroundStyle(.white)
             .frame(width: pointsColumnWidth)
     }

@@ -522,8 +522,7 @@ struct MatchCard: View {
                     .foregroundStyle(.white)
             } else if prediction.isLive {
                 Text(liveStatusDisplay)
-                    .font(.system(size: 11))
-                    .fontWeight(.semibold)
+                    .font(.custom("Bebas Neue", size: 16))
                     .foregroundStyle(.red)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
@@ -531,8 +530,7 @@ struct MatchCard: View {
                     .clipShape(RoundedRectangle(cornerRadius: 4))
             } else if let date = prediction.matchDate {
                 Text(formatTime(date))
-                    .font(.title3)
-                    .fontWeight(.semibold)
+                    .font(.custom("Bebas Neue", size: 24))
                     .foregroundStyle(.white)
 
                 if prediction.confidenceTier != nil {

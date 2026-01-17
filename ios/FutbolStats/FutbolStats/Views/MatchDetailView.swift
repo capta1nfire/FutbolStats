@@ -670,7 +670,7 @@ struct MatchDetailView: View {
                     // Show score if match is finished, otherwise show VS
                     if prediction.isFinished, let score = prediction.scoreDisplay {
                         Text(score)
-                            .font(.system(size: 28, weight: .bold))
+                            .font(.custom("Bebas Neue", size: 32))
                             .foregroundStyle(.white)
                         HStack(spacing: 6) {
                             // Prediction result indicator
@@ -696,7 +696,7 @@ struct MatchDetailView: View {
                     } else if prediction.isLive {
                         if let score = prediction.scoreDisplay {
                             Text(score)
-                                .font(.system(size: 28, weight: .bold))
+                                .font(.custom("Bebas Neue", size: 32))
                                 .foregroundStyle(.white)
                         }
                         Text(prediction.status ?? "LIVE")
@@ -776,9 +776,20 @@ struct MatchDetailView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             // Position & Role - centered (hide position if 0/unavailable)
-            Text(position > 0 ? "#\(position) • \(role)" : role)
-                .font(.caption)
-                .foregroundStyle(.gray)
+            if position > 0 {
+                HStack(spacing: 2) {
+                    Text("#\(position)")
+                        .font(.custom("Bebas Neue", size: 14))
+                        .foregroundStyle(.gray)
+                    Text("• \(role)")
+                        .font(.caption)
+                        .foregroundStyle(.gray)
+                }
+            } else {
+                Text(role)
+                    .font(.caption)
+                    .foregroundStyle(.gray)
+            }
         }
         .frame(maxWidth: .infinity)
     }
@@ -845,8 +856,7 @@ struct MatchDetailView: View {
                 .font(.caption)
                 .foregroundStyle(.gray)
             Text(value)
-                .font(.title3)
-                .fontWeight(.bold)
+                .font(.custom("Bebas Neue", size: 22))
                 .foregroundStyle(.white)
         }
     }
@@ -899,8 +909,7 @@ struct MatchDetailView: View {
                     .font(.caption2)
                     .foregroundStyle(.gray)
                 Text(fairOdds)
-                    .font(.title2)
-                    .fontWeight(.bold)
+                    .font(.custom("Bebas Neue", size: 26))
                     .foregroundStyle(color)
             }
 
@@ -910,8 +919,7 @@ struct MatchDetailView: View {
                     .font(.caption2)
                     .foregroundStyle(.gray)
                 Text(bookieOdds.map { String(format: "%.2f", $0) } ?? "-")
-                    .font(.title2)
-                    .fontWeight(.bold)
+                    .font(.custom("Bebas Neue", size: 26))
                     .foregroundStyle(isValue ? valueColor : .white)
 
                 // EV display - reserve space for all cards if any has value
@@ -973,8 +981,7 @@ struct MatchDetailView: View {
         HStack(spacing: 0) {
             // Position
             Text(data.position > 0 ? "#\(data.position)" : "-")
-                .font(.subheadline)
-                .fontWeight(.semibold)
+                .font(.custom("Bebas Neue", size: 18))
                 .foregroundStyle(.white.opacity(0.8))
                 .frame(width: 36, alignment: .leading)
 
@@ -1015,8 +1022,7 @@ struct MatchDetailView: View {
             // Points
             HStack(spacing: 4) {
                 Text("\(data.points)")
-                    .font(.title3)
-                    .fontWeight(.bold)
+                    .font(.custom("Bebas Neue", size: 22))
                     .foregroundStyle(.white)
                 Text("Pts")
                     .font(.caption)

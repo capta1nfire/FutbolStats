@@ -147,8 +147,7 @@ struct MatchStatsTableView: View {
         return VStack(spacing: 8) {
             HStack {
                 Text("\(Int(homePercent))%")
-                    .font(.subheadline)
-                    .fontWeight(.bold)
+                    .font(.custom("Bebas Neue", size: 20))
                     .foregroundStyle(.blue)
 
                 Spacer()
@@ -165,8 +164,7 @@ struct MatchStatsTableView: View {
                 Spacer()
 
                 Text("\(Int(awayPercent))%")
-                    .font(.subheadline)
-                    .fontWeight(.bold)
+                    .font(.custom("Bebas Neue", size: 20))
                     .foregroundStyle(.red)
             }
 
@@ -199,8 +197,7 @@ struct MatchStatsTableView: View {
     ) -> some View {
         HStack {
             Text(homeValue)
-                .font(.subheadline)
-                .fontWeight(.semibold)
+                .font(.custom("Bebas Neue", size: 18))
                 .foregroundStyle(.white)
                 .frame(width: 40, alignment: .leading)
 
@@ -218,8 +215,7 @@ struct MatchStatsTableView: View {
             Spacer()
 
             Text(awayValue)
-                .font(.subheadline)
-                .fontWeight(.semibold)
+                .font(.custom("Bebas Neue", size: 18))
                 .foregroundStyle(.white)
                 .frame(width: 40, alignment: .trailing)
         }
