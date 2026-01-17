@@ -496,6 +496,16 @@ struct MatchDetailView: View {
 
     private let valueColor = Color(red: 0.19, green: 0.82, blue: 0.35)  // #30D158
 
+    /// Live status display with elapsed minute when appropriate
+    private var liveStatusDisplay: String {
+        let status = prediction.status ?? "LIVE"
+        let showElapsedStatuses = ["1H", "2H", "LIVE"]
+        if showElapsedStatuses.contains(status), let elapsed = prediction.elapsed {
+            return "\(elapsed)'"
+        }
+        return status
+    }
+
     // Animation for section transitions - fade only, no slide
     private let sectionTransition: AnyTransition = .opacity
     private let sectionAnimation: Animation = .easeOut(duration: 0.3)
@@ -699,12 +709,11 @@ struct MatchDetailView: View {
                                 .font(.custom("Bebas Neue", size: 32))
                                 .foregroundStyle(.white)
                         }
-                        Text(prediction.status ?? "LIVE")
-                            .font(.caption)
-                            .fontWeight(.semibold)
+                        Text(liveStatusDisplay)
+                            .font(.custom("Bebas Neue", size: 16))
                             .foregroundStyle(.red)
                             .padding(.horizontal, 8)
-                            .padding(.vertical, 2)
+                            .padding(.vertical, 4)
                             .background(Color.red.opacity(0.2))
                             .clipShape(Capsule())
                     } else {
