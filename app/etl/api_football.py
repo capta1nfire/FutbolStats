@@ -320,6 +320,9 @@ class APIFootballProvider(DataProvider):
         except ValueError:
             match_date = datetime.utcnow()
 
+        # Extract status info (short code + elapsed minute)
+        status_info = fixture_info.get("status", {})
+
         return MatchData(
             external_id=fixture_info.get("id"),
             date=match_date,
@@ -330,7 +333,8 @@ class APIFootballProvider(DataProvider):
             home_goals=goals.get("home"),
             away_goals=goals.get("away"),
             stats=stats,
-            status=fixture_info.get("status", {}).get("short", "NS"),
+            status=status_info.get("short", "NS"),
+            elapsed=status_info.get("elapsed"),  # Current minute for live matches
             match_type=match_type,
             match_weight=match_weight,
             venue_name=venue.get("name"),

@@ -63,6 +63,9 @@ class Match(SQLModel, table=True):
     status: str = Field(
         max_length=20, default="NS", description="NS, FT, LIVE, etc."
     )
+    elapsed: Optional[int] = Field(
+        default=None, description="Current minute for live matches (from API)"
+    )
     match_type: str = Field(
         max_length=20, default="official", description="'official' or 'friendly'"
     )

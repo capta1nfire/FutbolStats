@@ -907,6 +907,7 @@ class PredictionItem(BaseModel):
     away_team_logo: Optional[str] = None
     date: datetime
     status: Optional[str] = None  # Match status: NS, FT, 1H, 2H, HT, etc.
+    elapsed: Optional[int] = None  # Current minute for live matches (e.g., 32)
     home_goals: Optional[int] = None  # Final score (nil if not played)
     away_goals: Optional[int] = None  # Final score (nil if not played)
     league_id: Optional[int] = None
@@ -1771,6 +1772,7 @@ async def get_predictions(
             away_team_logo=pred.get("away_team_logo"),
             date=pred["date"],
             status=pred.get("status"),
+            elapsed=pred.get("elapsed"),
             home_goals=pred.get("home_goals"),
             away_goals=pred.get("away_goals"),
             league_id=pred.get("league_id"),

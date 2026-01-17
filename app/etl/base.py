@@ -31,6 +31,7 @@ class MatchData:
     away_goals: Optional[int]
     stats: Optional[dict]
     status: str
+    elapsed: Optional[int]  # Current minute for live matches
     match_type: str  # "official" or "friendly"
     match_weight: float
     odds_home: Optional[float] = None

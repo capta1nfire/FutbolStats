@@ -627,6 +627,7 @@ class FeatureEngineer:
                 features["odds_away"] = match.odds_away
                 # Include match status and score for iOS display
                 features["status"] = match.status
+                features["elapsed"] = match.elapsed  # Current minute for live matches
                 features["home_goals"] = match.home_goals
                 features["away_goals"] = match.away_goals
                 # Include venue for LLM narrative enrichment

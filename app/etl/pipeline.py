@@ -112,6 +112,7 @@ class ETLPipeline:
                     logger.info(f"Match {existing_match.id} finished: {old_status} -> {new_status}")
 
             existing_match.status = match_data.status
+            existing_match.elapsed = match_data.elapsed  # Update live minute
 
             # Update venue if available (backfill case)
             if match_data.venue_name and not existing_match.venue_name:
@@ -199,6 +200,7 @@ class ETLPipeline:
             away_goals=match_data.away_goals,
             stats=match_data.stats,
             status=match_data.status,
+            elapsed=match_data.elapsed,
             match_type=match_data.match_type,
             match_weight=match_data.match_weight,
             odds_home=odds_home_validated,
