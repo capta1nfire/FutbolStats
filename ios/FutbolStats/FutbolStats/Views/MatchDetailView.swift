@@ -782,21 +782,31 @@ struct MatchDetailView: View {
     private var matchHeader: some View {
         VStack(spacing: 16) {
             HStack(alignment: .top, spacing: 0) {
-                teamColumn(
-                    name: prediction.homeTeam,
-                    logo: viewModel.matchDetails?.homeTeam.logo,
-                    position: viewModel.homeTeamForm?.position ?? 1,
-                    role: "Home",
-                    isFavorite: $isFavoriteHome
-                )
+                // Home team with score (for live/finished)
+                HStack(spacing: 8) {
+                    teamColumn(
+                        name: prediction.homeTeam,
+                        logo: viewModel.matchDetails?.homeTeam.logo,
+                        position: viewModel.homeTeamForm?.position ?? 1,
+                        role: "Home",
+                        isFavorite: $isFavoriteHome
+                    )
 
-                VStack(spacing: 4) {
-                    Spacer()
-                    // Show score if match is finished, otherwise show VS
-                    if prediction.isFinished, let score = prediction.scoreDisplay {
-                        Text(score)
+                    // Home score - next to team column
+                    if viewModel.currentPrediction.isLive || prediction.isFinished {
+                        Text("\(viewModel.currentPrediction.homeGoals ?? 0)")
                             .font(.custom("Bebas Neue", size: 42))
                             .foregroundStyle(.white)
+                            .frame(minWidth: 30)
+                    }
+                }
+
+                Spacer()
+
+                // Center: status indicator
+                VStack(spacing: 4) {
+                    Spacer()
+                    if prediction.isFinished {
                         HStack(spacing: 6) {
                             // Prediction result indicator
                             if let correct = prediction.predictionCorrect {
@@ -819,16 +829,8 @@ struct MatchDetailView: View {
                         .background(Color.green.opacity(0.2))
                         .clipShape(Capsule())
                     } else if viewModel.currentPrediction.isLive {
-                        // Live score with pulsing minute as separator
-                        HStack(spacing: 6) {
-                            Text("\(viewModel.currentPrediction.homeGoals ?? 0)")
-                                .font(.custom("Bebas Neue", size: 42))
-                                .foregroundStyle(.white)
-                            PulsingLiveMinute(text: liveStatusDisplay)
-                            Text("\(viewModel.currentPrediction.awayGoals ?? 0)")
-                                .font(.custom("Bebas Neue", size: 42))
-                                .foregroundStyle(.white)
-                        }
+                        // Pulsing minute in center
+                        PulsingLiveMinute(text: liveStatusDisplay)
                     } else {
                         // Tier emoji for upcoming matches
                         if !prediction.tierEmoji.isEmpty {
@@ -846,15 +848,27 @@ struct MatchDetailView: View {
                     }
                     Spacer()
                 }
-                .frame(width: 100)
 
-                teamColumn(
-                    name: prediction.awayTeam,
-                    logo: viewModel.matchDetails?.awayTeam.logo,
-                    position: viewModel.awayTeamForm?.position ?? 4,
-                    role: "Away",
-                    isFavorite: $isFavoriteAway
-                )
+                Spacer()
+
+                // Away team with score (for live/finished)
+                HStack(spacing: 8) {
+                    // Away score - next to team column
+                    if viewModel.currentPrediction.isLive || prediction.isFinished {
+                        Text("\(viewModel.currentPrediction.awayGoals ?? 0)")
+                            .font(.custom("Bebas Neue", size: 42))
+                            .foregroundStyle(.white)
+                            .frame(minWidth: 30)
+                    }
+
+                    teamColumn(
+                        name: prediction.awayTeam,
+                        logo: viewModel.matchDetails?.awayTeam.logo,
+                        position: viewModel.awayTeamForm?.position ?? 4,
+                        role: "Away",
+                        isFavorite: $isFavoriteAway
+                    )
+                }
             }
             .frame(height: 160)
 
