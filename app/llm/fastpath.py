@@ -866,14 +866,23 @@ class FastPathService:
         return outcome, audit
 
     async def _get_best_prediction(self, match_id: int) -> Optional[Prediction]:
-        """Get frozen prediction, or latest if none frozen."""
-        # Try frozen first
+        """Get frozen baseline prediction (the one user saw), or latest baseline if none frozen.
+
+        IMPORTANT: Must use baseline model (MODEL_VERSION), not shadow/experimental models.
+        Shadow predictions (two_stage) are for A/B testing only and should never be shown to users.
+        """
+        from app.config import get_settings
+        settings = get_settings()
+        baseline_version = settings.MODEL_VERSION  # e.g., "v1.0.0"
+
+        # Try frozen baseline prediction first (this is what user saw before match)
         result = await self.session.execute(
             select(Prediction)
             .where(
                 and_(
                     Prediction.match_id == match_id,
                     Prediction.is_frozen == True,
+                    Prediction.model_version == baseline_version,
                 )
             )
             .order_by(Prediction.frozen_at.desc().nullslast())
@@ -883,10 +892,15 @@ class FastPathService:
         if prediction:
             return prediction
 
-        # Fall back to latest
+        # Fall back to latest baseline (not frozen yet)
         result = await self.session.execute(
             select(Prediction)
-            .where(Prediction.match_id == match_id)
+            .where(
+                and_(
+                    Prediction.match_id == match_id,
+                    Prediction.model_version == baseline_version,
+                )
+            )
             .order_by(Prediction.created_at.desc())
             .limit(1)
         )
