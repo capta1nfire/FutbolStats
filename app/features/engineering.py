@@ -628,9 +628,6 @@ class FeatureEngineer:
                 # Include match status and score for iOS display
                 features["status"] = match.status
                 features["elapsed"] = match.elapsed  # Current minute for live matches
-                # DEBUG: Log elapsed for live matches
-                if match.status in ["1H", "2H", "HT", "LIVE"]:
-                    logger.info(f"[DEBUG] Match {match.id} status={match.status} elapsed={match.elapsed}")
                 features["home_goals"] = match.home_goals
                 features["away_goals"] = match.away_goals
                 # Include venue for LLM narrative enrichment

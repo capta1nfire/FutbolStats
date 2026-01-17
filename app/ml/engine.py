@@ -728,6 +728,7 @@ class XGBoostEngine:
                 "away_team_external_id": int(row.get("away_team_external_id")) if row.get("away_team_external_id") else None,
                 "date": row.get("date"),
                 "status": row.get("status"),
+                "elapsed": int(row.get("elapsed")) if pd.notna(row.get("elapsed")) else None,
                 "home_goals": int(row.get("home_goals")) if pd.notna(row.get("home_goals")) else None,
                 "away_goals": int(row.get("away_goals")) if pd.notna(row.get("away_goals")) else None,
                 "league_id": league_id,
