@@ -12,10 +12,6 @@ struct PulsingLiveMinute: View {
             .font(.custom("Bebas Neue", size: 16))
             .foregroundStyle(.gray)
             .opacity(isPulsing ? 0.5 : 1.0)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.gray.opacity(0.2))
-            .clipShape(Capsule())
             .onAppear {
                 withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
                     isPulsing = true
