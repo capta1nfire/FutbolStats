@@ -338,12 +338,28 @@ class FastPathService:
         - Finished within lookback window (using finished_at if available, else kickoff date)
         - Have a prediction
         - Don't have a successful LLM narrative yet
+        - Haven't exceeded max retry attempts (3)
         """
+        MAX_LLM_ATTEMPTS = 3
+
         # Subquery: match IDs that already have successful LLM narrative
         matches_with_narrative = (
             select(PredictionOutcome.match_id)
             .join(PostMatchAudit, PredictionOutcome.id == PostMatchAudit.outcome_id)
             .where(PostMatchAudit.llm_narrative_status == "ok")
+            .scalar_subquery()
+        )
+
+        # Subquery: match IDs that have exceeded max retry attempts
+        matches_max_retries = (
+            select(PredictionOutcome.match_id)
+            .join(PostMatchAudit, PredictionOutcome.id == PostMatchAudit.outcome_id)
+            .where(
+                and_(
+                    PostMatchAudit.llm_narrative_status == "error",
+                    PostMatchAudit.llm_narrative_attempts >= MAX_LLM_ATTEMPTS,
+                )
+            )
             .scalar_subquery()
         )
 
@@ -355,6 +371,7 @@ class FastPathService:
         )
 
         # Main query: finished matches that have predictions but no successful narrative
+        # and haven't exceeded max retry attempts
         result = await self.session.execute(
             select(Match)
             .options(selectinload(Match.predictions))
@@ -365,6 +382,7 @@ class FastPathService:
                     Match.status.in_(["FT", "AET", "PEN"]),
                     Match.id.in_(matches_with_predictions),
                     ~Match.id.in_(matches_with_narrative),
+                    ~Match.id.in_(matches_max_retries),  # Exclude max-retried matches
                     or_(
                         # Primary: use finished_at timestamp (accurate)
                         and_(
@@ -738,12 +756,17 @@ class FastPathService:
                         enqueued += 1
                         logger.info(f"[FASTPATH] Enqueued match {match.id} -> job {job_id}, hash={payload_hash[:12]}")
 
-                    audit.llm_narrative_attempts = 1
+                    # Increment attempt counter (or set to 1 if first attempt)
+                    current_attempts = audit.llm_narrative_attempts or 0
+                    audit.llm_narrative_attempts = current_attempts + 1
 
                 except (RunPodError, GeminiError) as e:
                     audit.llm_narrative_status = "error"
                     audit.llm_narrative_error_code = f"{self.provider_name}_http_error"
                     audit.llm_narrative_error_detail = str(e)[:500]
+                    # Increment attempt counter on error
+                    current_attempts = audit.llm_narrative_attempts or 0
+                    audit.llm_narrative_attempts = current_attempts + 1
                     logger.error(f"[FASTPATH] Failed to process match {match.id}: {e}")
 
             await self.session.commit()
