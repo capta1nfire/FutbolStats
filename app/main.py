@@ -2933,10 +2933,41 @@ async def get_match_timeline(
         )
 
     # Get saved prediction for this match
+    # Use the most recent frozen prediction before kickoff
+    # This ensures we evaluate against what the user actually saw before the match
+    prediction_source = "frozen_pre_kickoff"
     result = await session.execute(
-        select(Prediction).where(Prediction.match_id == match_id).limit(1)
+        select(Prediction)
+        .where(Prediction.match_id == match_id)
+        .where(Prediction.is_frozen == True)
+        .where(Prediction.created_at <= match.date)  # Before kickoff
+        .order_by(Prediction.created_at.desc())  # Most recent before kickoff
+        .limit(1)
     )
     prediction = result.scalar_one_or_none()
+
+    # Fallback: any frozen prediction (in case kickoff time is wrong/missing)
+    if not prediction:
+        prediction_source = "frozen_any"
+        result = await session.execute(
+            select(Prediction)
+            .where(Prediction.match_id == match_id)
+            .where(Prediction.is_frozen == True)
+            .order_by(Prediction.created_at.desc())
+            .limit(1)
+        )
+        prediction = result.scalar_one_or_none()
+
+    # Last fallback: any prediction (mark as low confidence)
+    if not prediction:
+        prediction_source = "unfrozen_fallback"
+        result = await session.execute(
+            select(Prediction)
+            .where(Prediction.match_id == match_id)
+            .order_by(Prediction.created_at.desc())
+            .limit(1)
+        )
+        prediction = result.scalar_one_or_none()
 
     if not prediction:
         raise HTTPException(
@@ -3135,6 +3166,7 @@ async def get_match_timeline(
         "_meta": {
             "events_source": events_source,
             "events_count": len(events),
+            "prediction_source": prediction_source,
         },
     }
 
