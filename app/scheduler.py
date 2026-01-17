@@ -1843,6 +1843,149 @@ async def prediction_gap_safety_net():
         return {"status": "error", "error": str(e)}
 
 
+# Live status codes that indicate match is in progress
+LIVE_STATUSES = frozenset(["1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT", "SUSP"])
+
+
+async def live_tick():
+    """
+    Global live tick - updates all live matches in batch.
+
+    Runs every 30s. Only fetches if there are live matches.
+    Uses batch API call to minimize requests.
+
+    Guardrails (per Director/Auditor approval):
+    - Only status IN LIVE_STATUSES (1H, HT, 2H, ET, BT, P, LIVE, INT, SUSP)
+    - Stuck guard: date > NOW() - 4 hours
+    - Max 50 fixtures per tick (3 API requests max)
+    - Updates: status, elapsed, home_goals, away_goals (NO events)
+    - Degrade on rate_limited/budget_exceeded
+
+    Telemetry:
+    - live_tick_runs_total{status}: ok, skipped, rate_limited, error
+    - live_tick_matches_updated_total: matches updated
+    - live_tick_matches_live_gauge: current live match count
+    """
+    from sqlalchemy import text
+    from app.telemetry.metrics import record_job_run
+    from app.etl import APIFootballProvider
+
+    start_time = time.time()
+    job_name = "live_tick"
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Find live matches (stuck guard: within 4h)
+            result = await session.execute(
+                text("""
+                    SELECT id, external_id
+                    FROM matches
+                    WHERE status IN ('1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT', 'SUSP')
+                      AND date > NOW() - INTERVAL '4 hours'
+                    ORDER BY date ASC
+                    LIMIT 50
+                """)
+            )
+            live_matches = result.fetchall()
+
+            if not live_matches:
+                duration_ms = (time.time() - start_time) * 1000
+                record_job_run(job=job_name, status="ok", duration_ms=duration_ms)
+                # Don't log when no live matches - too noisy
+                return {"status": "skipped", "reason": "no_live_matches"}
+
+            live_count = len(live_matches)
+            logger.info(f"[LIVE_TICK] Found {live_count} live matches")
+
+            # Build lookup: external_id -> internal_id
+            id_map = {ext_id: int_id for int_id, ext_id in live_matches}
+            external_ids = list(id_map.keys())
+
+            # Batch fetch from API-Football (max 20 per request)
+            provider = APIFootballProvider()
+            updated = 0
+            api_errors = 0
+
+            try:
+                # Process in chunks of 20 (API limit)
+                for i in range(0, len(external_ids), 20):
+                    chunk = external_ids[i:i + 20]
+
+                    try:
+                        fixtures = await provider.get_fixtures_by_ids(chunk)
+
+                        for f in fixtures:
+                            ext_id = f.get("external_id")
+                            if ext_id not in id_map:
+                                continue
+
+                            match_id = id_map[ext_id]
+                            new_status = f.get("status")
+                            new_elapsed = f.get("elapsed")
+                            new_home = f.get("home_goals")
+                            new_away = f.get("away_goals")
+
+                            # Update match in DB
+                            await session.execute(
+                                text("""
+                                    UPDATE matches
+                                    SET status = :status,
+                                        elapsed = :elapsed,
+                                        home_goals = :home_goals,
+                                        away_goals = :away_goals
+                                    WHERE id = :match_id
+                                """),
+                                {
+                                    "match_id": match_id,
+                                    "status": new_status,
+                                    "elapsed": new_elapsed,
+                                    "home_goals": new_home,
+                                    "away_goals": new_away,
+                                }
+                            )
+                            updated += 1
+
+                    except Exception as chunk_err:
+                        api_errors += 1
+                        err_str = str(chunk_err).lower()
+
+                        # Check for rate limit or budget exceeded
+                        if "rate" in err_str or "limit" in err_str:
+                            logger.warning(f"[LIVE_TICK] Rate limited, stopping tick early")
+                            record_job_run(job=job_name, status="rate_limited", duration_ms=(time.time() - start_time) * 1000)
+                            return {"status": "rate_limited", "updated": updated}
+
+                        if "budget" in err_str or "exceeded" in err_str:
+                            logger.error(f"[LIVE_TICK] Budget exceeded, disabling tick")
+                            record_job_run(job=job_name, status="budget_exceeded", duration_ms=(time.time() - start_time) * 1000)
+                            return {"status": "budget_exceeded", "updated": updated}
+
+                        logger.warning(f"[LIVE_TICK] Chunk error: {chunk_err}")
+
+                await session.commit()
+
+            finally:
+                await provider.close()
+
+            duration_ms = (time.time() - start_time) * 1000
+            logger.info(f"[LIVE_TICK] Updated {updated}/{live_count} live matches in {duration_ms:.0f}ms")
+            record_job_run(job=job_name, status="ok", duration_ms=duration_ms)
+
+            return {
+                "status": "ok",
+                "live_count": live_count,
+                "updated": updated,
+                "api_errors": api_errors,
+                "duration_ms": duration_ms,
+            }
+
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(f"[LIVE_TICK] Failed: {e}")
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        return {"status": "error", "error": str(e)}
+
+
 async def evaluate_shadow_predictions():
     """
     Evaluate shadow predictions against actual outcomes.
@@ -4154,6 +4297,18 @@ def start_scheduler(ml_engine):
         trigger=IntervalTrigger(seconds=60),
         id="live_global_sync",
         name="Live Global Sync (every minute)",
+        replace_existing=True,
+    )
+
+    # Live Tick: Every 30 seconds (batch update for live matches)
+    # Only runs if there are matches in progress (status IN LIVE_STATUSES)
+    # Uses batch API calls: 1-20 matches = 1 req, 21-40 = 2 req, etc.
+    # Estimated: 2-6 requests/min during live windows
+    scheduler.add_job(
+        live_tick,
+        trigger=IntervalTrigger(seconds=30),
+        id="live_tick",
+        name="Live Tick (every 30s, batch update)",
         replace_existing=True,
     )
 

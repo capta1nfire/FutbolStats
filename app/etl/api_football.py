@@ -454,6 +454,46 @@ class APIFootballProvider(DataProvider):
         league_id = fixture.get("league", {}).get("id")
         return self._parse_fixture(fixture, league_id)
 
+    async def get_fixtures_by_ids(self, fixture_ids: list[int]) -> list[dict]:
+        """
+        Fetch multiple fixtures by IDs in a single API call.
+
+        API-Football supports up to 20 IDs per request via ids parameter.
+        Returns raw fixture data (not parsed) for live_tick updates.
+
+        Args:
+            fixture_ids: List of external fixture IDs (max 20)
+
+        Returns:
+            List of raw fixture dicts with status, elapsed, goals, etc.
+        """
+        if not fixture_ids:
+            return []
+
+        # API-Football limit: 20 IDs per request
+        if len(fixture_ids) > 20:
+            logger.warning(f"get_fixtures_by_ids called with {len(fixture_ids)} IDs, truncating to 20")
+            fixture_ids = fixture_ids[:20]
+
+        ids_param = "-".join(str(fid) for fid in fixture_ids)
+        data = await self._rate_limited_request("fixtures", {"ids": ids_param})
+        fixtures = data.get("response", [])
+
+        # Return minimal data needed for live updates
+        results = []
+        for f in fixtures:
+            fixture_data = f.get("fixture", {})
+            goals = f.get("goals", {})
+            results.append({
+                "external_id": fixture_data.get("id"),
+                "status": fixture_data.get("status", {}).get("short"),
+                "elapsed": fixture_data.get("status", {}).get("elapsed"),
+                "home_goals": goals.get("home"),
+                "away_goals": goals.get("away"),
+            })
+
+        return results
+
     async def get_team(self, team_id: int) -> Optional[TeamData]:
         """Fetch team information by ID."""
         data = await self._rate_limited_request("teams", {"id": team_id}, entity="team")
