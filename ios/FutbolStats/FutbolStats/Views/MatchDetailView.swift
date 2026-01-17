@@ -795,9 +795,9 @@ struct MatchDetailView: View {
                     // Home score - next to team column
                     if viewModel.currentPrediction.isLive || prediction.isFinished {
                         Text("\(viewModel.currentPrediction.homeGoals ?? 0)")
-                            .font(.custom("Bebas Neue", size: 42))
+                            .font(.custom("Bebas Neue", size: 68))
                             .foregroundStyle(.white)
-                            .frame(minWidth: 30)
+                            .frame(minWidth: 40)
                     }
                 }
 
@@ -856,9 +856,9 @@ struct MatchDetailView: View {
                     // Away score - next to team column
                     if viewModel.currentPrediction.isLive || prediction.isFinished {
                         Text("\(viewModel.currentPrediction.awayGoals ?? 0)")
-                            .font(.custom("Bebas Neue", size: 42))
+                            .font(.custom("Bebas Neue", size: 68))
                             .foregroundStyle(.white)
-                            .frame(minWidth: 30)
+                            .frame(minWidth: 40)
                     }
 
                     teamColumn(
