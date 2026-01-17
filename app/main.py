@@ -7363,8 +7363,9 @@ async def _load_ops_data() -> dict:
         # PROGRESS METRICS (for re-test / Alpha readiness)
         # =============================================================
         # Configurable targets via env vars
-        TARGET_PIT_SNAPSHOTS_30D = int(os.environ.get("TARGET_PIT_SNAPSHOTS_30D", "100"))
-        TARGET_PIT_BETS_30D = int(os.environ.get("TARGET_PIT_BETS_30D", "100"))
+        # Per PIT Protocol v2: Piloto=50 (done), Preliminar=200, Formal=500
+        TARGET_PIT_SNAPSHOTS_30D = int(os.environ.get("TARGET_PIT_SNAPSHOTS_30D", "200"))
+        TARGET_PIT_BETS_30D = int(os.environ.get("TARGET_PIT_BETS_30D", "200"))
         TARGET_BASELINE_COVERAGE_PCT = int(os.environ.get("TARGET_BASELINE_COVERAGE_PCT", "60"))
 
         # 1) PIT snapshots (30 days) - lineup_confirmed with live odds
@@ -8747,7 +8748,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
     </div>
 
     <div class="table-card">
-      <h3>Progreso hacia Re-test / Alpha<span class="info-icon">i<span class="tooltip">Métricas de preparación para re-evaluar el modelo. Se recomienda re-test cuando: Bets ≥ 100 y Baseline Coverage ≥ 60%.</span></span></h3>
+      <h3>Progreso hacia Re-test / Alpha<span class="info-icon">i<span class="tooltip">Métricas de preparación para re-evaluar el modelo. Fases PIT v2: Piloto=50 (✓), Preliminar=200 (actual), Formal=500. Re-test cuando: Bets ≥ 200 y Baseline Coverage ≥ 60%.</span></span></h3>
       <div style="padding: 0.75rem;">
         {_render_progress_bar(
             "PIT Snapshots (30d)",
