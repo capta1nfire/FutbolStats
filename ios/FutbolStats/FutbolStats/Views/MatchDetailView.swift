@@ -783,7 +783,7 @@ struct MatchDetailView: View {
         VStack(spacing: 16) {
             HStack(alignment: .top, spacing: 0) {
                 // Home team with score (for live/finished)
-                HStack(spacing: 8) {
+                HStack(spacing: 4) {
                     teamColumn(
                         name: prediction.homeTeam,
                         logo: viewModel.matchDetails?.homeTeam.logo,
@@ -852,7 +852,7 @@ struct MatchDetailView: View {
                 Spacer()
 
                 // Away team with score (for live/finished)
-                HStack(spacing: 8) {
+                HStack(spacing: 4) {
                     // Away score - next to team column
                     if viewModel.currentPrediction.isLive || prediction.isFinished {
                         Text("\(viewModel.currentPrediction.awayGoals ?? 0)")
