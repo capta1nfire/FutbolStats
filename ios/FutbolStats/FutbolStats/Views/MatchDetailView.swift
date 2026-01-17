@@ -1077,6 +1077,7 @@ struct MatchDetailView: View {
             awayTeamLogo: nil,
             date: "2026-01-03T07:00:00",
             status: "FT",
+            elapsed: nil,
             homeGoals: 2,
             awayGoals: 1,
             leagueId: 140,

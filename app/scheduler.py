@@ -197,15 +197,19 @@ async def resolve_lineup_monitoring_leagues(session) -> Optional[list[int]]:
 
 async def global_sync_today() -> dict:
     """
-    Global Sync: 1 API call for ALL fixtures worldwide for today.
-    Filters to our 5 leagues in memory and updates the DB.
+    Global Sync: 2 API calls for fixtures today + yesterday (for late matches crossing midnight).
+    Filters to our leagues in memory and updates the DB.
 
-    Uses: GET /fixtures?date=YYYY-MM-DD (1 single API call)
-    Budget: 1 call/min × 60 min × 24 hrs = 1,440 calls/day (of 7,500 available)
+    Uses: GET /fixtures?date=YYYY-MM-DD (2 API calls: today + yesterday)
+    Budget: 2 calls/min × 60 min × 24 hrs = 2,880 calls/day (of 7,500 available)
+
+    Why yesterday? Late matches (e.g., LATAM kickoff at 23:20 UTC) may still be live
+    after midnight UTC. Without yesterday sync, live scores won't update.
     """
     global _last_live_sync
 
     today = datetime.utcnow()
+    yesterday = today - timedelta(days=1)
 
     try:
         async with AsyncSessionLocal() as session:
@@ -213,11 +217,22 @@ async def global_sync_today() -> dict:
 
             league_ids = await resolve_live_sync_leagues(session)
 
-            # 1 SINGLE API CALL - all fixtures worldwide, filtered to our leagues
-            our_fixtures = await provider.get_fixtures_by_date(
+            # 2 API CALLS: today + yesterday (for late matches crossing midnight)
+            our_fixtures = []
+
+            # Today's fixtures
+            today_fixtures = await provider.get_fixtures_by_date(
                 date=today,
-                league_ids=league_ids  # Filter in memory (tracked/extended/top5)
+                league_ids=league_ids
             )
+            our_fixtures.extend(today_fixtures)
+
+            # Yesterday's fixtures (catch late matches still live after midnight UTC)
+            yesterday_fixtures = await provider.get_fixtures_by_date(
+                date=yesterday,
+                league_ids=league_ids
+            )
+            our_fixtures.extend(yesterday_fixtures)
 
             # Upsert to DB
             pipeline = ETLPipeline(provider, session)
