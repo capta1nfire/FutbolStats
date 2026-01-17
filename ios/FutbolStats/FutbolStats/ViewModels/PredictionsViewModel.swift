@@ -7,12 +7,20 @@ class PredictionsViewModel: ObservableObject {
         didSet {
             rebuildMatchCountCache()
             updateCachedPredictions()
+            predictionsLoadedAt = Date()  // Track when predictions were loaded for local clock
         }
     }
     @Published var isLoading = false
     @Published var error: String?
     @Published var modelLoaded = false
     @Published var lastUpdated: Date?
+
+    // MARK: - Live Match Clock
+    /// Timestamp when predictions were loaded (for calculating elapsed time locally)
+    @Published private(set) var predictionsLoadedAt: Date = Date()
+    /// Current time - updated every 60s to trigger UI refresh for live matches
+    @Published private(set) var clockTick: Date = Date()
+    private var clockTimer: Timer?
     @Published var selectedDate: Date {
         didSet {
             let formatter = ISO8601DateFormatter()
@@ -61,6 +69,61 @@ class PredictionsViewModel: ObservableObject {
         // Initialize selectedDate to today in LOCAL timezone
         // User expects "Today" to mean their local day, not UTC
         self.selectedDate = Calendar.current.startOfDay(for: Date())
+        startClockTimer()
+    }
+
+    deinit {
+        clockTimer?.invalidate()
+    }
+
+    // MARK: - Live Clock Timer
+
+    /// Start the 60-second timer for updating live match minutes
+    private func startClockTimer() {
+        clockTimer?.invalidate()
+        clockTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.clockTick = Date()
+            }
+        }
+    }
+
+    /// Calculate the current elapsed minute for a live match
+    /// Uses the API elapsed as base and adds local time passed since load
+    /// - Parameter prediction: The match prediction
+    /// - Returns: Formatted elapsed string (e.g., "32'", "45+", "90+", or status like "HT")
+    func calculatedElapsedDisplay(for prediction: MatchPrediction) -> String {
+        guard let status = prediction.status else { return "LIVE" }
+
+        // Only calculate for active play statuses
+        let activeStatuses = ["1H", "2H", "LIVE"]
+        guard activeStatuses.contains(status) else {
+            // For HT, ET, BT, P, etc. - show status code
+            return status
+        }
+
+        guard let baseElapsed = prediction.elapsed else {
+            return status
+        }
+
+        // Calculate minutes passed since predictions were loaded
+        let minutesPassed = Int(clockTick.timeIntervalSince(predictionsLoadedAt) / 60)
+        var calculatedElapsed = baseElapsed + minutesPassed
+
+        // Apply caps based on status
+        if status == "1H" {
+            // Cap at 45+ for first half
+            if calculatedElapsed > 45 {
+                return "45+"
+            }
+        } else if status == "2H" {
+            // Cap at 90+ for second half
+            if calculatedElapsed > 90 {
+                return "90+"
+            }
+        }
+
+        return "\(calculatedElapsed)'"
     }
 
     // MARK: - Load Predictions

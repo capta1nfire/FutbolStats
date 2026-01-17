@@ -234,6 +234,9 @@ struct PredictionsListView: View {
         // Group all matches by league (including value bets)
         let groupedMatches = groupedByLeague(limitedMatches)
 
+        // Observe clockTick to trigger re-render for live match minutes
+        let _ = viewModel.clockTick
+
         return ScrollView {
             LazyVStack(spacing: 12) {
                 // All matches grouped by league
@@ -247,8 +250,9 @@ struct PredictionsListView: View {
 
                     ForEach(group.predictions) { prediction in
                         let isValueBet = (prediction.valueBets?.count ?? 0) > 0
+                        let elapsed = prediction.isLive ? viewModel.calculatedElapsedDisplay(for: prediction) : nil
                         NavigationLink(destination: MatchDetailView(prediction: prediction)) {
-                            MatchCard(prediction: prediction, showValueBadge: isValueBet)
+                            MatchCard(prediction: prediction, showValueBadge: isValueBet, calculatedElapsed: elapsed)
                         }
                         .buttonStyle(.plain)
                     }
@@ -416,6 +420,8 @@ struct DateCell: View {
 struct MatchCard: View {
     let prediction: MatchPrediction
     let showValueBadge: Bool
+    /// Calculated elapsed display from ViewModel (for live clock)
+    var calculatedElapsed: String?
 
     var body: some View {
         VStack(spacing: 5) {
@@ -542,13 +548,19 @@ struct MatchCard: View {
     }
 
     /// Live status display with elapsed minute when appropriate
+    /// Uses calculatedElapsed from ViewModel if available (local clock),
+    /// otherwise falls back to static elapsed from API
     /// - 1H, 2H, LIVE: show elapsed minute (e.g., "32'")
     /// - HT: show "HT" (halftime, no minute)
     /// - ET, BT, P, INT, SUSP: show status code (special periods)
     private var liveStatusDisplay: String {
-        let status = prediction.status ?? "LIVE"
+        // Use calculated elapsed if provided (includes local clock adjustment)
+        if let calculated = calculatedElapsed {
+            return calculated
+        }
 
-        // Statuses that should show elapsed minute
+        // Fallback to static elapsed from API
+        let status = prediction.status ?? "LIVE"
         let showElapsedStatuses = ["1H", "2H", "LIVE"]
 
         if showElapsedStatuses.contains(status), let elapsed = prediction.elapsed {

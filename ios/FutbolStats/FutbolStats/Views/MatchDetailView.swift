@@ -102,8 +102,23 @@ class MatchDetailViewModel: ObservableObject {
     @Published var matchStats: MatchStats?
     @Published var matchEvents: [MatchEvent]?
 
+    // MARK: - Live Match Polling & Clock
+    /// Updated prediction from polling (for live matches)
+    @Published var livePrediction: MatchPrediction?
+    /// Timestamp when live data was last fetched (for local clock calculation)
+    @Published private(set) var liveDataLoadedAt: Date = Date()
+    /// Current time - updated every 60s to trigger UI refresh for live matches
+    @Published private(set) var clockTick: Date = Date()
+    private var livePollingTimer: Timer?
+    private var clockTimer: Timer?
+
     // Task cancellation support
     private var loadTask: Task<Void, Never>?
+
+    /// The current prediction to display (live-updated or original)
+    var currentPrediction: MatchPrediction {
+        livePrediction ?? prediction
+    }
 
     init(prediction: MatchPrediction) {
         self.prediction = prediction
@@ -112,6 +127,88 @@ class MatchDetailViewModel: ObservableObject {
 
     deinit {
         loadTask?.cancel()
+        stopLivePolling()
+    }
+
+    // MARK: - Live Polling (30s)
+
+    func startLivePollingIfNeeded() {
+        guard currentPrediction.isLive else { return }
+
+        // Start 60s clock timer for local elapsed updates
+        clockTimer?.invalidate()
+        clockTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.clockTick = Date()
+            }
+        }
+
+        // Start 30s polling timer for status/score updates
+        livePollingTimer?.invalidate()
+        livePollingTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.pollLiveData()
+            }
+        }
+        print("[LivePolling] Started for match \(prediction.matchId ?? 0)")
+    }
+
+    func stopLivePolling() {
+        livePollingTimer?.invalidate()
+        livePollingTimer = nil
+        clockTimer?.invalidate()
+        clockTimer = nil
+        print("[LivePolling] Stopped")
+    }
+
+    private func pollLiveData() async {
+        guard let matchId = prediction.matchId else { return }
+
+        do {
+            // Fetch fresh prediction data from API
+            let response = try await APIClient.shared.getUpcomingPredictions(daysBack: 1, daysAhead: 1)
+            if let updated = response.predictions.first(where: { $0.matchId == matchId }) {
+                livePrediction = updated
+                liveDataLoadedAt = Date()
+                print("[LivePolling] Updated match \(matchId): status=\(updated.status ?? "nil"), elapsed=\(updated.elapsed ?? -1)")
+
+                // Stop polling if match finished
+                if updated.isFinished {
+                    stopLivePolling()
+                }
+            }
+        } catch {
+            print("[LivePolling] Error: \(error.localizedDescription)")
+        }
+    }
+
+    /// Calculate the current elapsed minute for display (with local clock)
+    func calculatedElapsedDisplay() -> String {
+        let pred = currentPrediction
+        guard let status = pred.status else { return "LIVE" }
+
+        // Only calculate for active play statuses
+        let activeStatuses = ["1H", "2H", "LIVE"]
+        guard activeStatuses.contains(status) else {
+            return status
+        }
+
+        guard let baseElapsed = pred.elapsed else {
+            return status
+        }
+
+        // Calculate minutes passed since data was loaded
+        let minutesPassed = Int(clockTick.timeIntervalSince(liveDataLoadedAt) / 60)
+        let calculatedElapsed = baseElapsed + minutesPassed
+
+        // Apply caps based on status
+        if status == "1H" && calculatedElapsed > 45 {
+            return "45+"
+        } else if status == "2H" && calculatedElapsed > 90 {
+            return "90+"
+        }
+
+        return "\(calculatedElapsed)'"
     }
 
     func cancelLoading() {
@@ -496,14 +593,9 @@ struct MatchDetailView: View {
 
     private let valueColor = Color(red: 0.19, green: 0.82, blue: 0.35)  // #30D158
 
-    /// Live status display with elapsed minute when appropriate
+    /// Live status display with elapsed minute (uses local clock from viewModel)
     private var liveStatusDisplay: String {
-        let status = prediction.status ?? "LIVE"
-        let showElapsedStatuses = ["1H", "2H", "LIVE"]
-        if showElapsedStatuses.contains(status), let elapsed = prediction.elapsed {
-            return "\(elapsed)'"
-        }
-        return status
+        viewModel.calculatedElapsedDisplay()
     }
 
     // Animation for section transitions - fade only, no slide
@@ -616,9 +708,11 @@ struct MatchDetailView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .task {
             await viewModel.loadDetails()
+            viewModel.startLivePollingIfNeeded()
         }
         .onDisappear {
             viewModel.cancelLoading()
+            viewModel.stopLivePolling()
         }
         .sheet(isPresented: $showStandings) {
             if let leagueId = viewModel.matchDetails?.match.leagueId {
@@ -703,8 +797,8 @@ struct MatchDetailView: View {
                         .padding(.vertical, 2)
                         .background(Color.green.opacity(0.2))
                         .clipShape(Capsule())
-                    } else if prediction.isLive {
-                        if let score = prediction.scoreDisplay {
+                    } else if viewModel.currentPrediction.isLive {
+                        if let score = viewModel.currentPrediction.scoreDisplay {
                             Text(score)
                                 .font(.custom("Bebas Neue", size: 32))
                                 .foregroundStyle(.white)
