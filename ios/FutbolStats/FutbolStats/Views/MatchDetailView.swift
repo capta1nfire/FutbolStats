@@ -819,12 +819,16 @@ struct MatchDetailView: View {
                         .background(Color.green.opacity(0.2))
                         .clipShape(Capsule())
                     } else if viewModel.currentPrediction.isLive {
-                        if let score = viewModel.currentPrediction.scoreDisplay {
-                            Text(score)
+                        // Live score with pulsing minute as separator
+                        HStack(spacing: 8) {
+                            Text("\(viewModel.currentPrediction.homeGoals ?? 0)")
+                                .font(.custom("Bebas Neue", size: 32))
+                                .foregroundStyle(.white)
+                            PulsingLiveMinute(text: liveStatusDisplay)
+                            Text("\(viewModel.currentPrediction.awayGoals ?? 0)")
                                 .font(.custom("Bebas Neue", size: 32))
                                 .foregroundStyle(.white)
                         }
-                        PulsingLiveMinute(text: liveStatusDisplay)
                     } else {
                         // Tier emoji for upcoming matches
                         if !prediction.tierEmoji.isEmpty {
