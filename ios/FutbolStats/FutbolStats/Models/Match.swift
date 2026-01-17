@@ -24,6 +24,7 @@ struct MatchPrediction: Codable, Identifiable {
     let awayTeamLogo: String?
     let date: String?
     let status: String?           // Match status: NS, FT, 1H, 2H, HT, etc.
+    let elapsed: Int?             // Current minute for live matches (e.g., 32)
     let homeGoals: Int?           // Final score (nil if not played)
     let awayGoals: Int?           // Final score (nil if not played)
     let leagueId: Int?            // League ID for grouping
@@ -195,6 +196,7 @@ struct MatchPrediction: Codable, Identifiable {
         case awayTeamLogo = "away_team_logo"
         case date
         case status
+        case elapsed
         case homeGoals = "home_goals"
         case awayGoals = "away_goals"
         case leagueId = "league_id"

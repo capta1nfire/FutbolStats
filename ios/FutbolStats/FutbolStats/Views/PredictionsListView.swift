@@ -418,7 +418,7 @@ struct MatchCard: View {
     let showValueBadge: Bool
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 5) {
             // Teams side by side: Logo | Score ... Center ... Score | Logo
             HStack(spacing: 0) {
                 // Home team (left side) - logo near edge, score near center
@@ -521,7 +521,7 @@ struct MatchCard: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.white)
             } else if prediction.isLive {
-                Text(prediction.status ?? "LIVE")
+                Text(liveStatusDisplay)
                     .font(.system(size: 11))
                     .fontWeight(.semibold)
                     .foregroundStyle(.red)
@@ -543,9 +543,27 @@ struct MatchCard: View {
         }
     }
 
+    /// Live status display with elapsed minute when appropriate
+    /// - 1H, 2H, LIVE: show elapsed minute (e.g., "32'")
+    /// - HT: show "HT" (halftime, no minute)
+    /// - ET, BT, P, INT, SUSP: show status code (special periods)
+    private var liveStatusDisplay: String {
+        let status = prediction.status ?? "LIVE"
+
+        // Statuses that should show elapsed minute
+        let showElapsedStatuses = ["1H", "2H", "LIVE"]
+
+        if showElapsedStatuses.contains(status), let elapsed = prediction.elapsed {
+            return "\(elapsed)'"
+        }
+
+        // HT, ET, BT, P, INT, SUSP - show status code as-is
+        return status
+    }
+
     private func formatTime(_ date: Date) -> String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
+        formatter.dateFormat = "h:mm a"
         return formatter.string(from: date)
     }
 
