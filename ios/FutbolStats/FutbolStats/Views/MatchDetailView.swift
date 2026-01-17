@@ -1,5 +1,29 @@
 import SwiftUI
 
+// MARK: - Pulsing Live Minute (MatchDetail only)
+
+/// Subtle pulsing animation for live match minute display
+struct PulsingLiveMinute: View {
+    let text: String
+    @State private var isPulsing = false
+
+    var body: some View {
+        Text(text)
+            .font(.custom("Bebas Neue", size: 16))
+            .foregroundStyle(.gray)
+            .opacity(isPulsing ? 0.5 : 1.0)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.gray.opacity(0.2))
+            .clipShape(Capsule())
+            .onAppear {
+                withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
+                    isPulsing = true
+                }
+            }
+    }
+}
+
 // MARK: - EV Calculation Result
 
 struct EVResult {
@@ -803,13 +827,7 @@ struct MatchDetailView: View {
                                 .font(.custom("Bebas Neue", size: 32))
                                 .foregroundStyle(.white)
                         }
-                        Text(liveStatusDisplay)
-                            .font(.custom("Bebas Neue", size: 16))
-                            .foregroundStyle(.red)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.red.opacity(0.2))
-                            .clipShape(Capsule())
+                        PulsingLiveMinute(text: liveStatusDisplay)
                     } else {
                         // Tier emoji for upcoming matches
                         if !prediction.tierEmoji.isEmpty {
