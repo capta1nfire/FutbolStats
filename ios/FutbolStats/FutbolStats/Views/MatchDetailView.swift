@@ -902,10 +902,10 @@ struct MatchDetailView: View {
                 teamPlaceholder
             }
 
-            // Team name - larger font
+            // Team name
             Text(name)
-                .font(.callout)
-                .fontWeight(.bold)
+                .font(.caption)
+                .fontWeight(.semibold)
                 .foregroundStyle(.white)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
