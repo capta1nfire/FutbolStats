@@ -34,7 +34,7 @@ struct LLMNarrativeView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Section header with tone badge
+            // Section header
             HStack {
                 Image(systemName: "brain.head.profile")
                     .foregroundStyle(.cyan)
@@ -42,18 +42,6 @@ struct LLMNarrativeView: View {
                     .font(.headline)
                     .fontWeight(.bold)
                     .foregroundStyle(.white)
-
-                Spacer()
-
-                // Tone badge
-                Text(toneBadgeText)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(toneColor.opacity(0.2))
-                    .foregroundStyle(toneColor)
-                    .clipShape(Capsule())
             }
 
             // Title (headline)
@@ -99,10 +87,7 @@ struct LLMNarrativeView: View {
             }
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(white: 0.08))
-        )
+        .modifier(GlassEffectModifier())
     }
 }
 
@@ -173,15 +158,15 @@ struct LLMNarrativeUnavailableView: View {
     private var message: String {
         switch status {
         case "pending":
-            return "Narrativa en proceso de generación..."
+            return "Generando análisis del partido..."
         case "skipped":
-            return "Narrativa no disponible para este partido"
+            return "Análisis no disponible para este partido"
         case "error":
-            return "Error al generar la narrativa"
+            return "El análisis estará disponible próximamente"
         case "no_prediction":
-            return "Sin narrativa disponible"
+            return "Análisis no disponible"
         default:
-            return "Sin narrativa disponible"
+            return "Análisis no disponible"
         }
     }
 
@@ -192,7 +177,7 @@ struct LLMNarrativeUnavailableView: View {
         case "skipped":
             return "minus.circle.fill"
         case "error":
-            return "exclamationmark.triangle.fill"
+            return "clock.arrow.circlepath"  // Retry icon - less alarming
         case "no_prediction":
             return "doc.text.magnifyingglass"
         default:
@@ -223,10 +208,7 @@ struct LLMNarrativeUnavailableView: View {
             .padding(.vertical, 8)
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(white: 0.08))
-        )
+        .modifier(GlassEffectModifier())
     }
 }
 
@@ -286,5 +268,19 @@ struct LLMNarrativeView_Previews: PreviewProvider {
         }
         .background(Color.black)
         .preferredColorScheme(.dark)
+    }
+}
+
+// MARK: - Glass Effect Modifier (iOS 26+)
+
+private struct GlassEffectModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+        } else {
+            content
+                .background(Color(white: 0.1), in: RoundedRectangle(cornerRadius: 16))
+        }
     }
 }
