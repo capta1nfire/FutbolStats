@@ -14,7 +14,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # Current prompt version - bump when changing prompt template
-PROMPT_VERSION = "v1.6"  # v1.6: Added rule 14 - player names as surname only
+PROMPT_VERSION = "v1.7"  # v1.7: Fix schema v3.2 normalization - preserve tone, keyFactors, responsibleNote
 
 # Control tokens that should NEVER appear in narrative body
 # These are internal prompt instructions that LLM sometimes echoes

@@ -480,10 +480,17 @@ def _fix_unescaped_quotes(json_text: str) -> str:
 
 def _normalize_narrative_object(narrative: dict) -> tuple[dict, Optional[dict]]:
     """
-    Normalize malformed narrative objects from LLM.
+    Normalize malformed narrative objects from LLM (Schema v3.2).
 
     Handles cases where LLM generates extra keys (e.g., newlines as keys)
     by concatenating all string values into body.
+
+    Valid narrative keys (v3.2):
+    - title: string (required)
+    - body: string (required)
+    - tone: string ("reinforce_win", "mitigate_loss", "neutral")
+    - keyFactors: array of {label, evidence, direction}
+    - responsibleNote: string
 
     Args:
         narrative: The narrative dict from LLM response.
@@ -491,14 +498,22 @@ def _normalize_narrative_object(narrative: dict) -> tuple[dict, Optional[dict]]:
     Returns:
         Tuple of (normalized_dict, normalization_warning or None)
     """
+    # Valid narrative keys per schema v3.2
+    VALID_NARRATIVE_KEYS = {"title", "body", "tone", "keyFactors", "responsibleNote", "key_factors", "responsible_note"}
+
+    # Extract known fields
     title = narrative.get("title", "")
     body = narrative.get("body", "")
+    tone = narrative.get("tone")
+    # Support both camelCase (LLM) and snake_case variants
+    key_factors = narrative.get("keyFactors") or narrative.get("key_factors")
+    responsible_note = narrative.get("responsibleNote") or narrative.get("responsible_note")
 
     # Collect extra string values (malformed keys like "\n\nMore text...")
     extra_keys = []
     extra_parts = []
     for key, value in narrative.items():
-        if key not in ("title", "body") and isinstance(value, str) and value.strip():
+        if key not in VALID_NARRATIVE_KEYS and isinstance(value, str) and value.strip():
             extra_keys.append(key[:50])  # Truncate key for logging
             extra_parts.append(value.strip())
 
@@ -520,7 +535,16 @@ def _normalize_narrative_object(narrative: dict) -> tuple[dict, Optional[dict]]:
             "extra_keys_sample": extra_keys[:3],  # First 3 keys for debugging
         }
 
-    return {"title": title, "body": body}, normalization_warning
+    # Build normalized narrative preserving all valid fields
+    normalized = {"title": title, "body": body}
+    if tone:
+        normalized["tone"] = tone
+    if key_factors:
+        normalized["keyFactors"] = key_factors
+    if responsible_note:
+        normalized["responsibleNote"] = responsible_note
+
+    return normalized, normalization_warning
 
 
 def validate_narrative_json(data: dict, match_id: int) -> bool:
