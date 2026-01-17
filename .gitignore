@@ -29,8 +29,10 @@ Thumbs.db
 # Logs
 *.log
 
-# Models (will be regenerated)
-models/*.json
+# Models - blessed versions are committed (xgb_v*.json)
+# Only ignore experimental/temp model files
+models/*_experimental*.json
+models/*_temp*.json
 
 # Temp
 tmp/
