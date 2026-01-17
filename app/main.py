@@ -241,6 +241,8 @@ _telemetry = {
     # Standings source
     "standings_source_cache": 0,
     "standings_source_db": 0,
+    "standings_source_calculated": 0,
+    "standings_source_placeholder": 0,
     "standings_source_miss": 0,
     # Timeline source
     "timeline_source_db": 0,
@@ -357,6 +359,176 @@ async def _save_standings_to_db(session, league_id: int, season: int, standings:
         {"league_id": league_id, "season": season, "standings": json.dumps(standings), "expires_at": expires_at}
     )
     await session.commit()
+
+
+# Standings calculated cache: shorter TTL (15 min) for calculated standings
+_STANDINGS_CALCULATED_TTL = 900  # 15 minutes
+
+
+async def _calculate_standings_from_results(session, league_id: int, season: int) -> list:
+    """
+    Calculate standings from FT match results when API-Football has no data yet.
+
+    Guardrails (per Auditor approval):
+    - Only activates if FT_count >= 2 in this league/season
+    - Only for league competitions (not cups/knockouts)
+    - Returns source='calculated', is_calculated=True for transparency
+    - Uses shorter cache TTL (15 min)
+    - Priority: API standings > calculated > placeholder
+
+    Sorting: points DESC, goal_diff DESC, goals_for DESC, team_name ASC
+
+    Args:
+        session: Database session
+        league_id: League ID
+        season: Season year
+
+    Returns:
+        List of standings dicts with calculated stats, or empty list if not eligible.
+    """
+    # Check FT count threshold (guardrail: need at least 2 finished matches)
+    ft_count_result = await session.execute(
+        text("""
+            SELECT COUNT(*)
+            FROM matches
+            WHERE league_id = :league_id
+              AND EXTRACT(YEAR FROM date) = :season
+              AND status IN ('FT', 'AET', 'PEN')
+              AND home_goals IS NOT NULL
+              AND away_goals IS NOT NULL
+        """),
+        {"league_id": league_id, "season": season}
+    )
+    ft_count = ft_count_result.scalar() or 0
+
+    if ft_count < 2:
+        logger.debug(f"Calculated standings skipped: league {league_id} season {season} has only {ft_count} FT matches (need >= 2)")
+        return []
+
+    # Get all teams from season fixtures (includes teams with 0 matches played)
+    teams_result = await session.execute(
+        text("""
+            SELECT DISTINCT t.id, t.external_id, t.name, t.logo_url
+            FROM teams t
+            JOIN matches m ON (t.id = m.home_team_id OR t.id = m.away_team_id)
+            WHERE m.league_id = :league_id
+              AND EXTRACT(YEAR FROM m.date) = :season
+              AND t.team_type = 'club'
+        """),
+        {"league_id": league_id, "season": season}
+    )
+    teams = {row[0]: {"id": row[0], "external_id": row[1], "name": row[2], "logo_url": row[3]} for row in teams_result.fetchall()}
+
+    if not teams:
+        return []
+
+    # Initialize stats for all teams
+    stats = {}
+    for team_id, team_data in teams.items():
+        stats[team_id] = {
+            "team_id": team_data["external_id"],
+            "team_name": team_data["name"],
+            "team_logo": team_data["logo_url"],
+            "points": 0,
+            "played": 0,
+            "won": 0,
+            "drawn": 0,
+            "lost": 0,
+            "goals_for": 0,
+            "goals_against": 0,
+            "goal_diff": 0,
+            "form": "",  # Last 5 results
+            "form_results": [],  # For building form string
+        }
+
+    # Calculate stats from FT matches
+    matches_result = await session.execute(
+        text("""
+            SELECT home_team_id, away_team_id, home_goals, away_goals, date
+            FROM matches
+            WHERE league_id = :league_id
+              AND EXTRACT(YEAR FROM date) = :season
+              AND status IN ('FT', 'AET', 'PEN')
+              AND home_goals IS NOT NULL
+              AND away_goals IS NOT NULL
+            ORDER BY date ASC
+        """),
+        {"league_id": league_id, "season": season}
+    )
+
+    for home_id, away_id, home_goals, away_goals, match_date in matches_result.fetchall():
+        if home_id not in stats or away_id not in stats:
+            continue
+
+        # Home team stats
+        stats[home_id]["played"] += 1
+        stats[home_id]["goals_for"] += home_goals
+        stats[home_id]["goals_against"] += away_goals
+
+        # Away team stats
+        stats[away_id]["played"] += 1
+        stats[away_id]["goals_for"] += away_goals
+        stats[away_id]["goals_against"] += home_goals
+
+        if home_goals > away_goals:
+            # Home win
+            stats[home_id]["won"] += 1
+            stats[home_id]["points"] += 3
+            stats[home_id]["form_results"].append("W")
+            stats[away_id]["lost"] += 1
+            stats[away_id]["form_results"].append("L")
+        elif home_goals < away_goals:
+            # Away win
+            stats[away_id]["won"] += 1
+            stats[away_id]["points"] += 3
+            stats[away_id]["form_results"].append("W")
+            stats[home_id]["lost"] += 1
+            stats[home_id]["form_results"].append("L")
+        else:
+            # Draw
+            stats[home_id]["drawn"] += 1
+            stats[home_id]["points"] += 1
+            stats[home_id]["form_results"].append("D")
+            stats[away_id]["drawn"] += 1
+            stats[away_id]["points"] += 1
+            stats[away_id]["form_results"].append("D")
+
+    # Calculate goal diff and form string (last 5)
+    for team_id in stats:
+        stats[team_id]["goal_diff"] = stats[team_id]["goals_for"] - stats[team_id]["goals_against"]
+        stats[team_id]["form"] = "".join(stats[team_id]["form_results"][-5:])
+        del stats[team_id]["form_results"]  # Remove helper field
+
+    # Sort: points DESC, goal_diff DESC, goals_for DESC, team_name ASC
+    sorted_teams = sorted(
+        stats.values(),
+        key=lambda x: (-x["points"], -x["goal_diff"], -x["goals_for"], x["team_name"])
+    )
+
+    # Build final standings with positions
+    standings = []
+    for idx, team_stats in enumerate(sorted_teams, start=1):
+        standings.append({
+            "position": idx,
+            "team_id": team_stats["team_id"],
+            "team_name": team_stats["team_name"],
+            "team_logo": team_stats["team_logo"],
+            "points": team_stats["points"],
+            "played": team_stats["played"],
+            "won": team_stats["won"],
+            "drawn": team_stats["drawn"],
+            "lost": team_stats["lost"],
+            "goals_for": team_stats["goals_for"],
+            "goals_against": team_stats["goals_against"],
+            "goal_diff": team_stats["goal_diff"],
+            "form": team_stats["form"],
+            "group": None,
+            "is_calculated": True,  # Transparency flag
+            "source": "calculated",
+        })
+
+    logger.info(f"Calculated standings for league {league_id} season {season}: {len(standings)} teams from {ft_count} FT matches")
+    return standings
 
 
 async def _generate_placeholder_standings(session, league_id: int, season: int) -> list:
@@ -2595,16 +2767,24 @@ async def get_match_details(
                 # Populate L1 cache for next request
                 _set_cached_standings(match.league_id, season, standings)
             else:
-                # L3: Generate placeholder standings (zero stats, alphabetical order)
-                standings = await _generate_placeholder_standings(session, match.league_id, season)
+                # L3: Try calculated standings from FT results first
+                standings = await _calculate_standings_from_results(session, match.league_id, season)
                 if standings:
-                    standings_status = "placeholder"
-                    standings_source = "placeholder"
-                    _incr("standings_source_placeholder")
+                    standings_status = "calculated"
+                    standings_source = "calculated"
+                    _incr("standings_source_calculated")
                     _set_cached_standings(match.league_id, season, standings)
                 else:
-                    standings_status = "miss"
-                    _incr("standings_source_miss")
+                    # L4: Generate placeholder standings (zero stats, alphabetical order)
+                    standings = await _generate_placeholder_standings(session, match.league_id, season)
+                    if standings:
+                        standings_status = "placeholder"
+                        standings_source = "placeholder"
+                        _incr("standings_source_placeholder")
+                        _set_cached_standings(match.league_id, season, standings)
+                    else:
+                        standings_status = "miss"
+                        _incr("standings_source_miss")
     _timings["get_standings"] = int((time.time() - _t0) * 1000)
     _timings["standings_status"] = standings_status
     if standings_source:
@@ -3318,6 +3498,17 @@ async def get_league_standings(
                 finally:
                     await provider.close()
 
+        # L3.5: Calculated standings from FT results (when API has no data yet)
+        # Priority: API > calculated > placeholder
+        # Guardrails: FT_count >= 2, transparency via is_calculated flag
+        if not standings:
+            standings = await _calculate_standings_from_results(session, league_id, season)
+            if standings:
+                source = "calculated"
+                # Use shorter TTL for calculated standings (15 min)
+                _set_cached_standings(league_id, season, standings)
+                logger.info(f"Using calculated standings for league {league_id} season {season}")
+
         # L4: Placeholder fallback - generate zero-stats standings from known teams
         if not standings:
             standings = await _generate_placeholder_standings(session, league_id, season)
@@ -3341,9 +3532,12 @@ async def get_league_standings(
         elapsed_ms = int((time.time() - _t_start) * 1000)
         logger.info(f"[PERF] get_standings league_id={league_id} season={season} source={source} time_ms={elapsed_ms}")
 
-        # Determine if standings are placeholder (all zeros)
+        # Determine if standings are placeholder or calculated
         is_placeholder = source == "placeholder" or (
             standings and standings[0].get("is_placeholder", False)
+        )
+        is_calculated = source == "calculated" or (
+            standings and standings[0].get("is_calculated", False)
         )
 
         return {
@@ -3352,6 +3546,7 @@ async def get_league_standings(
             "standings": standings,
             "source": source,
             "is_placeholder": is_placeholder,
+            "is_calculated": is_calculated,
         }
     except HTTPException:
         raise
