@@ -2782,6 +2782,169 @@ async def capture_finished_match_stats() -> dict:
 
 
 # =============================================================================
+# STATS REFRESH JOB (Fix: late events like red cards)
+# =============================================================================
+# Re-fetches stats for recently finished matches even if they already have stats.
+# Solves: Live sync captures stats mid-match, missing late events (red cards, etc.)
+
+
+async def refresh_recent_ft_stats(lookback_hours: int = 6, max_calls: int = 50) -> dict:
+    """
+    Refresh stats for recently finished matches to capture late events.
+
+    Unlike stats_backfill (which only fills NULL stats), this job:
+    1. Selects FT/AET/PEN matches that finished in the last N hours
+    2. Re-fetches stats from API-Football regardless of existing stats
+    3. Overwrites with fresh complete stats
+
+    This captures late events like:
+    - Red cards in injury time
+    - Late goals
+    - Updated possession/shots after final whistle
+
+    Default: 6h lookback, 50 calls max (runs every 2h = ~600 calls/day)
+
+    Args:
+        lookback_hours: Hours to look back for finished matches (default 6)
+        max_calls: Maximum API calls per run (default 50)
+
+    Returns:
+        Dict with metrics: checked, refreshed, errors, etc.
+    """
+    import json
+    import time
+    from datetime import datetime
+
+    start_time = time.time()
+
+    # Check if job is enabled (same flag as stats_backfill)
+    enabled = os.environ.get("STATS_REFRESH_ENABLED", "true").lower()
+    if enabled in ("false", "0", "no"):
+        logger.info("Stats refresh job disabled via STATS_REFRESH_ENABLED=false")
+        return {"status": "disabled"}
+
+    # Allow override via env
+    lookback_hours = int(os.environ.get("STATS_REFRESH_LOOKBACK_HOURS", lookback_hours))
+    max_calls = int(os.environ.get("STATS_REFRESH_MAX_CALLS", max_calls))
+
+    metrics = {
+        "checked": 0,
+        "refreshed": 0,
+        "skipped_no_external_id": 0,
+        "api_calls": 0,
+        "errors_429": 0,
+        "errors_other": 0,
+        "started_at": datetime.utcnow().isoformat(),
+    }
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Select recently finished matches (regardless of existing stats)
+            # Key difference: no stats filter, we want to refresh ALL recent FT
+            result = await session.execute(text("""
+                SELECT id, external_id, date, status, finished_at
+                FROM matches
+                WHERE status IN ('FT', 'AET', 'PEN')
+                  AND finished_at >= NOW() - INTERVAL ':lookback hours'
+                  AND external_id IS NOT NULL
+                ORDER BY finished_at DESC
+                LIMIT :max_matches
+            """.replace(":lookback", str(lookback_hours))), {
+                "max_matches": max_calls,
+            })
+
+            matches = result.fetchall()
+            metrics["checked"] = len(matches)
+
+            if not matches:
+                duration_ms = (time.time() - start_time) * 1000
+                logger.info(f"Stats refresh: No recently finished matches (lookback={lookback_hours}h)")
+                record_job_run(job="stats_refresh", status="ok", duration_ms=duration_ms)
+                return {**metrics, "status": "no_matches"}
+
+            logger.info(f"Stats refresh: Found {len(matches)} recently finished matches to refresh")
+
+            # Use APIFootballProvider to fetch stats
+            provider = APIFootballProvider()
+
+            try:
+                for match in matches:
+                    match_id = match.id
+                    external_id = match.external_id
+
+                    if not external_id:
+                        metrics["skipped_no_external_id"] += 1
+                        continue
+
+                    if metrics["api_calls"] >= max_calls:
+                        logger.info(f"Stats refresh: Hit call cap ({max_calls}), stopping")
+                        break
+
+                    try:
+                        # Fetch fresh stats from API
+                        stats_data = await provider.get_fixture_statistics(external_id)
+                        metrics["api_calls"] += 1
+
+                        if not stats_data:
+                            logger.debug(f"No stats available for match {match_id} (external: {external_id})")
+                            continue
+
+                        # Overwrite existing stats with fresh data
+                        await session.execute(text("""
+                            UPDATE matches
+                            SET stats = CAST(:stats_json AS JSON)
+                            WHERE id = :match_id
+                        """), {
+                            "match_id": match_id,
+                            "stats_json": json.dumps(stats_data),
+                        })
+                        metrics["refreshed"] += 1
+
+                        logger.debug(f"Refreshed stats for match {match_id}: {list(stats_data.get('home', {}).keys())}")
+
+                    except Exception as e:
+                        error_str = str(e).lower()
+                        if "429" in error_str or "rate limit" in error_str:
+                            metrics["errors_429"] += 1
+                            logger.warning(f"Stats refresh: 429 rate limit hit, stopping run")
+                            break
+                        else:
+                            metrics["errors_other"] += 1
+                            logger.warning(f"Error refreshing stats for match {match_id}: {e}")
+                            continue
+
+                await session.commit()
+
+            finally:
+                await provider.close()
+
+        duration_ms = (time.time() - start_time) * 1000
+        metrics["completed_at"] = datetime.utcnow().isoformat()
+        metrics["duration_ms"] = round(duration_ms, 1)
+
+        logger.info(
+            f"Stats refresh complete: "
+            f"checked={metrics['checked']}, refreshed={metrics['refreshed']}, "
+            f"api_calls={metrics['api_calls']}, errors={metrics['errors_other']}"
+        )
+
+        record_job_run(job="stats_refresh", status="ok", duration_ms=duration_ms)
+        return {**metrics, "status": "completed"}
+
+    except APIBudgetExceeded as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.warning(f"Stats refresh stopped: {e}")
+        record_job_run(job="stats_refresh", status="budget_exceeded", duration_ms=duration_ms)
+        return {**metrics, "status": "budget_exceeded", "error": str(e)}
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(f"Stats refresh failed: {e}")
+        sentry_capture_exception(e, job_id="stats_refresh", metrics=metrics)
+        record_job_run(job="stats_refresh", status="error", duration_ms=duration_ms)
+        return {**metrics, "status": "error", "error": str(e)}
+
+
+# =============================================================================
 # ODDS SYNC JOB (Auditor Decision 2026-01-16)
 # =============================================================================
 # Dedicated job to sync 1X2 odds for upcoming matches.
@@ -4565,6 +4728,17 @@ def start_scheduler(ml_engine):
         trigger=IntervalTrigger(minutes=60),
         id="finished_match_stats_backfill",
         name="Finished Match Stats Backfill (every 60 min)",
+        replace_existing=True,
+    )
+
+    # Stats Refresh: Every 2 hours, re-fetch stats for recently finished matches
+    # Captures late events (red cards, late goals) missed by live sync
+    # Guardrails: STATS_REFRESH_ENABLED, lookback 6h, max 50 calls/run (~600/day)
+    scheduler.add_job(
+        refresh_recent_ft_stats,
+        trigger=IntervalTrigger(hours=2),
+        id="stats_refresh_recent",
+        name="Stats Refresh Recent FT (every 2h)",
         replace_existing=True,
     )
 

@@ -9906,6 +9906,34 @@ async def trigger_stats_backfill(request: Request):
     }
 
 
+@app.post("/dashboard/ops/stats_refresh")
+async def trigger_stats_refresh(request: Request, lookback_hours: int = 48, max_calls: int = 100):
+    """
+    Manually trigger stats refresh for recently finished matches.
+
+    Unlike stats_backfill, this re-fetches stats for ALL recent FT matches,
+    even if they already have stats. Captures late events like red cards.
+
+    Args:
+        lookback_hours: Hours to look back (default 48 for manual runs)
+        max_calls: Max API calls (default 100)
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from app.scheduler import refresh_recent_ft_stats
+
+    start_time = time.time()
+    result = await refresh_recent_ft_stats(lookback_hours=lookback_hours, max_calls=max_calls)
+    duration_ms = int((time.time() - start_time) * 1000)
+
+    return {
+        "status": "executed",
+        "duration_ms": duration_ms,
+        "result": result,
+    }
+
+
 # =============================================================================
 # PREDICTION RERUN (controlled two-stage model promotion)
 # =============================================================================
