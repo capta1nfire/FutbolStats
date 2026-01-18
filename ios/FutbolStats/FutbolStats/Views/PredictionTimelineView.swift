@@ -297,29 +297,43 @@ struct PredictionTimelineView: View {
             ForEach(groupedGoals) { group in
                 let xPosition = CGFloat(group.effectiveMinute) / CGFloat(totalMinutes) * width
 
-                // Goal icon(s) - centered on bar
+                // Goal icon(s) with minute marker below
                 if group.count > 1 {
-                    // Grouped goals badge
-                    HStack(spacing: 2) {
-                        Image(systemName: "soccerball.inverse")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.white)
-                        Text("×\(group.count)")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white)
+                    // Grouped goals badge with minute
+                    VStack(spacing: 2) {
+                        HStack(spacing: 2) {
+                            Image(systemName: "soccerball.inverse")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.white)
+                            Text("×\(group.count)")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(Color.black.opacity(0.7))
+                        .clipShape(Capsule())
+
+                        // Minute marker
+                        Text("\(group.effectiveMinute)'")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.6))
                     }
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2)
-                    .background(Color.black.opacity(0.7))
-                    .clipShape(Capsule())
-                    .position(x: clampPosition(xPosition, width: width), y: barHeight / 2)
+                    .position(x: clampPosition(xPosition, width: width), y: barHeight / 2 + 4)
                 } else {
-                    // Single goal - centered on bar
-                    Image(systemName: "soccerball.inverse")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white)
-                        .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
-                        .position(x: clampPosition(xPosition, width: width), y: barHeight / 2)
+                    // Single goal with minute marker
+                    VStack(spacing: 2) {
+                        Image(systemName: "soccerball.inverse")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white)
+                            .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
+
+                        // Minute marker
+                        Text("\(group.effectiveMinute)'")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.6))
+                    }
+                    .position(x: clampPosition(xPosition, width: width), y: barHeight / 2 + 4)
                 }
             }
         }
