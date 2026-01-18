@@ -11289,6 +11289,61 @@ async def ops_daily_counts(
     }
 
 
+@app.get("/dashboard/ops/team_overrides.json")
+async def ops_team_overrides(
+    request: Request,
+    external_team_id: int = None,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    List all team identity overrides configured in the system.
+
+    Args:
+        external_team_id: Optional filter by API-Football team ID (e.g., 1134 for La Equidad).
+
+    Used to verify rebranding configurations like La Equidad → Internacional de Bogotá.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    query = """
+        SELECT
+            id, provider, external_team_id, display_name, display_logo_url,
+            effective_from, effective_to, reason, updated_by, created_at, updated_at
+        FROM team_overrides
+    """
+    params = {}
+    if external_team_id:
+        query += " WHERE external_team_id = :external_team_id"
+        params["external_team_id"] = external_team_id
+    query += " ORDER BY external_team_id, effective_from DESC"
+
+    result = await session.execute(text(query), params)
+    rows = result.fetchall()
+
+    overrides = []
+    for row in rows:
+        overrides.append({
+            "id": row[0],
+            "provider": row[1],
+            "external_team_id": row[2],
+            "display_name": row[3],
+            "display_logo_url": row[4],
+            "effective_from": str(row[5]) if row[5] else None,
+            "effective_to": str(row[6]) if row[6] else None,
+            "reason": row[7],
+            "updated_by": row[8],
+            "created_at": str(row[9]) if row[9] else None,
+            "updated_at": str(row[10]) if row[10] else None,
+        })
+
+    return {
+        "count": len(overrides),
+        "overrides": overrides,
+        "note": "These overrides replace team names/logos for matches on or after effective_from date.",
+    }
+
+
 @app.post("/dashboard/ops/migrate_llm_error_fields")
 async def migrate_llm_error_fields(
     request: Request,
