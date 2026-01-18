@@ -299,7 +299,7 @@ struct PredictionTimelineView: View {
 
                 // Goal icon(s) with minute marker below
                 if group.count > 1 {
-                    // Grouped goals badge with minute
+                    // Grouped goals badge with minute range
                     VStack(spacing: 2) {
                         HStack(spacing: 2) {
                             Image(systemName: "soccerball.inverse")
@@ -314,8 +314,8 @@ struct PredictionTimelineView: View {
                         .background(Color.black.opacity(0.7))
                         .clipShape(Capsule())
 
-                        // Minute marker
-                        Text("\(group.effectiveMinute)'")
+                        // Minute range marker (e.g., "88-90'" or "45'")
+                        Text(group.displayMinute)
                             .font(.system(size: 8, weight: .medium))
                             .foregroundStyle(.white.opacity(0.6))
                     }
@@ -328,8 +328,8 @@ struct PredictionTimelineView: View {
                             .foregroundStyle(.white)
                             .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
 
-                        // Minute marker
-                        Text("\(group.effectiveMinute)'")
+                        // Minute marker (use displayMinute for proper format like "45+2'")
+                        Text(group.displayMinute)
                             .font(.system(size: 8, weight: .medium))
                             .foregroundStyle(.white.opacity(0.6))
                     }
