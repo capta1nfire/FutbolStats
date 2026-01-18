@@ -545,9 +545,16 @@ struct MatchCard: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.white)
             } else if isLive {
-                Text(liveStatusDisplay)
-                    .font(.custom("BarlowCondensed-SemiBold", size: 18))
-                    .foregroundStyle(.white)
+                // Half Time uses same style as "Final", other live statuses use larger font
+                if liveStatusDisplay == "Half Time" {
+                    Text(liveStatusDisplay)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white)
+                } else {
+                    Text(liveStatusDisplay)
+                        .font(.custom("BarlowCondensed-SemiBold", size: 18))
+                        .foregroundStyle(.white)
+                }
             } else if let date = prediction.matchDate {
                 Text(formatTime(date))
                     .font(.custom("BarlowCondensed-SemiBold", size: 24))
