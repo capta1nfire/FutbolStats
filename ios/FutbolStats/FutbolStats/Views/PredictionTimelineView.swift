@@ -46,9 +46,14 @@ struct PredictionTimelineView: View {
         guard let status = liveData?.status else { return false }
         let elapsed = liveData?.elapsed ?? 0
 
+        // During HT, elapsed might still be 45 from 1H
         if status == "1H" && elapsed >= 45 {
             return true
         } else if status == "2H" && elapsed >= 90 {
+            return true
+        }
+        // Also stop if elapsed is exactly at regulation time (handles edge cases)
+        if elapsed == 45 || elapsed == 90 {
             return true
         }
         return false
