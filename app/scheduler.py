@@ -3581,7 +3581,7 @@ async def llm_raw_output_cleanup():
     logger.info("Starting LLM raw output cleanup...")
 
     try:
-        async with get_async_session_ctx() as session:
+        async with AsyncSessionLocal() as session:
             result = await session.execute(text("""
                 UPDATE post_match_audits
                 SET llm_output_raw = NULL
