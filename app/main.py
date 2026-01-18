@@ -3008,7 +3008,7 @@ async def get_match_details(
             } if match.venue_name else None,
         },
         "home_team": {
-            "id": home_team.id if home_team else None,
+            "id": home_team.external_id if home_team else None,
             "name": home_name,
             "logo": home_logo,
             "history": home_history["matches"],
@@ -3016,7 +3016,7 @@ async def get_match_details(
             "league_points": home_league_points,
         },
         "away_team": {
-            "id": away_team.id if away_team else None,
+            "id": away_team.external_id if away_team else None,
             "name": away_name,
             "logo": away_logo,
             "history": away_history["matches"],
