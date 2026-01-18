@@ -10016,7 +10016,7 @@ async def trigger_narratives_regenerate(
                     SET llm_narrative_status = 'pending',
                         llm_narrative_attempts = 0,
                         llm_narrative_json = NULL,
-                        llm_raw_response = NULL,
+                        llm_output_raw = NULL,
                         llm_prompt_version = NULL,
                         llm_validation_errors = NULL
                     WHERE id = ANY(:ids)
