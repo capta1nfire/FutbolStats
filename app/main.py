@@ -9869,10 +9869,10 @@ async def trigger_shadow_eval(request: Request):
     if not _verify_dashboard_token(request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
-    from app.scheduler import evaluate_shadow_predictions_job
+    from app.scheduler import evaluate_shadow_predictions
 
     start_time = time.time()
-    result = await evaluate_shadow_predictions_job()
+    result = await evaluate_shadow_predictions()
     duration_ms = int((time.time() - start_time) * 1000)
 
     return {
