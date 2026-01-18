@@ -41,6 +41,24 @@ struct PredictionTimelineView: View {
         liveData?.status == "HT"
     }
 
+    /// At regulation time limit (45' in 1H or 90' in 2H) - pulse should stop
+    private var isAtRegulationLimit: Bool {
+        guard let status = liveData?.status else { return false }
+        let elapsed = liveData?.elapsed ?? 0
+
+        if status == "1H" && elapsed >= 45 {
+            return true
+        } else if status == "2H" && elapsed >= 90 {
+            return true
+        }
+        return false
+    }
+
+    /// Pulse should stop during HT, at regulation limits, or when finished
+    private var shouldStopPulsing: Bool {
+        isHalfTime || isAtRegulationLimit || !isLive
+    }
+
     private var totalMinutes: Int {
         if let timeline = timeline {
             return timeline.totalMinutes
@@ -213,8 +231,8 @@ struct PredictionTimelineView: View {
         let progressWidth = width * CGFloat(currentElapsed) / CGFloat(totalMinutes)
 
         // Thin vertical white line that extends beyond bar (like probability bar indicator)
-        // Pulse only when actively playing (not during half time)
-        if isHalfTime {
+        // Pulse only when actively playing (not during HT, regulation limits, or finished)
+        if shouldStopPulsing {
             Rectangle()
                 .fill(Color.white.opacity(0.8))
                 .frame(width: 1, height: barHeight + 6)
