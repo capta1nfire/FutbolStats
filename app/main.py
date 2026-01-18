@@ -9906,6 +9906,74 @@ async def trigger_stats_backfill(request: Request):
     }
 
 
+@app.post("/dashboard/ops/match_link")
+async def link_match_to_api_football(
+    request: Request,
+    match_id: int,
+    external_id: int,
+    fetch_stats: bool = True,
+):
+    """
+    Link an orphan match to its API-Football fixture_id.
+
+    Orphan matches (external_id=NULL) cannot receive odds or stats from API-Football.
+    This endpoint allows manually linking them when the fixture_id is known.
+
+    Args:
+        match_id: Our internal match ID
+        external_id: API-Football fixture ID
+        fetch_stats: If True, also fetch and update stats from API-Football
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from sqlalchemy import text
+    import json
+
+    start_time = time.time()
+    result = {"match_id": match_id, "external_id": external_id}
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Update external_id
+            await session.execute(text("""
+                UPDATE matches
+                SET external_id = :external_id
+                WHERE id = :match_id
+            """), {"match_id": match_id, "external_id": external_id})
+
+            result["external_id_updated"] = True
+
+            # Optionally fetch stats
+            if fetch_stats:
+                from app.etl.api_football import APIFootballProvider
+                provider = APIFootballProvider()
+                try:
+                    stats_data = await provider.get_fixture_statistics(external_id)
+                    if stats_data:
+                        await session.execute(text("""
+                            UPDATE matches
+                            SET stats = CAST(:stats_json AS JSON)
+                            WHERE id = :match_id
+                        """), {"match_id": match_id, "stats_json": json.dumps(stats_data)})
+                        result["stats_updated"] = True
+                        result["stats_keys"] = list(stats_data.get("home", {}).keys())
+                    else:
+                        result["stats_updated"] = False
+                        result["stats_error"] = "No stats returned from API"
+                finally:
+                    await provider.close()
+
+            await session.commit()
+
+        duration_ms = int((time.time() - start_time) * 1000)
+        return {"status": "ok", "duration_ms": duration_ms, "result": result}
+
+    except Exception as e:
+        duration_ms = int((time.time() - start_time) * 1000)
+        return {"status": "error", "duration_ms": duration_ms, "error": str(e)}
+
+
 @app.post("/dashboard/ops/stats_refresh")
 async def trigger_stats_refresh(request: Request, lookback_hours: int = 48, max_calls: int = 100):
     """
