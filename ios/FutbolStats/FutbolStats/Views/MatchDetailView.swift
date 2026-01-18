@@ -689,6 +689,20 @@ struct MatchDetailView: View {
         viewModel.calculatedElapsedDisplay()
     }
 
+    /// Check if at regulation time limit (45' in 1H or 90' in 2H) - pulse should stop
+    private func isAtRegulationTimeLimit() -> Bool {
+        let pred = viewModel.currentPrediction
+        guard let status = pred.status, let elapsed = pred.elapsed else { return false }
+
+        // At 45' in first half or 90' in second half, stop pulsing
+        if status == "1H" && elapsed >= 45 {
+            return true
+        } else if status == "2H" && elapsed >= 90 {
+            return true
+        }
+        return false
+    }
+
     // Animation for section transitions - fade only, no slide
     private let sectionTransition: AnyTransition = .opacity
     private let sectionAnimation: Animation = .easeOut(duration: 0.3)
@@ -899,7 +913,16 @@ struct MatchDetailView: View {
                                 .background(Color.gray.opacity(0.2))
                                 .clipShape(Capsule())
                         } else {
-                            PulsingLiveMinute(text: liveStatusDisplay)
+                            // Check if at regulation time limit (45' or 90') - stop pulsing
+                            let isAtRegulationLimit = isAtRegulationTimeLimit()
+                            if isAtRegulationLimit {
+                                // Static text at regulation limit (waiting for injury time or half time)
+                                Text(liveStatusDisplay)
+                                    .font(.custom("BarlowCondensed-SemiBold", size: 22))
+                                    .foregroundStyle(.gray)
+                            } else {
+                                PulsingLiveMinute(text: liveStatusDisplay)
+                            }
                         }
 
                         Spacer()
