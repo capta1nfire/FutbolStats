@@ -889,10 +889,15 @@ struct MatchDetailView: View {
                             .background(Color.gray.opacity(0.2))
                             .clipShape(Capsule())
                         } else if viewModel.currentPrediction.status == "HT" {
-                            // Half Time: static text, no pulsing
+                            // Half Time: same style as Final badge
                             Text(liveStatusDisplay)
-                                .font(.custom("BarlowCondensed-SemiBold", size: 22))
+                                .font(.caption)
+                                .fontWeight(.semibold)
                                 .foregroundStyle(.gray)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(Color.gray.opacity(0.2))
+                                .clipShape(Capsule())
                         } else {
                             PulsingLiveMinute(text: liveStatusDisplay)
                         }
