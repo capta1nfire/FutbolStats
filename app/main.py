@@ -9834,6 +9834,54 @@ async def trigger_sensor_retrain(request: Request):
     }
 
 
+@app.post("/dashboard/ops/sensor_eval")
+async def trigger_sensor_eval(request: Request):
+    """
+    Manually trigger Sensor B evaluation job.
+
+    Protected by dashboard token. Evaluates pending FT matches against
+    sensor predictions.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from app.scheduler import evaluate_sensor_predictions_job
+
+    start_time = time.time()
+    result = await evaluate_sensor_predictions_job()
+    duration_ms = int((time.time() - start_time) * 1000)
+
+    return {
+        "status": "executed",
+        "duration_ms": duration_ms,
+        "result": result,
+    }
+
+
+@app.post("/dashboard/ops/shadow_eval")
+async def trigger_shadow_eval(request: Request):
+    """
+    Manually trigger Shadow mode evaluation job.
+
+    Protected by dashboard token. Evaluates pending FT matches against
+    shadow predictions.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from app.scheduler import evaluate_shadow_predictions_job
+
+    start_time = time.time()
+    result = await evaluate_shadow_predictions_job()
+    duration_ms = int((time.time() - start_time) * 1000)
+
+    return {
+        "status": "executed",
+        "duration_ms": duration_ms,
+        "result": result,
+    }
+
+
 @app.post("/dashboard/ops/stats_backfill")
 async def trigger_stats_backfill(request: Request):
     """
