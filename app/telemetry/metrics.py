@@ -1194,6 +1194,8 @@ def record_job_run(
     job: str,
     status: str,
     duration_ms: float,
+    error: str = None,
+    metrics: dict = None,
 ) -> None:
     """
     Record a job run with status and duration.
@@ -1202,7 +1204,10 @@ def record_job_run(
         job: Job identifier (stats_backfill, odds_sync, fastpath)
         status: "ok", "error", "rate_limited", "budget_exceeded"
         duration_ms: Job duration in milliseconds
+        error: Optional error message for failed runs
+        metrics: Optional job-specific metrics dict
     """
+    # 1) Record to Prometheus (always)
     try:
         job_runs_total.labels(job=job, status=status).inc()
         if duration_ms > 0:
@@ -1211,6 +1216,46 @@ def record_job_run(
             job_last_success_timestamp.labels(job=job).set(time.time())
     except Exception as e:
         logger.warning(f"Failed to record job run metric: {e}")
+
+    # 2) P1-B: Also persist to DB (for cold-start fallback)
+    # Run in background to avoid blocking
+    try:
+        import asyncio
+        from datetime import datetime, timedelta
+
+        # Calculate started_at from duration
+        finished_at = datetime.utcnow()
+        started_at = finished_at - timedelta(milliseconds=duration_ms)
+
+        async def _persist_to_db():
+            try:
+                from app.database import AsyncSessionLocal
+                from app.models import JobRun
+
+                async with AsyncSessionLocal() as session:
+                    job_run = JobRun(
+                        job_name=job,
+                        status=status,
+                        started_at=started_at,
+                        finished_at=finished_at,
+                        duration_ms=int(duration_ms),
+                        error_message=error,
+                        metrics=metrics,
+                    )
+                    session.add(job_run)
+                    await session.commit()
+            except Exception as db_err:
+                logger.debug(f"[JOB_TRACKING] DB persist failed (non-blocking): {db_err}")
+
+        # Try to get running loop, if exists schedule in background
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_persist_to_db())
+        except RuntimeError:
+            # No running loop - skip DB persist (startup/tests)
+            pass
+    except Exception as e:
+        logger.debug(f"[JOB_TRACKING] Failed to schedule DB persist: {e}")
 
 
 def set_job_last_success(job: str) -> None:

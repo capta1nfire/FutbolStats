@@ -6057,6 +6057,9 @@ async def _calculate_jobs_health_summary(session) -> dict:
     - ft_pending (stats_backfill): FT matches without stats
     - backlog_ready (fastpath): Audits ready for narratives
     - status: ok/warn/red based on thresholds
+
+    P1-B: Falls back to DB (job_runs table) when Prometheus metrics are unavailable
+    (e.g., cold-start after deploy).
     """
     from app.telemetry.metrics import (
         job_last_success_timestamp,
@@ -6066,25 +6069,53 @@ async def _calculate_jobs_health_summary(session) -> dict:
 
     now = datetime.utcnow()
 
+    # P1-B: Preload DB fallback data for all jobs
+    db_fallback = {}
+    try:
+        from app.jobs.tracking import get_jobs_health_from_db
+        db_fallback = await get_jobs_health_from_db(session)
+    except Exception as e:
+        logger.debug(f"[JOBS_HEALTH] DB fallback unavailable: {e}")
+
     # Helper to format timestamp and calculate age
     def job_status(job_name: str, max_gap_minutes: int) -> dict:
+        last_success = None
+        source = "prometheus"
+
+        # Try Prometheus first
         try:
             ts = job_last_success_timestamp.labels(job=job_name)._value.get()
             if ts and ts > 0:
                 last_success = datetime.utcfromtimestamp(ts)
-                gap_minutes = (now - last_success).total_seconds() / 60
-                status = "ok"
-                if gap_minutes > max_gap_minutes * 2:
-                    status = "red"
-                elif gap_minutes > max_gap_minutes:
-                    status = "warn"
-                return {
-                    "last_success_at": last_success.isoformat() + "Z",
-                    "minutes_since_success": round(gap_minutes, 1),
-                    "status": status,
-                }
         except Exception:
             pass
+
+        # P1-B: Fallback to DB if Prometheus has no data
+        if last_success is None and job_name in db_fallback:
+            db_data = db_fallback[job_name]
+            if db_data.get("last_success_at"):
+                try:
+                    # Parse ISO format
+                    ts_str = db_data["last_success_at"].rstrip("Z")
+                    last_success = datetime.fromisoformat(ts_str)
+                    source = "db_fallback"
+                except Exception:
+                    pass
+
+        if last_success:
+            gap_minutes = (now - last_success).total_seconds() / 60
+            status = "ok"
+            if gap_minutes > max_gap_minutes * 2:
+                status = "red"
+            elif gap_minutes > max_gap_minutes:
+                status = "warn"
+            return {
+                "last_success_at": last_success.isoformat() + "Z",
+                "minutes_since_success": round(gap_minutes, 1),
+                "status": status,
+                "source": source,  # For debugging
+            }
+
         return {
             "last_success_at": None,
             "minutes_since_success": None,
@@ -6349,9 +6380,17 @@ async def _calculate_predictions_health(session) -> dict:
         status = "ok"
         status_reason = "No upcoming NS matches in 48h (low activity period)"
     # NEW: Check if prediction job hasn't run recently (stale job detection)
+    # P1: Only WARN for staleness if coverage is NOT 100% - if all NS and FT have predictions,
+    # staleness is just informational (DAILY-SAVE runs once/day)
     elif hours_since_last and hours_since_last > 12 and ns_next_48h > 0:
-        status = "warn"
-        status_reason = f"Predictions job stale: {hours_since_last:.1f}h since last save with {ns_next_48h} NS upcoming"
+        # Check if coverage is perfect - if so, staleness is just informational
+        if ns_next_48h_missing == 0 and ft_48h_missing == 0:
+            # Coverage is 100%, staleness is OK (just means daily job ran earlier)
+            status = "ok"
+            status_reason = None  # No alert needed
+        else:
+            status = "warn"
+            status_reason = f"Predictions job stale: {hours_since_last:.1f}h since last save with {ns_next_48h} NS upcoming"
     # Primary check: upcoming NS matches should have predictions
     elif ns_coverage_pct < 50:
         status = "red"
@@ -11341,6 +11380,94 @@ async def ops_team_overrides(
         "count": len(overrides),
         "overrides": overrides,
         "note": "These overrides replace team names/logos for matches on or after effective_from date.",
+    }
+
+
+@app.get("/dashboard/ops/job_runs.json")
+async def ops_job_runs(
+    request: Request,
+    job_name: str = None,
+    limit: int = 20,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    List recent job runs from the job_runs table (P1-B fallback).
+
+    Args:
+        job_name: Optional filter by job name (stats_backfill, odds_sync, fastpath).
+        limit: Max rows to return (default 20).
+
+    Used to verify job tracking is working and debug jobs_health fallback.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    # Check if table exists
+    try:
+        check_result = await session.execute(text("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'job_runs'
+            )
+        """))
+        table_exists = check_result.scalar()
+        if not table_exists:
+            return {
+                "count": 0,
+                "runs": [],
+                "note": "job_runs table does not exist. Run migration 028_job_runs.py first.",
+            }
+    except Exception as e:
+        return {"error": str(e), "note": "Failed to check table existence"}
+
+    query = """
+        SELECT id, job_name, status, started_at, finished_at, duration_ms, error_message, metrics
+        FROM job_runs
+    """
+    params = {"limit": min(limit, 100)}  # Cap at 100
+
+    if job_name:
+        query += " WHERE job_name = :job_name"
+        params["job_name"] = job_name
+
+    query += " ORDER BY finished_at DESC LIMIT :limit"
+
+    result = await session.execute(text(query), params)
+    rows = result.fetchall()
+
+    runs = []
+    for row in rows:
+        runs.append({
+            "id": row[0],
+            "job_name": row[1],
+            "status": row[2],
+            "started_at": row[3].isoformat() + "Z" if row[3] else None,
+            "finished_at": row[4].isoformat() + "Z" if row[4] else None,
+            "duration_ms": row[5],
+            "error_message": row[6],
+            "metrics": row[7],
+        })
+
+    # Get last success per job for summary
+    summary_result = await session.execute(text("""
+        SELECT DISTINCT ON (job_name)
+            job_name,
+            finished_at as last_success_at
+        FROM job_runs
+        WHERE status = 'ok'
+        ORDER BY job_name, finished_at DESC
+    """))
+    summary_rows = summary_result.fetchall()
+    summary = {
+        row[0]: row[1].isoformat() + "Z" if row[1] else None
+        for row in summary_rows
+    }
+
+    return {
+        "count": len(runs),
+        "runs": runs,
+        "last_success_by_job": summary,
+        "note": "Job runs tracked for ops dashboard fallback when Prometheus is cold.",
     }
 
 

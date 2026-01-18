@@ -1081,6 +1081,38 @@ class TeamOverride(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class JobRun(SQLModel, table=True):
+    """
+    Scheduler job execution tracking.
+
+    Persists job runs for ops dashboard fallback when Prometheus metrics
+    are unavailable (e.g., cold-start after deploy). Enables jobs_health
+    to show last_success_at from DB instead of "unknown".
+
+    Jobs tracked: stats_backfill, odds_sync, fastpath, daily_save, etc.
+    """
+
+    __tablename__ = "job_runs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    job_name: str = Field(max_length=100, index=True, description="Job identifier")
+    status: str = Field(
+        max_length=20,
+        default="ok",
+        description="ok, error, rate_limited, budget_exceeded"
+    )
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    finished_at: Optional[datetime] = Field(default=None)
+    duration_ms: Optional[int] = Field(default=None)
+    error_message: Optional[str] = Field(default=None, description="Error details if failed")
+    metrics: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="Job-specific metrics (rows_updated, fixtures_scanned, etc.)"
+    )
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class PredictionRerun(SQLModel, table=True):
     """
     Audit log for manual prediction reruns.
