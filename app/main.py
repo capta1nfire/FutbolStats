@@ -9934,37 +9934,37 @@ async def link_match_to_api_football(
     result = {"match_id": match_id, "external_id": external_id}
 
     try:
+        # Update external_id first
         async with AsyncSessionLocal() as session:
-            # Update external_id
             await session.execute(text("""
                 UPDATE matches
                 SET external_id = :external_id
                 WHERE id = :match_id
             """), {"match_id": match_id, "external_id": external_id})
-
+            await session.commit()
             result["external_id_updated"] = True
 
-            # Optionally fetch stats
-            if fetch_stats:
-                from app.etl.api_football import APIFootballProvider
-                provider = APIFootballProvider()
-                try:
-                    stats_data = await provider.get_fixture_statistics(external_id)
-                    if stats_data:
-                        await session.execute(text("""
+        # Optionally fetch and update stats in separate transaction
+        if fetch_stats:
+            from app.etl.api_football import APIFootballProvider
+            provider = APIFootballProvider()
+            try:
+                stats_data = await provider.get_fixture_statistics(external_id)
+                if stats_data:
+                    async with AsyncSessionLocal() as session2:
+                        await session2.execute(text("""
                             UPDATE matches
                             SET stats = CAST(:stats_json AS JSON)
                             WHERE id = :match_id
                         """), {"match_id": match_id, "stats_json": json.dumps(stats_data)})
-                        result["stats_updated"] = True
-                        result["stats_keys"] = list(stats_data.get("home", {}).keys())
-                    else:
-                        result["stats_updated"] = False
-                        result["stats_error"] = "No stats returned from API"
-                finally:
-                    await provider.close()
-
-            await session.commit()
+                        await session2.commit()
+                    result["stats_updated"] = True
+                    result["stats_keys"] = list(stats_data.get("home", {}).keys())
+                else:
+                    result["stats_updated"] = False
+                    result["stats_error"] = "No stats returned from API"
+            finally:
+                await provider.close()
 
         duration_ms = int((time.time() - start_time) * 1000)
         return {"status": "ok", "duration_ms": duration_ms, "result": result}
