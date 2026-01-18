@@ -9810,6 +9810,54 @@ async def trigger_odds_sync(request: Request):
     }
 
 
+@app.post("/dashboard/ops/sensor_retrain")
+async def trigger_sensor_retrain(request: Request):
+    """
+    Manually trigger Sensor B retrain job.
+
+    Protected by dashboard token. Use after deploy to force immediate retrain
+    instead of waiting for the 6h interval.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from app.scheduler import retrain_sensor_model
+
+    start_time = time.time()
+    result = await retrain_sensor_model()
+    duration_ms = int((time.time() - start_time) * 1000)
+
+    return {
+        "status": "executed",
+        "duration_ms": duration_ms,
+        "result": result,
+    }
+
+
+@app.post("/dashboard/ops/stats_backfill")
+async def trigger_stats_backfill(request: Request):
+    """
+    Manually trigger stats backfill job.
+
+    Protected by dashboard token. Use after deploy to force immediate execution
+    instead of waiting for the 60min interval.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from app.scheduler import capture_finished_match_stats
+
+    start_time = time.time()
+    result = await capture_finished_match_stats()
+    duration_ms = int((time.time() - start_time) * 1000)
+
+    return {
+        "status": "executed",
+        "duration_ms": duration_ms,
+        "result": result,
+    }
+
+
 # =============================================================================
 # PREDICTION RERUN (controlled two-stage model promotion)
 # =============================================================================
