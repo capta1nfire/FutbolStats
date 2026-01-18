@@ -1,5 +1,21 @@
 import SwiftUI
 
+// MARK: - Inferred Goal (from live polling score changes)
+
+/// Represents a goal inferred from detecting score changes during live polling.
+/// Since we don't have exact event data, we record the minute when we detected the change.
+struct InferredGoal: Identifiable {
+    let id = UUID()
+    let minute: Int           // Minute when we detected the goal
+    let team: String          // "home" or "away"
+    let homeTeamName: String
+    let awayTeamName: String
+
+    var teamName: String {
+        team == "home" ? homeTeamName : awayTeamName
+    }
+}
+
 // MARK: - Pulsing Live Minute (MatchDetail only)
 
 /// Subtle pulsing animation for live match minute display
@@ -9,7 +25,7 @@ struct PulsingLiveMinute: View {
 
     var body: some View {
         Text(text)
-            .font(.custom("Bebas Neue", size: 16))
+            .font(.custom("BarlowCondensed-SemiBold", size: 22))
             .foregroundStyle(.gray)
             .opacity(isPulsing ? 0.5 : 1.0)
             .onAppear {
@@ -39,30 +55,12 @@ struct EVResult {
 
 struct TeamFormData: Identifiable {
     let id = UUID()
+    let teamId: Int?
     let position: Int
     let teamName: String
     let logoUrl: String?
     let form: [String]
     let points: Int
-}
-
-// MARK: - Insight Type
-
-enum InsightType: String {
-    case h2hDominance = "h2h_dominance"
-    case homeSpecialist = "home_specialist"
-    case awayScorer = "away_scorer"
-    case btts = "btts"
-    case timingGoals = "timing_goals"
-    case cleanSheets = "clean_sheets"
-    case highScoring = "high_scoring"
-    case formStreak = "form_streak"
-}
-
-struct MatchInsight {
-    let type: InsightType
-    let message: String
-    let confidence: Double
 }
 
 // MARK: - Section Loading State
@@ -107,7 +105,6 @@ class MatchDetailViewModel: ObservableObject {
     @Published var homeEV: EVResult?
     @Published var drawEV: EVResult?
     @Published var awayEV: EVResult?
-    @Published var primaryInsight: MatchInsight?
     @Published var homeTeamForm: TeamFormData?
     @Published var awayTeamForm: TeamFormData?
     @Published var timeline: MatchTimelineResponse?
@@ -120,7 +117,7 @@ class MatchDetailViewModel: ObservableObject {
 
     // Match stats for stats table (independent of narrative)
     @Published var matchStats: MatchStats?
-    @Published var matchEvents: [MatchEvent]?
+    @Published var matchEvents: [FootballMatchEvent]?
 
     // MARK: - Live Match Polling & Clock
     /// Updated prediction from polling (for live matches)
@@ -129,8 +126,13 @@ class MatchDetailViewModel: ObservableObject {
     @Published private(set) var liveDataLoadedAt: Date = Date()
     /// Current time - updated every 60s to trigger UI refresh for live matches
     @Published private(set) var clockTick: Date = Date()
+    /// Goals inferred from score changes during live polling (minute when detected)
+    @Published private(set) var inferredGoals: [InferredGoal] = []
     private var livePollingTimer: Timer?
     private var clockTimer: Timer?
+    /// Track previous score to detect changes
+    private var previousHomeGoals: Int = 0
+    private var previousAwayGoals: Int = 0
 
     // Task cancellation support
     private var loadTask: Task<Void, Never>?
@@ -142,6 +144,9 @@ class MatchDetailViewModel: ObservableObject {
 
     init(prediction: MatchPrediction) {
         self.prediction = prediction
+        // Initialize previous goals from initial prediction
+        self.previousHomeGoals = prediction.homeGoals ?? 0
+        self.previousAwayGoals = prediction.awayGoals ?? 0
         calculateEV()
     }
 
@@ -155,6 +160,9 @@ class MatchDetailViewModel: ObservableObject {
 
     func startLivePollingIfNeeded() {
         guard currentPrediction.isLive else { return }
+
+        // Seed existing goals on first load (distribute evenly across elapsed time)
+        seedExistingGoals()
 
         // Start 60s clock timer for local elapsed updates
         clockTimer?.invalidate()
@@ -182,6 +190,58 @@ class MatchDetailViewModel: ObservableObject {
         print("[LivePolling] Stopped")
     }
 
+    /// Seed inferred goals from existing score when user opens a live match
+    /// Since we don't know the exact minute of past goals, we distribute them
+    /// evenly across the elapsed time for a reasonable approximation
+    private func seedExistingGoals() {
+        let pred = currentPrediction
+        let homeGoals = pred.homeGoals ?? 0
+        let awayGoals = pred.awayGoals ?? 0
+        let elapsed = pred.elapsed ?? 1
+        let totalGoals = homeGoals + awayGoals
+
+        // Skip if no goals or goals already seeded
+        guard totalGoals > 0 && inferredGoals.isEmpty else { return }
+
+        // Distribute goals evenly across elapsed time
+        // For 2 goals in 60 minutes: place at ~20' and ~40'
+        var seededGoals: [InferredGoal] = []
+
+        // Calculate interval between goals
+        let interval = max(1, elapsed / (totalGoals + 1))
+
+        // Interleave home and away goals chronologically
+        var homeRemaining = homeGoals
+        var awayRemaining = awayGoals
+        var currentMinute = interval
+
+        for i in 0..<totalGoals {
+            // Alternate between home and away, but weighted by remaining goals
+            let team: String
+            if homeRemaining > 0 && (awayRemaining == 0 || i % 2 == 0) {
+                team = "home"
+                homeRemaining -= 1
+            } else if awayRemaining > 0 {
+                team = "away"
+                awayRemaining -= 1
+            } else {
+                continue
+            }
+
+            let goal = InferredGoal(
+                minute: min(currentMinute, elapsed - 1),
+                team: team,
+                homeTeamName: pred.homeTeam,
+                awayTeamName: pred.awayTeam
+            )
+            seededGoals.append(goal)
+            currentMinute += interval
+        }
+
+        inferredGoals = seededGoals
+        print("[LivePolling] Seeded \(seededGoals.count) existing goals for \(pred.homeTeam) vs \(pred.awayTeam)")
+    }
+
     private func pollLiveData() async {
         guard let matchId = prediction.matchId else { return }
 
@@ -189,9 +249,48 @@ class MatchDetailViewModel: ObservableObject {
             // Fetch fresh prediction data from API
             let response = try await APIClient.shared.getUpcomingPredictions(daysBack: 1, daysAhead: 1)
             if let updated = response.predictions.first(where: { $0.matchId == matchId }) {
+                // Detect goal changes before updating livePrediction
+                let newHomeGoals = updated.homeGoals ?? 0
+                let newAwayGoals = updated.awayGoals ?? 0
+                let currentMinute = updated.elapsed ?? 0
+
+                // Check for new home goals
+                if newHomeGoals > previousHomeGoals {
+                    let goalsScored = newHomeGoals - previousHomeGoals
+                    for _ in 0..<goalsScored {
+                        let goal = InferredGoal(
+                            minute: currentMinute,
+                            team: "home",
+                            homeTeamName: updated.homeTeam,
+                            awayTeamName: updated.awayTeam
+                        )
+                        inferredGoals.append(goal)
+                        print("[LivePolling] ⚽ Home goal detected at \(currentMinute)' - \(updated.homeTeam)")
+                    }
+                }
+
+                // Check for new away goals
+                if newAwayGoals > previousAwayGoals {
+                    let goalsScored = newAwayGoals - previousAwayGoals
+                    for _ in 0..<goalsScored {
+                        let goal = InferredGoal(
+                            minute: currentMinute,
+                            team: "away",
+                            homeTeamName: updated.homeTeam,
+                            awayTeamName: updated.awayTeam
+                        )
+                        inferredGoals.append(goal)
+                        print("[LivePolling] ⚽ Away goal detected at \(currentMinute)' - \(updated.awayTeam)")
+                    }
+                }
+
+                // Update previous goals for next comparison
+                previousHomeGoals = newHomeGoals
+                previousAwayGoals = newAwayGoals
+
                 livePrediction = updated
                 liveDataLoadedAt = Date()
-                print("[LivePolling] Updated match \(matchId): status=\(updated.status ?? "nil"), elapsed=\(updated.elapsed ?? -1)")
+                print("[LivePolling] Updated match \(matchId): status=\(updated.status ?? "nil"), elapsed=\(updated.elapsed ?? -1), goals=\(inferredGoals.count)")
 
                 // Write to shared cache so PredictionsListView can overlay
                 MatchCache.shared.update(from: updated)
@@ -207,7 +306,7 @@ class MatchDetailViewModel: ObservableObject {
     }
 
     /// Calculate the current elapsed minute for display (with local clock)
-    /// Returns formatted string like "32'", "45+2'", "90+3'", or status like "HT"
+    /// Returns formatted string like "32'", "45+2'", "90+3'", or "Half Time"
     func calculatedElapsedDisplay() -> String {
         let pred = currentPrediction
         guard let status = pred.status else { return "LIVE" }
@@ -215,10 +314,19 @@ class MatchDetailViewModel: ObservableObject {
         // Only calculate for active play statuses
         let activeStatuses = ["1H", "2H", "LIVE"]
         guard activeStatuses.contains(status) else {
+            // Transform HT to Half Time
+            if status == "HT" {
+                return "Half Time"
+            }
             return status
         }
 
+        // If no elapsed from backend, calculate from kickoff time
         guard let baseElapsed = pred.elapsed else {
+            // Use kickoff-based calculation from MatchPrediction
+            if let calculatedMins = pred.calculatedElapsed(at: clockTick) {
+                return "\(calculatedMins)'"
+            }
             return status
         }
 
@@ -227,18 +335,26 @@ class MatchDetailViewModel: ObservableObject {
             return "\(baseElapsed)+\(extra)'"
         }
 
-        // Calculate minutes passed since data was loaded (local clock estimation)
-        let minutesPassed = Int(clockTick.timeIntervalSince(liveDataLoadedAt) / 60)
-        let calculatedElapsed = baseElapsed + minutesPassed
-
-        // Apply caps based on status (injury time will come from API)
-        if status == "1H" && calculatedElapsed > 45 {
-            return "45+"
-        } else if status == "2H" && calculatedElapsed > 90 {
-            return "90+"
+        // At regulation time limits, don't calculate locally - wait for API injury time
+        if status == "1H" && baseElapsed >= 45 {
+            return "45'"
+        } else if status == "2H" && baseElapsed >= 90 {
+            return "90'"
         }
 
-        return "\(calculatedElapsed)'"
+        // Calculate time passed since data was loaded (local clock estimation)
+        let secondsPassed = clockTick.timeIntervalSince(liveDataLoadedAt)
+        let totalSeconds = (baseElapsed * 60) + Int(secondsPassed)
+        let displayMinutes = totalSeconds / 60
+
+        // Apply caps - stop local calculation at regulation time
+        if status == "1H" && displayMinutes >= 45 {
+            return "45'"
+        } else if status == "2H" && displayMinutes >= 90 {
+            return "90'"
+        }
+
+        return "\(displayMinutes)'"
     }
 
     func cancelLoading() {
@@ -291,7 +407,6 @@ class MatchDetailViewModel: ObservableObject {
                 try Task.checkCancellation()
 
                 processTeamHistory()
-                generateInsights()
 
                 // Mark details as loaded (triggers UI transition)
                 detailsState = .loaded
@@ -326,7 +441,6 @@ class MatchDetailViewModel: ObservableObject {
                 try Task.checkCancellation()
 
                 processTeamHistory()
-                generateInsights()
 
                 // Mark details as loaded
                 detailsState = .loaded
@@ -340,7 +454,7 @@ class MatchDetailViewModel: ObservableObject {
                     ]
                 )
 
-                print("Match \(matchId) status: \(prediction.status ?? "nil") - not loading timeline/insights")
+                print("Match \(matchId) status: \(prediction.status ?? "nil") - not loading timeline")
             }
         } catch is CancellationError {
             // Task was cancelled (user navigated away), don't update state
@@ -485,6 +599,7 @@ class MatchDetailViewModel: ObservableObject {
         let homePoints = details.homeTeam.leaguePoints ?? calculatePoints(from: Array(homeHistory))
 
         homeTeamForm = TeamFormData(
+            teamId: details.homeTeam.id,
             position: details.homeTeam.position ?? 0,
             teamName: details.homeTeam.name,
             logoUrl: details.homeTeam.logo,
@@ -498,6 +613,7 @@ class MatchDetailViewModel: ObservableObject {
         let awayPoints = details.awayTeam.leaguePoints ?? calculatePoints(from: Array(awayHistory))
 
         awayTeamForm = TeamFormData(
+            teamId: details.awayTeam.id,
             position: details.awayTeam.position ?? 0,
             teamName: details.awayTeam.name,
             logoUrl: details.awayTeam.logo,
@@ -516,93 +632,29 @@ class MatchDetailViewModel: ObservableObject {
         }
     }
 
-    private func generateInsights() {
-        guard let details = matchDetails else { return }
-
-        var insights: [MatchInsight] = []
-        let homeTeamHistory = details.homeTeam.history
-        let awayTeamHistory = details.awayTeam.history
-
-        // Home Specialist
-        let homeMatches = homeTeamHistory.filter { $0.isHome }
-        if homeMatches.count >= 3 {
-            let homeWins = homeMatches.filter { $0.result == "W" }.count
-            let homeWinRate = Double(homeWins) / Double(homeMatches.count)
-            if homeWinRate >= 0.7 {
-                insights.append(MatchInsight(
-                    type: .homeSpecialist,
-                    message: "\(details.homeTeam.name) wins \(Int(homeWinRate * 100))% of home matches",
-                    confidence: homeWinRate
-                ))
-            }
-        }
-
-        // Away Scorer
-        let awayMatches = awayTeamHistory.filter { !$0.isHome }.prefix(3)
-        if awayMatches.count >= 3 {
-            let scoredInAll = awayMatches.allSatisfy { ($0.teamGoals ?? 0) > 0 }
-            if scoredInAll {
-                insights.append(MatchInsight(
-                    type: .awayScorer,
-                    message: "\(details.awayTeam.name) scored in last 3 away matches",
-                    confidence: 0.85
-                ))
-            }
-        }
-
-        // BTTS
-        let last5Home = Array(homeTeamHistory.prefix(5))
-        let bttsCount = last5Home.filter { ($0.teamGoals ?? 0) > 0 && ($0.opponentGoals ?? 0) > 0 }.count
-        if last5Home.count >= 5 && bttsCount >= 4 {
-            let bttsRate = Double(bttsCount) / Double(last5Home.count)
-            insights.append(MatchInsight(
-                type: .btts,
-                message: "Both teams scored in \(Int(bttsRate * 100))% of \(details.homeTeam.name)'s matches",
-                confidence: bttsRate
-            ))
-        }
-
-        // High Scoring
-        let totalGoalsHome = last5Home.reduce(0) { $0 + ($1.teamGoals ?? 0) + ($1.opponentGoals ?? 0) }
-        let avgGoals = Double(totalGoalsHome) / max(1, Double(last5Home.count))
-        if avgGoals >= 3.0 {
-            insights.append(MatchInsight(
-                type: .highScoring,
-                message: "\(details.homeTeam.name) games average \(String(format: "%.1f", avgGoals)) goals",
-                confidence: min(1.0, avgGoals / 4.0)
-            ))
-        }
-
-        // Form Streak
-        let homeForm = homeTeamHistory.prefix(3).map { $0.result }
-        if homeForm.count == 3 && homeForm.allSatisfy({ $0 == "W" }) {
-            insights.append(MatchInsight(
-                type: .formStreak,
-                message: "\(details.homeTeam.name) on a 3-match winning streak",
-                confidence: 0.9
-            ))
-        }
-
-        primaryInsight = insights.max(by: { $0.confidence < $1.confidence })
-
-        // Fallback
-        if primaryInsight == nil {
-            let homeScoreRate = homeMatches.filter { ($0.teamGoals ?? 0) > 0 }.count
-            let rate = Double(homeScoreRate) / max(1, Double(homeMatches.count))
-            if rate > 0 {
-                primaryInsight = MatchInsight(
-                    type: .homeSpecialist,
-                    message: "\(details.homeTeam.name) scores in \(Int(rate * 100))% of home matches",
-                    confidence: rate
-                )
-            }
-        }
-    }
-
     var formattedMatchDate: String {
         guard let date = prediction.matchDate else { return "TBD" }
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d • h:mma"
+        return formatter.string(from: date)
+    }
+
+    /// Date display for upcoming match - "Today" if same day, otherwise "Jan 18"
+    var matchDateDisplay: String {
+        guard let date = prediction.matchDate else { return "TBD" }
+        if Calendar.current.isDateInToday(date) {
+            return "Today"
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        return formatter.string(from: date)
+    }
+
+    /// Time display for upcoming match - "3:30 PM"
+    var matchTimeDisplay: String {
+        guard let date = prediction.matchDate else { return "" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
         return formatter.string(from: date)
     }
 }
@@ -662,15 +714,17 @@ struct MatchDetailView: View {
                     ProbabilityBarSkeleton()
                 }
 
-                // Timeline for finished matches - shows skeleton from idle through loading
-                if prediction.isFinished {
-                    if let timeline = viewModel.timeline {
-                        PredictionTimelineView(timeline: timeline)
-                            .transition(sectionTransition)
-                    } else if viewModel.timelineState == .idle || viewModel.timelineState.isLoading {
-                        // Show skeleton immediately for finished matches to reserve space
-                        TimelineSkeleton()
-                    }
+                // Timeline for finished AND live matches
+                // Always build locally - we have prediction + score data
+                // Backend timeline is no longer needed (narrative/stats come separately)
+                if prediction.isFinished || prediction.isLive {
+                    PredictionTimelineView(
+                        liveData: LiveTimelineData.from(
+                            prediction: viewModel.currentPrediction,
+                            inferredGoals: viewModel.inferredGoals
+                        )
+                    )
+                    .transition(sectionTransition)
                 }
 
                 // Odds cards - shows skeleton until details loaded
@@ -696,22 +750,25 @@ struct MatchDetailView: View {
                     }
                 }
 
-                // Only show insight footer if no narrative and match not finished
-                if let insight = viewModel.primaryInsight,
-                   viewModel.llmNarrative == nil,
-                   !prediction.isFinished {
-                    insightFooter(insight)
-                        .transition(sectionTransition)
-                }
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 8)
             .padding(.bottom, 32)
             .animation(sectionAnimation, value: viewModel.detailsState)
             .animation(sectionAnimation, value: viewModel.timelineState)
             .animation(sectionAnimation, value: viewModel.narrativeState)
             .animation(sectionAnimation, value: viewModel.statsState)
         }
-        .background(Color.black)
+        .background(
+            LinearGradient(
+                stops: [
+                    .init(color: Color(red: 0.02, green: 0.02, blue: 0.06), location: 0),
+                    .init(color: Color(red: 0.02, green: 0.02, blue: 0.06), location: 0.7),
+                    .init(color: Color(red: 0.034, green: 0.034, blue: 0.10), location: 1.0)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -732,10 +789,13 @@ struct MatchDetailView: View {
         }
         .sheet(isPresented: $showStandings) {
             if let leagueId = viewModel.matchDetails?.match.leagueId {
+                let homeId = viewModel.matchDetails?.homeTeam.id
+                let awayId = viewModel.matchDetails?.awayTeam.id
+                let _ = print("[Standings] Opening with leagueId=\(leagueId), homeTeamId=\(String(describing: homeId)), awayTeamId=\(String(describing: awayId))")
                 LeagueStandingsView(
                     leagueId: leagueId,
-                    homeTeamId: viewModel.matchDetails?.homeTeam.id,
-                    awayTeamId: viewModel.matchDetails?.awayTeam.id
+                    homeTeamId: homeId,
+                    awayTeamId: awayId
                 )
             }
         }
@@ -805,7 +865,7 @@ struct MatchDetailView: View {
 
                         // Home score
                         Text("\(viewModel.currentPrediction.homeGoals ?? 0)")
-                            .font(.custom("Bebas Neue", size: 68))
+                            .font(.custom("BarlowCondensed-SemiBold", size: 68))
                             .foregroundStyle(.white)
                             .frame(minWidth: 40)
 
@@ -828,6 +888,11 @@ struct MatchDetailView: View {
                             .padding(.vertical, 2)
                             .background(Color.gray.opacity(0.2))
                             .clipShape(Capsule())
+                        } else if viewModel.currentPrediction.status == "HT" {
+                            // Half Time: static text, no pulsing
+                            Text(liveStatusDisplay)
+                                .font(.custom("BarlowCondensed-SemiBold", size: 22))
+                                .foregroundStyle(.gray)
                         } else {
                             PulsingLiveMinute(text: liveStatusDisplay)
                         }
@@ -836,7 +901,7 @@ struct MatchDetailView: View {
 
                         // Away score
                         Text("\(viewModel.currentPrediction.awayGoals ?? 0)")
-                            .font(.custom("Bebas Neue", size: 68))
+                            .font(.custom("BarlowCondensed-SemiBold", size: 68))
                             .foregroundStyle(.white)
                             .frame(minWidth: 40)
 
@@ -845,20 +910,15 @@ struct MatchDetailView: View {
                             .frame(width: 120)
                     }
                 } else {
-                    // For upcoming matches: VS and date centered
-                    VStack(spacing: 4) {
-                        if !prediction.tierEmoji.isEmpty {
-                            Text(prediction.tierEmoji)
-                                .font(.title2)
-                        }
-                        Text("VS")
-                            .font(.headline)
+                    // For upcoming matches: date and time centered
+                    VStack(spacing: 2) {
+                        Text(viewModel.matchDateDisplay)
+                            .font(.subheadline)
                             .fontWeight(.medium)
                             .foregroundStyle(.gray)
-                        Text(viewModel.formattedMatchDate)
-                            .font(.caption2)
-                            .foregroundStyle(.gray.opacity(0.8))
-                            .multilineTextAlignment(.center)
+                        Text(viewModel.matchTimeDisplay)
+                            .font(.custom("BarlowCondensed-SemiBold", size: 28))
+                            .foregroundStyle(.white)
                     }
                 }
             }
@@ -905,7 +965,7 @@ struct MatchDetailView: View {
             if position > 0 {
                 HStack(spacing: 2) {
                     Text("#\(position)")
-                        .font(.custom("Bebas Neue", size: 14))
+                        .font(.custom("BarlowCondensed-SemiBold", size: 14))
                         .foregroundStyle(.gray)
                     Text("• \(role)")
                         .font(.caption)
@@ -1044,7 +1104,7 @@ struct MatchDetailView: View {
     // MARK: - Prediction Tab Content
 
     private var predictionTabContent: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 0) {
             // Prediction indicator (arrow pointing down)
             GeometryReader { geo in
                 let position = predictionIndicatorPosition
@@ -1058,6 +1118,7 @@ struct MatchDetailView: View {
             .frame(height: 12)
 
             // Segmented probability bar with gradient transitions + vertical indicator line
+            // Matches timeline bar height (24) and cornerRadius (6)
             GeometryReader { geo in
                 let home = prediction.probabilities.home
                 let draw = prediction.probabilities.draw
@@ -1080,18 +1141,18 @@ struct MatchDetailView: View {
                                 endPoint: .trailing
                             )
                         )
-                        .frame(height: 16)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .frame(height: 24)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
 
                     Rectangle()
                         .fill(Color.white.opacity(0.8))
-                        .frame(width: 1, height: 22)
-                        .position(x: indicatorX, y: 8)
+                        .frame(width: 1, height: 30)
+                        .position(x: indicatorX, y: 12)
                 }
             }
-            .frame(height: 16)
+            .frame(height: 24)
 
-            // Labels
+            // Labels (with top padding to match timeline minute markers)
             HStack {
                 probabilityLabel("Home", value: prediction.probabilities.homePercent, color: .blue)
                 Spacer()
@@ -1099,6 +1160,7 @@ struct MatchDetailView: View {
                 Spacer()
                 probabilityLabel("Away", value: prediction.probabilities.awayPercent, color: .red)
             }
+            .padding(.top, 8)
         }
     }
 
@@ -1170,7 +1232,7 @@ struct MatchDetailView: View {
     private func statRow(label: String, homeValue: String, awayValue: String) -> some View {
         HStack {
             Text(homeValue)
-                .font(.custom("Bebas Neue", size: 16))
+                .font(.custom("BarlowCondensed-SemiBold", size: 16))
                 .foregroundStyle(.white)
                 .frame(width: 50, alignment: .leading)
 
@@ -1183,7 +1245,7 @@ struct MatchDetailView: View {
             Spacer()
 
             Text(awayValue)
-                .font(.custom("Bebas Neue", size: 16))
+                .font(.custom("BarlowCondensed-SemiBold", size: 16))
                 .foregroundStyle(.white)
                 .frame(width: 50, alignment: .trailing)
         }
@@ -1225,7 +1287,7 @@ struct MatchDetailView: View {
         HStack(spacing: 8) {
             // Position
             Text(data.position > 0 ? "#\(data.position)" : "-")
-                .font(.custom("Bebas Neue", size: 16))
+                .font(.custom("BarlowCondensed-SemiBold", size: 16))
                 .foregroundStyle(.white.opacity(0.8))
                 .frame(width: 30, alignment: .leading)
 
@@ -1263,7 +1325,7 @@ struct MatchDetailView: View {
             // Points
             HStack(spacing: 2) {
                 Text("\(data.points)")
-                    .font(.custom("Bebas Neue", size: 18))
+                    .font(.custom("BarlowCondensed-SemiBold", size: 18))
                     .foregroundStyle(.white)
                 Text("Pts")
                     .font(.caption2)
@@ -1299,7 +1361,7 @@ struct MatchDetailView: View {
                 .font(.caption)
                 .foregroundStyle(color)
             Text(value)
-                .font(.custom("Bebas Neue", size: 22))
+                .font(.custom("BarlowCondensed-SemiBold", size: 22))
                 .foregroundStyle(.white)
         }
     }
@@ -1352,7 +1414,7 @@ struct MatchDetailView: View {
                     .font(.caption2)
                     .foregroundStyle(.gray)
                 Text(fairOdds)
-                    .font(.custom("Bebas Neue", size: 26))
+                    .font(.custom("BarlowCondensed-SemiBold", size: 26))
                     .foregroundStyle(color)
             }
 
@@ -1362,18 +1424,18 @@ struct MatchDetailView: View {
                     .font(.caption2)
                     .foregroundStyle(.gray)
                 Text(bookieOdds.map { String(format: "%.2f", $0) } ?? "-")
-                    .font(.custom("Bebas Neue", size: 26))
+                    .font(.custom("BarlowCondensed-SemiBold", size: 26))
                     .foregroundStyle(isValue ? valueColor : .white)
 
                 // EV display - reserve space for all cards if any has value
                 if anyHasValue {
                     if isValue, let ev = evResult {
                         Text(ev.evDisplay)
-                            .font(.custom("Bebas Neue", size: 14))
+                            .font(.custom("BarlowCondensed-SemiBold", size: 14))
                             .foregroundStyle(valueColor)
                     } else {
                         Text(" ")
-                            .font(.custom("Bebas Neue", size: 14))
+                            .font(.custom("BarlowCondensed-SemiBold", size: 14))
                     }
                 }
             }
@@ -1387,21 +1449,6 @@ struct MatchDetailView: View {
         )
     }
 
-    // MARK: - Insight Footer
-
-    private func insightFooter(_ insight: MatchInsight) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "lightbulb.fill")
-                .font(.body)
-                .foregroundStyle(valueColor)
-
-            Text(insight.message)
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .foregroundStyle(valueColor)
-        }
-        .padding(.top, 12)
-    }
 }
 
 // MARK: - Preview
@@ -1422,6 +1469,7 @@ struct MatchDetailView: View {
             homeGoals: 2,
             awayGoals: 1,
             leagueId: 140,
+            events: nil,
             probabilities: Probabilities(home: 0.45, draw: 0.30, away: 0.25),
             fairOdds: FairOdds(home: 2.47, draw: 3.39, away: 3.33),
             marketOdds: MarketOdds(home: 1.45, draw: 4.50, away: 7.00),

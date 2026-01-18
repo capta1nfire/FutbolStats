@@ -1,6 +1,18 @@
 import SwiftUI
 import UIKit
 
+// MARK: - League Group Model
+
+/// League group for display - groups matches by league
+struct LeagueGroup: Identifiable {
+    let id: String  // Use leagueName as stable ID
+    let leagueId: Int?
+    let leagueName: String
+    let leagueLogo: String?
+    let countryFlag: String?
+    let predictions: [MatchPrediction]
+}
+
 // MARK: - SF Pro Condensed Font Helper
 
 extension Font {
@@ -20,6 +32,7 @@ extension Font {
     }
 }
 
+
 struct PredictionsListView: View {
     @StateObject private var viewModel = PredictionsViewModel()
 
@@ -35,88 +48,109 @@ struct PredictionsListView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                Color.black.ignoresSafeArea()
-
-                VStack(spacing: 0) {
-                    // Date selector
+            contentView
+                .safeAreaInset(edge: .top) {
                     dateSelector
-
-                    // Alpha readiness (non-blocking, only show if data available)
-                    if viewModel.opsProgress != nil {
-                        AlphaStatusBadge(progress: viewModel.opsProgress)
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, 10)
-                    }
-
-                    // Content
-                    if viewModel.isLoading && viewModel.predictions.isEmpty {
-                        Spacer()
-                        LoadingView()
-                        Spacer()
-                    } else if let error = viewModel.error, viewModel.predictions.isEmpty {
-                        Spacer()
-                        ErrorView(message: error) {
-                            Task { await viewModel.refresh() }
-                        }
-                        Spacer()
-                    } else if viewModel.predictionsForSelectedDate.isEmpty {
-                        Spacer()
-                        noMatchesForDate
-                        Spacer()
-                    } else {
-                        predictionsList
-                    }
-                }
-            }
-            .navigationBarHidden(true)
-            .refreshable {
-                await viewModel.refresh()
-            }
-            .task {
-                await viewModel.refresh()
-            }
-            .onChange(of: viewModel.selectedDate) { oldDate, newDate in
-                // Reset pagination when date changes for fast initial render
-                displayLimit = initialDisplayLimit
-
-                // Measure time from tap to state update
-                if let tapTime = dateChangeTapTime {
-                    let stateUpdateMs = Date().timeIntervalSince(tapTime) * 1000
-                    let matchCount = viewModel.predictionsForSelectedDate.count
-                    print("[Perf] DATE_CHANGE_COMPLETE: \(String(format: "%.0f", stateUpdateMs))ms, \(matchCount) matches for new date")
-                    PerfLogger.shared.log(
-                        endpoint: "dateChange",
-                        message: "complete",
-                        data: ["tap_to_update_ms": stateUpdateMs, "match_count": matchCount]
-                    )
-                    dateChangeTapTime = nil
-                }
-            }
-            .onAppear {
-                viewAppearTime = Date()
-                print("[Perf] PredictionsListView.onAppear")
-            }
-            .onDisappear {
-                // Cancel background refresh when navigating away to free up connections
-                viewModel.cancelBackgroundTasks()
-            }
-            .onChange(of: viewModel.predictions.count) { oldCount, newCount in
-                // Log when predictions first arrive (transition from 0 to N)
-                if oldCount == 0 && newCount > 0 && !hasLoggedFirstContent {
-                    hasLoggedFirstContent = true
-                    firstContentTime = Date()
-                    if let appear = viewAppearTime, let content = firstContentTime {
-                        let ttfc = content.timeIntervalSince(appear) * 1000
-                        print("[Perf] TIME_TO_FIRST_CONTENT: \(String(format: "%.0f", ttfc))ms (\(newCount) predictions)")
-                        PerfLogger.shared.log(
-                            endpoint: "PredictionsListView",
-                            message: "first_content",
-                            data: ["ttfc_ms": ttfc, "predictions_count": newCount]
+                        .background(
+                            LinearGradient(
+                                stops: [
+                                    .init(color: Color(red: 0.02, green: 0.02, blue: 0.06), location: 0),
+                                    .init(color: Color(red: 0.02, green: 0.02, blue: 0.06), location: 0.75),
+                                    .init(color: Color(red: 0.02, green: 0.02, blue: 0.06).opacity(0), location: 1.0)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
                         )
+                }
+                .background(
+                    LinearGradient(
+                        stops: [
+                            .init(color: Color(red: 0.02, green: 0.02, blue: 0.06), location: 0),
+                            .init(color: Color(red: 0.02, green: 0.02, blue: 0.06), location: 0.7),
+                            .init(color: Color(red: 0.034, green: 0.034, blue: 0.10), location: 1.0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .navigationBarHidden(true)
+                .refreshable {
+                    await viewModel.refresh()
+                }
+                .task {
+                    await viewModel.refresh()
+                }
+                .onChange(of: viewModel.selectedDate) { oldDate, newDate in
+                    // Reset pagination when date changes for fast initial render
+                    displayLimit = initialDisplayLimit
+
+                    // Measure time from tap to state update
+                    if let tapTime = dateChangeTapTime {
+                        let stateUpdateMs = Date().timeIntervalSince(tapTime) * 1000
+                        let matchCount = viewModel.predictionsForSelectedDate.count
+                        print("[Perf] DATE_CHANGE_COMPLETE: \(String(format: "%.0f", stateUpdateMs))ms, \(matchCount) matches for new date")
+                        PerfLogger.shared.log(
+                            endpoint: "dateChange",
+                            message: "complete",
+                            data: ["tap_to_update_ms": stateUpdateMs, "match_count": matchCount]
+                        )
+                        dateChangeTapTime = nil
                     }
                 }
+                .onAppear {
+                    viewAppearTime = Date()
+                    print("[Perf] PredictionsListView.onAppear")
+                }
+                .onDisappear {
+                    // Cancel background refresh when navigating away to free up connections
+                    viewModel.cancelBackgroundTasks()
+                }
+                .onChange(of: viewModel.predictions.count) { oldCount, newCount in
+                    // Log when predictions first arrive (transition from 0 to N)
+                    if oldCount == 0 && newCount > 0 && !hasLoggedFirstContent {
+                        hasLoggedFirstContent = true
+                        firstContentTime = Date()
+                        if let appear = viewAppearTime, let content = firstContentTime {
+                            let ttfc = content.timeIntervalSince(appear) * 1000
+                            print("[Perf] TIME_TO_FIRST_CONTENT: \(String(format: "%.0f", ttfc))ms (\(newCount) predictions)")
+                            PerfLogger.shared.log(
+                                endpoint: "PredictionsListView",
+                                message: "first_content",
+                                data: ["ttfc_ms": ttfc, "predictions_count": newCount]
+                            )
+                        }
+                    }
+                }
+        }
+    }
+
+    // MARK: - Content View
+
+    @ViewBuilder
+    private var contentView: some View {
+        if viewModel.isLoading && viewModel.predictions.isEmpty {
+            VStack {
+                Spacer()
+                LoadingView()
+                Spacer()
             }
+        } else if let error = viewModel.error, viewModel.predictions.isEmpty {
+            VStack {
+                Spacer()
+                ErrorView(message: error) {
+                    Task { await viewModel.refresh() }
+                }
+                Spacer()
+            }
+        } else if viewModel.predictionsForSelectedDate.isEmpty {
+            VStack {
+                Spacer()
+                noMatchesForDate
+                Spacer()
+            }
+        } else {
+            predictionsList
         }
     }
 
@@ -126,8 +160,6 @@ struct PredictionsListView: View {
     private var localCalendar: Calendar {
         Calendar.current
     }
-
-    // MARK: - Date Selector
 
     private var dateSelector: some View {
         let _ = print("[Render] dateSelector body evaluated")
@@ -157,7 +189,8 @@ struct PredictionsListView: View {
                 proxy.scrollTo(localCalendar.startOfDay(for: Date()), anchor: .center)
             }
         }
-        .padding(.bottom, 12)
+        .padding(.bottom, 2)
+        .frame(height: 110) // Fixed height for safeAreaInset
     }
 
     // 7 days before + today + 7 days ahead = 15 days total
@@ -194,15 +227,6 @@ struct PredictionsListView: View {
 
     // MARK: - Predictions List
 
-    /// League group for display
-    private struct LeagueGroup: Identifiable {
-        let id: String  // Use leagueName as stable ID
-        let leagueId: Int?
-        let leagueName: String
-        let leagueLogo: String?
-        let predictions: [MatchPrediction]
-    }
-
     /// Group predictions by league
     private func groupedByLeague(_ predictions: [MatchPrediction]) -> [LeagueGroup] {
         let grouped = Dictionary(grouping: predictions) { $0.leagueId }
@@ -212,6 +236,7 @@ struct PredictionsListView: View {
                 leagueId: key,
                 leagueName: value.first?.leagueName ?? "Other",
                 leagueLogo: value.first?.leagueLogo,
+                countryFlag: value.first?.leagueCountryFlag,
                 predictions: value
             )
         }
@@ -237,39 +262,14 @@ struct PredictionsListView: View {
         // Observe clockTick to trigger re-render for live match minutes
         let _ = viewModel.clockTick
 
-        return ScrollView {
-            LazyVStack(spacing: 12) {
-                // All matches grouped by league
+        return ScrollView(showsIndicators: false) {
+            LazyVStack(spacing: 16) {
+                // All matches grouped by league - each league in one card
                 ForEach(groupedMatches) { group in
-                    leagueHeader(
-                        title: group.leagueName,
-                        logoUrl: group.leagueLogo,
-                        isValueBets: false
+                    LeagueCard(
+                        group: group,
+                        viewModel: viewModel
                     )
-                    .padding(.top, 8)
-
-                    ForEach(group.predictions) { prediction in
-                        let isValueBet = (prediction.valueBets?.count ?? 0) > 0
-                        // Use viewModel overlay methods for cache-aware data
-                        let isLive = viewModel.isLive(for: prediction)
-                        let elapsed = isLive ? viewModel.calculatedElapsedDisplay(for: prediction) : nil
-                        let score = viewModel.overlayedScore(for: prediction)
-                        let hasScore = viewModel.hasScore(for: prediction)
-                        let isFinished = viewModel.isFinished(for: prediction)
-                        NavigationLink(destination: MatchDetailView(prediction: prediction)) {
-                            MatchCard(
-                                prediction: prediction,
-                                showValueBadge: isValueBet,
-                                calculatedElapsed: elapsed,
-                                overlayedHomeGoals: score.home,
-                                overlayedAwayGoals: score.away,
-                                overlayedHasScore: hasScore,
-                                overlayedIsLive: isLive,
-                                overlayedIsFinished: isFinished
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
                 }
 
                 // Load More button
@@ -308,41 +308,9 @@ struct PredictionsListView: View {
                 }
 
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 8)
+            .padding(.top, -10)
             .padding(.bottom, 20)
-        }
-    }
-
-    private func leagueHeader(title: String, logoUrl: String?, isValueBets: Bool) -> some View {
-        HStack(spacing: 10) {
-            if isValueBets {
-                Image(systemName: "star.fill")
-                    .font(.system(size: 18))
-                    .foregroundStyle(Color(red: 0.2, green: 1.0, blue: 0.4))
-                    .frame(width: 24, height: 24)
-            } else if let logoUrl = logoUrl, let url = URL(string: logoUrl) {
-                CachedAsyncImage(url: url) { image in
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                } placeholder: {
-                    Image(systemName: "trophy.fill")
-                        .foregroundStyle(.gray)
-                }
-                .frame(width: 24, height: 24)
-            } else {
-                Image(systemName: "trophy.fill")
-                    .font(.system(size: 18))
-                    .foregroundStyle(.gray)
-                    .frame(width: 24, height: 24)
-            }
-
-            Text(title)
-                .font(.subheadline)
-                .fontWeight(.semibold)
-                .foregroundStyle(isValueBets ? Color(red: 0.2, green: 1.0, blue: 0.4) : .white)
-
-            Spacer()
         }
     }
 }
@@ -390,7 +358,7 @@ struct DateCell: View {
     }
 
     private var backgroundColor: Color {
-        if isSelected { return .blue }
+        if isSelected { return Color(red: 0.034, green: 0.034, blue: 0.10) }
         if isPast { return Color(white: 0.08) }
         return Color(white: 0.12)
     }
@@ -424,8 +392,28 @@ struct DateCell: View {
             }
         }
         .frame(width: 52, height: 72)
-        .background(backgroundColor)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .modifier(DateCellBackgroundModifier(isSelected: isSelected, backgroundColor: backgroundColor))
+    }
+}
+
+struct DateCellBackgroundModifier: ViewModifier {
+    let isSelected: Bool
+    let backgroundColor: Color
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            if isSelected {
+                content
+                    .background(backgroundColor, in: RoundedRectangle(cornerRadius: 12))
+                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12))
+            } else {
+                content
+                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12))
+            }
+        } else {
+            content
+                .background(backgroundColor, in: RoundedRectangle(cornerRadius: 12))
+        }
     }
 }
 
@@ -465,7 +453,7 @@ struct MatchCard: View {
 
                     if hasScore {
                         Text("\(homeGoals ?? 0)")
-                            .font(.custom("Bebas Neue", size: 42))
+                            .font(.custom("BarlowCondensed-SemiBold", size: 42))
                             .foregroundStyle(.white)
                     }
                 }
@@ -481,7 +469,7 @@ struct MatchCard: View {
                 HStack(spacing: 28) {
                     if hasScore {
                         Text("\(awayGoals ?? 0)")
-                            .font(.custom("Bebas Neue", size: 42))
+                            .font(.custom("BarlowCondensed-SemiBold", size: 42))
                             .foregroundStyle(.white)
                     }
 
@@ -506,9 +494,7 @@ struct MatchCard: View {
                     .lineLimit(1)
             }
         }
-        .padding(14)
-        .background(Color(white: 0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .padding(.vertical, 10)
     }
 
     /// Team logo only
@@ -560,21 +546,13 @@ struct MatchCard: View {
                     .foregroundStyle(.white)
             } else if isLive {
                 Text(liveStatusDisplay)
-                    .font(.custom("Bebas Neue", size: 18))
+                    .font(.custom("BarlowCondensed-SemiBold", size: 18))
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Color.red.opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
             } else if let date = prediction.matchDate {
                 Text(formatTime(date))
-                    .font(.custom("Bebas Neue", size: 24))
+                    .font(.custom("BarlowCondensed-SemiBold", size: 24))
                     .foregroundStyle(.white)
 
-                if prediction.confidenceTier != nil {
-                    Text(prediction.tierEmoji)
-                        .font(.caption)
-                }
             }
         }
     }
@@ -582,25 +560,47 @@ struct MatchCard: View {
     /// Live status display with elapsed minute when appropriate
     /// Uses calculatedElapsed from ViewModel if available (local clock),
     /// otherwise falls back to static elapsed from API
-    /// - 1H, 2H, LIVE: show elapsed minute (e.g., "32'")
-    /// - HT: show "HT" (halftime, no minute)
-    /// - ET, BT, P, INT, SUSP: show status code (special periods)
+    /// Format: "32'", "45+2'", "90+3'", "Half Time", etc.
     private var liveStatusDisplay: String {
         // Use calculated elapsed if provided (includes local clock adjustment)
         if let calculated = calculatedElapsed {
+            // Transform HT to Half Time
+            if calculated == "HT" {
+                return "Half Time"
+            }
             return calculated
         }
 
         // Fallback to static elapsed from API
         let status = prediction.status ?? "LIVE"
-        let showElapsedStatuses = ["1H", "2H", "LIVE"]
+        let activeStatuses = ["1H", "2H", "LIVE"]
 
-        if showElapsedStatuses.contains(status), let elapsed = prediction.elapsed {
-            return "\(elapsed)'"
+        // Only calculate for active play statuses
+        guard activeStatuses.contains(status) else {
+            // Transform HT to Half Time
+            if status == "HT" {
+                return "Half Time"
+            }
+            return status
         }
 
-        // HT, ET, BT, P, INT, SUSP - show status code as-is
-        return status
+        guard let baseElapsed = prediction.elapsed else {
+            return status
+        }
+
+        // If we have injury/added time from API, show it (e.g., "90+3'")
+        if let extra = prediction.elapsedExtra, extra > 0 {
+            return "\(baseElapsed)+\(extra)'"
+        }
+
+        // At regulation time limits, show capped value
+        if status == "1H" && baseElapsed >= 45 {
+            return "45'"
+        } else if status == "2H" && baseElapsed >= 90 {
+            return "90'"
+        }
+
+        return "\(baseElapsed)'"
     }
 
     private func formatTime(_ date: Date) -> String {
@@ -846,6 +846,119 @@ struct EmptyStateView: View {
                 .font(.headline)
             Text("Check back later for predictions")
                 .foregroundStyle(.secondary)
+        }
+    }
+}
+
+// MARK: - League Card (groups all matches of a league in one card)
+
+struct LeagueCard: View {
+    let group: LeagueGroup
+    let viewModel: PredictionsViewModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // League header inside the card
+            leagueHeader
+                .padding(.horizontal, 14)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+
+            // Matches with separators
+            ForEach(Array(group.predictions.enumerated()), id: \.element.id) { index, prediction in
+                if index > 0 {
+                    Divider()
+                        .background(Color.white.opacity(0.1))
+                        .padding(.horizontal, 14)
+                }
+
+                let isValueBet = (prediction.valueBets?.count ?? 0) > 0
+                let isLive = viewModel.isLive(for: prediction)
+                let elapsed = isLive ? viewModel.calculatedElapsedDisplay(for: prediction) : nil
+                let score = viewModel.overlayedScore(for: prediction)
+                let hasScore = viewModel.hasScore(for: prediction)
+                let isFinished = viewModel.isFinished(for: prediction)
+
+                NavigationLink(destination: MatchDetailView(prediction: prediction)) {
+                    MatchCard(
+                        prediction: prediction,
+                        showValueBadge: isValueBet,
+                        calculatedElapsed: elapsed,
+                        overlayedHomeGoals: score.home,
+                        overlayedAwayGoals: score.away,
+                        overlayedHasScore: hasScore,
+                        overlayedIsLive: isLive,
+                        overlayedIsFinished: isFinished
+                    )
+                    .padding(.horizontal, 14)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.bottom, 8)
+        .modifier(GlassCardModifier())
+    }
+
+    private var leagueHeader: some View {
+        HStack(spacing: 10) {
+            if let logoUrl = group.leagueLogo, let url = URL(string: logoUrl) {
+                CachedAsyncImage(url: url) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                } placeholder: {
+                    Image(systemName: "trophy.fill")
+                        .foregroundStyle(.gray)
+                }
+                .frame(width: 24, height: 24)
+            } else {
+                Image(systemName: "trophy.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.gray)
+                    .frame(width: 24, height: 24)
+            }
+
+            Text(group.leagueName)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(.white)
+
+            Spacer()
+
+            // Country name badge
+            if let country = group.countryFlag {
+                Text(country)
+                    .font(.caption)
+                    .foregroundStyle(.gray)
+            }
+        }
+    }
+}
+
+// MARK: - Glass Card Modifier (iOS 26+)
+
+struct GlassCardModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+        } else {
+            content
+                .background(Color(white: 0.1), in: RoundedRectangle(cornerRadius: 16))
+        }
+    }
+}
+
+// MARK: - Glass Circle Modifier (iOS 26+)
+
+struct GlassCircleModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .glassEffect(.regular, in: Circle())
+        } else {
+            content
+                .background(AppColors.surfaceHighlight, in: Circle())
         }
     }
 }

@@ -4,11 +4,19 @@
 <dict>
 	<key>UIAppFonts</key>
 	<array>
-		<string>BebasNeue-Regular.ttf</string>
+		<string>BarlowCondensed-Light.ttf</string>
+		<string>BarlowCondensed-Regular.ttf</string>
+		<string>BarlowCondensed-Medium.ttf</string>
+		<string>BarlowCondensed-SemiBold.ttf</string>
+		<string>BarlowCondensed-Bold.ttf</string>
 		<string>RobotoCondensed-Light.ttf</string>
 		<string>RobotoCondensed-Regular.ttf</string>
 		<string>RobotoCondensed-Medium.ttf</string>
 		<string>SF-Pro.ttf</string>
 	</array>
+	<key>DASHBOARD_TOKEN</key>
+	<string>$(DASHBOARD_TOKEN)</string>
+	<key>API_KEY</key>
+	<string>$(API_KEY)</string>
 </dict>
 </plist>

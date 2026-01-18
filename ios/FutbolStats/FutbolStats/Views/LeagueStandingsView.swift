@@ -261,15 +261,22 @@ struct LeagueStandingsView: View {
 
     private func stickyRow(entry: StandingsEntry) -> some View {
         let isHighlighted = entry.teamId == homeTeamId || entry.teamId == awayTeamId
+        let highlightColor = Color.cyan
 
         return HStack(spacing: 0) {
-            // Zone indicator
-            zoneIndicator(position: entry.position)
+            // Match indicator (overrides zone indicator when highlighted)
+            if isHighlighted {
+                Rectangle()
+                    .fill(highlightColor)
+                    .frame(width: zoneWidth)
+            } else {
+                zoneIndicator(position: entry.position)
+            }
 
             // Position
             Text("\(entry.position)")
-                .font(.custom("Bebas Neue", size: 16))
-                .foregroundStyle(isHighlighted ? .white : .gray)
+                .font(.custom("BarlowCondensed-SemiBold", size: 16))
+                .foregroundStyle(isHighlighted ? highlightColor : .gray)
                 .frame(width: positionWidth, alignment: .center)
 
             // Team logo
@@ -299,8 +306,9 @@ struct LeagueStandingsView: View {
                 .truncationMode(.tail)
                 .frame(width: teamNameWidth, alignment: .leading)
                 .padding(.leading, 6)
+
         }
-        .background(isHighlighted ? Color.white.opacity(0.08) : Color.black)
+        .background(isHighlighted ? highlightColor.opacity(0.15) : Color.black)
     }
 
     private func zoneIndicator(position: Int) -> some View {
@@ -322,6 +330,7 @@ struct LeagueStandingsView: View {
 
     private func statsRow(entry: StandingsEntry) -> some View {
         let isHighlighted = entry.teamId == homeTeamId || entry.teamId == awayTeamId
+        let highlightColor = Color.cyan
 
         return HStack(spacing: 0) {
             statCell(entry.played)
@@ -334,26 +343,26 @@ struct LeagueStandingsView: View {
             pointsCell(entry.points)
             formCells(entry.formArray)
         }
-        .background(isHighlighted ? Color.white.opacity(0.08) : Color.clear)
+        .background(isHighlighted ? highlightColor.opacity(0.15) : Color.clear)
     }
 
     private func statCell(_ value: Int) -> some View {
         Text("\(value)")
-            .font(.custom("Bebas Neue", size: 16))
+            .font(.custom("BarlowCondensed-SemiBold", size: 16))
             .foregroundStyle(.white.opacity(0.8))
             .frame(width: statColumnWidth)
     }
 
     private func goalDiffCell(_ value: Int) -> some View {
         Text(value > 0 ? "+\(value)" : "\(value)")
-            .font(.custom("Bebas Neue", size: 16))
+            .font(.custom("BarlowCondensed-SemiBold", size: 16))
             .foregroundStyle(value > 0 ? .green : (value < 0 ? .red : .white.opacity(0.8)))
             .frame(width: statColumnWidth)
     }
 
     private func pointsCell(_ value: Int) -> some View {
         Text("\(value)")
-            .font(.custom("Bebas Neue", size: 18))
+            .font(.custom("BarlowCondensed-SemiBold", size: 18))
             .foregroundStyle(.white)
             .frame(width: pointsColumnWidth)
     }
