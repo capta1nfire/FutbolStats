@@ -342,19 +342,9 @@ class MatchDetailViewModel: ObservableObject {
             return "90'"
         }
 
-        // Calculate time passed since data was loaded (local clock estimation)
-        let secondsPassed = clockTick.timeIntervalSince(liveDataLoadedAt)
-        let totalSeconds = (baseElapsed * 60) + Int(secondsPassed)
-        let displayMinutes = totalSeconds / 60
-
-        // Apply caps - stop local calculation at regulation time
-        if status == "1H" && displayMinutes >= 45 {
-            return "45'"
-        } else if status == "2H" && displayMinutes >= 90 {
-            return "90'"
-        }
-
-        return "\(displayMinutes)'"
+        // Use API elapsed directly to stay in sync with parrilla
+        // Polling happens every 30s, so difference is minimal
+        return "\(baseElapsed)'"
     }
 
     func cancelLoading() {
