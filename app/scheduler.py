@@ -249,6 +249,11 @@ async def global_sync_today() -> dict:
             await session.commit()
             await provider.close()
 
+        # Ensure predictions exist for imminent matches (hard guardrail)
+        kickoff_result = await ensure_kickoff_predictions()
+        if kickoff_result.get("generated", 0) > 0:
+            logger.warning(f"[KICKOFF-SAFETY] Generated {kickoff_result['generated']} last-minute predictions")
+
         # Freeze predictions for matches that have started
         freeze_result = await freeze_predictions_before_kickoff()
 
@@ -351,6 +356,131 @@ async def global_sync_window(days_ahead: int = 10, days_back: int = 1) -> dict:
     except Exception as e:
         logger.error(f"[WINDOW_SYNC] Failed: {e}")
         return {"matches_synced": 0, "error": str(e)}
+
+
+async def ensure_kickoff_predictions() -> dict:
+    """
+    Hard guardrail: Generate predictions for matches about to kick off without one.
+
+    This is the last line of defense - if a match is starting in the next 30 minutes
+    and has no prediction in DB, generate and save one immediately.
+
+    This ensures no match can start without a persisted prediction.
+    """
+    from sqlalchemy import text
+    from app.telemetry.metrics import record_job_run
+
+    start_time = time.time()
+    generated = 0
+    errors = []
+
+    try:
+        from app.ml import XGBoostEngine
+        from app.models import Prediction
+
+        async with AsyncSessionLocal() as session:
+            # Find NS matches in next 30 minutes WITHOUT any prediction
+            result = await session.execute(
+                text("""
+                    SELECT m.id, m.external_id, m.date, m.league_id,
+                           ht.name as home_team, at.name as away_team
+                    FROM matches m
+                    JOIN teams ht ON ht.id = m.home_team_id
+                    JOIN teams at ON at.id = m.away_team_id
+                    WHERE m.status = 'NS'
+                      AND m.date > NOW()
+                      AND m.date <= NOW() + INTERVAL '30 minutes'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM predictions p WHERE p.match_id = m.id
+                      )
+                    ORDER BY m.date ASC
+                """)
+            )
+            imminent_gaps = result.fetchall()
+
+            if not imminent_gaps:
+                return {"generated": 0, "message": "no_imminent_gaps"}
+
+            logger.warning(
+                f"[KICKOFF-SAFETY] Found {len(imminent_gaps)} matches starting in <30min WITHOUT prediction! "
+                f"Generating now..."
+            )
+
+            # Load ML engine
+            engine = XGBoostEngine()
+            if not engine.load_model():
+                logger.error("[KICKOFF-SAFETY] Could not load ML model")
+                return {"generated": 0, "error": "model_not_loaded"}
+
+            # Get features for these matches
+            match_ids = [g[0] for g in imminent_gaps]
+            feature_engineer = FeatureEngineer(session=session)
+
+            if hasattr(feature_engineer, 'get_matches_features_by_ids'):
+                df = await feature_engineer.get_matches_features_by_ids(match_ids)
+            else:
+                df = await feature_engineer.get_upcoming_matches_features()
+                if len(df) > 0:
+                    df = df[df["match_id"].isin(match_ids)]
+
+            if len(df) == 0:
+                logger.error(f"[KICKOFF-SAFETY] No features for imminent matches: {match_ids}")
+                return {"generated": 0, "error": "no_features", "match_ids": match_ids}
+
+            # Generate predictions
+            predictions = engine.predict(df)
+
+            for pred in predictions:
+                match_id = pred.get("match_id")
+                if not match_id:
+                    continue
+
+                try:
+                    probs = pred.get("probabilities", {})
+
+                    # Create prediction - table only has home_prob/draw_prob/away_prob
+                    prediction = Prediction(
+                        match_id=match_id,
+                        model_version=engine.model_version or "v1.0.0",
+                        home_prob=probs.get("home", 0.33),
+                        draw_prob=probs.get("draw", 0.33),
+                        away_prob=probs.get("away", 0.34),
+                    )
+
+                    session.add(prediction)
+                    generated += 1
+
+                    # Derive pick for logging
+                    pick = max(probs, key=probs.get) if probs else "home"
+
+                    logger.info(
+                        f"[KICKOFF-SAFETY] Generated prediction for {match_id} "
+                        f"(pick={pick}, home={probs.get('home', 0):.2%})"
+                    )
+
+                except Exception as e:
+                    errors.append(f"match {match_id}: {e}")
+                    logger.error(f"[KICKOFF-SAFETY] Error for {match_id}: {e}")
+
+            await session.commit()
+
+            duration_ms = (time.time() - start_time) * 1000
+
+            if generated > 0:
+                record_job_run(job="kickoff_safety_net", status="ok", duration_ms=duration_ms)
+                logger.warning(
+                    f"[KICKOFF-SAFETY] Complete: generated {generated} predictions for imminent matches"
+                )
+
+            return {
+                "generated": generated,
+                "duration_ms": duration_ms,
+                "errors": errors[:5] if errors else None,
+            }
+
+    except Exception as e:
+        logger.error(f"[KICKOFF-SAFETY] Failed: {e}")
+        return {"generated": 0, "error": str(e)}
 
 
 async def freeze_predictions_before_kickoff() -> dict:
@@ -1526,7 +1656,8 @@ async def daily_save_predictions():
     Daily job to save predictions for upcoming matches.
     Runs every day at 7:00 AM UTC (before audit).
     """
-    logger.info("Starting daily prediction save job...")
+    start_time = time.time()
+    logger.info("[DAILY-SAVE] Starting daily prediction save job...")
 
     try:
         from app.db_utils import upsert
@@ -1658,29 +1789,42 @@ async def daily_save_predictions():
             if sensor_settings.SENSOR_ENABLED and (sensor_logged > 0 or sensor_errors > 0):
                 record_sensor_predictions_batch(logged=sensor_logged, errors=sensor_errors)
 
-            # Build log message with optional shadow/sensor stats
-            log_msg = f"Daily prediction save complete: {saved} saved, {skipped} skipped (non-NS)"
+            # Build log message with all stats for audit trail
+            duration_ms = (time.time() - start_time) * 1000
+            log_msg = (
+                f"[DAILY-SAVE] Complete: saved={saved}, skipped={skipped}, "
+                f"ns_matches={ns_matches}, model_version={engine.model_version}, "
+                f"duration_ms={duration_ms:.0f}"
+            )
             if is_shadow_enabled():
-                log_msg += f", shadow: {shadow_logged} logged, {shadow_errors} errors"
+                log_msg += f", shadow={shadow_logged}/{shadow_errors}"
             if sensor_settings.SENSOR_ENABLED:
-                log_msg += f", sensor: {sensor_logged} logged, {sensor_errors} errors"
+                log_msg += f", sensor={sensor_logged}/{sensor_errors}"
             logger.info(log_msg)
 
+            # Record job run for monitoring
+            from app.telemetry.metrics import record_job_run
+            record_job_run(job="daily_save_predictions", status="ok", duration_ms=duration_ms)
+
     except Exception as e:
-        logger.error(f"Daily prediction save failed: {e}")
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(f"[DAILY-SAVE] Failed after {duration_ms:.0f}ms: {e}")
+        from app.telemetry.metrics import record_job_run
+        record_job_run(job="daily_save_predictions", status="error", duration_ms=duration_ms)
 
 
 async def prediction_gap_safety_net():
     """
     Safety net job to catch matches without predictions before kickoff.
 
-    Runs every 30 minutes to detect NS matches in the next 2 hours that
+    Runs every 30 minutes to detect NS matches in the next 12 hours that
     don't have a prediction yet, and generates predictions for them.
 
     This covers edge cases like:
     - Isolated midweek matches that fall between daily batch runs
     - Matches added after the daily prediction job ran
     - Any timing gaps in the prediction pipeline
+    - LATAM matches with late-night kickoffs
 
     Safety: Only generates predictions for matches that haven't started yet.
 
@@ -1700,8 +1844,9 @@ async def prediction_gap_safety_net():
         from app.models import Prediction, Match
 
         async with AsyncSessionLocal() as session:
-            # Find NS matches in next 2 hours without any prediction
-            lookahead_hours = 2
+            # Find NS matches in next 12 hours without any prediction
+            # Extended from 2h to 12h to catch LATAM late-night matches
+            lookahead_hours = 12
             result = await session.execute(
                 text("""
                     SELECT m.id, m.external_id, m.date, m.league_id,
@@ -1711,7 +1856,7 @@ async def prediction_gap_safety_net():
                     JOIN teams at ON at.id = m.away_team_id
                     WHERE m.status = 'NS'
                       AND m.date > NOW()
-                      AND m.date <= NOW() + INTERVAL '2 hours'
+                      AND m.date <= NOW() + INTERVAL '12 hours'
                       AND NOT EXISTS (
                           SELECT 1 FROM predictions p WHERE p.match_id = m.id
                       )
@@ -1722,7 +1867,7 @@ async def prediction_gap_safety_net():
 
             if not gaps:
                 duration_ms = (time.time() - start_time) * 1000
-                logger.debug(f"[SAFETY-NET] No prediction gaps in next {lookahead_hours}h")
+                logger.info(f"[SAFETY-NET] No prediction gaps in next {lookahead_hours}h (checked in {duration_ms:.0f}ms)")
                 record_job_run(job=job_name, status="ok", duration_ms=duration_ms)
                 return {"status": "no_gaps", "checked": True}
 
@@ -1735,14 +1880,18 @@ async def prediction_gap_safety_net():
                 record_job_run(job=job_name, status="error", duration_ms=(time.time() - start_time) * 1000)
                 return {"status": "error", "error": "model_not_loaded"}
 
-            # Get features for these specific matches
+            # Get features only for gap matches (optimized for 12h window)
             match_ids = [g[0] for g in gaps]
             feature_engineer = FeatureEngineer(session=session)
-            df = await feature_engineer.get_upcoming_matches_features()
 
-            # Filter to only our gap matches
-            if len(df) > 0:
-                df = df[df["match_id"].isin(match_ids)]
+            # Try to use optimized method if available, else fallback
+            if hasattr(feature_engineer, 'get_matches_features_by_ids'):
+                df = await feature_engineer.get_matches_features_by_ids(match_ids)
+            else:
+                # Fallback: get all upcoming and filter
+                df = await feature_engineer.get_upcoming_matches_features()
+                if len(df) > 0:
+                    df = df[df["match_id"].isin(match_ids)]
 
             if len(df) == 0:
                 logger.warning(f"[SAFETY-NET] No features available for gap matches: {match_ids}")
@@ -3971,12 +4120,40 @@ async def update_predictions_health_metrics():
             )
             ns_missing = int(res.scalar() or 0)
 
-            # 4) Coverage percentage
+            # 4) Coverage percentage (NS)
             coverage_pct = 100.0
             if ns_next_48h > 0:
                 coverage_pct = round(((ns_next_48h - ns_missing) / ns_next_48h) * 100, 1)
 
-            # 5) Determine status
+            # 5) FT matches in last 48h missing prediction (IMPACT METRIC)
+            res = await session.execute(
+                text("""
+                    SELECT COUNT(*) FROM matches m
+                    WHERE m.status IN ('FT', 'AET', 'PEN')
+                      AND m.date >= NOW() - INTERVAL '48 hours'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM predictions p WHERE p.match_id = m.id
+                      )
+                """)
+            )
+            ft_missing = int(res.scalar() or 0)
+
+            # 6) Total FT matches in last 48h for coverage calc
+            res = await session.execute(
+                text("""
+                    SELECT COUNT(*) FROM matches
+                    WHERE status IN ('FT', 'AET', 'PEN')
+                      AND date >= NOW() - INTERVAL '48 hours'
+                """)
+            )
+            ft_total = int(res.scalar() or 0)
+
+            # 7) FT coverage percentage
+            ft_coverage_pct = 100.0
+            if ft_total > 0:
+                ft_coverage_pct = round(((ft_total - ft_missing) / ft_total) * 100, 1)
+
+            # 8) Determine status
             status = "ok"
             if ns_next_48h == 0:
                 status = "ok"  # No upcoming matches, no concern
@@ -3994,12 +4171,15 @@ async def update_predictions_health_metrics():
                 ns_missing_next_48h=ns_missing,
                 coverage_ns_pct=coverage_pct,
                 status=status,
+                ft_missing_48h=ft_missing,
+                ft_coverage_pct=ft_coverage_pct,
             )
 
             hours_str = f"{hours_since_last:.1f}" if hours_since_last else "N/A"
             logger.info(
                 f"[METRICS] predictions gauges updated: hours={hours_str}, "
-                f"ns_48h={ns_next_48h}, missing={ns_missing}, coverage={coverage_pct}%, status={status}"
+                f"ns_48h={ns_next_48h}, ns_missing={ns_missing}, ns_coverage={coverage_pct}%, "
+                f"ft_missing={ft_missing}, ft_coverage={ft_coverage_pct}%, status={status}"
             )
 
             # Send email alert if status is warn or red

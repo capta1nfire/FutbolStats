@@ -282,6 +282,18 @@ predictions_health_status = Gauge(
     [],
 )
 
+predictions_ft_missing_last_48h = Gauge(
+    "predictions_ft_missing_last_48h",
+    "FT (finished) matches in last 48h that never received a prediction (impact metric)",
+    [],
+)
+
+predictions_ft_coverage_pct = Gauge(
+    "predictions_ft_coverage_pct",
+    "Prediction coverage percentage for FT matches in last 48h (0-100)",
+    [],
+)
+
 # =============================================================================
 # ENTITY MAPPING METRICS
 # =============================================================================
@@ -636,6 +648,8 @@ def set_predictions_health_metrics(
     ns_missing_next_48h: int,
     coverage_ns_pct: float,
     status: str,
+    ft_missing_48h: int = 0,
+    ft_coverage_pct: float = 100.0,
 ) -> None:
     """
     Update predictions health gauges for Prometheus/Grafana alerting.
@@ -644,8 +658,10 @@ def set_predictions_health_metrics(
         hours_since_last: Hours since last prediction saved (None if never)
         ns_next_48h: NS matches in next 48 hours
         ns_missing_next_48h: NS matches missing predictions
-        coverage_ns_pct: Coverage percentage (0-100)
+        coverage_ns_pct: Coverage percentage for NS (0-100)
         status: Health status string: "ok", "warn", "red"
+        ft_missing_48h: FT matches in last 48h missing predictions (impact metric)
+        ft_coverage_pct: Coverage percentage for FT (0-100)
     """
     try:
         # Hours since last (use -1 if None/never to indicate missing data)
@@ -657,6 +673,10 @@ def set_predictions_health_metrics(
         predictions_ns_next_48h.set(ns_next_48h)
         predictions_ns_missing_next_48h.set(ns_missing_next_48h)
         predictions_coverage_ns_pct.set(coverage_ns_pct)
+
+        # FT missing metrics (impact - matches that finished without prediction)
+        predictions_ft_missing_last_48h.set(ft_missing_48h)
+        predictions_ft_coverage_pct.set(ft_coverage_pct)
 
         # Status code: ok=0, warn=1, red=2
         status_code = {"ok": 0, "warn": 1, "red": 2}.get(status, 1)

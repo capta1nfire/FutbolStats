@@ -11,7 +11,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import select, text
@@ -1086,9 +1086,34 @@ class PredictionItem(BaseModel):
     away_goals: Optional[int] = None  # Final score (nil if not played)
     league_id: Optional[int] = None
     venue: Optional[dict] = None  # Stadium: {"name": str, "city": str} or None
+    events: Optional[list[dict]] = None  # Match events (goals, cards) for live timeline
+
+    # Model pick derived from probabilities (home, draw, away)
+    pick: Optional[str] = None
 
     # Adjusted probabilities (after team adjustments)
     probabilities: dict
+
+    @model_validator(mode='after')
+    def derive_pick_from_probabilities(self) -> 'PredictionItem':
+        """Derive pick from probabilities if not set.
+
+        Deterministic tie-breaker: home > draw > away (matches betting convention).
+        """
+        if self.pick is None and self.probabilities:
+            probs = self.probabilities
+            h = probs.get("home", 0)
+            d = probs.get("draw", 0)
+            a = probs.get("away", 0)
+            if h or d or a:  # At least one prob exists
+                # Deterministic: priority home > draw > away on ties
+                if h >= d and h >= a:
+                    self.pick = "home"
+                elif d >= a:
+                    self.pick = "draw"
+                else:
+                    self.pick = "away"
+        return self
     # Raw model output before adjustments
     raw_probabilities: Optional[dict] = None
 
@@ -1952,6 +1977,7 @@ async def get_predictions(
             away_goals=pred.get("away_goals"),
             league_id=pred.get("league_id"),
             venue=pred.get("venue"),
+            events=pred.get("events"),
             probabilities=pred["probabilities"],
             raw_probabilities=pred.get("raw_probabilities"),
             fair_odds=pred["fair_odds"],
