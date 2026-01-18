@@ -23,6 +23,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
 from app.models import Match, Prediction, PostMatchAudit, PredictionOutcome, Team
+from app.teams.overrides import preload_team_overrides, resolve_team_display
 from app.llm.narrative_generator import (
     NarrativeGenerator,
     NarrativeResult,
@@ -591,19 +592,51 @@ class FastPathService:
             if match.away_team_id:
                 team_ids.add(match.away_team_id)
 
-        team_info = {}  # team_id -> {"name": str, "external_id": int}
+        team_info = {}  # team_id -> {"name": str, "external_id": int, "original_name": str}
+        external_ids_for_overrides = []
         if team_ids:
             result = await self.session.execute(
                 select(Team.id, Team.name, Team.external_id).where(Team.id.in_(team_ids))
             )
             for team_id, team_name, external_id in result.all():
-                team_info[team_id] = {"name": team_name, "external_id": external_id}
+                team_info[team_id] = {"name": team_name, "external_id": external_id, "original_name": team_name}
+                if external_id:
+                    external_ids_for_overrides.append(external_id)
+
+        # Load team overrides (e.g., La Equidad → Internacional de Bogotá)
+        team_overrides = {}
+        if external_ids_for_overrides:
+            try:
+                team_overrides = await preload_team_overrides(self.session, external_ids_for_overrides)
+            except Exception as override_err:
+                logger.warning(f"[FASTPATH] Failed to load team overrides: {override_err}")
 
         try:
             for match in matches[:self.settings.FASTPATH_MAX_CONCURRENT_JOBS]:
                 # Get team info from pre-loaded cache
-                home_info = team_info.get(match.home_team_id, {"name": "Local", "external_id": None})
-                away_info = team_info.get(match.away_team_id, {"name": "Visitante", "external_id": None})
+                home_info = team_info.get(match.home_team_id, {"name": "Local", "external_id": None, "original_name": "Local"})
+                away_info = team_info.get(match.away_team_id, {"name": "Visitante", "external_id": None, "original_name": "Visitante"})
+
+                # Apply team overrides based on match date
+                if team_overrides and match.date:
+                    home_ext_id = home_info.get("external_id")
+                    away_ext_id = away_info.get("external_id")
+                    if home_ext_id:
+                        home_display = resolve_team_display(
+                            team_overrides, home_ext_id, match.date,
+                            home_info.get("original_name", "Local"),
+                        )
+                        if home_display.is_override:
+                            home_info["name"] = home_display.name
+                            logger.debug(f"[FASTPATH] Override applied: {home_display.original_name} → {home_display.name}")
+                    if away_ext_id:
+                        away_display = resolve_team_display(
+                            team_overrides, away_ext_id, match.date,
+                            away_info.get("original_name", "Visitante"),
+                        )
+                        if away_display.is_override:
+                            away_info["name"] = away_display.name
+                            logger.debug(f"[FASTPATH] Override applied: {away_display.original_name} → {away_display.name}")
 
                 # Get or create outcome/audit
                 outcome, audit = await self._get_or_create_audit(match)
