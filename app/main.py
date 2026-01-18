@@ -9936,13 +9936,22 @@ async def link_match_to_api_football(
     try:
         # Update external_id first
         async with AsyncSessionLocal() as session:
-            await session.execute(text("""
+            # Check if external_id already exists on another match
+            check_result = await session.execute(text("""
+                SELECT id FROM matches WHERE external_id = :external_id AND id != :match_id
+            """), {"match_id": match_id, "external_id": external_id})
+            existing = check_result.scalar()
+            if existing:
+                return {"status": "error", "error": f"external_id {external_id} already exists on match {existing}"}
+
+            update_result = await session.execute(text("""
                 UPDATE matches
                 SET external_id = :external_id
                 WHERE id = :match_id
             """), {"match_id": match_id, "external_id": external_id})
             await session.commit()
             result["external_id_updated"] = True
+            result["rows_affected"] = update_result.rowcount
 
         # Optionally fetch and update stats in separate transaction
         if fetch_stats:
