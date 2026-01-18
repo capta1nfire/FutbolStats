@@ -9934,6 +9934,125 @@ async def trigger_stats_refresh(request: Request, lookback_hours: int = 48, max_
     }
 
 
+@app.post("/dashboard/ops/narratives_regenerate")
+async def trigger_narratives_regenerate(
+    request: Request,
+    lookback_hours: int = 48,
+    max_matches: int = 100,
+    force: bool = False,
+):
+    """
+    Regenerate LLM narratives for recently finished matches.
+
+    This endpoint resets narratives for matches that had stats refreshed,
+    allowing FastPath to regenerate them with updated data.
+
+    Args:
+        lookback_hours: Hours to look back for finished matches (default 48)
+        max_matches: Maximum matches to process (default 100)
+        force: If True, regenerate even if narrative already exists
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from sqlalchemy import text
+
+    start_time = time.time()
+    metrics = {
+        "checked": 0,
+        "reset": 0,
+        "already_pending": 0,
+        "no_audit": 0,
+        "errors": 0,
+    }
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Find FT matches in lookback window that have prediction_outcomes and post_match_audits
+            result = await session.execute(text("""
+                SELECT
+                    m.id as match_id,
+                    po.id as outcome_id,
+                    pma.id as audit_id,
+                    pma.llm_narrative_status,
+                    ht.name as home_team,
+                    at.name as away_team
+                FROM matches m
+                JOIN prediction_outcomes po ON po.match_id = m.id
+                JOIN post_match_audits pma ON pma.outcome_id = po.id
+                JOIN teams ht ON ht.id = m.home_team_id
+                JOIN teams at ON at.id = m.away_team_id
+                WHERE m.status IN ('FT', 'AET', 'PEN')
+                  AND m.finished_at >= NOW() - INTERVAL ':lookback hours'
+                  AND m.stats IS NOT NULL
+                  AND m.stats::text != '{}'
+                ORDER BY m.finished_at DESC
+                LIMIT :max_matches
+            """.replace(":lookback", str(lookback_hours))), {
+                "max_matches": max_matches,
+            })
+
+            rows = result.fetchall()
+            metrics["checked"] = len(rows)
+
+            reset_ids = []
+            match_ids = []
+            for row in rows:
+                if row.llm_narrative_status == "pending":
+                    metrics["already_pending"] += 1
+                    continue
+
+                if row.llm_narrative_status == "ok" and not force:
+                    # Skip if already has narrative and force=False
+                    continue
+
+                reset_ids.append(row.audit_id)
+                match_ids.append(row.match_id)
+
+            if reset_ids:
+                # Reset narrative status to allow regeneration
+                await session.execute(text("""
+                    UPDATE post_match_audits
+                    SET llm_narrative_status = 'pending',
+                        llm_narrative_attempts = 0,
+                        llm_narrative_json = NULL,
+                        llm_raw_response = NULL,
+                        llm_prompt_version = NULL,
+                        llm_validation_errors = NULL
+                    WHERE id = ANY(:ids)
+                """), {"ids": reset_ids})
+
+                # Trick: update finished_at to NOW() so FastPath picks them up
+                # FastPath has a 90-min lookback, this makes old matches eligible
+                await session.execute(text("""
+                    UPDATE matches
+                    SET finished_at = NOW()
+                    WHERE id = ANY(:ids)
+                """), {"ids": match_ids})
+
+                await session.commit()
+                metrics["reset"] = len(reset_ids)
+
+        duration_ms = int((time.time() - start_time) * 1000)
+        return {
+            "status": "executed",
+            "duration_ms": duration_ms,
+            "result": {
+                **metrics,
+                "message": f"Reset {metrics['reset']} narratives. FastPath will regenerate in next ticks (~2 min each).",
+            },
+        }
+
+    except Exception as e:
+        duration_ms = int((time.time() - start_time) * 1000)
+        metrics["errors"] = 1
+        return {
+            "status": "error",
+            "duration_ms": duration_ms,
+            "result": {**metrics, "error": str(e)},
+        }
+
+
 # =============================================================================
 # PREDICTION RERUN (controlled two-stage model promotion)
 # =============================================================================
