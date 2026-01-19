@@ -352,7 +352,7 @@ struct FutbolStatsApp: App {
 
 **Con 0 partidos live:**
 ```bash
-curl -s -H "X-API-Key: efb85a4a291f917578dd9c625b91b87ace5846c1d92bf250552955cd50e6e1e3" \
+curl -s -H "X-API-Key: <YOUR_API_KEY>" \
   "https://web-production-f2de9.up.railway.app/live-summary" | jq '.'
 
 # Expected response:

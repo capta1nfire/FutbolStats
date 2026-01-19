@@ -456,3 +456,6 @@ WHERE league_id = {LEAGUE_ID}
 | 2026-01-16 | Europa League | 3 | Analítica | PASS | 1.9K fixtures, priority MEDIUM |
 | 2026-01-16 | Conference League | 848 | UX-only | PASS | 2K fixtures, odds 0% (bajo), weight=0.9 |
 | 2026-01-16 | FA Cup | 45 | UX-only | PASS | 5K fixtures, odds 100%, weight=0.85 |
+| 2026-01-16 | Belgian Pro League | 144 | Analítica | PASS | 17 fixtures, 16 teams, odds 100%, recién onboarded |
+| 2026-01-16 | Saudi Pro League | 307 | Analítica | PASS | 48 fixtures, 18 teams, odds 66.7%, stats 100%. Distribución OK: 3 partidos/día × 17 fechas |
+| 2026-01-16 | MLS | 253 | Analítica | PASS (deferred) | Off-season, 30 teams, 2.8K historical FT (18.8% con stats - legacy, NO backfill). Reevaluar feb 2026 |

@@ -631,6 +631,8 @@ class FeatureEngineer:
                 features["elapsed_extra"] = match.elapsed_extra  # Added/injury time (e.g., 3 for 90+3)
                 features["home_goals"] = match.home_goals
                 features["away_goals"] = match.away_goals
+                # Include events for live match timeline (goals with minute/team info)
+                features["events"] = match.events
                 # Include venue for LLM narrative enrichment
                 features["venue_name"] = match.venue_name
                 features["venue_city"] = match.venue_city
