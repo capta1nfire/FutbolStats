@@ -1,0 +1,7 @@
+// Debug.xcconfig
+// Configuration for Debug builds
+
+#include "Secrets.xcconfig"
+
+// Debug-specific settings can go here
+// For example: different API base URL for staging

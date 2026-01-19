@@ -43,3 +43,6 @@ CLAUDE.local.md
 
 # iOS Secrets (xcconfig with tokens/keys)
 ios/**/Secrets.xcconfig
+
+# Xcode user state (personal IDE state)
+*.xcuserstate

@@ -1,6 +1,66 @@
 import Foundation
 import SwiftUI
 
+// MARK: - Match Events (defined early for use in MatchPrediction)
+
+struct FootballMatchEvent: Codable, Identifiable {
+    var id: String { "\(minute ?? 0)-\(type ?? "")-\(playerName ?? player ?? "")" }
+    let minute: Int?
+    let extraMinute: Int?
+    let type: String?
+    let detail: String?
+    let team: String?           // Used by match_events from insights
+    let player: String?         // Used by match_events from insights
+    let teamId: Int?            // Used by events from predictions API
+    let teamName: String?       // Used by events from predictions API
+    let playerName: String?     // Used by events from predictions API
+    let assist: String?
+
+    enum CodingKeys: String, CodingKey {
+        case minute
+        case extraMinute = "extra_minute"
+        case type
+        case detail
+        case team
+        case player
+        case teamId = "team_id"
+        case teamName = "team_name"
+        case playerName = "player_name"
+        case assist
+    }
+
+    var displayMinute: String {
+        if let extra = extraMinute, extra > 0 {
+            return "\(minute ?? 0)+\(extra)'"
+        }
+        return "\(minute ?? 0)'"
+    }
+
+    var typeIcon: String {
+        switch type {
+        case "Goal": return "soccerball"
+        case "Card":
+            if detail == "Red Card" { return "rectangle.fill" }
+            return "rectangle.fill"
+        case "subst": return "arrow.left.arrow.right"
+        case "Var": return "tv"
+        default: return "circle.fill"
+        }
+    }
+
+    var typeColor: Color {
+        switch type {
+        case "Goal": return .green
+        case "Card":
+            if detail == "Red Card" { return .red }
+            return .yellow
+        case "subst": return .blue
+        case "Var": return .purple
+        default: return .gray
+        }
+    }
+}
+
 // MARK: - API Response Models
 
 struct PredictionResponse: Codable {
@@ -29,6 +89,7 @@ struct MatchPrediction: Codable, Identifiable {
     let homeGoals: Int?           // Final score (nil if not played)
     let awayGoals: Int?           // Final score (nil if not played)
     let leagueId: Int?            // League ID for grouping
+    let events: [FootballMatchEvent]?     // Match events (goals, cards) for live timeline
     let probabilities: Probabilities
     let fairOdds: FairOdds
     let marketOdds: MarketOdds?
@@ -66,6 +127,7 @@ struct MatchPrediction: Codable, Identifiable {
         128: "Liga Argentina",
         129: "Copa Argentina",
         239: "Liga Colombia",
+        713: "Superliga Colombia",
         71: "Brasileirão",
         73: "Copa Brasil",
         13: "Libertadores",
@@ -81,6 +143,8 @@ struct MatchPrediction: Codable, Identifiable {
         88: "Eredivisie",
         61: "Ligue 1",
         94: "Primeira Liga",
+        144: "Belgian Pro League",
+        307: "Saudi Pro League",
         2: "Champions League",
         3: "Europa League",
         848: "Conference League",
@@ -88,6 +152,34 @@ struct MatchPrediction: Codable, Identifiable {
         262: "Liga MX",
         16: "Concacaf Champions",
     ]
+
+    /// League country name mapping
+    private static let leagueCountryNames: [Int: String] = [
+        // International
+        1: "World", 4: "Europe", 5: "Europe", 6: "Africa", 9: "South America", 10: "International",
+        // South America
+        128: "Argentina", 129: "Argentina", 239: "Colombia", 713: "Colombia", 71: "Brazil", 73: "Brazil",
+        13: "South America", 11: "South America",
+        // Europe
+        39: "England", 40: "England", 45: "England",
+        140: "Spain", 143: "Spain",
+        135: "Italy",
+        78: "Germany",
+        88: "Netherlands",
+        61: "France",
+        94: "Portugal",
+        144: "Belgium",
+        307: "Saudi Arabia",
+        2: "Europe", 3: "Europe", 848: "Europe",
+        // Mexico & CONCACAF
+        262: "Mexico", 16: "CONCACAF",
+    ]
+
+    /// Country name for this league
+    var leagueCountryFlag: String? {
+        guard let id = leagueId else { return nil }
+        return Self.leagueCountryNames[id]
+    }
 
     /// Check if match is finished
     var isFinished: Bool {
@@ -117,6 +209,53 @@ struct MatchPrediction: Codable, Identifiable {
         if let extra = elapsedExtra, extra > 0 {
             return "\(mins)+\(extra)'"
         }
+        return "\(mins)'"
+    }
+
+    /// Calculate elapsed minutes locally based on kickoff time
+    /// Returns nil if match hasn't started or isn't live
+    /// Note: This is an approximation - doesn't account for stoppage time or halftime
+    func calculatedElapsed(at currentTime: Date = Date()) -> Int? {
+        guard isLive, let kickoff = matchDate else { return nil }
+
+        let secondsSinceKickoff = currentTime.timeIntervalSince(kickoff)
+        guard secondsSinceKickoff > 0 else { return nil }
+
+        let minutesSinceKickoff = Int(secondsSinceKickoff / 60)
+
+        // Cap at reasonable values based on match status
+        switch status {
+        case "1H":
+            // First half: 0-45 minutes (plus some injury time buffer)
+            return min(minutesSinceKickoff, 47)
+        case "HT":
+            // Halftime: show 45
+            return 45
+        case "2H":
+            // Second half: kickoff + ~15min break, so subtract ~15 and add 45
+            // Approximation: assume 15min halftime break
+            let adjustedMinutes = minutesSinceKickoff - 15
+            return min(max(adjustedMinutes, 46), 95)
+        case "ET", "BT":
+            // Extra time: 90+ minutes
+            return min(minutesSinceKickoff - 15, 120)
+        default:
+            return min(minutesSinceKickoff, 120)
+        }
+    }
+
+    /// Formatted elapsed display using local calculation if backend elapsed is stale
+    func calculatedElapsedDisplay(at currentTime: Date = Date()) -> String? {
+        // Prefer backend elapsed if available and recent
+        if let backendElapsed = elapsed {
+            if let extra = elapsedExtra, extra > 0 {
+                return "\(backendElapsed)+\(extra)'"
+            }
+            return "\(backendElapsed)'"
+        }
+
+        // Fallback to local calculation
+        guard let mins = calculatedElapsed(at: currentTime) else { return nil }
         return "\(mins)'"
     }
 
@@ -211,6 +350,7 @@ struct MatchPrediction: Codable, Identifiable {
         case homeGoals = "home_goals"
         case awayGoals = "away_goals"
         case leagueId = "league_id"
+        case events
         case probabilities
         case fairOdds = "fair_odds"
         case marketOdds = "market_odds"
@@ -713,7 +853,7 @@ struct MatchInsightsResponse: Codable {
 
     // Match stats for UI table (independent of narrative)
     let matchStats: MatchStats?
-    let matchEvents: [MatchEvent]?
+    let matchEvents: [FootballMatchEvent]?
 
     enum CodingKeys: String, CodingKey {
         case matchId = "match_id"
@@ -869,60 +1009,6 @@ struct TeamStats: Codable {
         totalPasses = try? container.decode(Int.self, forKey: .totalPasses)
         passesAccurate = try? container.decode(Int.self, forKey: .passesAccurate)
         expectedGoals = try? container.decode(String.self, forKey: .expectedGoals)
-    }
-}
-
-// MARK: - Match Events
-
-struct MatchEvent: Codable, Identifiable {
-    var id: String { "\(minute ?? 0)-\(type ?? "")-\(player ?? "")" }
-    let minute: Int?
-    let extraMinute: Int?
-    let type: String?
-    let detail: String?
-    let team: String?
-    let player: String?
-    let assist: String?
-
-    enum CodingKeys: String, CodingKey {
-        case minute
-        case extraMinute = "extra_minute"
-        case type
-        case detail
-        case team
-        case player
-        case assist
-    }
-
-    var displayMinute: String {
-        if let extra = extraMinute, extra > 0 {
-            return "\(minute ?? 0)+\(extra)'"
-        }
-        return "\(minute ?? 0)'"
-    }
-
-    var typeIcon: String {
-        switch type {
-        case "Goal": return "soccerball"
-        case "Card":
-            if detail == "Red Card" { return "rectangle.fill" }
-            return "rectangle.fill"
-        case "subst": return "arrow.left.arrow.right"
-        case "Var": return "tv"
-        default: return "circle.fill"
-        }
-    }
-
-    var typeColor: Color {
-        switch type {
-        case "Goal": return .green
-        case "Card":
-            if detail == "Red Card" { return .red }
-            return .yellow
-        case "subst": return .blue
-        case "Var": return .purple
-        default: return .gray
-        }
     }
 }
 

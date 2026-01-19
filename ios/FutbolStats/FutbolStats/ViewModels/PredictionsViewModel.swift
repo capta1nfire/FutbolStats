@@ -119,7 +119,8 @@ class PredictionsViewModel: ObservableObject {
     }
 
     /// Calculate the current elapsed minute for a live match
-    /// Uses cached data if fresher, otherwise falls back to API elapsed + local time
+    /// Uses cached data if fresher, otherwise falls back to API elapsed + local time,
+    /// or calculates from kickoff time if no elapsed data available
     /// - Parameter prediction: The match prediction
     /// - Returns: Formatted elapsed string (e.g., "32'", "45+2'", "90+3'", or status like "HT")
     func calculatedElapsedDisplay(for prediction: MatchPrediction) -> String {
@@ -141,7 +142,12 @@ class PredictionsViewModel: ObservableObject {
             return status
         }
 
+        // If no elapsed from backend, calculate from kickoff time
         guard let baseElapsed = elapsed else {
+            // Use kickoff-based calculation from MatchPrediction
+            if let calculatedMins = prediction.calculatedElapsed(at: clockTick) {
+                return "\(calculatedMins)'"
+            }
             return status
         }
 
