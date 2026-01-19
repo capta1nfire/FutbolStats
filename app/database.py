@@ -102,35 +102,63 @@ async def get_session_with_retry(max_retries: int = 3, retry_delay: float = 1.0)
         async with get_session_with_retry() as session:
             result = await session.execute(...)
             await session.commit()
+
+    Note: Uses @asynccontextmanager decorator to properly handle generator cleanup
+    and avoid "generator didn't stop after athrow()" errors when connections drop.
+
+    IMPORTANT: Retries only happen on session CREATION failure. If a connection drops
+    DURING execution, the exception propagates to the caller. For mid-execution failures,
+    the caller should wrap their logic in a retry loop.
     """
     last_error = None
+    current_delay = retry_delay
+    session = None
 
     for attempt in range(max_retries):
         try:
-            async with AsyncSessionLocal() as session:
-                yield session
-                return  # Success, exit the retry loop
+            session = AsyncSessionLocal()
+            # Test the connection is alive before yielding
+            await session.connection()
+            break  # Connection successful, exit retry loop
         except (InterfaceError, OperationalError) as e:
             last_error = e
             error_msg = str(e)
 
+            if session is not None:
+                try:
+                    await session.close()
+                except Exception:
+                    pass
+                session = None
+
             # Check if this is a connection-closed error worth retrying
-            if "closed" in error_msg.lower() or "connection" in error_msg.lower():
+            if "closed" in error_msg.lower() or "connection" in error_msg.lower() or "terminated" in error_msg.lower():
                 if attempt < max_retries - 1:
                     logger.warning(
                         f"Database connection error (attempt {attempt + 1}/{max_retries}): {e}. "
-                        f"Retrying in {retry_delay}s..."
+                        f"Retrying in {current_delay}s..."
                     )
-                    await asyncio.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
+                    await asyncio.sleep(current_delay)
+                    current_delay *= 2  # Exponential backoff
                     continue
 
             # Non-retryable error or max retries reached
             raise
-        except Exception:
-            # Non-connection errors should not be retried
-            raise
 
-    # If we get here, all retries failed
-    if last_error:
-        raise last_error
+    # All retries exhausted without success
+    if session is None:
+        if last_error:
+            raise last_error
+        raise RuntimeError("Failed to create database session after retries")
+
+    # Now yield the session - this is a single yield point
+    try:
+        yield session
+    finally:
+        # Ensure session cleanup even if connection dropped mid-execution
+        if session is not None:
+            try:
+                await session.close()
+            except Exception as close_error:
+                # Log but don't raise - we want cleanup to be best-effort
+                logger.debug(f"Error closing session during cleanup: {close_error}")
