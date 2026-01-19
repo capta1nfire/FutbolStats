@@ -1,6 +1,7 @@
 """Background scheduler for weekly sync, audit, and training jobs."""
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -2077,27 +2078,53 @@ async def live_tick():
                             new_elapsed_extra = f.get("elapsed_extra")  # Injury time
                             new_home = f.get("home_goals")
                             new_away = f.get("away_goals")
+                            new_events = f.get("events")  # FASE 1: Live events (full schema)
 
-                            # Update match in DB
-                            await session.execute(
-                                text("""
-                                    UPDATE matches
-                                    SET status = :status,
-                                        elapsed = :elapsed,
-                                        elapsed_extra = :elapsed_extra,
-                                        home_goals = :home_goals,
-                                        away_goals = :away_goals
-                                    WHERE id = :match_id
-                                """),
-                                {
-                                    "match_id": match_id,
-                                    "status": new_status,
-                                    "elapsed": new_elapsed,
-                                    "elapsed_extra": new_elapsed_extra,
-                                    "home_goals": new_home,
-                                    "away_goals": new_away,
-                                }
-                            )
+                            # Update match in DB (FASE 1: now includes events)
+                            # GUARDRAIL: Only update events if we have new data (don't overwrite with NULL)
+                            if new_events:
+                                await session.execute(
+                                    text("""
+                                        UPDATE matches
+                                        SET status = :status,
+                                            elapsed = :elapsed,
+                                            elapsed_extra = :elapsed_extra,
+                                            home_goals = :home_goals,
+                                            away_goals = :away_goals,
+                                            events = :events
+                                        WHERE id = :match_id
+                                    """),
+                                    {
+                                        "match_id": match_id,
+                                        "status": new_status,
+                                        "elapsed": new_elapsed,
+                                        "elapsed_extra": new_elapsed_extra,
+                                        "home_goals": new_home,
+                                        "away_goals": new_away,
+                                        "events": json.dumps(new_events),
+                                    }
+                                )
+                            else:
+                                # No events - update only score/status, preserve existing events
+                                await session.execute(
+                                    text("""
+                                        UPDATE matches
+                                        SET status = :status,
+                                            elapsed = :elapsed,
+                                            elapsed_extra = :elapsed_extra,
+                                            home_goals = :home_goals,
+                                            away_goals = :away_goals
+                                        WHERE id = :match_id
+                                    """),
+                                    {
+                                        "match_id": match_id,
+                                        "status": new_status,
+                                        "elapsed": new_elapsed,
+                                        "elapsed_extra": new_elapsed_extra,
+                                        "home_goals": new_home,
+                                        "away_goals": new_away,
+                                    }
+                                )
                             updated += 1
 
                     except Exception as chunk_err:

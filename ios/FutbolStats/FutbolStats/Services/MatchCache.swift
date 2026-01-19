@@ -2,12 +2,14 @@ import Foundation
 
 /// Cached live match data for overlay updates.
 /// Only stores fields that change during live matches.
+/// FASE 1: Now includes events (goals, cards) for live timeline.
 struct CachedMatchData {
     let status: String?
     let elapsed: Int?
     let elapsedExtra: Int?  // Added/injury time (e.g., 3 for 90+3)
     let homeGoals: Int?
     let awayGoals: Int?
+    let events: [LiveSummary.LiveEvent]?  // FASE 1: live events
     let updatedAt: Date
 
     /// TTL based on match state (30s for live, 5min for finished)
@@ -43,9 +45,10 @@ final class MatchCache {
 
     private init() {}
 
-    // MARK: - Write (from MatchDetailView)
+    // MARK: - Write (from LiveScoreManager)
 
-    /// Update cache with fresh data from MatchDetailView polling.
+    /// Update cache with fresh data from LiveScoreManager polling.
+    /// FASE 1: Now includes events for live timeline.
     /// - Parameters:
     ///   - matchId: The match ID
     ///   - status: Current match status (1H, HT, 2H, FT, etc.)
@@ -53,13 +56,15 @@ final class MatchCache {
     ///   - elapsedExtra: Added/injury time minutes (e.g., 3 for 90+3)
     ///   - homeGoals: Home team goals
     ///   - awayGoals: Away team goals
+    ///   - events: Live events (goals, cards) - FASE 1
     func update(
         matchId: Int,
         status: String?,
         elapsed: Int?,
         elapsedExtra: Int?,
         homeGoals: Int?,
-        awayGoals: Int?
+        awayGoals: Int?,
+        events: [LiveSummary.LiveEvent]? = nil
     ) {
         let entry = CachedMatchData(
             status: status,
@@ -67,6 +72,7 @@ final class MatchCache {
             elapsedExtra: elapsedExtra,
             homeGoals: homeGoals,
             awayGoals: awayGoals,
+            events: events,
             updatedAt: Date()
         )
         cache[matchId] = entry
@@ -81,7 +87,8 @@ final class MatchCache {
         let elapsedStr = elapsed.map { extra in
             elapsedExtra.map { "\(extra)+\($0)" } ?? "\(extra)"
         } ?? "-1"
-        print("[MatchCache] Updated match \(matchId): status=\(status ?? "nil"), elapsed=\(elapsedStr), score=\(homeGoals ?? 0)-\(awayGoals ?? 0)")
+        let eventsCount = events?.count ?? 0
+        print("[MatchCache] Updated match \(matchId): status=\(status ?? "nil"), elapsed=\(elapsedStr), score=\(homeGoals ?? 0)-\(awayGoals ?? 0), events=\(eventsCount)")
     }
 
     /// Convenience method to update from a MatchPrediction

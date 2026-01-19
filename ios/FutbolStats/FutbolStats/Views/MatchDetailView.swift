@@ -119,17 +119,20 @@ class MatchDetailViewModel: ObservableObject {
     @Published var matchStats: MatchStats?
     @Published var matchEvents: [FootballMatchEvent]?
 
-    // MARK: - Live Match Polling & Clock
-    /// Updated prediction from polling (for live matches)
+    // MARK: - Live Match Updates (via MatchCache + LiveScoreManager)
+    /// Updated prediction from MatchCache (for live matches)
     @Published var livePrediction: MatchPrediction?
     /// Timestamp when live data was last fetched (for local clock calculation)
     @Published private(set) var liveDataLoadedAt: Date = Date()
     /// Current time - updated every 60s to trigger UI refresh for live matches
     @Published private(set) var clockTick: Date = Date()
-    /// Goals inferred from score changes during live polling (minute when detected)
+    /// Goals inferred from score changes during live updates (minute when detected)
     @Published private(set) var inferredGoals: [InferredGoal] = []
-    private var livePollingTimer: Timer?
+    /// FASE 1: Live events from MatchCache (real events from API-Football)
+    @Published private(set) var liveEvents: [LiveSummary.LiveEvent]?
     private var clockTimer: Timer?
+    /// Observer for MatchCache updates
+    private var cacheObserver: NSObjectProtocol?
     /// Track previous score to detect changes
     private var previousHomeGoals: Int = 0
     private var previousAwayGoals: Int = 0
@@ -152,19 +155,31 @@ class MatchDetailViewModel: ObservableObject {
 
     deinit {
         loadTask?.cancel()
-        livePollingTimer?.invalidate()
-        clockTimer?.invalidate()
+        // Remove observer synchronously (allowed in deinit)
+        if let observer = cacheObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        // Timer and LiveScoreManager cleanup via Task (MainActor required)
+        Task { @MainActor in
+            LiveScoreManager.shared.setViewingMatch(nil)
+        }
     }
 
-    // MARK: - Live Polling (30s)
+    // MARK: - Live Updates (via MatchCache - no more polling)
 
-    func startLivePollingIfNeeded() {
-        guard currentPrediction.isLive else { return }
+    /// Start observing MatchCache for live updates
+    /// This replaces the old 30s polling to /predictions/upcoming
+    func startLiveUpdatesIfNeeded() {
+        guard currentPrediction.isLive || currentPrediction.status == "NS" else { return }
+        guard let matchId = prediction.matchId else { return }
 
         // Seed existing goals on first load (distribute evenly across elapsed time)
         seedExistingGoals()
 
-        // Start 60s clock timer for local elapsed updates
+        // Register with LiveScoreManager (triggers polling if not already)
+        LiveScoreManager.shared.setViewingMatch(matchId)
+
+        // Start 60s clock timer for local elapsed display smoothness
         clockTimer?.invalidate()
         clockTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -172,22 +187,109 @@ class MatchDetailViewModel: ObservableObject {
             }
         }
 
-        // Start 30s polling timer for status/score updates
-        livePollingTimer?.invalidate()
-        livePollingTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+        // Observe MatchCache for updates (instead of polling every 30s)
+        cacheObserver = NotificationCenter.default.addObserver(
+            forName: MatchCache.didUpdateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self = self,
+                  let updatedMatchId = notification.object as? Int,
+                  updatedMatchId == matchId else { return }
+
             Task { @MainActor in
-                await self?.pollLiveData()
+                self.handleCacheUpdate(matchId: matchId)
             }
         }
-        print("[LivePolling] Started for match \(prediction.matchId ?? 0)")
+
+        print("[LiveUpdates] Started observing MatchCache for match \(matchId)")
+    }
+
+    /// Stop observing MatchCache
+    func stopLiveUpdates() {
+        if let observer = cacheObserver {
+            NotificationCenter.default.removeObserver(observer)
+            cacheObserver = nil
+        }
+        clockTimer?.invalidate()
+        clockTimer = nil
+
+        // Unregister from LiveScoreManager
+        LiveScoreManager.shared.setViewingMatch(nil)
+
+        print("[LiveUpdates] Stopped")
+    }
+
+    /// Handle update from MatchCache (called when LiveScoreManager fetches new data)
+    private func handleCacheUpdate(matchId: Int) {
+        guard let cached = MatchCache.shared.get(matchId: matchId) else { return }
+
+        let newHomeGoals = cached.homeGoals ?? 0
+        let newAwayGoals = cached.awayGoals ?? 0
+        let currentMinute = cached.elapsed ?? 0
+
+        // Detect new home goals
+        if newHomeGoals > previousHomeGoals {
+            let goalsScored = newHomeGoals - previousHomeGoals
+            for _ in 0..<goalsScored {
+                let goal = InferredGoal(
+                    minute: currentMinute,
+                    team: "home",
+                    homeTeamName: prediction.homeTeam,
+                    awayTeamName: prediction.awayTeam
+                )
+                inferredGoals.append(goal)
+                print("[LiveUpdates] ⚽ Home goal detected at \(currentMinute)' - \(prediction.homeTeam)")
+            }
+        }
+
+        // Detect new away goals
+        if newAwayGoals > previousAwayGoals {
+            let goalsScored = newAwayGoals - previousAwayGoals
+            for _ in 0..<goalsScored {
+                let goal = InferredGoal(
+                    minute: currentMinute,
+                    team: "away",
+                    homeTeamName: prediction.homeTeam,
+                    awayTeamName: prediction.awayTeam
+                )
+                inferredGoals.append(goal)
+                print("[LiveUpdates] ⚽ Away goal detected at \(currentMinute)' - \(prediction.awayTeam)")
+            }
+        }
+
+        // Update tracking
+        previousHomeGoals = newHomeGoals
+        previousAwayGoals = newAwayGoals
+
+        // Create updated prediction from cache overlay (MatchPrediction has let properties)
+        livePrediction = prediction.withLiveUpdate(
+            status: cached.status,
+            elapsed: cached.elapsed,
+            elapsedExtra: cached.elapsedExtra,
+            homeGoals: cached.homeGoals,
+            awayGoals: cached.awayGoals
+        )
+        liveDataLoadedAt = Date()
+
+        // FASE 1: Update live events from cache
+        liveEvents = cached.events
+        let eventsCount = cached.events?.count ?? 0
+        print("[LiveUpdates] Match \(matchId) updated: status=\(cached.status ?? "nil"), elapsed=\(cached.elapsed ?? -1), events=\(eventsCount)")
+
+        // Stop updates if match finished
+        if let status = cached.status, ["FT", "AET", "PEN"].contains(status) {
+            stopLiveUpdates()
+        }
+    }
+
+    // Legacy method name for compatibility (calls new method)
+    func startLivePollingIfNeeded() {
+        startLiveUpdatesIfNeeded()
     }
 
     func stopLivePolling() {
-        livePollingTimer?.invalidate()
-        livePollingTimer = nil
-        clockTimer?.invalidate()
-        clockTimer = nil
-        print("[LivePolling] Stopped")
+        stopLiveUpdates()
     }
 
     /// Seed inferred goals from existing score when user opens a live match
@@ -242,68 +344,8 @@ class MatchDetailViewModel: ObservableObject {
         print("[LivePolling] Seeded \(seededGoals.count) existing goals for \(pred.homeTeam) vs \(pred.awayTeam)")
     }
 
-    private func pollLiveData() async {
-        guard let matchId = prediction.matchId else { return }
-
-        do {
-            // Fetch fresh prediction data from API
-            let response = try await APIClient.shared.getUpcomingPredictions(daysBack: 1, daysAhead: 1)
-            if let updated = response.predictions.first(where: { $0.matchId == matchId }) {
-                // Detect goal changes before updating livePrediction
-                let newHomeGoals = updated.homeGoals ?? 0
-                let newAwayGoals = updated.awayGoals ?? 0
-                let currentMinute = updated.elapsed ?? 0
-
-                // Check for new home goals
-                if newHomeGoals > previousHomeGoals {
-                    let goalsScored = newHomeGoals - previousHomeGoals
-                    for _ in 0..<goalsScored {
-                        let goal = InferredGoal(
-                            minute: currentMinute,
-                            team: "home",
-                            homeTeamName: updated.homeTeam,
-                            awayTeamName: updated.awayTeam
-                        )
-                        inferredGoals.append(goal)
-                        print("[LivePolling] ⚽ Home goal detected at \(currentMinute)' - \(updated.homeTeam)")
-                    }
-                }
-
-                // Check for new away goals
-                if newAwayGoals > previousAwayGoals {
-                    let goalsScored = newAwayGoals - previousAwayGoals
-                    for _ in 0..<goalsScored {
-                        let goal = InferredGoal(
-                            minute: currentMinute,
-                            team: "away",
-                            homeTeamName: updated.homeTeam,
-                            awayTeamName: updated.awayTeam
-                        )
-                        inferredGoals.append(goal)
-                        print("[LivePolling] ⚽ Away goal detected at \(currentMinute)' - \(updated.awayTeam)")
-                    }
-                }
-
-                // Update previous goals for next comparison
-                previousHomeGoals = newHomeGoals
-                previousAwayGoals = newAwayGoals
-
-                livePrediction = updated
-                liveDataLoadedAt = Date()
-                print("[LivePolling] Updated match \(matchId): status=\(updated.status ?? "nil"), elapsed=\(updated.elapsed ?? -1), goals=\(inferredGoals.count)")
-
-                // Write to shared cache so PredictionsListView can overlay
-                MatchCache.shared.update(from: updated)
-
-                // Stop polling if match finished
-                if updated.isFinished {
-                    stopLivePolling()
-                }
-            }
-        } catch {
-            print("[LivePolling] Error: \(error.localizedDescription)")
-        }
-    }
+    // NOTE: pollLiveData() removed - replaced by handleCacheUpdate() observing MatchCache
+    // This eliminates the 30s polling to /predictions/upcoming and unifies with LiveScoreManager
 
     /// Calculate the current elapsed minute for display (with local clock)
     /// Returns formatted string like "32'", "45+2'", "90+3'", or "Half Time"
@@ -747,6 +789,7 @@ struct MatchDetailView: View {
                     PredictionTimelineView(
                         liveData: LiveTimelineData.from(
                             prediction: viewModel.currentPrediction,
+                            liveEvents: viewModel.liveEvents,
                             inferredGoals: viewModel.inferredGoals
                         )
                     )

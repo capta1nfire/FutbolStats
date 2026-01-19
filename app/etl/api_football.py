@@ -480,12 +480,44 @@ class APIFootballProvider(DataProvider):
         data = await self._rate_limited_request("fixtures", {"ids": ids_param})
         fixtures = data.get("response", [])
 
-        # Return minimal data needed for live updates
+        # Return minimal data needed for live updates (including events for FASE 1)
+        # IMPORTANT: Events use FULL schema (same as get_fixture_events) for compatibility
+        # with FastPath and /predictions/upcoming. Compact format is applied in /live-summary.
         results = []
         for f in fixtures:
             fixture_data = f.get("fixture", {})
             goals = f.get("goals", {})
             status_info = fixture_data.get("status", {})
+            teams = f.get("teams", {})
+            raw_events = f.get("events", [])
+
+            # Parse events into FULL schema (compatible with get_fixture_events)
+            # Include: Goal, Card, subst, Var (all important live events)
+            events = []
+            for ev in raw_events:
+                ev_type = ev.get("type")
+                if ev_type not in ("Goal", "Card", "subst", "Var"):
+                    continue
+
+                team_info = ev.get("team", {})
+                player_info = ev.get("player", {})
+                assist_info = ev.get("assist", {})
+                time_info = ev.get("time", {})
+
+                # FULL schema - same fields as get_fixture_events()
+                events.append({
+                    "type": ev_type,
+                    "detail": ev.get("detail"),
+                    "minute": time_info.get("elapsed"),
+                    "extra_minute": time_info.get("extra"),
+                    "team_id": team_info.get("id"),
+                    "team_name": team_info.get("name"),
+                    "player_id": player_info.get("id"),
+                    "player_name": player_info.get("name"),
+                    "assist_id": assist_info.get("id") if assist_info else None,
+                    "assist_name": assist_info.get("name") if assist_info else None,
+                })
+
             results.append({
                 "external_id": fixture_data.get("id"),
                 "status": status_info.get("short"),
@@ -493,6 +525,9 @@ class APIFootballProvider(DataProvider):
                 "elapsed_extra": status_info.get("extra"),  # Added/injury time
                 "home_goals": goals.get("home"),
                 "away_goals": goals.get("away"),
+                "home_team_id": teams.get("home", {}).get("id"),
+                "away_team_id": teams.get("away", {}).get("id"),
+                "events": events if events else None,  # None if no events
             })
 
         return results

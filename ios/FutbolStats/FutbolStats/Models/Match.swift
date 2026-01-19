@@ -359,6 +359,42 @@ struct MatchPrediction: Codable, Identifiable {
         case bestValueBet = "best_value_bet"
         case confidenceTier = "confidence_tier"
     }
+
+    // MARK: - Live Update Helper
+
+    /// Create a new MatchPrediction with updated live fields.
+    /// Used by MatchCache overlay since MatchPrediction has immutable (let) properties.
+    func withLiveUpdate(
+        status: String?,
+        elapsed: Int?,
+        elapsedExtra: Int?,
+        homeGoals: Int?,
+        awayGoals: Int?
+    ) -> MatchPrediction {
+        MatchPrediction(
+            matchId: self.matchId,
+            matchExternalId: self.matchExternalId,
+            homeTeam: self.homeTeam,
+            awayTeam: self.awayTeam,
+            homeTeamLogo: self.homeTeamLogo,
+            awayTeamLogo: self.awayTeamLogo,
+            date: self.date,
+            status: status ?? self.status,
+            elapsed: elapsed ?? self.elapsed,
+            elapsedExtra: elapsedExtra ?? self.elapsedExtra,
+            homeGoals: homeGoals ?? self.homeGoals,
+            awayGoals: awayGoals ?? self.awayGoals,
+            leagueId: self.leagueId,
+            events: self.events,
+            probabilities: self.probabilities,
+            fairOdds: self.fairOdds,
+            marketOdds: self.marketOdds,
+            valueBets: self.valueBets,
+            hasValueBet: self.hasValueBet,
+            bestValueBet: self.bestValueBet,
+            confidenceTier: self.confidenceTier
+        )
+    }
 }
 
 struct Probabilities: Codable {

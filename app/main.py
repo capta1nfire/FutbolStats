@@ -2474,12 +2474,17 @@ async def get_live_summary(
     Returns only LIVE matches with minimal payload (~50 bytes/match).
     Designed for 15s polling interval from iOS clients.
 
-    Response schema:
+    Response schema (v2 - FASE 1: includes events):
     {
         "ts": 1705500000,  // Unix timestamp of cache
         "matches": {
-            "12345": {"s": "2H", "e": 67, "ex": 0, "h": 2, "a": 1},
-            "12346": {"s": "HT", "e": 45, "ex": 2, "h": 0, "a": 0}
+            "12345": {
+                "s": "2H", "e": 67, "ex": 0, "h": 2, "a": 1,
+                "ev": [
+                    {"m": 23, "t": "Goal", "d": "Normal Goal", "tm": 529, "p": "Messi", "a": "Di Maria"},
+                    {"m": 45, "x": 2, "t": "Card", "d": "Yellow Card", "tm": 530, "p": "Martinez"}
+                ]
+            }
         }
     }
 
@@ -2489,6 +2494,14 @@ async def get_live_summary(
     - ex: elapsed_extra (injury time, e.g., 3 for 90+3)
     - h: home goals
     - a: away goals
+    - ev: events array (optional, only if events exist)
+      - m: minute
+      - x: extra minute (injury time)
+      - t: type (Goal, Card)
+      - d: detail (Normal Goal, Yellow Card, Red Card, Penalty, Own Goal, etc.)
+      - tm: team_id
+      - p: player name
+      - a: assist name (goals only)
 
     Auth: Requires X-API-Key header.
     Rate limit: 60 requests/minute per IP.
@@ -2514,9 +2527,9 @@ async def get_live_summary(
             )
             return cached_data
 
-        # Cache miss - query DB (ultra-light: only live matches, minimal columns)
+        # Cache miss - query DB (FASE 1: now includes events column)
         query = text("""
-            SELECT id, status, elapsed, elapsed_extra, home_goals, away_goals
+            SELECT id, status, elapsed, elapsed_extra, home_goals, away_goals, events
             FROM matches
             WHERE status IN ('1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE', 'INT', 'SUSP')
             LIMIT 50
@@ -2526,16 +2539,47 @@ async def get_live_summary(
         rows = result.fetchall()
 
         # Build compact response (keyed by internal match_id per Auditor requirement)
+        # FASE 1: now includes events (ev) when available
         matches_dict = {}
         for row in rows:
             match_id = row[0]
-            matches_dict[match_id] = {
+            match_data = {
                 "s": row[1],  # status
                 "e": row[2] or 0,  # elapsed
                 "ex": row[3] or 0,  # elapsed_extra
                 "h": row[4] or 0,  # home_goals
                 "a": row[5] or 0,  # away_goals
             }
+            # FASE 1: Convert FULL schema events to COMPACT format for iOS
+            # DB stores: {type, detail, minute, extra_minute, team_id, team_name, player_name, assist_name}
+            # iOS expects: {m, x, t, d, tm, p, a}
+            events = row[6]
+            if events:
+                # events is already JSON from DB, parse if string
+                if isinstance(events, str):
+                    try:
+                        events = json.loads(events)
+                    except json.JSONDecodeError:
+                        events = None
+                if events:
+                    # Convert to compact format (only Goal and Card for iOS timeline)
+                    compact_events = []
+                    for ev in events:
+                        ev_type = ev.get("type")
+                        if ev_type not in ("Goal", "Card"):
+                            continue
+                        compact_events.append({
+                            "m": ev.get("minute"),
+                            "x": ev.get("extra_minute"),
+                            "t": ev_type,
+                            "d": ev.get("detail"),
+                            "tm": ev.get("team_id"),
+                            "p": ev.get("player_name"),
+                            "a": ev.get("assist_name"),
+                        })
+                    if compact_events:
+                        match_data["ev"] = compact_events
+            matches_dict[match_id] = match_data
 
         response_data = {
             "ts": int(now),

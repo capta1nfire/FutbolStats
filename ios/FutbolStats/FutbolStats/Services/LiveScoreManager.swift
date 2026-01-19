@@ -1,6 +1,6 @@
 import Foundation
 
-/// Response model for /live-summary endpoint
+/// Response model for /live-summary endpoint (v2 - FASE 1: includes events)
 struct LiveSummary: Codable {
     let ts: Int
     let matches: [String: LiveScore]  // Key is match_id as String (JSON keys are strings)
@@ -11,12 +11,54 @@ struct LiveSummary: Codable {
         let ex: Int        // elapsed_extra
         let h: Int         // home goals
         let a: Int         // away goals
+        let ev: [LiveEvent]?  // FASE 1: live events (goals, cards)
 
         var status: String { s }
         var elapsed: Int { e }
         var elapsedExtra: Int { ex }
         var homeGoals: Int { h }
         var awayGoals: Int { a }
+        var events: [LiveEvent]? { ev }
+    }
+
+    /// Compact live event from /live-summary (FASE 1)
+    struct LiveEvent: Codable, Identifiable {
+        let m: Int?        // minute
+        let x: Int?        // extra minute (injury time)
+        let t: String?     // type: Goal, Card
+        let d: String?     // detail: Normal Goal, Yellow Card, Red Card, Penalty, Own Goal
+        let tm: Int?       // team_id
+        let p: String?     // player name
+        let a: String?     // assist name (goals only)
+
+        var id: String {
+            "\(m ?? 0)-\(t ?? "")-\(p ?? "")"
+        }
+
+        var minute: Int { m ?? 0 }
+        var extraMinute: Int? { x }
+        var type: String { t ?? "" }
+        var detail: String { d ?? "" }
+        var teamId: Int? { tm }
+        var playerName: String { p ?? "Unknown" }
+        var assistName: String? { a }
+
+        /// Display minute (e.g., "45+2'" or "67'")
+        var displayMinute: String {
+            if let extra = x, extra > 0 {
+                return "\(m ?? 0)+\(extra)'"
+            }
+            return "\(m ?? 0)'"
+        }
+
+        /// Is this a goal event?
+        var isGoal: Bool { t == "Goal" }
+
+        /// Is this a card event?
+        var isCard: Bool { t == "Card" }
+
+        /// Is this a red card?
+        var isRedCard: Bool { t == "Card" && d == "Red Card" }
     }
 }
 
@@ -49,14 +91,23 @@ final class LiveScoreManager: ObservableObject {
 
     // MARK: - Configuration
 
-    /// Normal polling interval when there are live matches (15s per Auditor)
-    private let normalPollInterval: TimeInterval = 15.0
+    /// Normal polling interval when there are live matches (10s per Auditor v2)
+    private let normalPollInterval: TimeInterval = 10.0
+
+    /// Burst polling interval after score change (3s x 3 times)
+    private let burstPollInterval: TimeInterval = 3.0
 
     /// Backoff interval when no live matches (60s per Auditor)
     private let backoffPollInterval: TimeInterval = 60.0
 
-    /// Current polling interval (adjusts based on live match count)
-    private var currentPollInterval: TimeInterval = 15.0
+    /// Current polling interval (adjusts based on live match count and burst mode)
+    private var currentPollInterval: TimeInterval = 10.0
+
+    /// Burst mode: rapid polling after score change
+    private var burstRemaining: Int = 0
+
+    /// Last known scores to detect changes (matchId -> "home-away")
+    private var lastKnownScores: [Int: String] = [:]
 
     // MARK: - State
 
@@ -116,16 +167,18 @@ final class LiveScoreManager: ObservableObject {
     }
 
     /// Determine if we should be polling based on current state
+    /// FIX (Auditor v2): viewingMatchId should trigger polling independently of liveMatchIdsFromList
     private var shouldPoll: Bool {
         guard isAppActive else { return false }
 
-        // Poll if there are live matches in the list
-        if !liveMatchIdsFromList.isEmpty {
+        // Poll if viewing ANY match in detail (user expects live updates)
+        // This fixes the bug where detail wouldn't poll if list didn't mark it as live
+        if viewingMatchId != nil {
             return true
         }
 
-        // Poll if viewing a live match in detail
-        if let viewingId = viewingMatchId, liveMatchIdsFromList.contains(viewingId) {
+        // Poll if there are live matches in the list
+        if !liveMatchIdsFromList.isEmpty {
             return true
         }
 
@@ -152,10 +205,28 @@ final class LiveScoreManager: ObservableObject {
 
         pollTask = Task {
             while !Task.isCancelled {
-                await fetchLiveSummary()
+                let scoreChanged = await fetchLiveSummary()
 
-                // Adjust interval based on results
-                let interval = liveMatchCount > 0 ? normalPollInterval : backoffPollInterval
+                // Determine next interval
+                let interval: TimeInterval
+                if scoreChanged {
+                    // Score changed - enter burst mode (3s x 3)
+                    burstRemaining = 3
+                    interval = burstPollInterval
+                    print("[LiveScoreManager] BURST MODE: Score changed, polling every \(burstPollInterval)s for \(burstRemaining) cycles")
+                } else if burstRemaining > 0 {
+                    // Continue burst mode
+                    burstRemaining -= 1
+                    interval = burstPollInterval
+                    print("[LiveScoreManager] BURST MODE: \(burstRemaining) cycles remaining")
+                } else if liveMatchCount > 0 {
+                    // Normal live polling
+                    interval = normalPollInterval
+                } else {
+                    // No live matches - backoff
+                    interval = backoffPollInterval
+                }
+
                 if interval != currentPollInterval {
                     currentPollInterval = interval
                     print("[LiveScoreManager] Adjusted poll interval to \(interval)s (liveMatches: \(liveMatchCount))")
@@ -177,11 +248,14 @@ final class LiveScoreManager: ObservableObject {
 
     // MARK: - Fetch
 
-    private func fetchLiveSummary() async {
+    /// Fetch live summary and update cache
+    /// - Returns: true if any score changed (triggers burst mode)
+    @discardableResult
+    private func fetchLiveSummary() async -> Bool {
         let baseURL = APIEnvironment.current.baseURL
         guard let url = URL(string: "\(baseURL)/live-summary") else {
             print("[LiveScoreManager] Invalid URL")
-            return
+            return false
         }
 
         var request = URLRequest(url: url)
@@ -201,12 +275,12 @@ final class LiveScoreManager: ObservableObject {
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 print("[LiveScoreManager] Invalid response type")
-                return
+                return false
             }
 
             guard httpResponse.statusCode == 200 else {
                 print("[LiveScoreManager] HTTP \(httpResponse.statusCode)")
-                return
+                return false
             }
 
             let summary = try JSONDecoder().decode(LiveSummary.self, from: data)
@@ -216,23 +290,37 @@ final class LiveScoreManager: ObservableObject {
             lastPollAt = Date()
             liveMatchCount = summary.matches.count
 
-            // Update MatchCache with fresh data
+            // Detect score changes and update cache
+            var anyScoreChanged = false
             for (matchIdStr, score) in summary.matches {
                 guard let matchId = Int(matchIdStr) else { continue }
+
+                // Check for score change
+                let currentScore = "\(score.homeGoals)-\(score.awayGoals)"
+                if let lastScore = lastKnownScores[matchId], lastScore != currentScore {
+                    print("[LiveScoreManager] GOAL DETECTED: Match \(matchId) score changed \(lastScore) -> \(currentScore)")
+                    anyScoreChanged = true
+                }
+                lastKnownScores[matchId] = currentScore
+
+                // Update cache (FASE 1: now includes events)
                 MatchCache.shared.update(
                     matchId: matchId,
                     status: score.status,
                     elapsed: score.elapsed,
                     elapsedExtra: score.elapsedExtra,
                     homeGoals: score.homeGoals,
-                    awayGoals: score.awayGoals
+                    awayGoals: score.awayGoals,
+                    events: score.events
                 )
             }
 
             print("[LiveScoreManager] Fetched \(summary.matches.count) live matches in \(String(format: "%.1f", latencyMs))ms")
+            return anyScoreChanged
 
         } catch {
             print("[LiveScoreManager] Error: \(error.localizedDescription)")
+            return false
         }
     }
 }
