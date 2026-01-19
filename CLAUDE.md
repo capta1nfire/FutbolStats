@@ -2,6 +2,11 @@
 
 Sistema de predicciones de fútbol con ML y narrativas LLM.
 
+## Roles del Proyecto
+- **David**: Owner/Usuario del producto
+- **Auditor**: Director de Ingeniería - valida arquitectura, define requisitos/guardrails/criterios de aceptación, audita riesgos. No escribe código de producción.
+- **Claude (Master)**: Implementador - ejecuta código, deploys, debugging según instrucciones del Auditor
+
 ## Stack Tecnológico
 - **Backend**: Python 3.12, FastAPI, SQLAlchemy/SQLModel
 - **Database**: PostgreSQL (Railway)
