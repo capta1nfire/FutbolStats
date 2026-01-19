@@ -37,4 +37,9 @@ models/*_temp*.json
 # Temp
 tmp/
 temp/
-CLAUDE.md
+
+# Claude Code local config (credentials, personal settings)
+CLAUDE.local.md
+
+# iOS Secrets (xcconfig with tokens/keys)
+ios/**/Secrets.xcconfig
