@@ -24,21 +24,20 @@
   - Legacy value_bets (6) permanecen; UI muestra "—" en campos faltantes; no rompe
   - Script de migración creado (scripts/migrate_legacy_value_bets.py) - opcional, requiere acceso a producción
 
-- [ ] Investigar Predictions frozen para los partidos del 9 de enero y probablemente 10 de enro (y los futuros) Probable bug?
-
 - [ ] Monitorear narrativa y comparar con un review de un humano (analista deportivo o periodista) para validar/reforzar prescicion de nuestra narrativa.
 
 - [ ] crear un checklist y mapa (ayer datos iban a pasar por fuera de "ML Engine")
 
 - [ ] verificar que cada equipo de cada liga esta recibiendo predicciones, odds, estadisticas, etc.
+
 - [ ] Reestructura xgboots y features basado en analisis de Google (pineado)
 
 - [ ] Por que desaparecen los ppartidos de la App? El sabado 10 de enero inicialmente aparecieron 35, luego aparecieron 34 y hoy solo aparecen 8? Se estan filtrando o eliminando?
 
 
-- [ ] Pandas vs Polars
+- [ ] Pandas vs Polars (por el momento no)
 
-- [ ] Mejorar narrativa, qwen intercambia numeros (1) con palabras (Uno). Que diga el resultado 1-1, 2-2, 2-1, etc es irrelevante ya el usuario sabe que el equipo/gano/empato/perdio y lo que realmente quiere entender es el porque, haciendonos desperdiciar palabras (tokens) diciendo el marcador cuando podemos usarlo para explicar mas el contexto del match. En la seccion inferior titulada "los factores clave" se repite la misma informacion de la narrativa, estamos duplicando la info. Evitar mencionar tanto El nombre del equipo, si ya se menciona el Inter, al nombrarlo nuevamente usar "Los Azurri" o "los locales". Implementar el uso de "sobrenombres" a los equipos para que en la narrativa se enriquezaca y dinamicamente/aleatoriamente sean utilizados, por ejemplo para referirse al "Real Madrid" use "Los Merengues", Atletico de Madrid "Los Colchoneros", Colombia "Los Cafeteros" deben ser "apodos" no peyorativos o despectivos. Tambien considero que debajo de la narrativa debe ir una seccion "Tabla" con las estadisticas del partido (como en el entretiempo de un partido), con eso podemos ajustar la narrativa para marcar puntualmente donde acertamos o perdimos la prediccion, dejando que la tabla de estadisticas que vamos a poner (mas adelante) explique por si sola los numeros.
+- [ ] Mejorar narrativa
 
 - [x] Para el cierre formal (operacional) solo faltan los 2 pendientes y ya:
 Screenshot de 1 alerta "Firing" (prueba controlada bajando temporalmente el umbral y luego revertir).
@@ -86,23 +85,90 @@ Cuando veas el próximo tick y esos campos, lo marcamos CLOSED. (esto es respect
 - [ ] Mensaje "Apuesta con responsabilidad en el footer de la narrativa me gusta", podemos manejar mas mensajes bajo este concepto.
 
 - [ ]Revisar tabla de posiciones de inicio de ligas de sudamerica, deben volver a "Cero".
-- [ ] 
+Monitorear (Ajustes aplicados:
 
-- [ ] 
-- [ ] 
-- [ ] 
-- [ ] 
-- [ ] 
-- [ ] 
-- [ ] 
-- [ ] 
-- [ ] 
-- [ ] 
-- [ ] 
-- [ ] 
+Last eval + next run: Last eval: — | Next: every 30m
+Errors 24h: Contador agregado en ops.json, solo se muestra en card si > 0
+Labels claros: Pending → Awaiting FT para indicar que esperan partidos terminados, no que faltan generar
+El deploy se propagará automáticamente. El card ahora distingue claramente:
+
+"Awaiting FT: 1576" = predicciones shadow generadas, esperando que los partidos terminen
+"Evaluated: 0" = partidos ya terminados y evaluados
+"Last eval: —" = aún no ha corrido evaluación (vs job roto que mostraría timestamp antiguo)))
+
+- [ ] El formato Copy se llama "triple backticks"
+
+- [ ] Quiero cards con promedio de acierto de modelo A y modelo B.
+
+- [ ] Auditoria a shadow + model B
+
+- [ ] Se estan cargando equipos de la liga pero por la copa del rey y no por la liga, agregar esos torneos tambien.
+
+- [ ] OJO LIGA COLOMBIANA! Para poblar manualmente cuando API-Football publique 2026:
+curl "https://web-production-f2de9.up.railway.app/standings/239?season=2026"
+
+- [x] Actualizar la equidad por internacional de bogota
+
+- [ ] El P1 diferido (unificar en _LEAGUE_RULES) está bien planteado: lo activaría únicamente cuando crezca el número de ligas con reglas especiales o cuando haya más de un consumidor de esas reglas.
+
+- [ ] Monitorear aleatoriamente logs en el backend.
+
+- [ ] OK, todos los partidos NS de las próximas 48h sí tienen predicciones. El health check reporta WARN porque la columna created_at de esas predicciones es antigua (hace 19h), no porque falten predicciones.
+
+El catch-up hizo upsert y encontró que ya existían predicciones, así que el created_at no se actualizó (es el timestamp original de cuando se crearon).
+
+Diagnóstico:
+
+Las predicciones existen y están correctas (Coverage 100%)
+Missing FT: 0/22 - ningún partido terminado sin predicción
+El WARN es porque el timestamp de la última predicción guardada es antiguo
+El sistema está funcionando correctamente, pero la métrica de "staleness" es confusa porque:
+
+Mira MAX(created_at) de la tabla predictions
+Si el catch-up hace upsert de predicciones existentes, created_at no cambia
+Reporta WARN aunque las predicciones están al día
+Esto es un falso positivo del health check. Las predicciones están actualizadas, solo que el timestamp de creación es el original.
+
+¿Quieres que ajuste la lógica del health check para considerar este caso, o prefieres dejarlo así ya que el próximo daily_save_predictions (a las 7:00 UTC) actualizará naturalmente las métricas?
+
+- [ ] Betting Odds formato (+185 vs 2.54)
+
+- [ ] medir predicciones con empates ajustado desde el dia 15 enero hora 5:50pm hora LA.
+
+- [ ] monitoria en dashboard de todos los jobs
+
+- [ ] configurar alertas en grafana
+
 - [ ] Revisar claude.md para validar los pendientes.
+
 - [ ] Supervisar Shadow Mode (2 semanas a partir de Jan 14/25)
 
 
----
+--- Intención Sensor B: re-entrenar periódicamente con una ventana deslizante (p.ej. últimos N partidos FT) para ajustarse a la tendencia reciente; con ese ajuste, generar predicciones internas “hacia adelante” y, cuando esos partidos terminen, comparar Modelo A vs Realidad vs Modelo B (head-to-head + calibración).
+
+tabla de posiciones aun sigue La Equidad.
+
+- [ ] Perfecto. Resumen del estado actual:
+
+ML Leagues Onboarding: COMPLETO
+
+Liga	Volumen	Odds	Stats	Valor ML
+Championship (40)	37 NS	32%	Pending	Alto (volumen)
+Eredivisie (88)	3K+	47%	100%	Alto (mejor candidato)
+Primeira Liga (94)	3K+	7%	100%	Medio (sin market)
+Conference (848)	2K	0%	100%	Bajo (sin market)
+Monitoreo 48h establecido:
+
+jobs_health (stats_backfill, odds_sync)
+Sentry (league_id 40/88/94)
+Coverage por liga
+Criterio backfill P1: Solo si FT sin stats o coverage persistentemente 0%.
+
+- [ ] P1 (más adelante)
+Cuando tengamos aire, migramos a un esquema más limpio (DB-only o S3/GCS). Pero hoy el objetivo es que no se caiga el job.
+GO.
+
+- [ ] Cuando tengamos una liga con tabla de posicion en fallback, notificarlo para seguimiento.
+
+eliminar medallas "Tier" (y codigo) de oro, plata bronce en las predicciones de cada partido o revisar el codigo e implementarlo bien.
 

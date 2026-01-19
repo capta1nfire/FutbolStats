@@ -22,7 +22,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-os.environ["DATABASE_URL"] = "postgresql://postgres:hzvozcXijUpblVrQshuowYcEGwZnMrfO@maglev.proxy.rlwy.net:24997/railway"
+
+# Require DATABASE_URL from environment (do not hardcode secrets)
+if not os.environ.get("DATABASE_URL"):
+    raise RuntimeError(
+        "DATABASE_URL environment variable is required.\n"
+        "Set it in your shell or .env file before running this script."
+    )
 
 import numpy as np
 import pandas as pd
