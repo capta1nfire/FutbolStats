@@ -11372,6 +11372,138 @@ async def ops_daily_counts(
     }
 
 
+# =============================================================================
+# DAILY COMPARISON: Model A vs Shadow vs Sensor B vs Market
+# =============================================================================
+
+
+@app.get("/dashboard/ops/daily_comparison.json")
+async def ops_daily_comparison(
+    request: Request,
+    date: str = None,
+    league_id: int = None,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Get daily comparison of finished matches: Real vs Model A vs Shadow vs Sensor B vs Market.
+
+    Args:
+        date: Date in YYYY-MM-DD format (America/Los_Angeles timezone). Defaults to today.
+        league_id: Optional filter by league ID.
+
+    Returns:
+        List of matches with predictions from all sources for comparison.
+    """
+    import pytz
+    import re
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    # Default to today in LA timezone
+    la_tz = pytz.timezone("America/Los_Angeles")
+    if date:
+        # Validate date format
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+        target_date = datetime.strptime(date, "%Y-%m-%d")
+    else:
+        # Today in LA timezone
+        target_date = datetime.now(la_tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        target_date = target_date.replace(tzinfo=None)  # Make naive for localize
+
+    # Convert date_la to UTC range (CRITICAL for index usage per Auditor)
+    start_la = la_tz.localize(target_date.replace(hour=0, minute=0, second=0))
+    end_la = la_tz.localize(target_date.replace(hour=23, minute=59, second=59))
+    start_utc = start_la.astimezone(pytz.UTC)
+    end_utc = end_la.astimezone(pytz.UTC) + timedelta(seconds=1)  # Inclusive end
+
+    # Build query with UTC range filter
+    query = """
+        SELECT
+            match_id,
+            kickoff_utc,
+            match_day_la,
+            league_id,
+            status,
+            home_team,
+            away_team,
+            home_goals,
+            away_goals,
+            actual_outcome,
+            a_home_prob,
+            a_draw_prob,
+            a_away_prob,
+            a_pick,
+            a_version,
+            a_is_frozen,
+            shadow_home_prob,
+            shadow_draw_prob,
+            shadow_away_prob,
+            shadow_pick,
+            shadow_version,
+            sensor_home_prob,
+            sensor_draw_prob,
+            sensor_away_prob,
+            sensor_pick,
+            sensor_version,
+            sensor_state,
+            market_bookmaker,
+            market_odds_home,
+            market_odds_draw,
+            market_odds_away,
+            market_implied_home,
+            market_implied_draw,
+            market_implied_away,
+            market_pick
+        FROM v_daily_match_comparison
+        WHERE kickoff_utc >= :start_utc AND kickoff_utc < :end_utc
+    """
+    params = {"start_utc": start_utc, "end_utc": end_utc}
+
+    if league_id:
+        query += " AND league_id = :league_id"
+        params["league_id"] = league_id
+
+    query += " ORDER BY kickoff_utc"
+
+    result = await session.execute(text(query), params)
+    matches = result.mappings().all()
+
+    # Calculate summary stats
+    total = len(matches)
+    a_correct = sum(1 for m in matches if m["a_pick"] == m["actual_outcome"])
+    shadow_correct = sum(1 for m in matches if m["shadow_pick"] == m["actual_outcome"])
+    sensor_correct = sum(1 for m in matches if m["sensor_pick"] == m["actual_outcome"])
+    market_correct = sum(1 for m in matches if m["market_pick"] == m["actual_outcome"])
+
+    return {
+        "date_la": target_date.strftime("%Y-%m-%d"),
+        "start_utc": start_utc.isoformat(),
+        "end_utc": end_utc.isoformat(),
+        "total_matches": total,
+        "summary": {
+            "model_a": {
+                "correct": a_correct,
+                "accuracy": round(a_correct / total, 3) if total > 0 else 0,
+            },
+            "shadow": {
+                "correct": shadow_correct,
+                "accuracy": round(shadow_correct / total, 3) if total > 0 else 0,
+            },
+            "sensor_b": {
+                "correct": sensor_correct,
+                "accuracy": round(sensor_correct / total, 3) if total > 0 else 0,
+            },
+            "market": {
+                "correct": market_correct,
+                "accuracy": round(market_correct / total, 3) if total > 0 else 0,
+            },
+        },
+        "matches": [dict(m) for m in matches],
+    }
+
+
 @app.get("/dashboard/ops/team_overrides.json")
 async def ops_team_overrides(
     request: Request,
