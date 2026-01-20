@@ -11509,16 +11509,43 @@ async def ops_daily_comparison_html(
     request: Request,
     date: str = None,
     league_id: int = None,
+    market: str = "1",
+    model_a: str = "1",
+    shadow: str = "1",
+    sensor: str = "1",
     session: AsyncSession = Depends(get_async_session),
 ):
     """
     HTML table view of daily comparison - opens directly in browser.
+
+    Model selection via query params (1=enabled, 0=disabled):
+    - market: Include Market predictions
+    - model_a: Include Model A predictions
+    - shadow: Include Shadow predictions
+    - sensor: Include Sensor B predictions
     """
     import pytz
     import re
 
     if not _verify_dashboard_token(request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    # Parse model selection (1=enabled, 0=disabled)
+    show_market = market == "1"
+    show_model_a = model_a == "1"
+    show_shadow = shadow == "1"
+    show_sensor = sensor == "1"
+
+    # At least one model must be selected
+    if not any([show_market, show_model_a, show_shadow, show_sensor]):
+        show_market = show_model_a = True  # Default to Market + Model A
+
+    selected_models = {
+        "market": show_market,
+        "model_a": show_model_a,
+        "shadow": show_shadow,
+        "sensor": show_sensor,
+    }
 
     # Reuse the JSON endpoint logic
     la_tz = pytz.timezone("America/Los_Angeles")
@@ -11535,28 +11562,90 @@ async def ops_daily_comparison_html(
     start_utc = start_la.astimezone(pytz.UTC).replace(tzinfo=None)
     end_utc = (end_la.astimezone(pytz.UTC) + timedelta(seconds=1)).replace(tzinfo=None)
 
-    query = """
+    # Query for FINISHED matches (from VIEW)
+    query_finished = """
         SELECT * FROM v_daily_match_comparison
         WHERE kickoff_utc >= :start_utc AND kickoff_utc < :end_utc
     """
     params = {"start_utc": start_utc, "end_utc": end_utc}
     if league_id:
-        query += " AND league_id = :league_id"
+        query_finished += " AND league_id = :league_id"
         params["league_id"] = league_id
-    query += " ORDER BY kickoff_utc"
+    query_finished += " ORDER BY kickoff_utc"
 
-    result = await session.execute(text(query), params)
-    matches = result.mappings().all()
+    result_finished = await session.execute(text(query_finished), params)
+    finished_matches = result_finished.mappings().all()
 
-    # Calculate summary (all matches)
-    total = len(matches)
-    a_correct = sum(1 for m in matches if m["a_pick"] == m["actual_outcome"])
-    shadow_correct = sum(1 for m in matches if m["shadow_pick"] == m["actual_outcome"])
-    sensor_correct = sum(1 for m in matches if m["sensor_pick"] == m["actual_outcome"])
-    market_correct = sum(1 for m in matches if m["market_pick"] == m["actual_outcome"])
+    # Query for PENDING matches (NS status) - need to join manually
+    query_pending = """
+        WITH latest_predictions AS (
+            SELECT DISTINCT ON (match_id)
+                match_id, home_prob, draw_prob, away_prob, model_version
+            FROM predictions
+            WHERE model_version NOT LIKE '%two_stage%'
+            ORDER BY match_id, is_frozen DESC NULLS LAST, created_at DESC
+        )
+        SELECT
+            m.id AS match_id,
+            m.date AS kickoff_utc,
+            m.league_id,
+            m.status,
+            ht.name AS home_team,
+            at.name AS away_team,
+            p.home_prob AS a_home_prob,
+            p.draw_prob AS a_draw_prob,
+            p.away_prob AS a_away_prob,
+            CASE
+                WHEN p.home_prob >= p.draw_prob AND p.home_prob >= p.away_prob THEN 'home'
+                WHEN p.draw_prob >= p.home_prob AND p.draw_prob >= p.away_prob THEN 'draw'
+                ELSE 'away'
+            END AS a_pick,
+            sp.shadow_predicted AS shadow_pick,
+            sen.b_pick AS sensor_pick,
+            mos.market_pick
+        FROM matches m
+        JOIN teams ht ON ht.id = m.home_team_id
+        JOIN teams at ON at.id = m.away_team_id
+        LEFT JOIN latest_predictions p ON p.match_id = m.id
+        LEFT JOIN shadow_predictions sp ON sp.match_id = m.id
+        LEFT JOIN sensor_predictions sen ON sen.match_id = m.id
+        LEFT JOIN match_odds_snapshot mos ON mos.match_id = m.id AND mos.is_primary = TRUE
+        WHERE m.status = 'NS'
+          AND m.date >= :start_utc AND m.date < :end_utc
+    """
+    if league_id:
+        query_pending += " AND m.league_id = :league_id"
+    query_pending += " ORDER BY m.date"
 
-    # Calculate GLOBAL accuracy (all historical matches where ALL 4 models have data)
-    global_query = """
+    result_pending = await session.execute(text(query_pending), params)
+    pending_matches = result_pending.mappings().all()
+
+    # Combine: pending first, then finished
+    all_matches = list(pending_matches) + list(finished_matches)
+
+    # Calculate summary (only finished matches)
+    total_finished = len(finished_matches)
+    total_pending = len(pending_matches)
+    a_correct = sum(1 for m in finished_matches if m["a_pick"] == m["actual_outcome"])
+    shadow_correct = sum(1 for m in finished_matches if m["shadow_pick"] == m["actual_outcome"])
+    sensor_correct = sum(1 for m in finished_matches if m["sensor_pick"] == m["actual_outcome"])
+    market_correct = sum(1 for m in finished_matches if m["market_pick"] == m["actual_outcome"])
+
+    # Calculate GLOBAL accuracy (only for SELECTED models)
+    # Build WHERE clause dynamically based on selected models
+    global_where_clauses = []
+    if show_market:
+        global_where_clauses.append("market_pick IS NOT NULL")
+    if show_model_a:
+        global_where_clauses.append("a_pick IS NOT NULL")
+    if show_shadow:
+        global_where_clauses.append("shadow_pick IS NOT NULL")
+    if show_sensor:
+        global_where_clauses.append("sensor_pick IS NOT NULL")
+
+    global_where = " AND ".join(global_where_clauses) if global_where_clauses else "1=1"
+
+    global_query = f"""
         SELECT
             COUNT(*) as total,
             SUM(CASE WHEN market_pick = actual_outcome THEN 1 ELSE 0 END) as market_correct,
@@ -11564,10 +11653,7 @@ async def ops_daily_comparison_html(
             SUM(CASE WHEN shadow_pick = actual_outcome THEN 1 ELSE 0 END) as shadow_correct,
             SUM(CASE WHEN sensor_pick = actual_outcome THEN 1 ELSE 0 END) as sensor_correct
         FROM v_daily_match_comparison
-        WHERE market_pick IS NOT NULL
-          AND a_pick IS NOT NULL
-          AND shadow_pick IS NOT NULL
-          AND sensor_pick IS NOT NULL
+        WHERE {global_where}
     """
     global_result = await session.execute(text(global_query))
     global_row = global_result.fetchone()
@@ -11577,35 +11663,55 @@ async def ops_daily_comparison_html(
     global_shadow = global_row[3] or 0
     global_sensor = global_row[4] or 0
 
-    # Calculate daily wins per model (how many days each model was the winner)
-    daily_wins_query = """
-        WITH daily_stats AS (
+    # Calculate daily wins per model (only for SELECTED models)
+    # Build dynamic winner conditions based on selected models
+    selected_model_names = []
+    if show_market:
+        selected_model_names.append(("market", "market_correct"))
+    if show_model_a:
+        selected_model_names.append(("model_a", "a_correct"))
+    if show_shadow:
+        selected_model_names.append(("shadow", "shadow_correct"))
+    if show_sensor:
+        selected_model_names.append(("sensor", "sensor_correct"))
+
+    # Build winner CASE expressions dynamically
+    def build_winner_case(model_col, all_cols):
+        """Build CASE for when this model beats all others."""
+        other_cols = [c for _, c in all_cols if c != model_col]
+        if not other_cols:
+            return "1"  # Only one model selected, always wins
+        conditions = " AND ".join([f"{model_col} > {oc}" for oc in other_cols])
+        return f"CASE WHEN {conditions} THEN 1 ELSE 0 END"
+
+    wins_market = wins_a = wins_shadow = wins_sensor = 0
+
+    if len(selected_model_names) >= 1:
+        daily_wins_query = f"""
+            WITH daily_stats AS (
+                SELECT
+                    match_day_la,
+                    SUM(CASE WHEN market_pick = actual_outcome THEN 1 ELSE 0 END) as market_correct,
+                    SUM(CASE WHEN a_pick = actual_outcome THEN 1 ELSE 0 END) as a_correct,
+                    SUM(CASE WHEN shadow_pick = actual_outcome THEN 1 ELSE 0 END) as shadow_correct,
+                    SUM(CASE WHEN sensor_pick = actual_outcome THEN 1 ELSE 0 END) as sensor_correct
+                FROM v_daily_match_comparison
+                WHERE {global_where}
+                GROUP BY match_day_la
+            )
             SELECT
-                match_day_la,
-                SUM(CASE WHEN market_pick = actual_outcome THEN 1 ELSE 0 END) as market_correct,
-                SUM(CASE WHEN a_pick = actual_outcome THEN 1 ELSE 0 END) as a_correct,
-                SUM(CASE WHEN shadow_pick = actual_outcome THEN 1 ELSE 0 END) as shadow_correct,
-                SUM(CASE WHEN sensor_pick = actual_outcome THEN 1 ELSE 0 END) as sensor_correct
-            FROM v_daily_match_comparison
-            WHERE market_pick IS NOT NULL
-              AND a_pick IS NOT NULL
-              AND shadow_pick IS NOT NULL
-              AND sensor_pick IS NOT NULL
-            GROUP BY match_day_la
-        )
-        SELECT
-            SUM(CASE WHEN market_correct > a_correct AND market_correct > shadow_correct AND market_correct > sensor_correct THEN 1 ELSE 0 END) as market_wins,
-            SUM(CASE WHEN a_correct > market_correct AND a_correct > shadow_correct AND a_correct > sensor_correct THEN 1 ELSE 0 END) as a_wins,
-            SUM(CASE WHEN shadow_correct > market_correct AND shadow_correct > a_correct AND shadow_correct > sensor_correct THEN 1 ELSE 0 END) as shadow_wins,
-            SUM(CASE WHEN sensor_correct > market_correct AND sensor_correct > a_correct AND sensor_correct > shadow_correct THEN 1 ELSE 0 END) as sensor_wins
-        FROM daily_stats
-    """
-    daily_wins_result = await session.execute(text(daily_wins_query))
-    daily_wins_row = daily_wins_result.fetchone()
-    wins_market = daily_wins_row[0] or 0
-    wins_a = daily_wins_row[1] or 0
-    wins_shadow = daily_wins_row[2] or 0
-    wins_sensor = daily_wins_row[3] or 0
+                SUM({build_winner_case('market_correct', selected_model_names)}) as market_wins,
+                SUM({build_winner_case('a_correct', selected_model_names)}) as a_wins,
+                SUM({build_winner_case('shadow_correct', selected_model_names)}) as shadow_wins,
+                SUM({build_winner_case('sensor_correct', selected_model_names)}) as sensor_wins
+            FROM daily_stats
+        """
+        daily_wins_result = await session.execute(text(daily_wins_query))
+        daily_wins_row = daily_wins_result.fetchone()
+        wins_market = daily_wins_row[0] or 0
+        wins_a = daily_wins_row[1] or 0
+        wins_shadow = daily_wins_row[2] or 0
+        wins_sensor = daily_wins_row[3] or 0
 
     # Build HTML
     date_str = target_date.strftime("%Y-%m-%d")
@@ -11649,19 +11755,54 @@ async def ops_daily_comparison_html(
             return "background: #dcfce7;"
         return ""
 
+    def format_time_la(kickoff_utc):
+        """Convert UTC kickoff to LA time formatted as HH:MM AM/PM."""
+        if not kickoff_utc:
+            return "—"
+        utc_dt = kickoff_utc.replace(tzinfo=pytz.UTC) if kickoff_utc.tzinfo is None else kickoff_utc
+        la_dt = utc_dt.astimezone(la_tz)
+        return la_dt.strftime("%-I:%M %p")
+
     rows_html = ""
-    for m in matches:
-        actual = m['actual_outcome']
+    for m in all_matches:
+        is_finished = m.get('status') in ('FT', 'AET', 'PEN') or m.get('actual_outcome') is not None
+        actual = m.get('actual_outcome')
+
+        if is_finished:
+            # Finished match: show score, result, and checkmarks
+            score_cell = f"{m['home_goals']}-{m['away_goals']}"
+            real_cell = badge_only(actual)
+            market_cell = badge(m.get('market_pick'), actual)
+            model_a_cell = badge(m.get('a_pick'), actual)
+            shadow_cell = badge(m.get('shadow_pick'), actual)
+            sensor_cell = badge(m.get('sensor_pick'), actual)
+        else:
+            # Pending match: show time, "—" for real, badges without checkmarks
+            score_cell = format_time_la(m.get('kickoff_utc'))
+            real_cell = "—"
+            market_cell = badge_only(m.get('market_pick'))
+            model_a_cell = badge_only(m.get('a_pick'))
+            shadow_cell = badge_only(m.get('shadow_pick'))
+            sensor_cell = badge_only(m.get('sensor_pick'))
+
+        # Build row with only selected model columns
+        model_cells = ""
+        if show_market:
+            model_cells += f'<td style="text-align: center; {winner_style("market") if is_finished else ""}">{market_cell}</td>'
+        if show_model_a:
+            model_cells += f'<td style="text-align: center; {winner_style("model_a") if is_finished else ""}">{model_a_cell}</td>'
+        if show_shadow:
+            model_cells += f'<td style="text-align: center; {winner_style("shadow") if is_finished else ""}">{shadow_cell}</td>'
+        if show_sensor:
+            model_cells += f'<td style="text-align: center; {winner_style("sensor") if is_finished else ""}">{sensor_cell}</td>'
+
         rows_html += f"""
-        <tr>
+        <tr style="{'opacity: 0.7;' if not is_finished else ''}">
             <td>{m['home_team']}</td>
             <td>{m['away_team']}</td>
-            <td style="text-align: center; font-weight: bold;">{m['home_goals']}-{m['away_goals']}</td>
-            <td style="text-align: center;">{badge_only(actual)}</td>
-            <td style="text-align: center; {winner_style('market')}">{badge(m['market_pick'], actual)}</td>
-            <td style="text-align: center; {winner_style('model_a')}">{badge(m['a_pick'], actual)}</td>
-            <td style="text-align: center; {winner_style('shadow')}">{badge(m['shadow_pick'], actual)}</td>
-            <td style="text-align: center; {winner_style('sensor')}">{badge(m['sensor_pick'], actual)}</td>
+            <td style="text-align: center; font-weight: bold;">{score_cell}</td>
+            <td style="text-align: center;">{real_cell}</td>
+            {model_cells}
         </tr>
         """
 
@@ -11692,28 +11833,50 @@ async def ops_daily_comparison_html(
             .nav a {{ color: #3b82f6; text-decoration: none; margin-right: 15px; }}
             .nav a:hover {{ text-decoration: underline; }}
             .legend {{ font-size: 11px; color: #94a3b8; margin: 8px 0 16px 0; font-style: italic; }}
+            .summary-item input[type="checkbox"] {{ width: 12px; height: 12px; cursor: pointer; margin-right: 4px; }}
+            .summary-item .label {{ display: flex; align-items: center; justify-content: center; }}
+            .apply-btn {{ background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-left: 8px; }}
+            .apply-btn:hover {{ background: #2563eb; }}
         </style>
     </head>
     <body>
         <div class="nav">
-            <a href="?date={( target_date - timedelta(days=1)).strftime('%Y-%m-%d')}&token={request.query_params.get('token', '')}">← Día anterior</a>
-            <a href="?date={(target_date + timedelta(days=1)).strftime('%Y-%m-%d')}&token={request.query_params.get('token', '')}">Día siguiente →</a>
+            <a href="?date={( target_date - timedelta(days=1)).strftime('%Y-%m-%d')}&market={market}&model_a={model_a}&shadow={shadow}&sensor={sensor}">← Día anterior</a>
+            <a href="?date={(target_date + timedelta(days=1)).strftime('%Y-%m-%d')}&market={market}&model_a={model_a}&shadow={shadow}&sensor={sensor}">Día siguiente →</a>
         </div>
 
         <div class="header-container">
             <div class="header-left">
                 <h1>Daily Comparison</h1>
-                <p class="subtitle">{date_str} (LA timezone) - {total} partidos terminados</p>
+                <p class="subtitle">{date_str} (LA timezone) - {total_finished} terminados, {total_pending} pendientes</p>
             </div>
-            <div class="summary-box">
+            <form class="summary-box" method="GET">
+                <input type="hidden" name="date" value="{date_str}">
                 <span class="summary-title">n={global_total}</span>
-                <div class="summary-item"><div class="label">Market <span class="wins">{wins_market}</span></div><div class="value">{round(global_market/global_total*100, 1) if global_total > 0 else 0}%</div><div class="count">{global_market}</div></div>
-                <div class="summary-item"><div class="label">Model A <span class="wins">{wins_a}</span></div><div class="value">{round(global_a/global_total*100, 1) if global_total > 0 else 0}%</div><div class="count">{global_a}</div></div>
-                <div class="summary-item"><div class="label">Shadow <span class="wins">{wins_shadow}</span></div><div class="value">{round(global_shadow/global_total*100, 1) if global_total > 0 else 0}%</div><div class="count">{global_shadow}</div></div>
-                <div class="summary-item"><div class="label">Sensor B <span class="wins">{wins_sensor}</span></div><div class="value">{round(global_sensor/global_total*100, 1) if global_total > 0 else 0}%</div><div class="count">{global_sensor}</div></div>
-            </div>
+                <div class="summary-item">
+                    <div class="label"><input type="checkbox" name="market" value="1" {'checked' if show_market else ''}>Market <span class="wins">{wins_market}</span></div>
+                    <div class="value">{round(global_market/global_total*100, 1) if global_total > 0 and show_market else '—'}{'%' if show_market and global_total > 0 else ''}</div>
+                    <div class="count">{global_market if show_market else '—'}</div>
+                </div>
+                <div class="summary-item">
+                    <div class="label"><input type="checkbox" name="model_a" value="1" {'checked' if show_model_a else ''}>Model A <span class="wins">{wins_a}</span></div>
+                    <div class="value">{round(global_a/global_total*100, 1) if global_total > 0 and show_model_a else '—'}{'%' if show_model_a and global_total > 0 else ''}</div>
+                    <div class="count">{global_a if show_model_a else '—'}</div>
+                </div>
+                <div class="summary-item">
+                    <div class="label"><input type="checkbox" name="shadow" value="1" {'checked' if show_shadow else ''}>Shadow <span class="wins">{wins_shadow}</span></div>
+                    <div class="value">{round(global_shadow/global_total*100, 1) if global_total > 0 and show_shadow else '—'}{'%' if show_shadow and global_total > 0 else ''}</div>
+                    <div class="count">{global_shadow if show_shadow else '—'}</div>
+                </div>
+                <div class="summary-item">
+                    <div class="label"><input type="checkbox" name="sensor" value="1" {'checked' if show_sensor else ''}>Sensor B <span class="wins">{wins_sensor}</span></div>
+                    <div class="value">{round(global_sensor/global_total*100, 1) if global_total > 0 and show_sensor else '—'}{'%' if show_sensor and global_total > 0 else ''}</div>
+                    <div class="count">{global_sensor if show_sensor else '—'}</div>
+                </div>
+                <button type="submit" class="apply-btn">Aplicar</button>
+            </form>
         </div>
-        <p class="legend">* Resultados calculados solo con partidos donde los 4 modelos tienen datos completos (desde 18 Ene 2026)</p>
+        <p class="legend">* Resultados calculados solo con partidos donde los modelos seleccionados tienen datos</p>
 
         <table>
             <thead>
@@ -11722,10 +11885,10 @@ async def ops_daily_comparison_html(
                     <th>Away</th>
                     <th style="text-align: center;">Score</th>
                     <th style="text-align: center;">Real</th>
-                    <th style="text-align: center; {'background:#166534;' if daily_winner == 'market' else ''}">Market<br><span style="font-size:11px;background:#22c55e;color:white;padding:2px 6px;border-radius:4px;margin-top:4px;display:inline-block;">{round(market_correct/total*100, 1) if total > 0 else 0}%</span></th>
-                    <th style="text-align: center; {'background:#166534;' if daily_winner == 'model_a' else ''}">Model A<br><span style="font-size:11px;background:#22c55e;color:white;padding:2px 6px;border-radius:4px;margin-top:4px;display:inline-block;">{round(a_correct/total*100, 1) if total > 0 else 0}%</span></th>
-                    <th style="text-align: center; {'background:#166534;' if daily_winner == 'shadow' else ''}">Shadow<br><span style="font-size:11px;background:#22c55e;color:white;padding:2px 6px;border-radius:4px;margin-top:4px;display:inline-block;">{round(shadow_correct/total*100, 1) if total > 0 else 0}%</span></th>
-                    <th style="text-align: center; {'background:#166534;' if daily_winner == 'sensor' else ''}">Sensor B<br><span style="font-size:11px;background:#22c55e;color:white;padding:2px 6px;border-radius:4px;margin-top:4px;display:inline-block;">{round(sensor_correct/total*100, 1) if total > 0 else 0}%</span></th>
+                    {'<th style="text-align: center; ' + ('background:#166534;' if daily_winner == 'market' else '') + '">Market<br><span style="font-size:11px;background:#22c55e;color:white;padding:2px 6px;border-radius:4px;margin-top:4px;display:inline-block;">' + str(round(market_correct/total_finished*100, 1) if total_finished > 0 else 0) + '%</span></th>' if show_market else ''}
+                    {'<th style="text-align: center; ' + ('background:#166534;' if daily_winner == 'model_a' else '') + '">Model A<br><span style="font-size:11px;background:#22c55e;color:white;padding:2px 6px;border-radius:4px;margin-top:4px;display:inline-block;">' + str(round(a_correct/total_finished*100, 1) if total_finished > 0 else 0) + '%</span></th>' if show_model_a else ''}
+                    {'<th style="text-align: center; ' + ('background:#166534;' if daily_winner == 'shadow' else '') + '">Shadow<br><span style="font-size:11px;background:#22c55e;color:white;padding:2px 6px;border-radius:4px;margin-top:4px;display:inline-block;">' + str(round(shadow_correct/total_finished*100, 1) if total_finished > 0 else 0) + '%</span></th>' if show_shadow else ''}
+                    {'<th style="text-align: center; ' + ('background:#166534;' if daily_winner == 'sensor' else '') + '">Sensor B<br><span style="font-size:11px;background:#22c55e;color:white;padding:2px 6px;border-radius:4px;margin-top:4px;display:inline-block;">' + str(round(sensor_correct/total_finished*100, 1) if total_finished > 0 else 0) + '%</span></th>' if show_sensor else ''}
                 </tr>
             </thead>
             <tbody>
