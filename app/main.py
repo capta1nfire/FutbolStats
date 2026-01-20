@@ -11833,8 +11833,8 @@ async def ops_daily_comparison_html(
             .nav a {{ color: #3b82f6; text-decoration: none; margin-right: 15px; }}
             .nav a:hover {{ text-decoration: underline; }}
             .legend {{ font-size: 11px; color: #94a3b8; margin: 8px 0 16px 0; font-style: italic; }}
-            .summary-item input[type="checkbox"] {{ width: 12px; height: 12px; cursor: pointer; margin-right: 4px; }}
-            .summary-item .label {{ display: flex; align-items: center; justify-content: center; }}
+            .summary-item .checkbox {{ margin-top: 6px; }}
+            .summary-item input[type="checkbox"] {{ width: 14px; height: 14px; cursor: pointer; }}
             .apply-btn {{ background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-left: 8px; }}
             .apply-btn:hover {{ background: #2563eb; }}
         </style>
@@ -11854,24 +11854,28 @@ async def ops_daily_comparison_html(
                 <input type="hidden" name="date" value="{date_str}">
                 <span class="summary-title">n={global_total}</span>
                 <div class="summary-item">
-                    <div class="label"><input type="checkbox" name="market" value="1" {'checked' if show_market else ''}>Market <span class="wins">{wins_market}</span></div>
+                    <div class="label">Market <span class="wins">{wins_market}</span></div>
                     <div class="value">{round(global_market/global_total*100, 1) if global_total > 0 and show_market else '—'}{'%' if show_market and global_total > 0 else ''}</div>
                     <div class="count">{global_market if show_market else '—'}</div>
+                    <div class="checkbox"><input type="checkbox" name="market" value="1" {'checked' if show_market else ''}></div>
                 </div>
                 <div class="summary-item">
-                    <div class="label"><input type="checkbox" name="model_a" value="1" {'checked' if show_model_a else ''}>Model A <span class="wins">{wins_a}</span></div>
+                    <div class="label">Model A <span class="wins">{wins_a}</span></div>
                     <div class="value">{round(global_a/global_total*100, 1) if global_total > 0 and show_model_a else '—'}{'%' if show_model_a and global_total > 0 else ''}</div>
                     <div class="count">{global_a if show_model_a else '—'}</div>
+                    <div class="checkbox"><input type="checkbox" name="model_a" value="1" {'checked' if show_model_a else ''}></div>
                 </div>
                 <div class="summary-item">
-                    <div class="label"><input type="checkbox" name="shadow" value="1" {'checked' if show_shadow else ''}>Shadow <span class="wins">{wins_shadow}</span></div>
+                    <div class="label">Shadow <span class="wins">{wins_shadow}</span></div>
                     <div class="value">{round(global_shadow/global_total*100, 1) if global_total > 0 and show_shadow else '—'}{'%' if show_shadow and global_total > 0 else ''}</div>
                     <div class="count">{global_shadow if show_shadow else '—'}</div>
+                    <div class="checkbox"><input type="checkbox" name="shadow" value="1" {'checked' if show_shadow else ''}></div>
                 </div>
                 <div class="summary-item">
-                    <div class="label"><input type="checkbox" name="sensor" value="1" {'checked' if show_sensor else ''}>Sensor B <span class="wins">{wins_sensor}</span></div>
+                    <div class="label">Sensor B <span class="wins">{wins_sensor}</span></div>
                     <div class="value">{round(global_sensor/global_total*100, 1) if global_total > 0 and show_sensor else '—'}{'%' if show_sensor and global_total > 0 else ''}</div>
                     <div class="count">{global_sensor if show_sensor else '—'}</div>
+                    <div class="checkbox"><input type="checkbox" name="sensor" value="1" {'checked' if show_sensor else ''}></div>
                 </div>
                 <button type="submit" class="apply-btn">Aplicar</button>
             </form>
