@@ -131,7 +131,8 @@ async def log_shadow_prediction(
 
         # Shadow prediction (two-stage)
         shadow_proba = _shadow_engine.predict_proba(df)
-        shadow_pred = ["home", "draw", "away"][np.argmax(shadow_proba[0])]
+        # Use TwoStageEngine decision rule (supports optional draw threshold override)
+        shadow_pred = _shadow_engine.predict_pick(shadow_proba[0])
 
         # UPSERT using raw SQL for ON CONFLICT DO UPDATE
         upsert_query = text("""
