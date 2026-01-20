@@ -9006,6 +9006,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
         <div class="nav-tabs">
           <a class="nav-link active" data-path="/dashboard/ops" href="/dashboard/ops">Ops</a>
           <a class="nav-link" data-path="/dashboard/pit" href="/dashboard/pit">PIT</a>
+          <a class="nav-link" data-path="/dashboard/ops/daily_comparison" href="/dashboard/ops/daily_comparison">Daily</a>
           <a class="nav-link" data-path="/dashboard/ops/history" href="/dashboard/ops/history">History</a>
           <a class="nav-link" data-path="/dashboard/ops/logs" href="/dashboard/ops/logs">Logs (debug)</a>
           <a class="nav-link" href="/ops/logout" style="margin-left: auto; color: #f87171;">Logout</a>
@@ -9739,6 +9740,7 @@ async def ops_dashboard_logs_html(
         <div class="nav-tabs">
           <a class="nav-link" data-path="/dashboard/ops" href="/dashboard/ops">Ops</a>
           <a class="nav-link" data-path="/dashboard/pit" href="/dashboard/pit">PIT</a>
+          <a class="nav-link" data-path="/dashboard/ops/daily_comparison" href="/dashboard/ops/daily_comparison">Daily</a>
           <a class="nav-link active" data-path="/dashboard/ops/logs" href="/dashboard/ops/logs">Logs</a>
           <div class="json-dropdown">
             <span class="json-dropdown-btn">JSON ▾</span>
@@ -10919,6 +10921,7 @@ async def ops_history_html(request: Request, days: int = 30):
         <div class="nav-tabs">
           <a class="nav-link" data-path="/dashboard/ops" href="/dashboard/ops">Ops</a>
           <a class="nav-link" data-path="/dashboard/pit" href="/dashboard/pit">PIT</a>
+          <a class="nav-link" data-path="/dashboard/ops/daily_comparison" href="/dashboard/ops/daily_comparison">Daily</a>
           <a class="nav-link active" data-path="/dashboard/ops/history" href="/dashboard/ops/history">History</a>
           <a class="nav-link" data-path="/dashboard/ops/logs" href="/dashboard/ops/logs">Logs</a>
           <div class="json-dropdown">
