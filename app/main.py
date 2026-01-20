@@ -11415,8 +11415,8 @@ async def ops_daily_comparison(
     # Convert date_la to UTC range (CRITICAL for index usage per Auditor)
     start_la = la_tz.localize(target_date.replace(hour=0, minute=0, second=0))
     end_la = la_tz.localize(target_date.replace(hour=23, minute=59, second=59))
-    start_utc = start_la.astimezone(pytz.UTC)
-    end_utc = end_la.astimezone(pytz.UTC) + timedelta(seconds=1)  # Inclusive end
+    start_utc = start_la.astimezone(pytz.UTC).replace(tzinfo=None)  # Naive for DB
+    end_utc = (end_la.astimezone(pytz.UTC) + timedelta(seconds=1)).replace(tzinfo=None)
 
     # Build query with UTC range filter
     query = """
