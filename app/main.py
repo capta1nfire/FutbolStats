@@ -11741,17 +11741,14 @@ async def ops_daily_comparison_html(
         return f'<span style="background:{bg};color:white;padding:2px 8px;border-radius:4px;font-weight:600;">{letter}</span>'
 
     def badge(pick, actual):
-        """Render pick as colored badge with initial + check/x mark."""
+        """Render pick as colored badge - green if correct, red if wrong."""
         if not pick:
             return '-'
-        colors = {'home': '#3b82f6', 'draw': '#6b7280', 'away': '#ef4444'}
         initials = {'home': 'H', 'draw': 'D', 'away': 'A'}
-        bg = colors.get(pick, '#6b7280')
         letter = initials.get(pick, '?')
         is_correct = pick == actual
-        mark = '✓' if is_correct else '✗'
-        mark_color = '#22c55e' if is_correct else '#ef4444'
-        return f'<span style="background:{bg};color:white;padding:2px 8px;border-radius:4px;font-weight:600;">{letter}</span> <span style="color:{mark_color};font-weight:bold;">{mark}</span>'
+        bg = '#22c55e' if is_correct else '#ef4444'  # green if correct, red if wrong
+        return f'<span style="background:{bg};color:white;padding:2px 8px;border-radius:4px;font-weight:600;">{letter}</span>'
 
     # Determine daily winner (model with most correct predictions)
     daily_scores = {
