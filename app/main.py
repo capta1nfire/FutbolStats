@@ -11512,16 +11512,16 @@ async def ops_daily_comparison_html(
     request: Request,
     date: str = None,
     league_id: int = None,
-    market: str = "1",
-    model_a: str = "1",
-    shadow: str = "1",
-    sensor: str = "1",
+    market: str = None,
+    model_a: str = None,
+    shadow: str = None,
+    sensor: str = None,
     session: AsyncSession = Depends(get_async_session),
 ):
     """
     HTML table view of daily comparison - opens directly in browser.
 
-    Model selection via query params (1=enabled, 0=disabled):
+    Model selection via query params (1=enabled, absent=disabled):
     - market: Include Market predictions
     - model_a: Include Model A predictions
     - shadow: Include Shadow predictions
@@ -11533,11 +11533,18 @@ async def ops_daily_comparison_html(
     if not _verify_dashboard_token(request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
-    # Parse model selection (1=enabled, 0=disabled)
-    show_market = market == "1"
-    show_model_a = model_a == "1"
-    show_shadow = shadow == "1"
-    show_sensor = sensor == "1"
+    # Parse model selection: present with value "1" = enabled, absent = disabled
+    # First visit (no params) = all enabled by default
+    query_params = dict(request.query_params)
+    is_first_visit = not any(k in query_params for k in ["market", "model_a", "shadow", "sensor"])
+
+    if is_first_visit:
+        show_market = show_model_a = show_shadow = show_sensor = True
+    else:
+        show_market = market == "1"
+        show_model_a = model_a == "1"
+        show_shadow = shadow == "1"
+        show_sensor = sensor == "1"
 
     # At least one model must be selected
     if not any([show_market, show_model_a, show_shadow, show_sensor]):
