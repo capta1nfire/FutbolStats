@@ -12026,7 +12026,7 @@ async def ops_league_stats_html(
             ROUND(goals_against::numeric / NULLIF(matches_played, 0), 2) as conceded_per_match,
             wins * 3 + draws as points
         FROM team_stats
-        WHERE matches_played >= 3
+        WHERE matches_played >= 1
         ORDER BY points DESC, goal_diff DESC
     """
     result = await session.execute(text(team_stats_query), {"league_id": league_id, "season": season})
@@ -12037,7 +12037,8 @@ async def ops_league_stats_html(
         SELECT
             COUNT(*) as total_matches,
             COUNT(CASE WHEN stats IS NOT NULL AND stats::text != 'null' THEN 1 END) as with_stats,
-            COUNT(CASE WHEN home_goals IS NOT NULL THEN 1 END) as with_goals
+            COUNT(CASE WHEN home_goals IS NOT NULL THEN 1 END) as with_goals,
+            COALESCE(SUM(home_goals), 0) + COALESCE(SUM(away_goals), 0) as total_goals
         FROM matches
         WHERE league_id = :league_id
           AND status = 'FT'
@@ -12082,15 +12083,15 @@ async def ops_league_stats_html(
     best_accuracy = max(detailed_stats, key=lambda t: t[8] / t[7] if t[7] > 0 else 0) if detailed_stats else None
 
     # Calculate league-wide stats
-    total_goals = sum(t[5] for t in teams) // 2 if teams else 0  # Divide by 2 since each goal counted twice
     total_matches = availability[0] if availability else 0
+    total_goals = int(availability[3]) if availability and availability[3] else 0
     avg_goals_per_match = round(total_goals / total_matches, 2) if total_matches > 0 else 0
 
     # Find extremes
     if teams:
         top_scorer = max(teams, key=lambda t: t[5])  # goals_for
         worst_defense = max(teams, key=lambda t: t[6])  # goals_against
-        best_defense = min(teams, key=lambda t: t[13] if t[1] >= 5 else 999)  # conceded_per_match with min matches
+        best_defense = min(teams, key=lambda t: t[13] if t[13] is not None else 999)  # conceded_per_match
         most_wins = max(teams, key=lambda t: t[2])  # wins
         most_draws = max(teams, key=lambda t: t[3])  # draws
         most_losses = max(teams, key=lambda t: t[4])  # losses
