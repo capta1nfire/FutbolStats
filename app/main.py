@@ -12147,20 +12147,31 @@ async def ops_league_stats_html(
 
         <h1>League Stats: {league_name}
             <select class="league-select" onchange="window.location.href='?league_id='+this.value+'&season='+document.getElementById('seasonSelect').value">
-                <option value="239" {'selected' if league_id == 239 else ''}>Colombia</option>
-                <option value="128" {'selected' if league_id == 128 else ''}>Argentina</option>
-                <option value="250" {'selected' if league_id == 250 else ''}>Paraguay</option>
-                <option value="71" {'selected' if league_id == 71 else ''}>Brasil</option>
-                <option value="39" {'selected' if league_id == 39 else ''}>Premier League</option>
-                <option value="140" {'selected' if league_id == 140 else ''}>La Liga</option>
-                <option value="135" {'selected' if league_id == 135 else ''}>Serie A</option>
-                <option value="78" {'selected' if league_id == 78 else ''}>Bundesliga</option>
-                <option value="253" {'selected' if league_id == 253 else ''}>MLS</option>
+                <optgroup label="Sudamérica">
+                    <option value="239" {'selected' if league_id == 239 else ''}>Colombia Primera A</option>
+                    <option value="128" {'selected' if league_id == 128 else ''}>Argentina Primera</option>
+                    <option value="250" {'selected' if league_id == 250 else ''}>Paraguay Apertura</option>
+                    <option value="252" {'selected' if league_id == 252 else ''}>Paraguay Clausura</option>
+                    <option value="71" {'selected' if league_id == 71 else ''}>Brasil Serie A</option>
+                </optgroup>
+                <optgroup label="Europa">
+                    <option value="39" {'selected' if league_id == 39 else ''}>Premier League</option>
+                    <option value="140" {'selected' if league_id == 140 else ''}>La Liga</option>
+                    <option value="135" {'selected' if league_id == 135 else ''}>Serie A Italia</option>
+                    <option value="78" {'selected' if league_id == 78 else ''}>Bundesliga</option>
+                    <option value="61" {'selected' if league_id == 61 else ''}>Ligue 1</option>
+                </optgroup>
+                <optgroup label="Norteamérica">
+                    <option value="253" {'selected' if league_id == 253 else ''}>MLS</option>
+                    <option value="262" {'selected' if league_id == 262 else ''}>Liga MX</option>
+                </optgroup>
             </select>
             <select id="seasonSelect" class="league-select" onchange="window.location.href='?league_id={league_id}&season='+this.value">
                 <option value="2026" {'selected' if season == 2026 else ''}>2026</option>
                 <option value="2025" {'selected' if season == 2025 else ''}>2025</option>
                 <option value="2024" {'selected' if season == 2024 else ''}>2024</option>
+                <option value="2023" {'selected' if season == 2023 else ''}>2023</option>
+                <option value="2022" {'selected' if season == 2022 else ''}>2022</option>
             </select>
         </h1>
         <p class="subtitle">Temporada {season} - Datos calculados de {total_matches} partidos</p>
