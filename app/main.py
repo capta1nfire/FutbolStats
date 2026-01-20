@@ -12497,7 +12497,10 @@ async def ops_league_stats_html(
                 </tr>
         """
 
-    html += """
+    import json as json_module
+    modal_data_json = json_module.dumps(modal_data)
+
+    html += f"""
             </tbody>
         </table>
         <div id="teamModalOverlay" class="modal-overlay" role="dialog" aria-modal="true" aria-hidden="true">
@@ -12516,7 +12519,7 @@ async def ops_league_stats_html(
             </div>
         </div>
         <script>
-        const TEAM_DATA = {json.dumps(modal_data)};
+        const TEAM_DATA = {modal_data_json};
 
         function fmtRank(rank, total) {{
             if (!rank) return '—';
