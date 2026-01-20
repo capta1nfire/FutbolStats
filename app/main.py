@@ -11558,23 +11558,33 @@ async def ops_daily_comparison_html(
     # Build HTML
     date_str = target_date.strftime("%Y-%m-%d")
 
-    def check_mark(pick, actual):
-        if pick == actual:
-            return '<span style="color: #22c55e; font-weight: bold;">✓</span>'
-        return '<span style="color: #ef4444;">✗</span>'
+    def badge(pick, actual):
+        """Render pick as colored badge with initial + check/x mark."""
+        if not pick:
+            return '-'
+        # Badge colors: H=blue, D=gray, A=red
+        colors = {'home': '#3b82f6', 'draw': '#6b7280', 'away': '#ef4444'}
+        initials = {'home': 'H', 'draw': 'D', 'away': 'A'}
+        bg = colors.get(pick, '#6b7280')
+        letter = initials.get(pick, '?')
+        is_correct = pick == actual
+        mark = '✓' if is_correct else '✗'
+        mark_color = '#22c55e' if is_correct else '#ef4444'
+        return f'<span style="background:{bg};color:white;padding:2px 8px;border-radius:4px;font-weight:600;">{letter}</span> <span style="color:{mark_color};font-weight:bold;">{mark}</span>'
 
     rows_html = ""
     for m in matches:
+        actual = m['actual_outcome']
         rows_html += f"""
         <tr>
             <td>{m['home_team']}</td>
             <td>{m['away_team']}</td>
             <td style="text-align: center; font-weight: bold;">{m['home_goals']}-{m['away_goals']}</td>
-            <td style="text-align: center;"><span style="background: #3b82f6; color: white; padding: 2px 8px; border-radius: 4px;">{m['actual_outcome']}</span></td>
-            <td style="text-align: center;">{m['a_pick'] or '-'} {check_mark(m['a_pick'], m['actual_outcome'])}</td>
-            <td style="text-align: center;">{m['shadow_pick'] or '-'} {check_mark(m['shadow_pick'], m['actual_outcome']) if m['shadow_pick'] else ''}</td>
-            <td style="text-align: center;">{m['sensor_pick'] or '-'} {check_mark(m['sensor_pick'], m['actual_outcome']) if m['sensor_pick'] else ''}</td>
-            <td style="text-align: center;">{m['market_pick'] or '-'} {check_mark(m['market_pick'], m['actual_outcome']) if m['market_pick'] else ''}</td>
+            <td style="text-align: center;">{badge(actual, actual).split(' ')[0]}</td>
+            <td style="text-align: center;">{badge(m['market_pick'], actual)}</td>
+            <td style="text-align: center;">{badge(m['a_pick'], actual)}</td>
+            <td style="text-align: center;">{badge(m['shadow_pick'], actual)}</td>
+            <td style="text-align: center;">{badge(m['sensor_pick'], actual)}</td>
         </tr>
         """
 
@@ -11613,6 +11623,11 @@ async def ops_daily_comparison_html(
 
         <div class="summary">
             <div class="summary-card">
+                <h3>Market</h3>
+                <div class="value">{market_correct}/{total}</div>
+                <div class="pct">{round(market_correct/total*100, 1) if total > 0 else 0}%</div>
+            </div>
+            <div class="summary-card">
                 <h3>Model A</h3>
                 <div class="value">{a_correct}/{total}</div>
                 <div class="pct">{round(a_correct/total*100, 1) if total > 0 else 0}%</div>
@@ -11627,11 +11642,6 @@ async def ops_daily_comparison_html(
                 <div class="value">{sensor_correct}/{total}</div>
                 <div class="pct">{round(sensor_correct/total*100, 1) if total > 0 else 0}%</div>
             </div>
-            <div class="summary-card">
-                <h3>Market</h3>
-                <div class="value">{market_correct}/{total}</div>
-                <div class="pct">{round(market_correct/total*100, 1) if total > 0 else 0}%</div>
-            </div>
         </div>
 
         <table>
@@ -11641,10 +11651,10 @@ async def ops_daily_comparison_html(
                     <th>Away</th>
                     <th style="text-align: center;">Score</th>
                     <th style="text-align: center;">Real</th>
+                    <th style="text-align: center;">Market</th>
                     <th style="text-align: center;">Model A</th>
                     <th style="text-align: center;">Shadow</th>
                     <th style="text-align: center;">Sensor B</th>
-                    <th style="text-align: center;">Market</th>
                 </tr>
             </thead>
             <tbody>
