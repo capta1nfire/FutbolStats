@@ -11950,8 +11950,8 @@ async def ops_daily_comparison_html(
 @app.get("/dashboard/ops/league_stats", response_class=HTMLResponse)
 async def ops_league_stats_html(
     request: Request,
-    league_id: int = 128,
-    season: int = 2025,
+    league_id: int = 239,
+    season: int = 2026,
     session: AsyncSession = Depends(get_async_session),
 ):
     """
@@ -11965,6 +11965,7 @@ async def ops_league_stats_html(
 
     # League name mapping
     league_names = {
+        239: "Colombia Primera A",
         128: "Argentina Primera División",
         250: "Paraguay Apertura",
         252: "Paraguay Clausura",
@@ -12045,6 +12046,41 @@ async def ops_league_stats_html(
     avail_result = await session.execute(text(data_availability_query), {"league_id": league_id, "season": season})
     availability = avail_result.fetchone()
 
+    # Detailed stats query (from matches with stats)
+    detailed_stats_query = """
+        WITH team_detailed AS (
+            SELECT
+                t.id,
+                t.name,
+                COUNT(*) as matches_with_stats,
+                SUM(COALESCE((CASE WHEN m.home_team_id = t.id THEN (m.stats->'home'->>'offsides')::int ELSE (m.stats->'away'->>'offsides')::int END), 0)) as total_offsides,
+                SUM(COALESCE((CASE WHEN m.home_team_id = t.id THEN (m.stats->'home'->>'yellow_cards')::int ELSE (m.stats->'away'->>'yellow_cards')::int END), 0)) as total_yellows,
+                SUM(COALESCE((CASE WHEN m.home_team_id = t.id THEN (m.stats->'home'->>'fouls')::int ELSE (m.stats->'away'->>'fouls')::int END), 0)) as total_fouls,
+                SUM(COALESCE((CASE WHEN m.home_team_id = t.id THEN (m.stats->'home'->>'corner_kicks')::int ELSE (m.stats->'away'->>'corner_kicks')::int END), 0)) as total_corners,
+                SUM(COALESCE((CASE WHEN m.home_team_id = t.id THEN (m.stats->'home'->>'total_shots')::int ELSE (m.stats->'away'->>'total_shots')::int END), 0)) as total_shots,
+                SUM(COALESCE((CASE WHEN m.home_team_id = t.id THEN (m.stats->'home'->>'shots_on_goal')::int ELSE (m.stats->'away'->>'shots_on_goal')::int END), 0)) as shots_on_target
+            FROM matches m
+            JOIN teams t ON t.id = m.home_team_id OR t.id = m.away_team_id
+            WHERE m.league_id = :league_id
+              AND m.status = 'FT'
+              AND m.season = :season
+              AND m.stats IS NOT NULL
+              AND m.stats::text != 'null'
+            GROUP BY t.id, t.name
+        )
+        SELECT * FROM team_detailed WHERE matches_with_stats > 0 ORDER BY total_shots DESC
+    """
+    detailed_result = await session.execute(text(detailed_stats_query), {"league_id": league_id, "season": season})
+    detailed_stats = detailed_result.fetchall()
+
+    # Calculate detailed leaders
+    most_offsides = max(detailed_stats, key=lambda t: t[3]) if detailed_stats else None
+    most_yellows = max(detailed_stats, key=lambda t: t[4]) if detailed_stats else None
+    most_fouls = max(detailed_stats, key=lambda t: t[5]) if detailed_stats else None
+    most_corners = max(detailed_stats, key=lambda t: t[6]) if detailed_stats else None
+    most_shots = max(detailed_stats, key=lambda t: t[7]) if detailed_stats else None
+    best_accuracy = max(detailed_stats, key=lambda t: t[8] / t[7] if t[7] > 0 else 0) if detailed_stats else None
+
     # Calculate league-wide stats
     total_goals = sum(t[5] for t in teams) // 2 if teams else 0  # Divide by 2 since each goal counted twice
     total_matches = availability[0] if availability else 0
@@ -12110,7 +12146,8 @@ async def ops_league_stats_html(
         </div>
 
         <h1>League Stats: {league_name}
-            <select class="league-select" onchange="window.location.href='?league_id='+this.value">
+            <select class="league-select" onchange="window.location.href='?league_id='+this.value+'&season='+document.getElementById('seasonSelect').value">
+                <option value="239" {'selected' if league_id == 239 else ''}>Colombia</option>
                 <option value="128" {'selected' if league_id == 128 else ''}>Argentina</option>
                 <option value="250" {'selected' if league_id == 250 else ''}>Paraguay</option>
                 <option value="71" {'selected' if league_id == 71 else ''}>Brasil</option>
@@ -12119,6 +12156,11 @@ async def ops_league_stats_html(
                 <option value="135" {'selected' if league_id == 135 else ''}>Serie A</option>
                 <option value="78" {'selected' if league_id == 78 else ''}>Bundesliga</option>
                 <option value="253" {'selected' if league_id == 253 else ''}>MLS</option>
+            </select>
+            <select id="seasonSelect" class="league-select" onchange="window.location.href='?league_id={league_id}&season='+this.value">
+                <option value="2026" {'selected' if season == 2026 else ''}>2026</option>
+                <option value="2025" {'selected' if season == 2025 else ''}>2025</option>
+                <option value="2024" {'selected' if season == 2024 else ''}>2024</option>
             </select>
         </h1>
         <p class="subtitle">Temporada {season} - Datos calculados de {total_matches} partidos</p>
@@ -12191,27 +12233,51 @@ async def ops_league_stats_html(
             </div>
         </div>
 
-        <div class="section-title warning-box">Datos NO Disponibles para Narrativas</div>
+        <div class="section-title">Stats Detalladas (de {availability[1] if availability else 0} partidos con stats)</div>
         <div class="grid">
-            <div class="card warning">
-                <div class="card-title">Fueras de Lugar</div>
-                <div class="card-value">—</div>
-                <div class="card-detail">Solo {availability[1] if availability else 0} partidos tienen stats detalladas</div>
+            <div class="card {'highlight' if most_offsides else 'warning'}">
+                <div class="card-title">Más Fueras de Lugar</div>
+                <div class="card-value">{most_offsides[1] if most_offsides else '—'}</div>
+                <div class="card-detail">{most_offsides[3] if most_offsides else 0} offsides en {most_offsides[2] if most_offsides else 0} partidos</div>
             </div>
+            <div class="card {'highlight' if most_yellows else 'warning'}">
+                <div class="card-title">Más Tarjetas Amarillas</div>
+                <div class="card-value">{most_yellows[1] if most_yellows else '—'}</div>
+                <div class="card-detail">{most_yellows[4] if most_yellows else 0} amarillas en {most_yellows[2] if most_yellows else 0} partidos</div>
+            </div>
+            <div class="card {'highlight' if most_fouls else 'warning'}">
+                <div class="card-title">Más Faltas Cometidas</div>
+                <div class="card-value">{most_fouls[1] if most_fouls else '—'}</div>
+                <div class="card-detail">{most_fouls[5] if most_fouls else 0} faltas en {most_fouls[2] if most_fouls else 0} partidos</div>
+            </div>
+            <div class="card {'highlight' if most_corners else 'warning'}">
+                <div class="card-title">Más Córners</div>
+                <div class="card-value">{most_corners[1] if most_corners else '—'}</div>
+                <div class="card-detail">{most_corners[6] if most_corners else 0} córners en {most_corners[2] if most_corners else 0} partidos</div>
+            </div>
+            <div class="card {'highlight' if most_shots else 'warning'}">
+                <div class="card-title">Más Tiros</div>
+                <div class="card-value">{most_shots[1] if most_shots else '—'}</div>
+                <div class="card-detail">{most_shots[7] if most_shots else 0} tiros totales ({most_shots[8] if most_shots else 0} al arco)</div>
+            </div>
+            <div class="card {'highlight' if best_accuracy else 'warning'}">
+                <div class="card-title">Mejor Puntería</div>
+                <div class="card-value">{best_accuracy[1] if best_accuracy else '—'}</div>
+                <div class="card-detail">{round(best_accuracy[8] / best_accuracy[7] * 100, 1) if best_accuracy and best_accuracy[7] > 0 else 0}% tiros al arco ({best_accuracy[8] if best_accuracy else 0}/{best_accuracy[7] if best_accuracy else 0})</div>
+            </div>
+        </div>
+
+        <div class="section-title warning-box">Datos NO Disponibles</div>
+        <div class="grid">
             <div class="card warning">
                 <div class="card-title">Goles de Cabeza</div>
                 <div class="card-value">—</div>
                 <div class="card-detail">API no provee desglose por tipo de gol</div>
             </div>
             <div class="card warning">
-                <div class="card-title">Tarjetas Acumuladas</div>
-                <div class="card-value">—</div>
-                <div class="card-detail">Stats de tarjetas incompletas</div>
-            </div>
-            <div class="card warning">
                 <div class="card-title">xG Acumulado</div>
                 <div class="card-value">—</div>
-                <div class="card-detail">Solo partidos recientes tienen xG</div>
+                <div class="card-detail">Solo algunos partidos tienen xG</div>
             </div>
         </div>
 
