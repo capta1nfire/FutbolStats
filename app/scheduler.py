@@ -4343,12 +4343,16 @@ async def update_predictions_health_metrics():
             if ft_total > 0:
                 ft_coverage_pct = round(((ft_total - ft_missing) / ft_total) * 100, 1)
 
-            # 8) Determine status
+            # 8) Determine status (same logic as _calculate_predictions_health in main.py)
             status = "ok"
             if ns_next_48h == 0:
                 status = "ok"  # No upcoming matches, no concern
             elif hours_since_last and hours_since_last > 12:
-                status = "warn"
+                # Smart bypass: if coverage is 100%, staleness is informational only
+                if ns_missing == 0 and ft_missing == 0:
+                    status = "ok"
+                else:
+                    status = "warn"
             elif coverage_pct < 50:
                 status = "red"
             elif coverage_pct < 80:
