@@ -11687,7 +11687,11 @@ async def ops_daily_comparison_html(
 
     # Build winner CASE expressions dynamically
     def build_winner_case(model_col, all_cols):
-        """Build CASE for when this model beats all others."""
+        """Build CASE for when this model beats all others (only among selected models)."""
+        # Check if this model is in the selected list
+        selected_cols = [c for _, c in all_cols]
+        if model_col not in selected_cols:
+            return "0"  # Model not selected, never wins
         other_cols = [c for _, c in all_cols if c != model_col]
         if not other_cols:
             return "1"  # Only one model selected, always wins
