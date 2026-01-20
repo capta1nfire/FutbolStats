@@ -341,8 +341,7 @@ async def log_sensor_prediction(
                 b_draw_prob = EXCLUDED.b_draw_prob,
                 b_away_prob = EXCLUDED.b_away_prob,
                 b_pick = EXCLUDED.b_pick,
-                sensor_state = EXCLUDED.sensor_state,
-                created_at = NOW()
+                sensor_state = EXCLUDED.sensor_state
         """)
 
         await session.execute(insert_query, {

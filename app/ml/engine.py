@@ -256,6 +256,29 @@ class TwoStageEngine:
 
         return proba
 
+    def predict_pick(self, proba_row: np.ndarray) -> str:
+        """
+        Convert a 3-class probability row into a discrete pick.
+
+        IMPORTANT:
+        - This is only a decision rule; it does NOT change probabilities.
+        - Used primarily for shadow diagnostics / reporting.
+
+        Behavior:
+        - If settings.MODEL_DRAW_THRESHOLD > 0 and p_draw >= threshold, pick "draw"
+          (even if not argmax). This is a pragmatic guardrail to avoid "draw collapse".
+        - Otherwise, use argmax.
+        """
+        p_home = float(proba_row[0])
+        p_draw = float(proba_row[1])
+        p_away = float(proba_row[2])
+
+        thr = float(get_settings().MODEL_DRAW_THRESHOLD or 0.0)
+        if thr > 0.0 and p_draw >= thr:
+            return "draw"
+
+        return ["home", "draw", "away"][int(np.argmax([p_home, p_draw, p_away]))]
+
     def save_to_bytes(self) -> bytes:
         """Export both stages to compressed bytes for DB storage."""
         import pickle
