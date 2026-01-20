@@ -12087,18 +12087,38 @@ async def ops_league_stats_html(
     total_goals = int(availability[3]) if availability and availability[3] else 0
     avg_goals_per_match = round(total_goals / total_matches, 2) if total_matches > 0 else 0
 
-    # Find extremes
+    # Find extremes (return all teams tied for the lead)
+    def get_all_max(teams_list, key_func, is_min=False):
+        """Get all teams tied for max (or min) value."""
+        if not teams_list:
+            return []
+        if is_min:
+            extreme_val = min(key_func(t) for t in teams_list)
+        else:
+            extreme_val = max(key_func(t) for t in teams_list)
+        return [t for t in teams_list if key_func(t) == extreme_val]
+
     if teams:
-        top_scorer = max(teams, key=lambda t: t[5])  # goals_for
-        worst_defense = max(teams, key=lambda t: t[6])  # goals_against
-        best_defense = min(teams, key=lambda t: t[13] if t[13] is not None else 999)  # conceded_per_match
-        most_wins = max(teams, key=lambda t: t[2])  # wins
-        most_draws = max(teams, key=lambda t: t[3])  # draws
-        most_losses = max(teams, key=lambda t: t[4])  # losses
-        best_home = max(teams, key=lambda t: t[10] / t[8] if t[8] > 0 else 0)  # home_goals/home_matches
-        best_away = max(teams, key=lambda t: t[11] / t[9] if t[9] > 0 else 0)  # away_goals/away_matches
+        top_scorers = get_all_max(teams, lambda t: t[5])  # goals_for
+        worst_defenses = get_all_max(teams, lambda t: t[6])  # goals_against
+        best_defenses = get_all_max(teams, lambda t: t[13] if t[13] is not None else 999, is_min=True)  # conceded_per_match
+        most_wins_list = get_all_max(teams, lambda t: t[2])  # wins
+        most_draws_list = get_all_max(teams, lambda t: t[3])  # draws
+        most_losses_list = get_all_max(teams, lambda t: t[4])  # losses
+        best_home_list = get_all_max(teams, lambda t: t[10] / t[8] if t[8] > 0 else 0)  # home_goals/home_matches
+        best_away_list = get_all_max(teams, lambda t: t[11] / t[9] if t[9] > 0 else 0)  # away_goals/away_matches
     else:
-        top_scorer = worst_defense = best_defense = most_wins = most_draws = most_losses = best_home = best_away = None
+        top_scorers = worst_defenses = best_defenses = most_wins_list = most_draws_list = most_losses_list = best_home_list = best_away_list = []
+
+    # Helper to format team names (join multiple with comma)
+    def format_teams(team_list, max_show=3):
+        if not team_list:
+            return '-'
+        names = [t[0] for t in team_list[:max_show]]
+        result = ', '.join(names)
+        if len(team_list) > max_show:
+            result += f' (+{len(team_list) - max_show})'
+        return result
 
     # Build HTML
     html = f"""
@@ -12204,44 +12224,44 @@ async def ops_league_stats_html(
         <div class="section-title">Líderes de Liga (Datos Verificables)</div>
         <div class="grid">
             <div class="card highlight">
-                <div class="card-title">Más Goleador</div>
-                <div class="card-value">{top_scorer[0] if top_scorer else '-'}</div>
-                <div class="card-detail">{top_scorer[5] if top_scorer else 0} goles en {top_scorer[1] if top_scorer else 0} partidos ({top_scorer[12] if top_scorer else 0}/partido)</div>
+                <div class="card-title">Más Goleador ({len(top_scorers)} equipo{'s' if len(top_scorers) != 1 else ''})</div>
+                <div class="card-value">{format_teams(top_scorers)}</div>
+                <div class="card-detail">{top_scorers[0][5] if top_scorers else 0} goles</div>
             </div>
             <div class="card highlight">
-                <div class="card-title">Mejor Defensa</div>
-                <div class="card-value">{best_defense[0] if best_defense else '-'}</div>
-                <div class="card-detail">{best_defense[6] if best_defense else 0} goles recibidos ({best_defense[13] if best_defense else 0}/partido)</div>
+                <div class="card-title">Mejor Defensa ({len(best_defenses)} equipo{'s' if len(best_defenses) != 1 else ''})</div>
+                <div class="card-value">{format_teams(best_defenses)}</div>
+                <div class="card-detail">{best_defenses[0][6] if best_defenses else 0} goles recibidos</div>
             </div>
             <div class="card">
-                <div class="card-title">Valla Más Vencida</div>
-                <div class="card-value">{worst_defense[0] if worst_defense else '-'}</div>
-                <div class="card-detail">{worst_defense[6] if worst_defense else 0} goles recibidos</div>
+                <div class="card-title">Valla Más Vencida ({len(worst_defenses)} equipo{'s' if len(worst_defenses) != 1 else ''})</div>
+                <div class="card-value">{format_teams(worst_defenses)}</div>
+                <div class="card-detail">{worst_defenses[0][6] if worst_defenses else 0} goles recibidos</div>
             </div>
             <div class="card">
-                <div class="card-title">Más Victorias</div>
-                <div class="card-value">{most_wins[0] if most_wins else '-'}</div>
-                <div class="card-detail">{most_wins[2] if most_wins else 0} victorias</div>
+                <div class="card-title">Más Victorias ({len(most_wins_list)} equipo{'s' if len(most_wins_list) != 1 else ''})</div>
+                <div class="card-value">{format_teams(most_wins_list)}</div>
+                <div class="card-detail">{most_wins_list[0][2] if most_wins_list else 0} victoria{'s' if most_wins_list and most_wins_list[0][2] != 1 else ''}</div>
             </div>
             <div class="card">
-                <div class="card-title">Más Empates</div>
-                <div class="card-value">{most_draws[0] if most_draws else '-'}</div>
-                <div class="card-detail">{most_draws[3] if most_draws else 0} empates</div>
+                <div class="card-title">Más Empates ({len(most_draws_list)} equipo{'s' if len(most_draws_list) != 1 else ''})</div>
+                <div class="card-value">{format_teams(most_draws_list)}</div>
+                <div class="card-detail">{most_draws_list[0][3] if most_draws_list else 0} empate{'s' if most_draws_list and most_draws_list[0][3] != 1 else ''}</div>
             </div>
             <div class="card">
-                <div class="card-title">Más Derrotas</div>
-                <div class="card-value">{most_losses[0] if most_losses else '-'}</div>
-                <div class="card-detail">{most_losses[4] if most_losses else 0} derrotas</div>
+                <div class="card-title">Más Derrotas ({len(most_losses_list)} equipo{'s' if len(most_losses_list) != 1 else ''})</div>
+                <div class="card-value">{format_teams(most_losses_list)}</div>
+                <div class="card-detail">{most_losses_list[0][4] if most_losses_list else 0} derrota{'s' if most_losses_list and most_losses_list[0][4] != 1 else ''}</div>
             </div>
             <div class="card">
-                <div class="card-title">Mejor Local</div>
-                <div class="card-value">{best_home[0] if best_home else '-'}</div>
-                <div class="card-detail">{best_home[10] if best_home else 0} goles en {best_home[8] if best_home else 0} partidos de local</div>
+                <div class="card-title">Mejor Local ({len(best_home_list)} equipo{'s' if len(best_home_list) != 1 else ''})</div>
+                <div class="card-value">{format_teams(best_home_list)}</div>
+                <div class="card-detail">{best_home_list[0][10] if best_home_list else 0} goles de local</div>
             </div>
             <div class="card">
-                <div class="card-title">Mejor Visitante</div>
-                <div class="card-value">{best_away[0] if best_away else '-'}</div>
-                <div class="card-detail">{best_away[11] if best_away else 0} goles en {best_away[9] if best_away else 0} partidos de visita</div>
+                <div class="card-title">Mejor Visitante ({len(best_away_list)} equipo{'s' if len(best_away_list) != 1 else ''})</div>
+                <div class="card-value">{format_teams(best_away_list)}</div>
+                <div class="card-detail">{best_away_list[0][11] if best_away_list else 0} goles de visita</div>
             </div>
         </div>
 
