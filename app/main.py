@@ -11848,6 +11848,9 @@ async def ops_daily_comparison_html(
             .summary-item input[type="checkbox"] {{ width: 14px; height: 14px; cursor: pointer; }}
             .apply-btn {{ background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-left: 8px; }}
             .apply-btn:hover {{ background: #2563eb; }}
+            .search-box {{ margin: 16px 0; }}
+            .search-box input {{ padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 6px; width: 300px; font-size: 14px; }}
+            .search-box input:focus {{ outline: none; border-color: #3b82f6; }}
         </style>
     </head>
     <body>
@@ -11894,7 +11897,11 @@ async def ops_daily_comparison_html(
         </div>
         <p class="legend">* Resultados calculados solo con partidos donde los modelos seleccionados tienen datos</p>
 
-        <table>
+        <div class="search-box">
+            <input type="text" id="searchInput" placeholder="Buscar equipo..." onkeyup="filterTable()">
+        </div>
+
+        <table id="matchesTable">
             <thead>
                 <tr>
                     <th>Home</th>
@@ -11911,6 +11918,28 @@ async def ops_daily_comparison_html(
                 {rows_html}
             </tbody>
         </table>
+
+        <script>
+        function filterTable() {{
+            const input = document.getElementById('searchInput');
+            const filter = input.value.toLowerCase();
+            const table = document.getElementById('matchesTable');
+            const rows = table.getElementsByTagName('tr');
+
+            for (let i = 1; i < rows.length; i++) {{
+                const cells = rows[i].getElementsByTagName('td');
+                if (cells.length > 0) {{
+                    const home = cells[0].textContent.toLowerCase();
+                    const away = cells[1].textContent.toLowerCase();
+                    if (home.includes(filter) || away.includes(filter)) {{
+                        rows[i].style.display = '';
+                    }} else {{
+                        rows[i].style.display = 'none';
+                    }}
+                }}
+            }}
+        }}
+        </script>
     </body>
     </html>
     """
