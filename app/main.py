@@ -11504,6 +11504,160 @@ async def ops_daily_comparison(
     }
 
 
+@app.get("/dashboard/ops/daily_comparison", response_class=HTMLResponse)
+async def ops_daily_comparison_html(
+    request: Request,
+    date: str = None,
+    league_id: int = None,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    HTML table view of daily comparison - opens directly in browser.
+    """
+    import pytz
+    import re
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    # Reuse the JSON endpoint logic
+    la_tz = pytz.timezone("America/Los_Angeles")
+    if date:
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+        target_date = datetime.strptime(date, "%Y-%m-%d")
+    else:
+        target_date = datetime.now(la_tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        target_date = target_date.replace(tzinfo=None)
+
+    start_la = la_tz.localize(target_date.replace(hour=0, minute=0, second=0))
+    end_la = la_tz.localize(target_date.replace(hour=23, minute=59, second=59))
+    start_utc = start_la.astimezone(pytz.UTC).replace(tzinfo=None)
+    end_utc = (end_la.astimezone(pytz.UTC) + timedelta(seconds=1)).replace(tzinfo=None)
+
+    query = """
+        SELECT * FROM v_daily_match_comparison
+        WHERE kickoff_utc >= :start_utc AND kickoff_utc < :end_utc
+    """
+    params = {"start_utc": start_utc, "end_utc": end_utc}
+    if league_id:
+        query += " AND league_id = :league_id"
+        params["league_id"] = league_id
+    query += " ORDER BY kickoff_utc"
+
+    result = await session.execute(text(query), params)
+    matches = result.mappings().all()
+
+    # Calculate summary
+    total = len(matches)
+    a_correct = sum(1 for m in matches if m["a_pick"] == m["actual_outcome"])
+    shadow_correct = sum(1 for m in matches if m["shadow_pick"] == m["actual_outcome"])
+    sensor_correct = sum(1 for m in matches if m["sensor_pick"] == m["actual_outcome"])
+    market_correct = sum(1 for m in matches if m["market_pick"] == m["actual_outcome"])
+
+    # Build HTML
+    date_str = target_date.strftime("%Y-%m-%d")
+
+    def check_mark(pick, actual):
+        if pick == actual:
+            return '<span style="color: #22c55e; font-weight: bold;">✓</span>'
+        return '<span style="color: #ef4444;">✗</span>'
+
+    rows_html = ""
+    for m in matches:
+        rows_html += f"""
+        <tr>
+            <td>{m['home_team']}</td>
+            <td>{m['away_team']}</td>
+            <td style="text-align: center; font-weight: bold;">{m['home_goals']}-{m['away_goals']}</td>
+            <td style="text-align: center;"><span style="background: #3b82f6; color: white; padding: 2px 8px; border-radius: 4px;">{m['actual_outcome']}</span></td>
+            <td style="text-align: center;">{m['a_pick'] or '-'} {check_mark(m['a_pick'], m['actual_outcome'])}</td>
+            <td style="text-align: center;">{m['shadow_pick'] or '-'} {check_mark(m['shadow_pick'], m['actual_outcome']) if m['shadow_pick'] else ''}</td>
+            <td style="text-align: center;">{m['sensor_pick'] or '-'} {check_mark(m['sensor_pick'], m['actual_outcome']) if m['sensor_pick'] else ''}</td>
+            <td style="text-align: center;">{m['market_pick'] or '-'} {check_mark(m['market_pick'], m['actual_outcome']) if m['market_pick'] else ''}</td>
+        </tr>
+        """
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Daily Comparison - {date_str}</title>
+        <style>
+            * {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }}
+            body {{ background: #f8fafc; padding: 20px; }}
+            h1 {{ color: #1e293b; margin-bottom: 5px; }}
+            .subtitle {{ color: #64748b; margin-bottom: 20px; }}
+            .summary {{ display: flex; gap: 15px; margin-bottom: 20px; }}
+            .summary-card {{ background: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+            .summary-card h3 {{ margin: 0 0 5px 0; font-size: 14px; color: #64748b; }}
+            .summary-card .value {{ font-size: 24px; font-weight: bold; color: #1e293b; }}
+            .summary-card .pct {{ font-size: 14px; color: #22c55e; }}
+            table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+            th {{ background: #1e293b; color: white; padding: 12px; text-align: left; font-weight: 600; }}
+            td {{ padding: 12px; border-bottom: 1px solid #e2e8f0; }}
+            tr:hover {{ background: #f1f5f9; }}
+            .nav {{ margin-bottom: 20px; }}
+            .nav a {{ color: #3b82f6; text-decoration: none; margin-right: 15px; }}
+            .nav a:hover {{ text-decoration: underline; }}
+        </style>
+    </head>
+    <body>
+        <div class="nav">
+            <a href="?date={( target_date - timedelta(days=1)).strftime('%Y-%m-%d')}&token={request.query_params.get('token', '')}">← Día anterior</a>
+            <a href="?date={(target_date + timedelta(days=1)).strftime('%Y-%m-%d')}&token={request.query_params.get('token', '')}">Día siguiente →</a>
+        </div>
+
+        <h1>📊 Daily Comparison</h1>
+        <p class="subtitle">{date_str} (LA timezone) • {total} partidos terminados</p>
+
+        <div class="summary">
+            <div class="summary-card">
+                <h3>Model A</h3>
+                <div class="value">{a_correct}/{total}</div>
+                <div class="pct">{round(a_correct/total*100, 1) if total > 0 else 0}%</div>
+            </div>
+            <div class="summary-card">
+                <h3>Shadow</h3>
+                <div class="value">{shadow_correct}/{total}</div>
+                <div class="pct">{round(shadow_correct/total*100, 1) if total > 0 else 0}%</div>
+            </div>
+            <div class="summary-card">
+                <h3>Sensor B</h3>
+                <div class="value">{sensor_correct}/{total}</div>
+                <div class="pct">{round(sensor_correct/total*100, 1) if total > 0 else 0}%</div>
+            </div>
+            <div class="summary-card">
+                <h3>Market</h3>
+                <div class="value">{market_correct}/{total}</div>
+                <div class="pct">{round(market_correct/total*100, 1) if total > 0 else 0}%</div>
+            </div>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Home</th>
+                    <th>Away</th>
+                    <th style="text-align: center;">Score</th>
+                    <th style="text-align: center;">Real</th>
+                    <th style="text-align: center;">Model A</th>
+                    <th style="text-align: center;">Shadow</th>
+                    <th style="text-align: center;">Sensor B</th>
+                    <th style="text-align: center;">Market</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows_html}
+            </tbody>
+        </table>
+    </body>
+    </html>
+    """
+
+    return HTMLResponse(content=html)
+
+
 @app.get("/dashboard/ops/team_overrides.json")
 async def ops_team_overrides(
     request: Request,
