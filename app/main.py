@@ -12534,18 +12534,18 @@ async def ops_league_stats_html(
 
             document.getElementById('teamModalTitle').textContent = data.team_name;
             document.getElementById('teamModalSubtitle').textContent =
-                `Posición: ${data.position} | PTS: ${data.points} | DIF: ${data.goal_diff}`;
+                `Posición: ${{data.position}} | PTS: ${{data.points}} | DIF: ${{data.goal_diff}}`;
 
             // Badges (logros)
             const badgesEl = document.getElementById('teamModalBadges');
             badgesEl.innerHTML = '';
             if (data.badges && data.badges.length) {{
                 for (const b of data.badges) {{
-                    const val = (b.value === null || b.value === undefined) ? '' : ` (${b.value})`;
-                    const tied = b.tied_n ? ` — ${1} de ${b.tied_n} equipos` : '';
+                    const val = (b.value === null || b.value === undefined) ? '' : ` (${{b.value}})`;
+                    const tied = b.tied_n ? ` — ${{1}} de ${{b.tied_n}} equipos` : '';
                     const span = document.createElement('span');
                     span.className = 'badge';
-                    span.textContent = `${b.title}${val}${tied}`;
+                    span.textContent = `${{b.title}}${{val}}${{tied}}`;
                     badgesEl.appendChild(span);
                 }}
             }} else {{
@@ -12580,9 +12580,9 @@ async def ops_league_stats_html(
                 div.className = 'kpi';
                 const value = (m.value === null || m.value === undefined) ? '—' : m.value;
                 div.innerHTML = `
-                    <div class="label">${m.label}</div>
-                    <div class="value">${value}</div>
-                    <div class="rank">${fmtRank(m.rank, totalTeams)}</div>
+                    <div class="label">${{m.label}}</div>
+                    <div class="value">${{value}}</div>
+                    <div class="rank">${{fmtRank(m.rank, totalTeams)}}</div>
                 `;
                 kpisEl.appendChild(div);
             }}
