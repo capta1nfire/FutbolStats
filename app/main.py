@@ -11947,6 +11947,319 @@ async def ops_daily_comparison_html(
     return HTMLResponse(content=html)
 
 
+@app.get("/dashboard/ops/league_stats", response_class=HTMLResponse)
+async def ops_league_stats_html(
+    request: Request,
+    league_id: int = 128,
+    season: int = 2025,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    HTML dashboard showing league-wide statistics.
+
+    Shows aggregated team stats: top scorers, best defense, etc.
+    Also shows data availability for derived_facts.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    # League name mapping
+    league_names = {
+        128: "Argentina Primera División",
+        250: "Paraguay Apertura",
+        252: "Paraguay Clausura",
+        39: "Premier League",
+        140: "La Liga",
+        135: "Serie A",
+        78: "Bundesliga",
+        61: "Ligue 1",
+        71: "Brasil Serie A",
+        253: "MLS",
+        262: "Liga MX",
+    }
+    league_name = league_names.get(league_id, f"League {league_id}")
+
+    # Team stats query
+    team_stats_query = """
+        WITH team_stats AS (
+            SELECT
+                t.id,
+                t.name,
+                COUNT(*) as matches_played,
+                SUM(CASE WHEN m.home_team_id = t.id THEN m.home_goals ELSE m.away_goals END) as goals_for,
+                SUM(CASE WHEN m.home_team_id = t.id THEN m.away_goals ELSE m.home_goals END) as goals_against,
+                SUM(CASE WHEN m.home_team_id = t.id THEN 1 ELSE 0 END) as home_matches,
+                SUM(CASE WHEN m.away_team_id = t.id THEN 1 ELSE 0 END) as away_matches,
+                SUM(CASE WHEN m.home_team_id = t.id THEN m.home_goals ELSE 0 END) as home_goals,
+                SUM(CASE WHEN m.away_team_id = t.id THEN m.away_goals ELSE 0 END) as away_goals,
+                SUM(CASE WHEN
+                    (m.home_team_id = t.id AND m.home_goals > m.away_goals) OR
+                    (m.away_team_id = t.id AND m.away_goals > m.home_goals)
+                    THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN m.home_goals = m.away_goals THEN 1 ELSE 0 END) as draws,
+                SUM(CASE WHEN
+                    (m.home_team_id = t.id AND m.home_goals < m.away_goals) OR
+                    (m.away_team_id = t.id AND m.away_goals < m.home_goals)
+                    THEN 1 ELSE 0 END) as losses
+            FROM matches m
+            JOIN teams t ON t.id = m.home_team_id OR t.id = m.away_team_id
+            WHERE m.league_id = :league_id
+              AND m.status = 'FT'
+              AND m.season = :season
+            GROUP BY t.id, t.name
+        )
+        SELECT
+            name,
+            matches_played,
+            wins,
+            draws,
+            losses,
+            goals_for,
+            goals_against,
+            goals_for - goals_against as goal_diff,
+            home_matches,
+            away_matches,
+            home_goals,
+            away_goals,
+            ROUND(goals_for::numeric / NULLIF(matches_played, 0), 2) as goals_per_match,
+            ROUND(goals_against::numeric / NULLIF(matches_played, 0), 2) as conceded_per_match,
+            wins * 3 + draws as points
+        FROM team_stats
+        WHERE matches_played >= 3
+        ORDER BY points DESC, goal_diff DESC
+    """
+    result = await session.execute(text(team_stats_query), {"league_id": league_id, "season": season})
+    teams = result.fetchall()
+
+    # Data availability query
+    data_availability_query = """
+        SELECT
+            COUNT(*) as total_matches,
+            COUNT(CASE WHEN stats IS NOT NULL AND stats::text != 'null' THEN 1 END) as with_stats,
+            COUNT(CASE WHEN home_goals IS NOT NULL THEN 1 END) as with_goals
+        FROM matches
+        WHERE league_id = :league_id
+          AND status = 'FT'
+          AND season = :season
+    """
+    avail_result = await session.execute(text(data_availability_query), {"league_id": league_id, "season": season})
+    availability = avail_result.fetchone()
+
+    # Calculate league-wide stats
+    total_goals = sum(t[5] for t in teams) // 2 if teams else 0  # Divide by 2 since each goal counted twice
+    total_matches = availability[0] if availability else 0
+    avg_goals_per_match = round(total_goals / total_matches, 2) if total_matches > 0 else 0
+
+    # Find extremes
+    if teams:
+        top_scorer = max(teams, key=lambda t: t[5])  # goals_for
+        worst_defense = max(teams, key=lambda t: t[6])  # goals_against
+        best_defense = min(teams, key=lambda t: t[13] if t[1] >= 5 else 999)  # conceded_per_match with min matches
+        most_wins = max(teams, key=lambda t: t[2])  # wins
+        most_draws = max(teams, key=lambda t: t[3])  # draws
+        most_losses = max(teams, key=lambda t: t[4])  # losses
+        best_home = max(teams, key=lambda t: t[10] / t[8] if t[8] > 0 else 0)  # home_goals/home_matches
+        best_away = max(teams, key=lambda t: t[11] / t[9] if t[9] > 0 else 0)  # away_goals/away_matches
+    else:
+        top_scorer = worst_defense = best_defense = most_wins = most_draws = most_losses = best_home = best_away = None
+
+    # Build HTML
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>League Stats - {league_name}</title>
+        <style>
+            body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 20px; background: #f8fafc; }}
+            h1 {{ color: #1e293b; margin-bottom: 5px; }}
+            .subtitle {{ color: #64748b; margin-bottom: 20px; }}
+            .nav {{ margin-bottom: 20px; }}
+            .nav a {{ color: #3b82f6; text-decoration: none; margin-right: 15px; }}
+            .nav a:hover {{ text-decoration: underline; }}
+            .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }}
+            .card {{ background: white; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+            .card-title {{ font-size: 12px; color: #64748b; text-transform: uppercase; margin-bottom: 8px; }}
+            .card-value {{ font-size: 24px; font-weight: 700; color: #1e293b; }}
+            .card-detail {{ font-size: 13px; color: #64748b; margin-top: 4px; }}
+            .highlight {{ background: #166534; color: white; }}
+            .highlight .card-title {{ color: #bbf7d0; }}
+            .highlight .card-value {{ color: white; }}
+            .highlight .card-detail {{ color: #bbf7d0; }}
+            .warning {{ background: #fef3c7; }}
+            .warning .card-title {{ color: #92400e; }}
+            table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-top: 24px; }}
+            th {{ background: #1e293b; color: white; padding: 12px; text-align: left; font-weight: 600; font-size: 12px; }}
+            td {{ padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; }}
+            tr:hover {{ background: #f1f5f9; }}
+            .num {{ text-align: right; font-variant-numeric: tabular-nums; }}
+            .pos {{ width: 30px; text-align: center; font-weight: 600; color: #64748b; }}
+            .section-title {{ font-size: 18px; font-weight: 600; color: #1e293b; margin: 32px 0 16px 0; }}
+            .data-status {{ display: flex; gap: 24px; margin-bottom: 24px; padding: 16px; background: #1e293b; border-radius: 8px; color: white; }}
+            .data-item {{ text-align: center; }}
+            .data-item .label {{ font-size: 11px; color: #94a3b8; }}
+            .data-item .value {{ font-size: 20px; font-weight: 700; }}
+            .available {{ color: #22c55e; }}
+            .missing {{ color: #ef4444; }}
+            .league-select {{ padding: 8px 12px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 14px; margin-left: 12px; }}
+        </style>
+    </head>
+    <body>
+        <div class="nav">
+            <a href="/dashboard/ops">← Ops</a>
+            <a href="/dashboard/ops/daily_comparison">Daily</a>
+        </div>
+
+        <h1>League Stats: {league_name}
+            <select class="league-select" onchange="window.location.href='?league_id='+this.value">
+                <option value="128" {'selected' if league_id == 128 else ''}>Argentina</option>
+                <option value="250" {'selected' if league_id == 250 else ''}>Paraguay</option>
+                <option value="71" {'selected' if league_id == 71 else ''}>Brasil</option>
+                <option value="39" {'selected' if league_id == 39 else ''}>Premier League</option>
+                <option value="140" {'selected' if league_id == 140 else ''}>La Liga</option>
+                <option value="135" {'selected' if league_id == 135 else ''}>Serie A</option>
+                <option value="78" {'selected' if league_id == 78 else ''}>Bundesliga</option>
+                <option value="253" {'selected' if league_id == 253 else ''}>MLS</option>
+            </select>
+        </h1>
+        <p class="subtitle">Temporada {season} - Datos calculados de {total_matches} partidos</p>
+
+        <div class="section-title">Disponibilidad de Datos para Narrativas</div>
+        <div class="data-status">
+            <div class="data-item">
+                <div class="label">Partidos FT</div>
+                <div class="value available">{availability[0] if availability else 0}</div>
+            </div>
+            <div class="data-item">
+                <div class="label">Con Stats Detalladas</div>
+                <div class="value {'available' if availability and availability[1] > 0 else 'missing'}">{availability[1] if availability else 0}</div>
+            </div>
+            <div class="data-item">
+                <div class="label">% Stats</div>
+                <div class="value {'available' if availability and availability[1]/availability[0]*100 > 50 else 'missing'}">{round(availability[1]/availability[0]*100, 1) if availability and availability[0] > 0 else 0}%</div>
+            </div>
+            <div class="data-item">
+                <div class="label">Goles Totales</div>
+                <div class="value available">{total_goals}</div>
+            </div>
+            <div class="data-item">
+                <div class="label">Prom. Goles/Partido</div>
+                <div class="value available">{avg_goals_per_match}</div>
+            </div>
+        </div>
+
+        <div class="section-title">Líderes de Liga (Datos Verificables)</div>
+        <div class="grid">
+            <div class="card highlight">
+                <div class="card-title">Más Goleador</div>
+                <div class="card-value">{top_scorer[0] if top_scorer else '-'}</div>
+                <div class="card-detail">{top_scorer[5] if top_scorer else 0} goles en {top_scorer[1] if top_scorer else 0} partidos ({top_scorer[12] if top_scorer else 0}/partido)</div>
+            </div>
+            <div class="card highlight">
+                <div class="card-title">Mejor Defensa</div>
+                <div class="card-value">{best_defense[0] if best_defense else '-'}</div>
+                <div class="card-detail">{best_defense[6] if best_defense else 0} goles recibidos ({best_defense[13] if best_defense else 0}/partido)</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Valla Más Vencida</div>
+                <div class="card-value">{worst_defense[0] if worst_defense else '-'}</div>
+                <div class="card-detail">{worst_defense[6] if worst_defense else 0} goles recibidos</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Más Victorias</div>
+                <div class="card-value">{most_wins[0] if most_wins else '-'}</div>
+                <div class="card-detail">{most_wins[2] if most_wins else 0} victorias</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Más Empates</div>
+                <div class="card-value">{most_draws[0] if most_draws else '-'}</div>
+                <div class="card-detail">{most_draws[3] if most_draws else 0} empates</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Más Derrotas</div>
+                <div class="card-value">{most_losses[0] if most_losses else '-'}</div>
+                <div class="card-detail">{most_losses[4] if most_losses else 0} derrotas</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Mejor Local</div>
+                <div class="card-value">{best_home[0] if best_home else '-'}</div>
+                <div class="card-detail">{best_home[10] if best_home else 0} goles en {best_home[8] if best_home else 0} partidos de local</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Mejor Visitante</div>
+                <div class="card-value">{best_away[0] if best_away else '-'}</div>
+                <div class="card-detail">{best_away[11] if best_away else 0} goles en {best_away[9] if best_away else 0} partidos de visita</div>
+            </div>
+        </div>
+
+        <div class="section-title warning-box">Datos NO Disponibles para Narrativas</div>
+        <div class="grid">
+            <div class="card warning">
+                <div class="card-title">Fueras de Lugar</div>
+                <div class="card-value">—</div>
+                <div class="card-detail">Solo {availability[1] if availability else 0} partidos tienen stats detalladas</div>
+            </div>
+            <div class="card warning">
+                <div class="card-title">Goles de Cabeza</div>
+                <div class="card-value">—</div>
+                <div class="card-detail">API no provee desglose por tipo de gol</div>
+            </div>
+            <div class="card warning">
+                <div class="card-title">Tarjetas Acumuladas</div>
+                <div class="card-value">—</div>
+                <div class="card-detail">Stats de tarjetas incompletas</div>
+            </div>
+            <div class="card warning">
+                <div class="card-title">xG Acumulado</div>
+                <div class="card-value">—</div>
+                <div class="card-detail">Solo partidos recientes tienen xG</div>
+            </div>
+        </div>
+
+        <div class="section-title">Tabla de Posiciones</div>
+        <table>
+            <thead>
+                <tr>
+                    <th class="pos">#</th>
+                    <th>Equipo</th>
+                    <th class="num">PJ</th>
+                    <th class="num">G</th>
+                    <th class="num">E</th>
+                    <th class="num">P</th>
+                    <th class="num">GF</th>
+                    <th class="num">GC</th>
+                    <th class="num">DIF</th>
+                    <th class="num">PTS</th>
+                </tr>
+            </thead>
+            <tbody>
+    """
+
+    for i, team in enumerate(teams, 1):
+        html += f"""
+                <tr>
+                    <td class="pos">{i}</td>
+                    <td>{team[0]}</td>
+                    <td class="num">{team[1]}</td>
+                    <td class="num">{team[2]}</td>
+                    <td class="num">{team[3]}</td>
+                    <td class="num">{team[4]}</td>
+                    <td class="num">{team[5]}</td>
+                    <td class="num">{team[6]}</td>
+                    <td class="num">{team[7]}</td>
+                    <td class="num"><strong>{team[14]}</strong></td>
+                </tr>
+        """
+
+    html += """
+            </tbody>
+        </table>
+    </body>
+    </html>
+    """
+
+    return HTMLResponse(content=html)
+
+
 @app.get("/dashboard/ops/team_overrides.json")
 async def ops_team_overrides(
     request: Request,
