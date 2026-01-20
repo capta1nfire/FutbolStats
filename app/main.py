@@ -11852,7 +11852,8 @@ async def ops_daily_comparison_html(
     </head>
     <body>
         <div class="nav">
-            <a href="?date={( target_date - timedelta(days=1)).strftime('%Y-%m-%d')}&market={market}&model_a={model_a}&shadow={shadow}&sensor={sensor}">← Día anterior</a>
+            <a href="/dashboard/ops">← Ops</a>
+            <a href="?date={( target_date - timedelta(days=1)).strftime('%Y-%m-%d')}&market={market}&model_a={model_a}&shadow={shadow}&sensor={sensor}">Día anterior</a>
             <a href="?date={(target_date + timedelta(days=1)).strftime('%Y-%m-%d')}&market={market}&model_a={model_a}&shadow={shadow}&sensor={sensor}">Día siguiente →</a>
         </div>
 
