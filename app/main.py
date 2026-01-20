@@ -11548,21 +11548,82 @@ async def ops_daily_comparison_html(
     result = await session.execute(text(query), params)
     matches = result.mappings().all()
 
-    # Calculate summary
+    # Calculate summary (all matches)
     total = len(matches)
     a_correct = sum(1 for m in matches if m["a_pick"] == m["actual_outcome"])
     shadow_correct = sum(1 for m in matches if m["shadow_pick"] == m["actual_outcome"])
     sensor_correct = sum(1 for m in matches if m["sensor_pick"] == m["actual_outcome"])
     market_correct = sum(1 for m in matches if m["market_pick"] == m["actual_outcome"])
 
+    # Calculate GLOBAL accuracy (all historical matches where ALL 4 models have data)
+    global_query = """
+        SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN market_pick = actual_outcome THEN 1 ELSE 0 END) as market_correct,
+            SUM(CASE WHEN a_pick = actual_outcome THEN 1 ELSE 0 END) as a_correct,
+            SUM(CASE WHEN shadow_pick = actual_outcome THEN 1 ELSE 0 END) as shadow_correct,
+            SUM(CASE WHEN sensor_pick = actual_outcome THEN 1 ELSE 0 END) as sensor_correct
+        FROM v_daily_match_comparison
+        WHERE market_pick IS NOT NULL
+          AND a_pick IS NOT NULL
+          AND shadow_pick IS NOT NULL
+          AND sensor_pick IS NOT NULL
+    """
+    global_result = await session.execute(text(global_query))
+    global_row = global_result.fetchone()
+    global_total = global_row[0] or 0
+    global_market = global_row[1] or 0
+    global_a = global_row[2] or 0
+    global_shadow = global_row[3] or 0
+    global_sensor = global_row[4] or 0
+
+    # Calculate daily wins per model (how many days each model was the winner)
+    daily_wins_query = """
+        WITH daily_stats AS (
+            SELECT
+                match_day_la,
+                SUM(CASE WHEN market_pick = actual_outcome THEN 1 ELSE 0 END) as market_correct,
+                SUM(CASE WHEN a_pick = actual_outcome THEN 1 ELSE 0 END) as a_correct,
+                SUM(CASE WHEN shadow_pick = actual_outcome THEN 1 ELSE 0 END) as shadow_correct,
+                SUM(CASE WHEN sensor_pick = actual_outcome THEN 1 ELSE 0 END) as sensor_correct
+            FROM v_daily_match_comparison
+            WHERE market_pick IS NOT NULL
+              AND a_pick IS NOT NULL
+              AND shadow_pick IS NOT NULL
+              AND sensor_pick IS NOT NULL
+            GROUP BY match_day_la
+        )
+        SELECT
+            SUM(CASE WHEN market_correct > a_correct AND market_correct > shadow_correct AND market_correct > sensor_correct THEN 1 ELSE 0 END) as market_wins,
+            SUM(CASE WHEN a_correct > market_correct AND a_correct > shadow_correct AND a_correct > sensor_correct THEN 1 ELSE 0 END) as a_wins,
+            SUM(CASE WHEN shadow_correct > market_correct AND shadow_correct > a_correct AND shadow_correct > sensor_correct THEN 1 ELSE 0 END) as shadow_wins,
+            SUM(CASE WHEN sensor_correct > market_correct AND sensor_correct > a_correct AND sensor_correct > shadow_correct THEN 1 ELSE 0 END) as sensor_wins
+        FROM daily_stats
+    """
+    daily_wins_result = await session.execute(text(daily_wins_query))
+    daily_wins_row = daily_wins_result.fetchone()
+    wins_market = daily_wins_row[0] or 0
+    wins_a = daily_wins_row[1] or 0
+    wins_shadow = daily_wins_row[2] or 0
+    wins_sensor = daily_wins_row[3] or 0
+
     # Build HTML
     date_str = target_date.strftime("%Y-%m-%d")
+
+    def badge_only(pick):
+        """Render pick as colored badge with initial (no check mark)."""
+        if not pick:
+            return '-'
+        colors = {'home': '#3b82f6', 'draw': '#6b7280', 'away': '#ef4444'}
+        initials = {'home': 'H', 'draw': 'D', 'away': 'A'}
+        bg = colors.get(pick, '#6b7280')
+        letter = initials.get(pick, '?')
+        return f'<span style="background:{bg};color:white;padding:2px 8px;border-radius:4px;font-weight:600;">{letter}</span>'
 
     def badge(pick, actual):
         """Render pick as colored badge with initial + check/x mark."""
         if not pick:
             return '-'
-        # Badge colors: H=blue, D=gray, A=red
         colors = {'home': '#3b82f6', 'draw': '#6b7280', 'away': '#ef4444'}
         initials = {'home': 'H', 'draw': 'D', 'away': 'A'}
         bg = colors.get(pick, '#6b7280')
@@ -11572,6 +11633,22 @@ async def ops_daily_comparison_html(
         mark_color = '#22c55e' if is_correct else '#ef4444'
         return f'<span style="background:{bg};color:white;padding:2px 8px;border-radius:4px;font-weight:600;">{letter}</span> <span style="color:{mark_color};font-weight:bold;">{mark}</span>'
 
+    # Determine daily winner (model with most correct predictions)
+    daily_scores = {
+        'market': market_correct,
+        'model_a': a_correct,
+        'shadow': shadow_correct,
+        'sensor': sensor_correct
+    }
+    max_score = max(daily_scores.values())
+    daily_winner = [k for k, v in daily_scores.items() if v == max_score][0] if max_score > 0 else None
+
+    # Helper to add green background if this column is the winner
+    def winner_style(col_name):
+        if col_name == daily_winner:
+            return "background: #dcfce7;"
+        return ""
+
     rows_html = ""
     for m in matches:
         actual = m['actual_outcome']
@@ -11580,11 +11657,11 @@ async def ops_daily_comparison_html(
             <td>{m['home_team']}</td>
             <td>{m['away_team']}</td>
             <td style="text-align: center; font-weight: bold;">{m['home_goals']}-{m['away_goals']}</td>
-            <td style="text-align: center;">{badge(actual, actual).split(' ')[0]}</td>
-            <td style="text-align: center;">{badge(m['market_pick'], actual)}</td>
-            <td style="text-align: center;">{badge(m['a_pick'], actual)}</td>
-            <td style="text-align: center;">{badge(m['shadow_pick'], actual)}</td>
-            <td style="text-align: center;">{badge(m['sensor_pick'], actual)}</td>
+            <td style="text-align: center;">{badge_only(actual)}</td>
+            <td style="text-align: center; {winner_style('market')}">{badge(m['market_pick'], actual)}</td>
+            <td style="text-align: center; {winner_style('model_a')}">{badge(m['a_pick'], actual)}</td>
+            <td style="text-align: center; {winner_style('shadow')}">{badge(m['shadow_pick'], actual)}</td>
+            <td style="text-align: center; {winner_style('sensor')}">{badge(m['sensor_pick'], actual)}</td>
         </tr>
         """
 
@@ -11596,13 +11673,17 @@ async def ops_daily_comparison_html(
         <style>
             * {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }}
             body {{ background: #f8fafc; padding: 20px; }}
+            .header-container {{ display: flex; justify-content: space-between; align-items: flex-start; }}
+            .header-left {{ flex: 1; }}
             h1 {{ color: #1e293b; margin-bottom: 5px; }}
             .subtitle {{ color: #64748b; margin-bottom: 20px; }}
-            .summary {{ display: flex; gap: 15px; margin-bottom: 20px; }}
-            .summary-card {{ background: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
-            .summary-card h3 {{ margin: 0 0 5px 0; font-size: 14px; color: #64748b; }}
-            .summary-card .value {{ font-size: 24px; font-weight: bold; color: #1e293b; }}
-            .summary-card .pct {{ font-size: 14px; color: #22c55e; }}
+            .summary-box {{ background: #1e293b; color: white; padding: 12px 20px; border-radius: 8px; display: flex; align-items: center; gap: 24px; }}
+            .summary-title {{ font-size: 12px; color: #94a3b8; font-weight: 500; white-space: nowrap; }}
+            .summary-item {{ text-align: center; }}
+            .summary-item .label {{ font-size: 11px; color: #94a3b8; margin-bottom: 2px; }}
+            .summary-item .label .wins {{ font-size: 9px; background: #fbbf24; color: #1e293b; padding: 1px 4px; border-radius: 3px; font-weight: 700; margin-left: 2px; }}
+            .summary-item .value {{ font-size: 18px; font-weight: 700; }}
+            .summary-item .count {{ font-size: 10px; background: #374151; padding: 2px 6px; border-radius: 4px; margin-top: 4px; display: inline-block; }}
             table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
             th {{ background: #1e293b; color: white; padding: 12px; text-align: left; font-weight: 600; }}
             td {{ padding: 12px; border-bottom: 1px solid #e2e8f0; }}
@@ -11610,6 +11691,7 @@ async def ops_daily_comparison_html(
             .nav {{ margin-bottom: 20px; }}
             .nav a {{ color: #3b82f6; text-decoration: none; margin-right: 15px; }}
             .nav a:hover {{ text-decoration: underline; }}
+            .legend {{ font-size: 11px; color: #94a3b8; margin: 8px 0 16px 0; font-style: italic; }}
         </style>
     </head>
     <body>
@@ -11618,31 +11700,20 @@ async def ops_daily_comparison_html(
             <a href="?date={(target_date + timedelta(days=1)).strftime('%Y-%m-%d')}&token={request.query_params.get('token', '')}">Día siguiente →</a>
         </div>
 
-        <h1>📊 Daily Comparison</h1>
-        <p class="subtitle">{date_str} (LA timezone) • {total} partidos terminados</p>
-
-        <div class="summary">
-            <div class="summary-card">
-                <h3>Market</h3>
-                <div class="value">{market_correct}/{total}</div>
-                <div class="pct">{round(market_correct/total*100, 1) if total > 0 else 0}%</div>
+        <div class="header-container">
+            <div class="header-left">
+                <h1>Daily Comparison</h1>
+                <p class="subtitle">{date_str} (LA timezone) - {total} partidos terminados</p>
             </div>
-            <div class="summary-card">
-                <h3>Model A</h3>
-                <div class="value">{a_correct}/{total}</div>
-                <div class="pct">{round(a_correct/total*100, 1) if total > 0 else 0}%</div>
-            </div>
-            <div class="summary-card">
-                <h3>Shadow</h3>
-                <div class="value">{shadow_correct}/{total}</div>
-                <div class="pct">{round(shadow_correct/total*100, 1) if total > 0 else 0}%</div>
-            </div>
-            <div class="summary-card">
-                <h3>Sensor B</h3>
-                <div class="value">{sensor_correct}/{total}</div>
-                <div class="pct">{round(sensor_correct/total*100, 1) if total > 0 else 0}%</div>
+            <div class="summary-box">
+                <span class="summary-title">n={global_total}</span>
+                <div class="summary-item"><div class="label">Market <span class="wins">{wins_market}</span></div><div class="value">{round(global_market/global_total*100, 1) if global_total > 0 else 0}%</div><div class="count">{global_market}</div></div>
+                <div class="summary-item"><div class="label">Model A <span class="wins">{wins_a}</span></div><div class="value">{round(global_a/global_total*100, 1) if global_total > 0 else 0}%</div><div class="count">{global_a}</div></div>
+                <div class="summary-item"><div class="label">Shadow <span class="wins">{wins_shadow}</span></div><div class="value">{round(global_shadow/global_total*100, 1) if global_total > 0 else 0}%</div><div class="count">{global_shadow}</div></div>
+                <div class="summary-item"><div class="label">Sensor B <span class="wins">{wins_sensor}</span></div><div class="value">{round(global_sensor/global_total*100, 1) if global_total > 0 else 0}%</div><div class="count">{global_sensor}</div></div>
             </div>
         </div>
+        <p class="legend">* Resultados calculados solo con partidos donde los 4 modelos tienen datos completos (desde 18 Ene 2026)</p>
 
         <table>
             <thead>
@@ -11651,10 +11722,10 @@ async def ops_daily_comparison_html(
                     <th>Away</th>
                     <th style="text-align: center;">Score</th>
                     <th style="text-align: center;">Real</th>
-                    <th style="text-align: center;">Market</th>
-                    <th style="text-align: center;">Model A</th>
-                    <th style="text-align: center;">Shadow</th>
-                    <th style="text-align: center;">Sensor B</th>
+                    <th style="text-align: center; {'background:#166534;' if daily_winner == 'market' else ''}">Market<br><span style="font-size:11px;background:#22c55e;color:white;padding:2px 6px;border-radius:4px;margin-top:4px;display:inline-block;">{round(market_correct/total*100, 1) if total > 0 else 0}%</span></th>
+                    <th style="text-align: center; {'background:#166534;' if daily_winner == 'model_a' else ''}">Model A<br><span style="font-size:11px;background:#22c55e;color:white;padding:2px 6px;border-radius:4px;margin-top:4px;display:inline-block;">{round(a_correct/total*100, 1) if total > 0 else 0}%</span></th>
+                    <th style="text-align: center; {'background:#166534;' if daily_winner == 'shadow' else ''}">Shadow<br><span style="font-size:11px;background:#22c55e;color:white;padding:2px 6px;border-radius:4px;margin-top:4px;display:inline-block;">{round(shadow_correct/total*100, 1) if total > 0 else 0}%</span></th>
+                    <th style="text-align: center; {'background:#166534;' if daily_winner == 'sensor' else ''}">Sensor B<br><span style="font-size:11px;background:#22c55e;color:white;padding:2px 6px;border-radius:4px;margin-top:4px;display:inline-block;">{round(sensor_correct/total*100, 1) if total > 0 else 0}%</span></th>
                 </tr>
             </thead>
             <tbody>

@@ -551,6 +551,89 @@ async def freeze_predictions_before_kickoff() -> dict:
                     pred.frozen_odds_draw = match.odds_draw
                     pred.frozen_odds_away = match.odds_away
 
+                    # OPS Daily Comparison: persist a "market snapshot" row for this match.
+                    # This avoids a disconnect where odds_sync updates matches.odds_* but the
+                    # OPS dashboard reads from match_odds_snapshot.
+                    #
+                    # Source of truth for "market at freeze": predictions.frozen_odds_*
+                    # (these are copied from matches at freeze time).
+                    try:
+                        if (
+                            pred.frozen_odds_home
+                            and pred.frozen_odds_draw
+                            and pred.frozen_odds_away
+                            and pred.frozen_odds_home > 1
+                            and pred.frozen_odds_draw > 1
+                            and pred.frozen_odds_away > 1
+                        ):
+                            # Resolve primary bookmaker for this league (default bet365)
+                            bookmaker_row = await session.execute(
+                                text("""
+                                    SELECT bookmaker
+                                    FROM league_bookmaker_config
+                                    WHERE league_id = :league_id AND is_primary = TRUE
+                                    LIMIT 1
+                                """),
+                                {"league_id": match.league_id},
+                            )
+                            bookmaker = (bookmaker_row.scalar() or "bet365").lower()
+
+                            # Compute implied probabilities (normalized, removes overround)
+                            raw_home = 1 / float(pred.frozen_odds_home)
+                            raw_draw = 1 / float(pred.frozen_odds_draw)
+                            raw_away = 1 / float(pred.frozen_odds_away)
+                            total = raw_home + raw_draw + raw_away
+                            implied_home = raw_home / total
+                            implied_draw = raw_draw / total
+                            implied_away = raw_away / total
+                            market_pick = max(
+                                {"home": implied_home, "draw": implied_draw, "away": implied_away},
+                                key=lambda k: {"home": implied_home, "draw": implied_draw, "away": implied_away}[k],
+                            )
+
+                            await session.execute(
+                                text("""
+                                    INSERT INTO match_odds_snapshot (
+                                        match_id, bookmaker,
+                                        odds_home, odds_draw, odds_away,
+                                        implied_home, implied_draw, implied_away,
+                                        market_pick, snapshot_at, is_primary
+                                    ) VALUES (
+                                        :match_id, :bookmaker,
+                                        :odds_home, :odds_draw, :odds_away,
+                                        :implied_home, :implied_draw, :implied_away,
+                                        :market_pick, :snapshot_at, TRUE
+                                    )
+                                    ON CONFLICT (match_id, bookmaker) DO UPDATE SET
+                                        odds_home = EXCLUDED.odds_home,
+                                        odds_draw = EXCLUDED.odds_draw,
+                                        odds_away = EXCLUDED.odds_away,
+                                        implied_home = EXCLUDED.implied_home,
+                                        implied_draw = EXCLUDED.implied_draw,
+                                        implied_away = EXCLUDED.implied_away,
+                                        market_pick = EXCLUDED.market_pick,
+                                        snapshot_at = EXCLUDED.snapshot_at,
+                                        is_primary = TRUE
+                                """),
+                                {
+                                    "match_id": match.id,
+                                    "bookmaker": bookmaker,
+                                    "odds_home": float(pred.frozen_odds_home),
+                                    "odds_draw": float(pred.frozen_odds_draw),
+                                    "odds_away": float(pred.frozen_odds_away),
+                                    "implied_home": float(round(implied_home, 6)),
+                                    "implied_draw": float(round(implied_draw, 6)),
+                                    "implied_away": float(round(implied_away, 6)),
+                                    "market_pick": market_pick,
+                                    "snapshot_at": pred.frozen_at or now,
+                                },
+                            )
+                    except Exception as e:
+                        # Don't block freezing if OPS snapshot fails.
+                        logger.warning(
+                            f"[FREEZE] Failed to upsert match_odds_snapshot for match_id={getattr(match, 'id', None)}: {e}"
+                        )
+
                     # Calculate and freeze EV values
                     if match.odds_home and pred.home_prob > 0:
                         pred.frozen_ev_home = (pred.home_prob * match.odds_home) - 1
