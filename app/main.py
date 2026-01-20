@@ -12024,7 +12024,8 @@ async def ops_league_stats_html(
             away_goals,
             ROUND(goals_for::numeric / NULLIF(matches_played, 0), 2) as goals_per_match,
             ROUND(goals_against::numeric / NULLIF(matches_played, 0), 2) as conceded_per_match,
-            wins * 3 + draws as points
+            wins * 3 + draws as points,
+            id as team_id
         FROM team_stats
         WHERE matches_played >= 1
         ORDER BY points DESC, goal_diff DESC
@@ -12110,6 +12111,136 @@ async def ops_league_stats_html(
     else:
         top_scorers = worst_defenses = best_defenses = most_wins_list = most_draws_list = most_losses_list = best_home_list = best_away_list = []
 
+    # -------------------------------------------------------------------------
+    # Modal data: per-team badges + stats + league ranks
+    # -------------------------------------------------------------------------
+    # Build quick lookup maps
+    team_rows_by_id = {}
+    for pos, t in enumerate(teams, 1):
+        # Tuple layout:
+        # 0 name, 1 PJ, 2 W, 3 D, 4 L, 5 GF, 6 GA, 7 GD, 8 home_matches, 9 away_matches,
+        # 10 home_goals, 11 away_goals, 12 goals_per_match, 13 conceded_per_match, 14 points, 15 team_id
+        team_id = t[15]
+        team_rows_by_id[int(team_id)] = {"pos": pos, "row": t}
+
+    def _rank_desc(values_by_team_id: dict[int, float]) -> dict[int, int]:
+        """Dense rank (1..N) for descending values. Ties share rank."""
+        # Sort unique values descending
+        unique_vals = sorted(set(values_by_team_id.values()), reverse=True)
+        rank_by_val = {v: i + 1 for i, v in enumerate(unique_vals)}
+        return {tid: rank_by_val[val] for tid, val in values_by_team_id.items()}
+
+    def _rank_asc(values_by_team_id: dict[int, float]) -> dict[int, int]:
+        """Dense rank (1..N) for ascending values. Ties share rank."""
+        unique_vals = sorted(set(values_by_team_id.values()))
+        rank_by_val = {v: i + 1 for i, v in enumerate(unique_vals)}
+        return {tid: rank_by_val[val] for tid, val in values_by_team_id.items()}
+
+    # Base stats ranks (all teams)
+    gf_by_id = {tid: float(data["row"][5] or 0) for tid, data in team_rows_by_id.items()}
+    ga_by_id = {tid: float(data["row"][6] or 0) for tid, data in team_rows_by_id.items()}
+    pts_by_id = {tid: float(data["row"][14] or 0) for tid, data in team_rows_by_id.items()}
+    gd_by_id = {tid: float(data["row"][7] or 0) for tid, data in team_rows_by_id.items()}
+    gf_rank = _rank_desc(gf_by_id)
+    ga_rank = _rank_asc(ga_by_id)
+    pts_rank = _rank_desc(pts_by_id)
+    gd_rank = _rank_desc(gd_by_id)
+
+    # Detailed stats ranks (only teams with stats)
+    detailed_by_id = {}
+    for d in detailed_stats:
+        # d: (id, name, matches_with_stats, total_offsides, total_yellows, total_fouls,
+        #     total_corners, total_shots, shots_on_target)
+        detailed_by_id[int(d[0])] = {
+            "matches_with_stats": int(d[2] or 0),
+            "offsides": int(d[3] or 0),
+            "yellows": int(d[4] or 0),
+            "fouls": int(d[5] or 0),
+            "corners": int(d[6] or 0),
+            "shots": int(d[7] or 0),
+            "shots_on_target": int(d[8] or 0),
+        }
+
+    # ranks among teams with stats only
+    shots_rank = {}
+    corners_rank = {}
+    sot_rank = {}
+    acc_rank = {}
+    fouls_rank = {}
+    if detailed_by_id:
+        shots_by_id = {tid: float(v["shots"]) for tid, v in detailed_by_id.items()}
+        corners_by_id = {tid: float(v["corners"]) for tid, v in detailed_by_id.items()}
+        sot_by_id = {tid: float(v["shots_on_target"]) for tid, v in detailed_by_id.items()}
+        fouls_by_id = {tid: float(v["fouls"]) for tid, v in detailed_by_id.items()}
+        acc_by_id = {
+            tid: (float(v["shots_on_target"]) / float(v["shots"])) if v["shots"] > 0 else 0.0
+            for tid, v in detailed_by_id.items()
+        }
+        shots_rank = _rank_desc(shots_by_id)
+        corners_rank = _rank_desc(corners_by_id)
+        sot_rank = _rank_desc(sot_by_id)
+        fouls_rank = _rank_desc(fouls_by_id)
+        acc_rank = _rank_desc(acc_by_id)
+
+    # Badge memberships (by team_id)
+    def _ids(team_list):
+        return {int(t[15]) for t in (team_list or [])}
+
+    badge_defs = [
+        ("top_scorer", "Más goleador", _ids(top_scorers), lambda tid: int(team_rows_by_id[tid]["row"][5] or 0), len(top_scorers)),
+        ("best_defense", "Mejor defensa", _ids(best_defenses), lambda tid: int(team_rows_by_id[tid]["row"][6] or 0), len(best_defenses)),
+        ("most_shots_on_target", "Más tiros al arco", {int(most_shots[0])} if most_shots else set(), lambda tid: int(detailed_by_id.get(tid, {}).get("shots_on_target", 0)), 1),
+        ("most_corners", "Más córners", {int(most_corners[0])} if most_corners else set(), lambda tid: int(detailed_by_id.get(tid, {}).get("corners", 0)), 1),
+        ("best_accuracy", "Mejor puntería", {int(best_accuracy[0])} if best_accuracy else set(), lambda tid: round((detailed_by_id.get(tid, {}).get("shots_on_target", 0) / detailed_by_id.get(tid, {}).get("shots", 1)) * 100, 1) if detailed_by_id.get(tid, {}).get("shots", 0) else 0, 1),
+    ]
+
+    # Build JSON payload for modal
+    modal_data = {}
+    for tid, data in team_rows_by_id.items():
+        t = data["row"]
+        team_name = t[0]
+        team_payload = {
+            "team_id": tid,
+            "team_name": team_name,
+            "position": data["pos"],
+            "points": int(t[14] or 0),
+            "goal_diff": int(t[7] or 0),
+            "played": int(t[1] or 0),
+            "wins": int(t[2] or 0),
+            "draws": int(t[3] or 0),
+            "losses": int(t[4] or 0),
+            "goals_for": int(t[5] or 0),
+            "goals_against": int(t[6] or 0),
+            "ranks": {
+                "points": pts_rank.get(tid),
+                "goal_diff": gd_rank.get(tid),
+                "goals_for": gf_rank.get(tid),
+                "goals_against": ga_rank.get(tid),
+                "shots": shots_rank.get(tid),
+                "shots_on_target": sot_rank.get(tid),
+                "corners": corners_rank.get(tid),
+                "accuracy": acc_rank.get(tid),
+                "fouls": fouls_rank.get(tid),
+            },
+            "detailed_stats": detailed_by_id.get(tid),
+            "badges": [],
+        }
+
+        for key, title, members, value_fn, tied_n in badge_defs:
+            if tid in members:
+                try:
+                    val = value_fn(tid)
+                except Exception:
+                    val = None
+                team_payload["badges"].append({
+                    "key": key,
+                    "title": title,
+                    "value": val,
+                    "tied_n": tied_n,
+                })
+
+        modal_data[str(tid)] = team_payload
+
     # Helper to format team names (join multiple with comma)
     def format_teams(team_list, max_show=3):
         if not team_list:
@@ -12158,6 +12289,23 @@ async def ops_league_stats_html(
             .available {{ color: #22c55e; }}
             .missing {{ color: #ef4444; }}
             .league-select {{ padding: 8px 12px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 14px; margin-left: 12px; }}
+            /* Modal */
+            .modal-overlay {{ position: fixed; inset: 0; background: rgba(15, 23, 42, 0.55); display: none; align-items: center; justify-content: center; padding: 24px; z-index: 9999; }}
+            .modal {{ background: white; width: 100%; max-width: 720px; border-radius: 12px; box-shadow: 0 20px 50px rgba(0,0,0,0.25); overflow: hidden; }}
+            .modal-header {{ display: flex; justify-content: space-between; align-items: flex-start; padding: 16px 18px; border-bottom: 1px solid #e2e8f0; }}
+            .modal-title {{ font-size: 18px; font-weight: 700; color: #0f172a; }}
+            .modal-subtitle {{ font-size: 13px; color: #64748b; margin-top: 4px; }}
+            .modal-close {{ border: 0; background: transparent; font-size: 20px; cursor: pointer; color: #64748b; padding: 4px 8px; }}
+            .modal-body {{ padding: 16px 18px; }}
+            .badge {{ display: inline-block; background: #0f172a; color: white; padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }}
+            .badge-gray {{ background: #64748b; }}
+            .badges {{ display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 14px; }}
+            .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-top: 12px; }}
+            .kpi {{ background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; }}
+            .kpi .label {{ font-size: 11px; color: #64748b; text-transform: uppercase; }}
+            .kpi .value {{ font-size: 18px; font-weight: 800; color: #0f172a; margin-top: 4px; }}
+            .kpi .rank {{ font-size: 12px; color: #334155; margin-top: 2px; }}
+            .clickable-row {{ cursor: pointer; }}
         </style>
     </head>
     <body>
@@ -12333,8 +12481,9 @@ async def ops_league_stats_html(
     """
 
     for i, team in enumerate(teams, 1):
+        team_id = team[15]
         html += f"""
-                <tr>
+                <tr class="clickable-row" data-team-id="{team_id}" title="Click para ver detalles">
                     <td class="pos">{i}</td>
                     <td>{team[0]}</td>
                     <td class="num">{team[1]}</td>
@@ -12351,6 +12500,118 @@ async def ops_league_stats_html(
     html += """
             </tbody>
         </table>
+        <div id="teamModalOverlay" class="modal-overlay" role="dialog" aria-modal="true" aria-hidden="true">
+            <div class="modal" role="document">
+                <div class="modal-header">
+                    <div>
+                        <div id="teamModalTitle" class="modal-title">Equipo</div>
+                        <div id="teamModalSubtitle" class="modal-subtitle">—</div>
+                    </div>
+                    <button id="teamModalClose" class="modal-close" aria-label="Cerrar">×</button>
+                </div>
+                <div class="modal-body">
+                    <div id="teamModalBadges" class="badges"></div>
+                    <div id="teamModalKPIs" class="kpi-grid"></div>
+                </div>
+            </div>
+        </div>
+        <script>
+        const TEAM_DATA = {json.dumps(modal_data)};
+
+        function fmtRank(rank, total) {{
+            if (!rank) return '—';
+            return `#${{rank}} de ${{total}}`;
+        }}
+
+        function openTeamModal(teamId) {{
+            const data = TEAM_DATA[String(teamId)];
+            if (!data) return;
+
+            const totalTeams = Object.keys(TEAM_DATA).length;
+
+            document.getElementById('teamModalTitle').textContent = data.team_name;
+            document.getElementById('teamModalSubtitle').textContent =
+                `Posición: ${data.position} | PTS: ${data.points} | DIF: ${data.goal_diff}`;
+
+            // Badges (logros)
+            const badgesEl = document.getElementById('teamModalBadges');
+            badgesEl.innerHTML = '';
+            if (data.badges && data.badges.length) {{
+                for (const b of data.badges) {{
+                    const val = (b.value === null || b.value === undefined) ? '' : ` (${b.value})`;
+                    const tied = b.tied_n ? ` — ${1} de ${b.tied_n} equipos` : '';
+                    const span = document.createElement('span');
+                    span.className = 'badge';
+                    span.textContent = `${b.title}${val}${tied}`;
+                    badgesEl.appendChild(span);
+                }}
+            }} else {{
+                const span = document.createElement('span');
+                span.className = 'badge badge-gray';
+                span.textContent = 'Sin insignias destacadas';
+                badgesEl.appendChild(span);
+            }}
+
+            // KPIs con ranking
+            const kpisEl = document.getElementById('teamModalKPIs');
+            kpisEl.innerHTML = '';
+
+            const metrics = [
+                {{ key: 'goals_for', label: 'Goles a favor', value: data.goals_for, rank: data.ranks.goals_for }},
+                {{ key: 'goals_against', label: 'Goles en contra', value: data.goals_against, rank: data.ranks.goals_against }},
+                {{ key: 'shots', label: 'Tiros totales', value: data.detailed_stats ? data.detailed_stats.shots : null, rank: data.ranks.shots }},
+                {{ key: 'shots_on_target', label: 'Tiros al arco', value: data.detailed_stats ? data.detailed_stats.shots_on_target : null, rank: data.ranks.shots_on_target }},
+                {{ key: 'corners', label: 'Córners', value: data.detailed_stats ? data.detailed_stats.corners : null, rank: data.ranks.corners }},
+                {{ key: 'accuracy', label: 'Puntería (%)', value: (() => {{
+                    if (!data.detailed_stats) return null;
+                    const s = data.detailed_stats.shots || 0;
+                    const sot = data.detailed_stats.shots_on_target || 0;
+                    if (s <= 0) return 0;
+                    return Math.round((sot / s) * 1000) / 10;
+                }})(), rank: data.ranks.accuracy }},
+                {{ key: 'fouls', label: 'Faltas', value: data.detailed_stats ? data.detailed_stats.fouls : null, rank: data.ranks.fouls }},
+            ];
+
+            for (const m of metrics) {{
+                const div = document.createElement('div');
+                div.className = 'kpi';
+                const value = (m.value === null || m.value === undefined) ? '—' : m.value;
+                div.innerHTML = `
+                    <div class="label">${m.label}</div>
+                    <div class="value">${value}</div>
+                    <div class="rank">${fmtRank(m.rank, totalTeams)}</div>
+                `;
+                kpisEl.appendChild(div);
+            }}
+
+            const overlay = document.getElementById('teamModalOverlay');
+            overlay.style.display = 'flex';
+            overlay.setAttribute('aria-hidden', 'false');
+        }}
+
+        function closeTeamModal() {{
+            const overlay = document.getElementById('teamModalOverlay');
+            overlay.style.display = 'none';
+            overlay.setAttribute('aria-hidden', 'true');
+        }}
+
+        // Row click handlers
+        document.querySelectorAll('tr[data-team-id]').forEach(row => {{
+            row.addEventListener('click', () => {{
+                const teamId = row.getAttribute('data-team-id');
+                openTeamModal(teamId);
+            }});
+        }});
+
+        // Close controls
+        document.getElementById('teamModalClose').addEventListener('click', closeTeamModal);
+        document.getElementById('teamModalOverlay').addEventListener('click', (e) => {{
+            if (e.target && e.target.id === 'teamModalOverlay') closeTeamModal();
+        }});
+        document.addEventListener('keydown', (e) => {{
+            if (e.key === 'Escape') closeTeamModal();
+        }});
+        </script>
     </body>
     </html>
     """
