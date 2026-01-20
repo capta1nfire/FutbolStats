@@ -12,6 +12,7 @@ from typing import Any, Optional, Union
 
 from app.config import get_settings
 from app.llm.runpod_client import RunPodClient, RunPodError, RunPodJobResult
+from app.llm.gemini_client import GeminiClient
 from app.llm.team_aliases import (
     get_team_alias_pack,
     get_reference_rules_for_prompt,
@@ -610,11 +611,20 @@ def validate_narrative_json(data: dict, match_id: int) -> bool:
 
 
 class NarrativeGenerator:
-    """Generates post-match narratives using RunPod LLM."""
+    """Generates post-match narratives using configured LLM provider (Gemini or RunPod)."""
 
     def __init__(self):
         self.settings = get_settings()
-        self.client = RunPodClient()
+        self.provider_name = self.settings.NARRATIVE_PROVIDER.lower()
+
+        # Initialize appropriate LLM client based on NARRATIVE_PROVIDER
+        if self.provider_name == "gemini":
+            self.client = GeminiClient()
+            logger.info("NarrativeGenerator using Gemini provider")
+        else:
+            self.client = RunPodClient()
+            logger.info("NarrativeGenerator using RunPod provider")
+
         self.enabled = self.settings.NARRATIVE_LLM_ENABLED
 
     async def close(self):
@@ -634,8 +644,13 @@ class NarrativeGenerator:
         if not self.enabled:
             return NarrativeResult(status="disabled", error_code="disabled")
 
-        if not self.settings.RUNPOD_API_KEY:
-            return NarrativeResult(status="error", error="RUNPOD_API_KEY not configured", error_code="runpod_auth")
+        # Check API key based on provider
+        if self.provider_name == "gemini":
+            if not self.settings.GEMINI_API_KEY:
+                return NarrativeResult(status="error", error="GEMINI_API_KEY not configured", error_code="gemini_auth")
+        else:
+            if not self.settings.RUNPOD_API_KEY:
+                return NarrativeResult(status="error", error="RUNPOD_API_KEY not configured", error_code="runpod_auth")
 
         match_id = match_data.get("match_id", 0)
 
