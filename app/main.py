@@ -9007,6 +9007,7 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
           <a class="nav-link active" data-path="/dashboard/ops" href="/dashboard/ops">Ops</a>
           <a class="nav-link" data-path="/dashboard/pit" href="/dashboard/pit">PIT</a>
           <a class="nav-link" data-path="/dashboard/ops/daily_comparison" href="/dashboard/ops/daily_comparison">Daily</a>
+          <a class="nav-link" data-path="/dashboard/ops/league_stats" href="/dashboard/ops/league_stats">Ligas</a>
           <a class="nav-link" data-path="/dashboard/ops/history" href="/dashboard/ops/history">History</a>
           <a class="nav-link" data-path="/dashboard/ops/logs" href="/dashboard/ops/logs">Logs (debug)</a>
           <a class="nav-link" href="/ops/logout" style="margin-left: auto; color: #f87171;">Logout</a>
@@ -12312,6 +12313,7 @@ async def ops_league_stats_html(
         <div class="nav">
             <a href="/dashboard/ops">← Ops</a>
             <a href="/dashboard/ops/daily_comparison">Daily</a>
+            <a href="/dashboard/ops/history">History</a>
         </div>
 
         <h1>League Stats: {league_name}
