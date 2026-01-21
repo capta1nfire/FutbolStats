@@ -113,7 +113,7 @@ export function CustomizeColumnsPanel({
   return (
     <aside
       className={cn(
-        "w-[200px] border-r border-border bg-surface flex flex-col shrink-0",
+        "w-[200px] border-r border-border bg-sidebar flex flex-col shrink-0",
         className
       )}
     >

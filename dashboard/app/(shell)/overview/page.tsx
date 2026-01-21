@@ -69,7 +69,7 @@ export default function OverviewPage() {
   return (
     <div className="h-full flex overflow-hidden">
       {/* Left Rail: API Budget (aligned with FilterPanel at 277px) */}
-      <aside className="w-[277px] shrink-0 border-r border-border bg-surface flex flex-col">
+      <aside className="w-[277px] shrink-0 border-r border-border bg-sidebar flex flex-col">
         {/* Header - consistent with FilterPanel */}
         <div className="h-12 flex items-center px-3 border-b border-border">
           <span className="text-sm font-medium text-foreground">Dashboard</span>
