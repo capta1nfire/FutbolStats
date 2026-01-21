@@ -273,12 +273,58 @@ interface IncidentFilters {
 }
 ```
 
-### 📋 HealthSummary (placeholder - Phase 1+)
+### ✅ HealthSummary (implementado)
 ```typescript
+type HealthStatus = "healthy" | "warning" | "critical";
+
+interface HealthCard {
+  id: string;
+  title: string;
+  status: HealthStatus;
+  value: string | number;
+  subtitle?: string;
+  trend?: "up" | "down" | "stable";
+}
+
+interface OverviewCounts {
+  matchesLive: number;
+  matchesScheduledToday: number;
+  incidentsActive: number;
+  incidentsCritical: number;
+  jobsRunning: number;
+  jobsFailedLast24h: number;
+  predictionsMissing: number;
+  predictionsTotal: number;
+}
+
 interface HealthSummary {
-  cards: HealthCard[];
-  counts: Record<string, number>;
   coveragePct: number;
+  counts: OverviewCounts;
+  cards: HealthCard[];
+  lastUpdated: string;                       // ISO timestamp
+}
+```
+
+### ✅ UpcomingMatch (implementado)
+```typescript
+interface UpcomingMatch {
+  id: number;
+  home: string;
+  away: string;
+  kickoffISO: string;
+  leagueName: string;
+  hasPrediction: boolean;
+}
+```
+
+### ✅ ActiveIncident (implementado)
+```typescript
+interface ActiveIncident {
+  id: number;
+  title: string;
+  severity: "critical" | "warning" | "info";
+  createdAt: string;
+  type: string;
 }
 ```
 
