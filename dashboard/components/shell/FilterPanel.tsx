@@ -198,7 +198,7 @@ export function FilterPanel({
         <div className="px-3 py-2 border-t border-border">
           <button
             onClick={onCustomizeColumnsClick}
-            className="text-sm text-primary hover:underline"
+            className="text-sm font-medium text-primary hover:text-blue-400 transition-colors"
           >
             Customize Columns
           </button>
