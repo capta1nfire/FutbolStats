@@ -176,13 +176,11 @@ function PredictionsPageContent() {
 
         {/* Coverage Card */}
         <div className="p-4 border-b border-border">
-          {coverage && (
-            <PredictionsCoverageCard
-              coverage={coverage}
-              onViewMissing={handleViewMissing}
-              isLoading={isLoadingCoverage}
-            />
-          )}
+          <PredictionsCoverageCard
+            coverage={coverage}
+            onViewMissing={handleViewMissing}
+            isLoading={isLoadingCoverage}
+          />
         </div>
 
         {/* Table */}

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { TrendingUp, AlertTriangle, ExternalLink } from "lucide-react";
 
 interface PredictionsCoverageCardProps {
-  coverage: PredictionCoverage;
+  coverage?: PredictionCoverage | null;
   onViewMissing?: () => void;
   isLoading?: boolean;
 }
@@ -15,7 +15,7 @@ export function PredictionsCoverageCard({
   onViewMissing,
   isLoading,
 }: PredictionsCoverageCardProps) {
-  if (isLoading) {
+  if (isLoading || !coverage) {
     return (
       <div className="bg-surface rounded-lg p-4 border border-border animate-pulse">
         <div className="h-6 bg-background rounded w-1/3 mb-2" />
