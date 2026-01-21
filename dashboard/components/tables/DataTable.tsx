@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useCallback, useImperativeHandle, forwardRef } from "react";
 import {
   ColumnDef,
   flexRender,
@@ -12,6 +12,11 @@ import {
 import { ArrowUpDown, ArrowUp, ArrowDown, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+
+export interface DataTableHandle {
+  /** Focus the selected row or first row */
+  focusSelectedRow: () => void;
+}
 
 interface DataTableProps<TData> {
   columns: ColumnDef<TData>[];
@@ -30,19 +35,30 @@ interface DataTableProps<TData> {
  *
  * Uses ColumnDef<T> directly from TanStack Table - no custom API.
  * Handles: sticky header, sorting, row selection, loading/empty/error states.
+ *
+ * UX Features:
+ * - Keyboard navigation: Arrow keys move between rows
+ * - Enter key triggers onRowClick for focused row
+ * - Tab to navigate into table, then arrows to move
  */
-export function DataTable<TData>({
-  columns,
-  data,
-  isLoading = false,
-  error = null,
-  onRetry,
-  selectedRowId,
-  onRowClick,
-  getRowId,
-  emptyMessage = "No data found",
-}: DataTableProps<TData>) {
+function DataTableInner<TData>(
+  {
+    columns,
+    data,
+    isLoading = false,
+    error = null,
+    onRetry,
+    selectedRowId,
+    onRowClick,
+    getRowId,
+    emptyMessage = "No data found",
+  }: DataTableProps<TData>,
+  ref: React.ForwardedRef<DataTableHandle>
+) {
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [focusedRowIndex, setFocusedRowIndex] = useState<number>(-1);
+  const tableBodyRef = useRef<HTMLTableSectionElement>(null);
+  const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
 
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table is compatible
   const table = useReactTable({
@@ -58,6 +74,62 @@ export function DataTable<TData>({
       ? (row) => String(getRowId(row))
       : (row, index) => String(index),
   });
+
+  const rows = table.getRowModel().rows;
+
+  // Expose method to focus selected row (for returning focus from drawer)
+  useImperativeHandle(ref, () => ({
+    focusSelectedRow: () => {
+      // Find selected row index
+      const selectedIndex = rows.findIndex(
+        (row) => selectedRowId !== null && selectedRowId !== undefined && row.id === String(selectedRowId)
+      );
+      const targetIndex = selectedIndex >= 0 ? selectedIndex : 0;
+
+      if (rows.length > 0) {
+        setFocusedRowIndex(targetIndex);
+        rowRefs.current.get(targetIndex)?.focus();
+      }
+    },
+  }));
+
+  // Handle keyboard navigation
+  const handleRowKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLTableRowElement>, rowIndex: number, rowData: TData) => {
+      switch (event.key) {
+        case "Enter":
+        case " ":
+          event.preventDefault();
+          onRowClick?.(rowData);
+          break;
+        case "ArrowDown":
+          event.preventDefault();
+          if (rowIndex < rows.length - 1) {
+            setFocusedRowIndex(rowIndex + 1);
+            rowRefs.current.get(rowIndex + 1)?.focus();
+          }
+          break;
+        case "ArrowUp":
+          event.preventDefault();
+          if (rowIndex > 0) {
+            setFocusedRowIndex(rowIndex - 1);
+            rowRefs.current.get(rowIndex - 1)?.focus();
+          }
+          break;
+        case "Home":
+          event.preventDefault();
+          setFocusedRowIndex(0);
+          rowRefs.current.get(0)?.focus();
+          break;
+        case "End":
+          event.preventDefault();
+          setFocusedRowIndex(rows.length - 1);
+          rowRefs.current.get(rows.length - 1)?.focus();
+          break;
+      }
+    },
+    [onRowClick, rows.length]
+  );
 
   // Loading state
   if (isLoading) {
@@ -144,19 +216,33 @@ export function DataTable<TData>({
         </thead>
 
         {/* Body */}
-        <tbody>
-          {table.getRowModel().rows.map((row) => {
+        <tbody ref={tableBodyRef} role="rowgroup">
+          {rows.map((row, rowIndex) => {
             const isSelected =
               selectedRowId !== null &&
               selectedRowId !== undefined &&
               row.id === String(selectedRowId);
+            const isFocused = focusedRowIndex === rowIndex;
 
             return (
               <tr
                 key={row.id}
+                ref={(el) => {
+                  if (el) {
+                    rowRefs.current.set(rowIndex, el);
+                  } else {
+                    rowRefs.current.delete(rowIndex);
+                  }
+                }}
+                tabIndex={isFocused || (focusedRowIndex === -1 && rowIndex === 0) ? 0 : -1}
+                role="row"
+                aria-selected={isSelected}
                 onClick={() => onRowClick?.(row.original)}
+                onKeyDown={(e) => handleRowKeyDown(e, rowIndex, row.original)}
+                onFocus={() => setFocusedRowIndex(rowIndex)}
                 className={cn(
                   "border-b border-border transition-colors cursor-pointer",
+                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
                   isSelected
                     ? "bg-primary/10 border-l-2 border-l-primary"
                     : "hover:bg-accent/50"
@@ -175,6 +261,14 @@ export function DataTable<TData>({
     </div>
   );
 }
+
+/**
+ * DataTable with forwardRef for imperative handle
+ * This allows parent components to call focusSelectedRow() when drawer closes
+ */
+export const DataTable = forwardRef(DataTableInner) as <TData>(
+  props: DataTableProps<TData> & { ref?: React.ForwardedRef<DataTableHandle> }
+) => ReturnType<typeof DataTableInner>;
 
 /**
  * Helper component for sortable header

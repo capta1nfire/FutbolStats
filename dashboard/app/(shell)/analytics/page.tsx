@@ -1,30 +1,28 @@
 "use client";
 
-import { Suspense, useState, useCallback, useEffect } from "react";
+import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAnalyticsReports, useAnalyticsReport } from "@/lib/hooks";
 import {
   AnalyticsReportRow,
   AnalyticsReportType,
   AnalyticsFilters,
+  ANALYTICS_REPORT_TYPES,
 } from "@/lib/types";
 import {
   AnalyticsTable,
   AnalyticsFilterPanel,
   AnalyticsDetailDrawer,
 } from "@/components/analytics";
+import {
+  parseNumericId,
+  parseArrayParam,
+  buildSearchParams,
+  toggleArrayValue,
+} from "@/lib/url-state";
 import { Loader2 } from "lucide-react";
 
-/**
- * Parse and validate report ID from URL parameter
- * Returns null if invalid (non-numeric, NaN, negative)
- */
-function parseReportId(param: string | null): number | null {
-  if (!param) return null;
-  const parsed = parseInt(param, 10);
-  if (isNaN(parsed) || parsed < 0) return null;
-  return parsed;
-}
+const BASE_PATH = "/analytics";
 
 /**
  * Analytics Page Content
@@ -35,28 +33,39 @@ function AnalyticsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // URL state: selected report ID (sanitized)
-  const selectedIdParam = searchParams.get("id");
-  const selectedReportId = parseReportId(selectedIdParam);
+  // Parse URL state
+  const selectedReportId = useMemo(
+    () => parseNumericId(searchParams.get("id")),
+    [searchParams]
+  );
+  const selectedTypes = useMemo(
+    () => parseArrayParam<AnalyticsReportType>(searchParams, "type", ANALYTICS_REPORT_TYPES),
+    [searchParams]
+  );
+  const searchValue = useMemo(
+    () => searchParams.get("q") ?? "",
+    [searchParams]
+  );
 
   // Normalize URL if id param is invalid
+  const selectedIdParam = searchParams.get("id");
   useEffect(() => {
     if (selectedIdParam && selectedReportId === null) {
-      // Invalid id in URL → normalize to /analytics
-      router.replace("/analytics", { scroll: false });
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("id");
+      const search = params.toString();
+      router.replace(`${BASE_PATH}${search ? `?${search}` : ""}`, { scroll: false });
     }
-  }, [selectedIdParam, selectedReportId, router]);
+  }, [selectedIdParam, selectedReportId, router, searchParams]);
 
-  // UI state
+  // UI state (non-URL)
   const [filterCollapsed, setFilterCollapsed] = useState(false);
-  const [selectedTypes, setSelectedTypes] = useState<AnalyticsReportType[]>([]);
-  const [searchValue, setSearchValue] = useState("");
 
-  // Construct filters
-  const filters: AnalyticsFilters = {
+  // Construct filters for query
+  const filters: AnalyticsFilters = useMemo(() => ({
     type: selectedTypes.length > 0 ? selectedTypes : undefined,
     search: searchValue || undefined,
-  };
+  }), [selectedTypes, searchValue]);
 
   // Fetch data
   const {
@@ -74,27 +83,51 @@ function AnalyticsPageContent() {
   // Drawer is open when there's a selected report
   const drawerOpen = selectedReportId !== null;
 
+  // Build URL with current filters
+  const buildUrl = useCallback(
+    (overrides: {
+      id?: number | null;
+      type?: AnalyticsReportType[];
+      q?: string;
+    }) => {
+      const params = buildSearchParams({
+        id: overrides.id ?? selectedReportId,
+        type: overrides.type ?? selectedTypes,
+        q: overrides.q ?? searchValue,
+      });
+      const search = params.toString();
+      return `${BASE_PATH}${search ? `?${search}` : ""}`;
+    },
+    [selectedReportId, selectedTypes, searchValue]
+  );
+
   // Handle row click - update URL with router.replace (no history entry)
   const handleRowClick = useCallback(
     (report: AnalyticsReportRow) => {
-      router.replace(`/analytics?id=${report.id}`, { scroll: false });
+      router.replace(buildUrl({ id: report.id }), { scroll: false });
     },
-    [router]
+    [router, buildUrl]
   );
 
-  // Handle drawer close - remove id from URL
+  // Handle drawer close - remove id from URL, preserve filters
   const handleCloseDrawer = useCallback(() => {
-    router.replace("/analytics", { scroll: false });
-  }, [router]);
+    router.replace(buildUrl({ id: null }), { scroll: false });
+  }, [router, buildUrl]);
 
   // Handle filter changes
   const handleTypeChange = useCallback(
     (type: AnalyticsReportType, checked: boolean) => {
-      setSelectedTypes((prev) =>
-        checked ? [...prev, type] : prev.filter((t) => t !== type)
-      );
+      const newTypes = toggleArrayValue(selectedTypes, type, checked);
+      router.replace(buildUrl({ type: newTypes }), { scroll: false });
     },
-    []
+    [selectedTypes, router, buildUrl]
+  );
+
+  const handleSearchChange = useCallback(
+    (value: string) => {
+      router.replace(buildUrl({ q: value }), { scroll: false });
+    },
+    [router, buildUrl]
   );
 
   return (
@@ -106,7 +139,7 @@ function AnalyticsPageContent() {
         selectedTypes={selectedTypes}
         searchValue={searchValue}
         onTypeChange={handleTypeChange}
-        onSearchChange={setSearchValue}
+        onSearchChange={handleSearchChange}
       />
 
       {/* Main content: Table */}
@@ -158,13 +191,8 @@ function AnalyticsLoading() {
 /**
  * Analytics Page
  *
- * Master-detail pattern with:
- * - FilterPanel (collapsible, left)
- * - DataTable (center)
- * - DetailDrawer (inline on desktop, right, pushes content)
- *
- * URL sync:
- * - Canonical: /analytics?id=123
+ * Master-detail pattern with URL sync (full state):
+ * - Canonical: /analytics?id=123&type=model_performance&q=accuracy
  * - Uses router.replace with scroll:false
  */
 export default function AnalyticsPage() {

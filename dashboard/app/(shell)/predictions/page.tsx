@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useCallback, useEffect } from "react";
+import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { usePredictions, usePrediction, usePredictionCoverage } from "@/lib/hooks";
 import { getPredictionLeaguesMock } from "@/lib/mocks";
@@ -10,6 +10,9 @@ import {
   ModelType,
   PredictionTimeRange,
   PredictionFilters,
+  PREDICTION_STATUSES,
+  MODEL_TYPES,
+  PREDICTION_TIME_RANGES,
 } from "@/lib/types";
 import {
   PredictionsTable,
@@ -17,18 +20,16 @@ import {
   PredictionDetailDrawer,
   PredictionsCoverageCard,
 } from "@/components/predictions";
+import {
+  parseNumericId,
+  parseArrayParam,
+  parseSingleParam,
+  buildSearchParams,
+  toggleArrayValue,
+} from "@/lib/url-state";
 import { Loader2 } from "lucide-react";
 
-/**
- * Parse and validate prediction ID from URL parameter
- * Returns null if invalid (non-numeric, NaN, negative)
- */
-function parsePredictionId(param: string | null): number | null {
-  if (!param) return null;
-  const parsed = parseInt(param, 10);
-  if (isNaN(parsed) || parsed < 0) return null;
-  return parsed;
-}
+const BASE_PATH = "/predictions";
 
 /**
  * Predictions Page Content
@@ -39,37 +40,57 @@ function PredictionsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // URL state: selected prediction ID (sanitized)
-  const selectedIdParam = searchParams.get("id");
-  const selectedPredictionId = parsePredictionId(selectedIdParam);
+  // Available leagues for filter
+  const availableLeagues = useMemo(() => getPredictionLeaguesMock(), []);
+
+  // Parse URL state
+  const selectedPredictionId = useMemo(
+    () => parseNumericId(searchParams.get("id")),
+    [searchParams]
+  );
+  const selectedStatuses = useMemo(
+    () => parseArrayParam<PredictionStatus>(searchParams, "status", PREDICTION_STATUSES),
+    [searchParams]
+  );
+  const selectedModels = useMemo(
+    () => parseArrayParam<ModelType>(searchParams, "model", MODEL_TYPES),
+    [searchParams]
+  );
+  const selectedLeagues = useMemo(
+    () => parseArrayParam<string>(searchParams, "league", availableLeagues),
+    [searchParams, availableLeagues]
+  );
+  const selectedTimeRange = useMemo(
+    () => parseSingleParam<PredictionTimeRange>(searchParams.get("range"), PREDICTION_TIME_RANGES),
+    [searchParams]
+  );
+  const searchValue = useMemo(
+    () => searchParams.get("q") ?? "",
+    [searchParams]
+  );
 
   // Normalize URL if id param is invalid
+  const selectedIdParam = searchParams.get("id");
   useEffect(() => {
     if (selectedIdParam && selectedPredictionId === null) {
-      // Invalid id in URL → normalize to /predictions
-      router.replace("/predictions", { scroll: false });
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("id");
+      const search = params.toString();
+      router.replace(`${BASE_PATH}${search ? `?${search}` : ""}`, { scroll: false });
     }
-  }, [selectedIdParam, selectedPredictionId, router]);
+  }, [selectedIdParam, selectedPredictionId, router, searchParams]);
 
-  // UI state
+  // UI state (non-URL)
   const [filterCollapsed, setFilterCollapsed] = useState(false);
-  const [selectedStatuses, setSelectedStatuses] = useState<PredictionStatus[]>([]);
-  const [selectedModels, setSelectedModels] = useState<ModelType[]>([]);
-  const [selectedLeagues, setSelectedLeagues] = useState<string[]>([]);
-  const [selectedTimeRange, setSelectedTimeRange] = useState<PredictionTimeRange | null>(null);
-  const [searchValue, setSearchValue] = useState("");
 
-  // Available leagues for filter
-  const availableLeagues = getPredictionLeaguesMock();
-
-  // Construct filters
-  const filters: PredictionFilters = {
+  // Construct filters for query
+  const filters: PredictionFilters = useMemo(() => ({
     status: selectedStatuses.length > 0 ? selectedStatuses : undefined,
     model: selectedModels.length > 0 ? selectedModels : undefined,
     league: selectedLeagues.length > 0 ? selectedLeagues : undefined,
     timeRange: selectedTimeRange || undefined,
     search: searchValue || undefined,
-  };
+  }), [selectedStatuses, selectedModels, selectedLeagues, selectedTimeRange, searchValue]);
 
   // Fetch data
   const {
@@ -92,57 +113,85 @@ function PredictionsPageContent() {
   // Drawer is open when there's a selected prediction
   const drawerOpen = selectedPredictionId !== null;
 
+  // Build URL with current filters
+  const buildUrl = useCallback(
+    (overrides: {
+      id?: number | null;
+      status?: PredictionStatus[];
+      model?: ModelType[];
+      league?: string[];
+      range?: PredictionTimeRange | null;
+      q?: string;
+    }) => {
+      const params = buildSearchParams({
+        id: overrides.id ?? selectedPredictionId,
+        status: overrides.status ?? selectedStatuses,
+        model: overrides.model ?? selectedModels,
+        league: overrides.league ?? selectedLeagues,
+        range: overrides.range ?? selectedTimeRange,
+        q: overrides.q ?? searchValue,
+      });
+      const search = params.toString();
+      return `${BASE_PATH}${search ? `?${search}` : ""}`;
+    },
+    [selectedPredictionId, selectedStatuses, selectedModels, selectedLeagues, selectedTimeRange, searchValue]
+  );
+
   // Handle row click - update URL with router.replace (no history entry)
   const handleRowClick = useCallback(
     (prediction: PredictionRow) => {
-      router.replace(`/predictions?id=${prediction.id}`, { scroll: false });
+      router.replace(buildUrl({ id: prediction.id }), { scroll: false });
     },
-    [router]
+    [router, buildUrl]
   );
 
-  // Handle drawer close - remove id from URL
+  // Handle drawer close - remove id from URL, preserve filters
   const handleCloseDrawer = useCallback(() => {
-    router.replace("/predictions", { scroll: false });
-  }, [router]);
+    router.replace(buildUrl({ id: null }), { scroll: false });
+  }, [router, buildUrl]);
 
   // Handle "View missing" from coverage card
   const handleViewMissing = useCallback(() => {
-    setSelectedStatuses(["missing"]);
-  }, []);
+    router.replace(buildUrl({ status: ["missing"] }), { scroll: false });
+  }, [router, buildUrl]);
 
   // Handle filter changes
   const handleStatusChange = useCallback(
     (status: PredictionStatus, checked: boolean) => {
-      setSelectedStatuses((prev) =>
-        checked ? [...prev, status] : prev.filter((s) => s !== status)
-      );
+      const newStatuses = toggleArrayValue(selectedStatuses, status, checked);
+      router.replace(buildUrl({ status: newStatuses }), { scroll: false });
     },
-    []
+    [selectedStatuses, router, buildUrl]
   );
 
   const handleModelChange = useCallback(
     (model: ModelType, checked: boolean) => {
-      setSelectedModels((prev) =>
-        checked ? [...prev, model] : prev.filter((m) => m !== model)
-      );
+      const newModels = toggleArrayValue(selectedModels, model, checked);
+      router.replace(buildUrl({ model: newModels }), { scroll: false });
     },
-    []
+    [selectedModels, router, buildUrl]
   );
 
   const handleLeagueChange = useCallback(
     (league: string, checked: boolean) => {
-      setSelectedLeagues((prev) =>
-        checked ? [...prev, league] : prev.filter((l) => l !== league)
-      );
+      const newLeagues = toggleArrayValue(selectedLeagues, league, checked);
+      router.replace(buildUrl({ league: newLeagues }), { scroll: false });
     },
-    []
+    [selectedLeagues, router, buildUrl]
   );
 
   const handleTimeRangeChange = useCallback(
     (timeRange: PredictionTimeRange | null) => {
-      setSelectedTimeRange(timeRange);
+      router.replace(buildUrl({ range: timeRange }), { scroll: false });
     },
-    []
+    [router, buildUrl]
+  );
+
+  const handleSearchChange = useCallback(
+    (value: string) => {
+      router.replace(buildUrl({ q: value }), { scroll: false });
+    },
+    [router, buildUrl]
   );
 
   return (
@@ -161,7 +210,7 @@ function PredictionsPageContent() {
         onModelChange={handleModelChange}
         onLeagueChange={handleLeagueChange}
         onTimeRangeChange={handleTimeRangeChange}
-        onSearchChange={setSearchValue}
+        onSearchChange={handleSearchChange}
       />
 
       {/* Main content */}
@@ -222,14 +271,8 @@ function PredictionsLoading() {
 /**
  * Predictions Page
  *
- * Master-detail pattern with:
- * - Coverage card (top)
- * - FilterPanel (collapsible, left)
- * - DataTable (center)
- * - DetailDrawer (inline on desktop, right, pushes content)
- *
- * URL sync:
- * - Canonical: /predictions?id=123
+ * Master-detail pattern with URL sync (full state):
+ * - Canonical: /predictions?id=123&status=missing&model=A&league=Premier%20League&range=24h&q=real
  * - Uses router.replace with scroll:false
  */
 export default function PredictionsPage() {
