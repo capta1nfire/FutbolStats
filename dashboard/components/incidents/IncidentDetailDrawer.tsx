@@ -16,7 +16,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
 import { SeverityBadge } from "./SeverityBadge";
 import { IncidentStatusChip } from "./IncidentStatusChip";
-import { formatDistanceToNow } from "@/lib/utils";
 import {
   Clock,
   CheckCircle2,

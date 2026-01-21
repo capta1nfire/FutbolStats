@@ -1,7 +1,8 @@
 "use client";
 
-import { ReactNode, useState, useEffect } from "react";
-import { ChevronLeft, ChevronRight, Search, Filter, Loader2 } from "lucide-react";
+import { ReactNode } from "react";
+import { ChevronLeft, ChevronRight, Search, Filter } from "lucide-react";
+import { useHasMounted } from "@/lib/hooks";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,11 +53,8 @@ export function FilterPanel({
   searchValue = "",
 }: FilterPanelProps) {
   // Track client-side mount to avoid Radix Accordion hydration mismatch
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  // Uses useSyncExternalStore instead of useState+useEffect to avoid lint error
+  const mounted = useHasMounted();
 
   // Collapsed state: show rail with icon + tooltips
   if (collapsed) {

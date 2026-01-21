@@ -45,3 +45,20 @@ export const BREAKPOINTS = {
 export function useIsDesktop(): boolean {
   return useMediaQuery(BREAKPOINTS.xl);
 }
+
+/**
+ * Hook to detect if component has mounted (client-side)
+ * Uses useSyncExternalStore to avoid setState in effects
+ * Useful for avoiding Radix UI hydration mismatches
+ */
+export function useHasMounted(): boolean {
+  const subscribe = () => {
+    // No-op: mounted state never changes after initial render
+    return () => {};
+  };
+
+  const getSnapshot = () => true;
+  const getServerSnapshot = () => false;
+
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+}
