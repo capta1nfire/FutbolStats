@@ -1,9 +1,9 @@
 "use client";
 
 import { useMemo } from "react";
-import { ColumnDef } from "@tanstack/react-table";
+import { ColumnDef, VisibilityState } from "@tanstack/react-table";
 import { JobRun } from "@/lib/types";
-import { DataTable } from "@/components/tables";
+import { DataTable, ColumnOption } from "@/components/tables";
 import { JobStatusBadge } from "./JobStatusBadge";
 import { formatDistanceToNow } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +15,26 @@ interface JobsTableProps {
   onRetry?: () => void;
   selectedJobId?: number | null;
   onRowClick?: (job: JobRun) => void;
+  columnVisibility?: VisibilityState;
+  onColumnVisibilityChange?: (visibility: VisibilityState) => void;
 }
+
+/**
+ * Column options for Customize Columns panel
+ */
+export const JOBS_COLUMN_OPTIONS: ColumnOption[] = [
+  { id: "status", label: "Status", enableHiding: false },
+  { id: "jobName", label: "Job", enableHiding: false },
+  { id: "startedAt", label: "Started", enableHiding: true },
+  { id: "durationMs", label: "Duration", enableHiding: true },
+  { id: "triggeredBy", label: "Trigger", enableHiding: true },
+  { id: "error", label: "Error", enableHiding: true },
+];
+
+/**
+ * Default column visibility for Jobs table
+ */
+export const JOBS_DEFAULT_VISIBILITY: VisibilityState = {};
 
 /**
  * Format duration in ms to human-readable
@@ -44,6 +63,8 @@ export function JobsTable({
   onRetry,
   selectedJobId,
   onRowClick,
+  columnVisibility,
+  onColumnVisibilityChange,
 }: JobsTableProps) {
   const columns = useMemo<ColumnDef<JobRun>[]>(
     () => [
@@ -121,6 +142,8 @@ export function JobsTable({
       onRowClick={onRowClick}
       getRowId={(row) => row.id}
       emptyMessage="No job runs found"
+      columnVisibility={columnVisibility}
+      onColumnVisibilityChange={onColumnVisibilityChange}
     />
   );
 }

@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo } from "react";
-import { ColumnDef } from "@tanstack/react-table";
+import { ColumnDef, VisibilityState } from "@tanstack/react-table";
 import { MatchSummary } from "@/lib/types";
 import { DataTable } from "@/components/tables";
+import { ColumnOption } from "@/components/tables";
 import { Badge } from "@/components/ui/badge";
 import { StatusDot } from "./StatusDot";
 
@@ -14,7 +15,33 @@ interface MatchesTableProps {
   onRetry?: () => void;
   selectedMatchId?: number | null;
   onRowClick?: (match: MatchSummary) => void;
+  /** Column visibility state */
+  columnVisibility?: VisibilityState;
+  /** Called when column visibility changes */
+  onColumnVisibilityChange?: (visibility: VisibilityState) => void;
 }
+
+/**
+ * Column options for Customize Columns panel
+ * Maps column IDs to human-readable labels
+ */
+export const MATCHES_COLUMN_OPTIONS: ColumnOption[] = [
+  { id: "status", label: "Status", enableHiding: false }, // Always visible
+  { id: "match", label: "Match", enableHiding: false }, // Always visible
+  { id: "leagueName", label: "League", enableHiding: true },
+  { id: "kickoffISO", label: "Kickoff", enableHiding: true },
+  { id: "score", label: "Score", enableHiding: true },
+  { id: "elapsed", label: "Elapsed", enableHiding: true },
+  { id: "prediction", label: "Prediction", enableHiding: true },
+  { id: "model", label: "Model", enableHiding: true },
+];
+
+/**
+ * Default column visibility for Matches table
+ */
+export const MATCHES_DEFAULT_VISIBILITY: VisibilityState = {
+  // All columns visible by default
+};
 
 export function MatchesTable({
   data,
@@ -23,6 +50,8 @@ export function MatchesTable({
   onRetry,
   selectedMatchId,
   onRowClick,
+  columnVisibility,
+  onColumnVisibilityChange,
 }: MatchesTableProps) {
   const columns: ColumnDef<MatchSummary>[] = useMemo(
     () => [
@@ -174,6 +203,8 @@ export function MatchesTable({
       onRowClick={onRowClick}
       getRowId={(row) => row.id}
       emptyMessage="No matches found"
+      columnVisibility={columnVisibility}
+      onColumnVisibilityChange={onColumnVisibilityChange}
     />
   );
 }

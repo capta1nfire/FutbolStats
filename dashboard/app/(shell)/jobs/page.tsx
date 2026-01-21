@@ -2,13 +2,16 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useJobRuns, useJobRun } from "@/lib/hooks";
+import { useJobRuns, useJobRun, useColumnVisibility } from "@/lib/hooks";
 import { JobRun, JobStatus, JobFilters, JOB_STATUSES, JOB_NAMES } from "@/lib/types";
 import {
   JobsTable,
   JobsFilterPanel,
   JobDetailDrawer,
+  JOBS_COLUMN_OPTIONS,
+  JOBS_DEFAULT_VISIBILITY,
 } from "@/components/jobs";
+import { CustomizeColumnsPanel } from "@/components/tables";
 import {
   parseNumericId,
   parseArrayParam,
@@ -58,7 +61,16 @@ function JobsPageContent() {
   }, [selectedIdParam, selectedJobId, router, searchParams]);
 
   // UI state (non-URL)
-  const [filterCollapsed, setFilterCollapsed] = useState(false);
+  const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
+  const [customizeColumnsOpen, setCustomizeColumnsOpen] = useState(false);
+
+  // Column visibility with localStorage persistence
+  const {
+    columnVisibility,
+    setColumnVisibility,
+    setColumnVisible,
+    resetToDefault,
+  } = useColumnVisibility("jobs", JOBS_DEFAULT_VISIBILITY);
 
   // Construct filters for query
   const filters: JobFilters = useMemo(() => ({
@@ -137,18 +149,51 @@ function JobsPageContent() {
     [router, buildUrl]
   );
 
+  // Handle "Customize Columns" link click
+  const handleCustomizeColumnsClick = useCallback(() => {
+    setCustomizeColumnsOpen(true);
+  }, []);
+
+  // Handle "Done" button in CustomizeColumnsPanel - only closes CC panel
+  const handleCustomizeColumnsDone = useCallback(() => {
+    setCustomizeColumnsOpen(false);
+  }, []);
+
+  // Handle Left Rail toggle - close CustomizeColumns when collapsing
+  const handleLeftRailToggle = useCallback(() => {
+    const newCollapsed = !leftRailCollapsed;
+    setLeftRailCollapsed(newCollapsed);
+    if (newCollapsed) {
+      setCustomizeColumnsOpen(false);
+    }
+  }, [leftRailCollapsed]);
+
   return (
     <div className="h-full flex overflow-hidden relative">
-      {/* FilterPanel */}
+      {/* Left Rail: FilterPanel */}
       <JobsFilterPanel
-        collapsed={filterCollapsed}
-        onToggleCollapse={() => setFilterCollapsed(!filterCollapsed)}
+        collapsed={leftRailCollapsed}
+        onToggleCollapse={handleLeftRailToggle}
         selectedStatuses={selectedStatuses}
         selectedJobs={selectedJobs}
         searchValue={searchValue}
         onStatusChange={handleStatusChange}
         onJobChange={handleJobChange}
         onSearchChange={handleSearchChange}
+        showCustomizeColumns={true}
+        onCustomizeColumnsClick={handleCustomizeColumnsClick}
+        customizeColumnsOpen={customizeColumnsOpen}
+      />
+
+      {/* Customize Columns Panel (separate column, hidden when Left Rail collapsed) */}
+      <CustomizeColumnsPanel
+        open={customizeColumnsOpen && !leftRailCollapsed}
+        columns={JOBS_COLUMN_OPTIONS}
+        columnVisibility={columnVisibility}
+        onColumnVisibilityChange={setColumnVisible}
+        onRestore={resetToDefault}
+        onDone={handleCustomizeColumnsDone}
+        onCollapse={handleLeftRailToggle}
       />
 
       {/* Main content: Table */}
@@ -169,6 +214,8 @@ function JobsPageContent() {
           onRetry={() => refetch()}
           selectedJobId={selectedJobId}
           onRowClick={handleRowClick}
+          columnVisibility={columnVisibility}
+          onColumnVisibilityChange={setColumnVisibility}
         />
       </div>
 

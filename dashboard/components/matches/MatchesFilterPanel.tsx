@@ -15,6 +15,12 @@ interface MatchesFilterPanelProps {
   onStatusChange: (status: MatchStatus, checked: boolean) => void;
   onLeagueChange: (league: string, checked: boolean) => void;
   onSearchChange: (value: string) => void;
+  /** Callback for "Customize Columns" link click */
+  onCustomizeColumnsClick?: () => void;
+  /** Whether to show the Customize Columns link */
+  showCustomizeColumns?: boolean;
+  /** Whether CustomizeColumnsPanel is open (hides collapse button) */
+  customizeColumnsOpen?: boolean;
 }
 
 export function MatchesFilterPanel({
@@ -26,6 +32,9 @@ export function MatchesFilterPanel({
   onStatusChange,
   onLeagueChange,
   onSearchChange,
+  onCustomizeColumnsClick,
+  showCustomizeColumns = false,
+  customizeColumnsOpen = false,
 }: MatchesFilterPanelProps) {
   const statusCounts = useMemo(() => getStatusCountsMock(), []);
   const leagues = useMemo(() => getLeaguesMock(), []);
@@ -108,6 +117,9 @@ export function MatchesFilterPanel({
       onFilterChange={handleFilterChange}
       onSearchChange={onSearchChange}
       searchValue={searchValue}
+      onCustomizeColumnsClick={onCustomizeColumnsClick}
+      showCustomizeColumns={showCustomizeColumns}
+      customizeColumnsOpen={customizeColumnsOpen}
     />
   );
 }
