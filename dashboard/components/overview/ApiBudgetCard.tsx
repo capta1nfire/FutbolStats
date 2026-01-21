@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { ApiBudget, ApiBudgetStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Info, AlertTriangle, ExternalLink } from "lucide-react";
@@ -38,15 +38,31 @@ const progressColors: Record<ApiBudgetStatus, string> = {
 };
 
 /**
- * Format time remaining until reset
+ * Hook to get current time that updates periodically
  */
-function formatTimeUntilReset(resetAtIso: string | undefined): string {
+function useNow(intervalMs: number = 30000): number {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(Date.now());
+    }, intervalMs);
+
+    return () => clearInterval(timer);
+  }, [intervalMs]);
+
+  return now;
+}
+
+/**
+ * Calculate time remaining until reset
+ */
+function calculateTimeUntilReset(resetAtIso: string | undefined, now: number): { hours: number; minutes: number } | null {
   if (!resetAtIso) {
-    return "~16:00 LA";
+    return null;
   }
 
   const resetTime = new Date(resetAtIso).getTime();
-  const now = Date.now();
   let diffMs = resetTime - now;
 
   // If reset time has passed, assume it's tomorrow
@@ -57,10 +73,38 @@ function formatTimeUntilReset(resetAtIso: string | undefined): string {
   const hours = Math.floor(diffMs / (1000 * 60 * 60));
   const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
 
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`;
+  return { hours, minutes };
+}
+
+/**
+ * Format time remaining until reset
+ */
+function formatTimeUntilReset(time: { hours: number; minutes: number } | null): string {
+  if (!time) {
+    return "~16:00 LA";
   }
-  return `${minutes}m`;
+
+  if (time.hours > 0) {
+    return `${time.hours}h ${time.minutes}m`;
+  }
+  return `${time.minutes}m`;
+}
+
+/**
+ * Format used percentage with appropriate precision
+ * - < 10%: show 2 decimals (e.g., "3.80%")
+ * - < 100%: show 1 decimal (e.g., "45.2%")
+ * - >= 100%: show integer (e.g., "100%")
+ */
+function formatUsedPct(ratio: number): string {
+  const pct = ratio * 100;
+  if (pct < 10) {
+    return pct.toFixed(2);
+  }
+  if (pct < 100) {
+    return pct.toFixed(1);
+  }
+  return Math.round(pct).toString();
 }
 
 /**
@@ -79,12 +123,32 @@ function formatCacheAge(seconds: number): string {
  *
  * Displays API rate limit information with progress bar and countdown.
  * Designed for the Overview side column.
+ *
+ * Features:
+ * - Real-time countdown that updates every 30 seconds
+ * - Precise percentage display with appropriate decimal precision
  */
 export function ApiBudgetCard({ budget, className }: ApiBudgetCardProps) {
-  const usedPct = useMemo(() => {
+  // Real-time clock for countdown (updates every 30s)
+  const now = useNow(30000);
+
+  // Calculate usage ratio (0-1)
+  const usedRatio = useMemo(() => {
     if (!budget.requests_limit || budget.requests_limit === 0) return 0;
-    return Math.round((budget.requests_today / budget.requests_limit) * 100);
+    return budget.requests_today / budget.requests_limit;
   }, [budget.requests_today, budget.requests_limit]);
+
+  // Progress bar width (clamped 0-100)
+  const progressWidth = Math.min(usedRatio * 100, 100);
+
+  // Formatted percentage with appropriate precision
+  const usedPctFormatted = formatUsedPct(usedRatio);
+
+  // Real-time countdown calculation
+  const timeUntilReset = useMemo(
+    () => calculateTimeUntilReset(budget.tokens_reset_at_la, now),
+    [budget.tokens_reset_at_la, now]
+  );
 
   const isInactive = !budget.active;
   const isDegraded = budget.status === "degraded" || isInactive;
@@ -182,11 +246,11 @@ export function ApiBudgetCard({ budget, className }: ApiBudgetCardProps) {
                 "h-full rounded-full transition-all",
                 progressColors[displayStatus]
               )}
-              style={{ width: `${Math.min(usedPct, 100)}%` }}
+              style={{ width: `${progressWidth}%` }}
             />
           </div>
           <div className="text-xs text-muted-foreground mt-1">
-            {usedPct}% used
+            {usedPctFormatted}% used
           </div>
         </div>
       ) : (
@@ -200,7 +264,7 @@ export function ApiBudgetCard({ budget, className }: ApiBudgetCardProps) {
         <div className="text-muted-foreground">
           Resets in:{" "}
           <span className="text-foreground font-medium">
-            {formatTimeUntilReset(budget.tokens_reset_at_la)}
+            {formatTimeUntilReset(timeUntilReset)}
           </span>
         </div>
         {budget.tokens_reset_note && (
