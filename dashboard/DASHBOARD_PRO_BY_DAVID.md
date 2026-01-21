@@ -805,8 +805,53 @@ const handleFilterChange = useCallback((value, checked) => {
 
 ### 13.5 UX Keyboard
 
-- **ESC**: Cierra drawer (desktop y mobile sheet)
-- **Enter/Space**: Abre drawer desde fila seleccionada
-- **Arrow Up/Down**: Navega entre filas de la tabla
-- **Home/End**: Salta a primera/última fila
-- Focus vuelve a la tabla cuando se cierra el drawer
+| Tecla | Acción |
+|-------|--------|
+| `ESC` | Cierra drawer (desktop inline y mobile sheet) |
+| `Enter` / `Space` | Abre drawer desde fila enfocada |
+| `Arrow Up/Down` | Navega entre filas de la tabla |
+| `Home` / `End` | Salta a primera/última fila |
+
+Focus management: Al cerrar drawer, foco vuelve a la fila previamente seleccionada.
+
+---
+
+## 14) Build & Development Notes
+
+### 14.1 Comandos
+
+```bash
+cd dashboard
+npm install          # Instalar dependencias
+npm run dev          # Desarrollo (Turbopack)
+npm run build        # Build producción
+npm run lint         # Lint check
+```
+
+### 14.2 Caveats Conocidos
+
+**Turbopack + Multiple Lockfiles**
+Next.js 14+ con Turbopack puede mostrar warning sobre workspace root cuando existen múltiples `package-lock.json` (root + dashboard). Este warning es cosmético y no afecta el build.
+
+```
+⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+```
+
+**Solución (opcional)**: Configurar `turbopack.root` en `next.config.ts` o mantener un solo lockfile.
+
+**Turbopack + Sandbox (CI restringido)**
+En entornos con sandbox estricto (CI restringido, verificadores aislados), `npm run build` con Turbopack puede **FALLAR** por permisos de binding o escritura:
+
+```
+Error: EPERM: operation not permitted, bind
+Error: EACCES: permission denied, open '/tmp/.fontsource/...'
+```
+
+**Solución**: Ejecutar build en entorno local o CI con permisos normales. El sandbox de Claude Code / verificadores no soporta Turbopack.
+
+### 14.3 Phase 0 Indicators
+
+Todas las secciones muestran claramente que están en Phase 0 con mocks:
+- Settings: "Read-only in Phase 0" en controles deshabilitados
+- Data tables: Loading/error/empty states con datos mock
+- Overview cards: Datos calculados desde mocks
