@@ -98,7 +98,7 @@ export function DetailDrawer({
       className={cn(
         "border-l border-border bg-surface flex flex-col transition-smooth",
         variant === "overlay"
-          ? "absolute right-0 top-0 h-full w-[400px] z-30 shadow-[-16px_0_24px_rgba(0,0,0,0.4)]"
+          ? "absolute right-0 top-0 h-full w-[400px] z-30 shadow-[-32px_0_32px_rgba(0,0,0,0.8)]"
           : "w-[320px]",
         className
       )}
