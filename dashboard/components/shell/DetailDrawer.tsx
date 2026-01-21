@@ -96,9 +96,9 @@ export function DetailDrawer({
   return (
     <aside
       className={cn(
-        "border-l border-border bg-sidebar flex flex-col transition-smooth",
+        "bg-sidebar flex flex-col transition-smooth",
         variant === "overlay"
-          ? "absolute right-0 top-0 h-full w-[400px] z-30 shadow-[-32px_0_32px_rgba(0,0,0,0.8)]"
+          ? "absolute right-0 top-0 h-full w-[400px] z-30 shadow-elevation-left"
           : "w-[320px]",
         className
       )}
@@ -106,8 +106,8 @@ export function DetailDrawer({
       aria-label={title || "Details panel"}
     >
       {/* Header */}
-      <div className="h-14 flex items-center justify-between px-4 border-b border-border shrink-0">
-        <h2 className="text-sm font-semibold text-foreground truncate">
+      <div className="h-14 flex items-center px-4 shrink-0 relative">
+        <h2 className="text-sm font-semibold text-foreground truncate absolute left-1/2 -translate-x-1/2">
           {title || "Details"}
         </h2>
         <Button
@@ -115,16 +115,20 @@ export function DetailDrawer({
           variant="ghost"
           size="icon"
           onClick={onClose}
-          className="h-8 w-8 shrink-0"
+          className="h-8 w-8 shrink-0 ml-auto"
           aria-label="Close details panel"
         >
           <X className="h-4 w-4" />
         </Button>
       </div>
 
-      {/* Content */}
+      {/* Content - UniFi style: card inside drawer */}
       <ScrollArea className="flex-1">
-        <div className="p-4">{children}</div>
+        <div className="p-3">
+          <div className="bg-surface rounded-lg p-4">
+            {children}
+          </div>
+        </div>
       </ScrollArea>
     </aside>
   );
