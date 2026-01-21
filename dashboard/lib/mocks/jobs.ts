@@ -4,58 +4,62 @@ import {
   JobStatus,
   JobFilters,
   JOB_NAMES,
+  JobName,
 } from "@/lib/types";
 
 /**
- * Create a mock job run
+ * Static base timestamp for deterministic mock data
+ * Using a fixed date avoids hydration mismatches
  */
-export function createMockJobRun(overrides?: Partial<JobRun>): JobRun {
-  const statuses: JobStatus[] = ["success", "success", "success", "failed", "running"];
-  const status = statuses[Math.floor(Math.random() * statuses.length)];
-  const jobNames = [...JOB_NAMES];
-  const jobName = jobNames[Math.floor(Math.random() * jobNames.length)];
+const BASE_TIMESTAMP = new Date("2026-01-20T12:00:00Z").getTime();
 
-  const now = new Date();
-  const startedAt = new Date(now.getTime() - Math.random() * 3600000); // Within last hour
-  const durationMs = status === "running" ? undefined : Math.floor(Math.random() * 30000) + 500;
+/**
+ * Create a deterministic mock job run
+ */
+function createDeterministicJobRun(index: number): JobRun {
+  const statuses: JobStatus[] = ["success", "success", "success", "failed", "running", "success", "success", "pending"];
+  const jobNames: JobName[] = [...JOB_NAMES];
+
+  // Use index as seed for deterministic selection
+  const statusIndex = index % statuses.length;
+  const jobIndex = index % jobNames.length;
+  const status = statuses[statusIndex];
+  const jobName = jobNames[jobIndex];
+
+  // Deterministic timestamps based on index
+  const startedAt = new Date(BASE_TIMESTAMP - index * 120000).toISOString();
+  const durationMs = status === "running" || status === "pending" ? undefined : 500 + (index * 137) % 29500;
   const finishedAt =
-    status === "running"
+    status === "running" || status === "pending"
       ? undefined
-      : new Date(startedAt.getTime() + (durationMs || 0)).toISOString();
+      : new Date(BASE_TIMESTAMP - index * 120000 + (durationMs || 0)).toISOString();
+
+  const triggeredBy = index % 5 === 0 ? "manual" as const : "scheduler" as const;
+  const isRetry = index % 7 === 0;
 
   return {
-    id: Math.floor(Math.random() * 100000),
+    id: 100000 - index,
     jobName,
     status,
-    startedAt: startedAt.toISOString(),
+    startedAt,
     finishedAt,
     durationMs,
-    triggeredBy: Math.random() > 0.8 ? "manual" : "scheduler",
+    triggeredBy: isRetry ? "retry" : triggeredBy,
     error: status === "failed" ? "Connection timeout to API-Football" : undefined,
-    ...overrides,
   };
 }
 
 /**
- * Create multiple mock job runs
+ * Create deterministic mock job runs
  */
-export function createMockJobRuns(count: number): JobRun[] {
+function createDeterministicJobRuns(count: number): JobRun[] {
   const runs: JobRun[] = [];
-  const now = new Date();
 
   for (let i = 0; i < count; i++) {
-    const startedAt = new Date(now.getTime() - i * 120000 - Math.random() * 60000);
-    runs.push(
-      createMockJobRun({
-        id: 100000 - i,
-        startedAt: startedAt.toISOString(),
-      })
-    );
+    runs.push(createDeterministicJobRun(i));
   }
 
-  return runs.sort(
-    (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
-  );
+  return runs;
 }
 
 /**
@@ -101,13 +105,11 @@ export const jobDefinitions: JobDefinition[] = [
 ];
 
 /**
- * Mock datasets
+ * Static mock datasets - created once, deterministic
  */
-const normalDataset = createMockJobRuns(30);
-
+const normalDataset: JobRun[] = createDeterministicJobRuns(30);
+const largeDataset: JobRun[] = createDeterministicJobRuns(150);
 const emptyDataset: JobRun[] = [];
-
-const largeDataset = createMockJobRuns(150);
 
 /**
  * Get mock job runs based on scenario
@@ -157,14 +159,14 @@ export function getJobRunMock(id: number): JobRun | undefined {
 }
 
 /**
- * Get job definitions
+ * Get job definitions with deterministic last run info
  */
 export function getJobDefinitionsMock(): JobDefinition[] {
-  // Add last run info to definitions
-  return jobDefinitions.map((def) => {
+  return jobDefinitions.map((def, index) => {
     const lastRun = normalDataset.find((run) => run.jobName === def.name);
+    // Deterministic next run time based on index
     const nextRunAt = def.enabled
-      ? new Date(Date.now() + Math.random() * 300000).toISOString()
+      ? new Date(BASE_TIMESTAMP + (index + 1) * 60000).toISOString()
       : undefined;
 
     return {
@@ -173,4 +175,13 @@ export function getJobDefinitionsMock(): JobDefinition[] {
       nextRunAt,
     };
   });
+}
+
+// Legacy exports for backwards compatibility
+export function createMockJobRun(overrides?: Partial<JobRun>): JobRun {
+  return { ...createDeterministicJobRun(0), ...overrides };
+}
+
+export function createMockJobRuns(count: number): JobRun[] {
+  return createDeterministicJobRuns(count);
 }

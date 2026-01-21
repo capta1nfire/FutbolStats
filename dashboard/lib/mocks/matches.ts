@@ -1,6 +1,7 @@
 /**
  * Match mock data
- * Provides factories and datasets for testing
+ * Provides deterministic factories and datasets for testing
+ * All data is static to avoid hydration mismatches
  */
 
 import {
@@ -11,6 +12,11 @@ import {
   PredictionPick,
 } from "@/lib/types";
 import { mockConfig, simulateDelay, checkMockError } from "./config";
+
+/**
+ * Static base timestamp for deterministic mock data
+ */
+const BASE_TIMESTAMP = new Date("2026-01-20T15:00:00Z").getTime();
 
 // Sample data for variety
 const leagues = [
@@ -40,89 +46,71 @@ const teams = [
   ["Tigres", "Monterrey"],
 ];
 
-const statuses: MatchStatus[] = ["scheduled", "live", "ht", "ft"];
+const statuses: MatchStatus[] = ["scheduled", "live", "ht", "ft", "ft", "ft", "scheduled", "scheduled"];
 const models: ModelType[] = ["A", "Shadow"];
 
 /**
- * Generate a random integer between min and max (inclusive)
+ * Create a deterministic mock match based on index
  */
-function randomInt(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
+function createDeterministicMatch(index: number): MatchSummary {
+  const leagueIndex = index % leagues.length;
+  const teamIndex = index % teams.length;
+  const statusIndex = index % statuses.length;
 
-/**
- * Generate a random date within the next N days
- */
-function randomFutureDate(days: number): string {
-  const now = new Date();
-  const future = new Date(now.getTime() + randomInt(0, days) * 24 * 60 * 60 * 1000);
-  future.setHours(randomInt(12, 22), randomInt(0, 59), 0, 0);
-  return future.toISOString();
-}
+  const league = leagues[leagueIndex];
+  const teamPair = teams[teamIndex];
+  const status = statuses[statusIndex];
 
-/**
- * Generate a random past date within the last N days
- */
-function randomPastDate(days: number): string {
-  const now = new Date();
-  const past = new Date(now.getTime() - randomInt(0, days) * 24 * 60 * 60 * 1000);
-  past.setHours(randomInt(12, 22), randomInt(0, 59), 0, 0);
-  return past.toISOString();
-}
-
-let idCounter = 1;
-
-/**
- * Create a single mock match
- */
-export function createMockMatch(overrides?: Partial<MatchSummary>): MatchSummary {
-  const league = leagues[randomInt(0, leagues.length - 1)];
-  const teamPair = teams[randomInt(0, teams.length - 1)];
-  const status = statuses[randomInt(0, statuses.length - 1)];
+  // Deterministic kickoff time
+  const dayOffset = (index % 7) - 3; // -3 to +3 days
+  const hourOffset = 12 + (index % 10); // 12:00 to 21:00
+  const kickoffTimestamp = BASE_TIMESTAMP + dayOffset * 86400000 + hourOffset * 3600000;
 
   const match: MatchSummary = {
-    id: idCounter++,
+    id: index + 1,
     status,
     leagueName: league.name,
     leagueCountry: league.country,
     home: teamPair[0],
     away: teamPair[1],
-    kickoffISO:
-      status === "ft" || status === "live" || status === "ht"
-        ? randomPastDate(7)
-        : randomFutureDate(14),
-    ...overrides,
+    kickoffISO: new Date(kickoffTimestamp).toISOString(),
   };
 
   // Add score for live/ht/ft matches
   if (status === "live" || status === "ht" || status === "ft") {
     match.score = {
-      home: randomInt(0, 4),
-      away: randomInt(0, 3),
+      home: (index * 7) % 4,
+      away: (index * 3) % 3,
     };
   }
 
   // Add elapsed for live matches
   if (status === "live") {
     match.elapsed = {
-      min: randomInt(1, 90),
-      extra: randomInt(0, 100) > 80 ? randomInt(1, 5) : undefined,
+      min: 1 + ((index * 13) % 89),
+      extra: index % 5 === 0 ? 1 + (index % 4) : undefined,
     };
   } else if (status === "ht") {
     match.elapsed = { min: 45 };
   }
 
   // Add prediction (most matches have one)
-  if (randomInt(0, 100) > 15) {
-    const home = randomInt(20, 60) / 100;
-    const draw = randomInt(15, 35) / 100;
-    const away = Math.round((1 - home - draw) * 100) / 100;
+  if (index % 6 !== 0) {
+    // Base probabilities that vary by index
+    const homeBase = 25 + ((index * 11) % 35);
+    const drawBase = 15 + ((index * 7) % 20);
+    const awayBase = 100 - homeBase - drawBase;
+
+    const home = homeBase / 100;
+    const draw = drawBase / 100;
+    const away = awayBase / 100;
+
     const maxProb = Math.max(home, draw, away);
     const pick: PredictionPick =
       maxProb === home ? "home" : maxProb === draw ? "draw" : "away";
 
     match.prediction = {
-      model: models[randomInt(0, models.length - 1)],
+      model: models[index % models.length],
       pick,
       probs: { home, draw, away },
     };
@@ -132,16 +120,15 @@ export function createMockMatch(overrides?: Partial<MatchSummary>): MatchSummary
 }
 
 /**
- * Create multiple mock matches
+ * Create multiple deterministic mock matches
  */
-export function createMockMatches(count: number): MatchSummary[] {
-  idCounter = 1; // Reset counter for consistent IDs
-  return Array.from({ length: count }, () => createMockMatch());
+function createDeterministicMatches(count: number): MatchSummary[] {
+  return Array.from({ length: count }, (_, i) => createDeterministicMatch(i));
 }
 
-// Pre-generated datasets
-const normalDataset = createMockMatches(25);
-const largeDataset = createMockMatches(120);
+// Pre-generated static datasets
+const normalDataset: MatchSummary[] = createDeterministicMatches(25);
+const largeDataset: MatchSummary[] = createDeterministicMatches(120);
 
 /**
  * Get matches based on current mock scenario
@@ -159,10 +146,10 @@ export async function getMatchesMock(
       data = [];
       break;
     case "large":
-      data = largeDataset;
+      data = [...largeDataset];
       break;
     default:
-      data = normalDataset;
+      data = [...normalDataset];
   }
 
   // Apply filters (basic implementation)
@@ -224,4 +211,13 @@ export function getStatusCountsMock(): Record<MatchStatus, number> {
     postponed: allMatches.filter((m) => m.status === "postponed").length,
     cancelled: allMatches.filter((m) => m.status === "cancelled").length,
   };
+}
+
+// Legacy exports for backwards compatibility
+export function createMockMatch(overrides?: Partial<MatchSummary>): MatchSummary {
+  return { ...createDeterministicMatch(0), ...overrides };
+}
+
+export function createMockMatches(count: number): MatchSummary[] {
+  return createDeterministicMatches(count);
 }
