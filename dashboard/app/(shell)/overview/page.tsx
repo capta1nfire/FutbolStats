@@ -68,9 +68,14 @@ export default function OverviewPage() {
 
   return (
     <div className="h-full flex overflow-hidden">
-      {/* Side column: API Budget */}
-      <aside className="w-[240px] shrink-0 border-r border-border bg-background p-4 overflow-y-auto">
-        <div className="space-y-4">
+      {/* Left Rail: API Budget (aligned with FilterPanel at 277px) */}
+      <aside className="w-[277px] shrink-0 border-r border-border bg-surface flex flex-col">
+        {/* Header - consistent with FilterPanel */}
+        <div className="h-12 flex items-center px-3 border-b border-border">
+          <span className="text-sm font-medium text-foreground">Dashboard</span>
+        </div>
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-3">
           {apiBudget && <ApiBudgetCard budget={apiBudget} />}
         </div>
       </aside>
