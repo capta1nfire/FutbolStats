@@ -235,20 +235,45 @@ interface JobFilters {
 }
 ```
 
-### 📋 Incident (placeholder - Phase 1)
+### ✅ Incident (implementado)
 ```typescript
+type IncidentSeverity = "critical" | "warning" | "info";
+type IncidentStatus = "active" | "acknowledged" | "resolved";
+type IncidentType =
+  | "missing_prediction"
+  | "job_failure"
+  | "api_error"
+  | "data_inconsistency"
+  | "high_latency"
+  | "other";
+
 interface Incident {
-  id: string;
-  type: string;
-  severity: "critical" | "warning" | "info";
-  status: "active" | "acknowledged" | "resolved";
-  createdAtISO: string;
+  id: number;
+  type: IncidentType;
+  severity: IncidentSeverity;
+  status: IncidentStatus;
+  createdAt: string;                         // ISO timestamp
   title: string;
-  entity?: { kind: "match" | "job" | "prediction"; id: string };
+  description?: string;
+  entity?: { kind: "match" | "job" | "prediction"; id: number };
+  runbook?: { steps: { id: string; text: string; done?: boolean }[] };
+  timeline?: { ts: string; message: string }[];
+  acknowledgedAt?: string;                   // ISO timestamp
+  resolvedAt?: string;                       // ISO timestamp
 }
 ```
 
-### 📋 HealthSummary (placeholder - Phase 1)
+### ✅ IncidentFilters (implementado)
+```typescript
+interface IncidentFilters {
+  status?: IncidentStatus[];
+  severity?: IncidentSeverity[];
+  type?: IncidentType[];
+  search?: string;
+}
+```
+
+### 📋 HealthSummary (placeholder - Phase 1+)
 ```typescript
 interface HealthSummary {
   cards: HealthCard[];
