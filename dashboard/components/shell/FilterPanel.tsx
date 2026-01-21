@@ -68,7 +68,7 @@ export function FilterPanel({
   // Collapsed state: show rail with icon + tooltips
   if (collapsed) {
     return (
-      <aside className="w-12 border-r border-border bg-surface flex flex-col items-center py-3 transition-smooth">
+      <aside className="w-12 shrink-0 border-r border-border bg-surface flex flex-col items-center py-3 transition-smooth">
         <TooltipProvider delayDuration={0}>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -107,9 +107,9 @@ export function FilterPanel({
     );
   }
 
-  // Expanded state: full filter panel
+  // Expanded state: full filter panel (277px matches UniFi Left Rail width)
   return (
-    <aside className="w-[220px] border-r border-border bg-surface flex flex-col transition-smooth">
+    <aside className="w-[277px] shrink-0 border-r border-border bg-surface flex flex-col transition-smooth">
       {/* Header - collapse button hidden when CustomizeColumnsPanel is open */}
       <div className="h-12 flex items-center justify-between px-3 border-b border-border">
         <span className="text-sm font-medium text-foreground">Filters</span>
