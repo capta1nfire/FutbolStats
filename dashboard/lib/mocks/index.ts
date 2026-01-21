@@ -7,3 +7,4 @@ export * from "./data-quality";
 export * from "./analytics";
 export * from "./audit";
 export * from "./settings";
+export * from "./predictions";

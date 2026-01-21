@@ -540,6 +540,83 @@ interface UsersFilters {
 }
 ```
 
+### ✅ PredictionRow (implementado)
+```typescript
+type PredictionStatus = "generated" | "missing" | "frozen" | "evaluated";
+type ModelType = "A" | "Shadow";
+type PickOutcome = "home" | "draw" | "away";
+type MatchResult = "home" | "draw" | "away" | "unknown";
+type PredictionTimeRange = "24h" | "48h" | "7d" | "30d";
+
+interface PredictionProbs {
+  home: number;
+  draw: number;
+  away: number;
+}
+
+interface PredictionRow {
+  id: number;
+  matchId: number;
+  matchLabel: string;                    // e.g., "Real Madrid vs Barcelona"
+  leagueName: string;
+  kickoffISO: string;
+  model: ModelType;
+  status: PredictionStatus;
+  generatedAt?: string;                  // ISO timestamp
+  probs?: PredictionProbs;
+  pick?: PickOutcome;
+  result?: MatchResult;                  // if evaluated
+}
+```
+
+### ✅ PredictionDetail (implementado)
+```typescript
+interface PredictionFeature {
+  name: string;
+  value: string | number;
+}
+
+interface PredictionEvaluation {
+  accuracy?: number;                     // 0-1
+  brier?: number;                        // Brier score
+  notes?: string;
+}
+
+interface PredictionHistoryEntry {
+  ts: string;                            // ISO timestamp
+  status: PredictionStatus;
+  model: ModelType;
+}
+
+interface PredictionDetail extends PredictionRow {
+  featuresTop?: PredictionFeature[];
+  evaluation?: PredictionEvaluation;
+  history?: PredictionHistoryEntry[];
+}
+```
+
+### ✅ PredictionFilters (implementado)
+```typescript
+interface PredictionFilters {
+  status?: PredictionStatus[];
+  model?: ModelType[];
+  league?: string[];
+  timeRange?: PredictionTimeRange;
+  search?: string;
+}
+```
+
+### ✅ PredictionCoverage (implementado)
+```typescript
+interface PredictionCoverage {
+  totalMatches: number;
+  withPrediction: number;
+  missingCount: number;
+  coveragePct: number;
+  periodLabel: string;                   // e.g., "Next 24 hours"
+}
+```
+
 ---
 
 ## 9) Mock strategy (regla de oro)
