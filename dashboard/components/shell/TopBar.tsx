@@ -11,7 +11,7 @@ import {
 
 export function TopBar() {
   return (
-    <header className="h-14 border-b border-border bg-surface flex items-center justify-between px-4">
+    <header className="h-14 bg-accent flex items-center justify-between px-4 shadow-elevation-down relative z-40">
       {/* Left: Logo + Site Switcher */}
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
