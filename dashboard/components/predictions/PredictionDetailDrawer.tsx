@@ -275,7 +275,7 @@ function PredictionDetailContent({ prediction }: { prediction: PredictionDetail 
 /**
  * Responsive Prediction Detail Drawer
  *
- * Desktop (>=1280px): Inline drawer that pushes content
+ * Desktop (>=1280px): Overlay drawer (no reflow, ~400px)
  * Mobile/Tablet (<1280px): Sheet overlay
  */
 export function PredictionDetailDrawer({
@@ -298,7 +298,7 @@ export function PredictionDetailDrawer({
     </div>
   );
 
-  // Desktop: inline drawer
+  // Desktop: overlay drawer
   if (isDesktop) {
     return (
       <DetailDrawer open={open} onClose={onClose} title={predictionTitle}>
