@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useCallback, useEffect } from "react";
+import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useIncidents, useIncident } from "@/lib/hooks";
 import {
@@ -9,24 +9,24 @@ import {
   IncidentSeverity,
   IncidentType,
   IncidentFilters,
+  INCIDENT_STATUSES,
+  INCIDENT_SEVERITIES,
+  INCIDENT_TYPES,
 } from "@/lib/types";
 import {
   IncidentsTable,
   IncidentsFilterPanel,
   IncidentDetailDrawer,
 } from "@/components/incidents";
+import {
+  parseNumericId,
+  parseArrayParam,
+  buildSearchParams,
+  toggleArrayValue,
+} from "@/lib/url-state";
 import { Loader2 } from "lucide-react";
 
-/**
- * Parse and validate incident ID from URL parameter
- * Returns null if invalid (non-numeric, NaN, negative)
- */
-function parseIncidentId(param: string | null): number | null {
-  if (!param) return null;
-  const parsed = parseInt(param, 10);
-  if (isNaN(parsed) || parsed < 0) return null;
-  return parsed;
-}
+const BASE_PATH = "/incidents";
 
 /**
  * Incidents Page Content
@@ -37,32 +37,49 @@ function IncidentsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // URL state: selected incident ID (sanitized)
-  const selectedIdParam = searchParams.get("id");
-  const selectedIncidentId = parseIncidentId(selectedIdParam);
+  // Parse URL state
+  const selectedIncidentId = useMemo(
+    () => parseNumericId(searchParams.get("id")),
+    [searchParams]
+  );
+  const selectedStatuses = useMemo(
+    () => parseArrayParam<IncidentStatus>(searchParams, "status", INCIDENT_STATUSES),
+    [searchParams]
+  );
+  const selectedSeverities = useMemo(
+    () => parseArrayParam<IncidentSeverity>(searchParams, "severity", INCIDENT_SEVERITIES),
+    [searchParams]
+  );
+  const selectedTypes = useMemo(
+    () => parseArrayParam<IncidentType>(searchParams, "type", INCIDENT_TYPES),
+    [searchParams]
+  );
+  const searchValue = useMemo(
+    () => searchParams.get("q") ?? "",
+    [searchParams]
+  );
 
   // Normalize URL if id param is invalid
+  const selectedIdParam = searchParams.get("id");
   useEffect(() => {
     if (selectedIdParam && selectedIncidentId === null) {
-      // Invalid id in URL → normalize to /incidents
-      router.replace("/incidents", { scroll: false });
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("id");
+      const search = params.toString();
+      router.replace(`${BASE_PATH}${search ? `?${search}` : ""}`, { scroll: false });
     }
-  }, [selectedIdParam, selectedIncidentId, router]);
+  }, [selectedIdParam, selectedIncidentId, router, searchParams]);
 
-  // UI state
+  // UI state (non-URL)
   const [filterCollapsed, setFilterCollapsed] = useState(false);
-  const [selectedStatuses, setSelectedStatuses] = useState<IncidentStatus[]>([]);
-  const [selectedSeverities, setSelectedSeverities] = useState<IncidentSeverity[]>([]);
-  const [selectedTypes, setSelectedTypes] = useState<IncidentType[]>([]);
-  const [searchValue, setSearchValue] = useState("");
 
-  // Construct filters
-  const filters: IncidentFilters = {
+  // Construct filters for query
+  const filters: IncidentFilters = useMemo(() => ({
     status: selectedStatuses.length > 0 ? selectedStatuses : undefined,
     severity: selectedSeverities.length > 0 ? selectedSeverities : undefined,
     type: selectedTypes.length > 0 ? selectedTypes : undefined,
     search: searchValue || undefined,
-  };
+  }), [selectedStatuses, selectedSeverities, selectedTypes, searchValue]);
 
   // Fetch data
   const {
@@ -77,45 +94,71 @@ function IncidentsPageContent() {
   // Drawer is open when there's a selected incident
   const drawerOpen = selectedIncidentId !== null;
 
+  // Build URL with current filters
+  const buildUrl = useCallback(
+    (overrides: {
+      id?: number | null;
+      status?: IncidentStatus[];
+      severity?: IncidentSeverity[];
+      type?: IncidentType[];
+      q?: string;
+    }) => {
+      const params = buildSearchParams({
+        id: overrides.id ?? selectedIncidentId,
+        status: overrides.status ?? selectedStatuses,
+        severity: overrides.severity ?? selectedSeverities,
+        type: overrides.type ?? selectedTypes,
+        q: overrides.q ?? searchValue,
+      });
+      const search = params.toString();
+      return `${BASE_PATH}${search ? `?${search}` : ""}`;
+    },
+    [selectedIncidentId, selectedStatuses, selectedSeverities, selectedTypes, searchValue]
+  );
+
   // Handle row click - update URL with router.replace (no history entry)
   const handleRowClick = useCallback(
     (incident: Incident) => {
-      router.replace(`/incidents?id=${incident.id}`, { scroll: false });
+      router.replace(buildUrl({ id: incident.id }), { scroll: false });
     },
-    [router]
+    [router, buildUrl]
   );
 
-  // Handle drawer close - remove id from URL
+  // Handle drawer close - remove id from URL, preserve filters
   const handleCloseDrawer = useCallback(() => {
-    router.replace("/incidents", { scroll: false });
-  }, [router]);
+    router.replace(buildUrl({ id: null }), { scroll: false });
+  }, [router, buildUrl]);
 
   // Handle filter changes
   const handleStatusChange = useCallback(
     (status: IncidentStatus, checked: boolean) => {
-      setSelectedStatuses((prev) =>
-        checked ? [...prev, status] : prev.filter((s) => s !== status)
-      );
+      const newStatuses = toggleArrayValue(selectedStatuses, status, checked);
+      router.replace(buildUrl({ status: newStatuses }), { scroll: false });
     },
-    []
+    [selectedStatuses, router, buildUrl]
   );
 
   const handleSeverityChange = useCallback(
     (severity: IncidentSeverity, checked: boolean) => {
-      setSelectedSeverities((prev) =>
-        checked ? [...prev, severity] : prev.filter((s) => s !== severity)
-      );
+      const newSeverities = toggleArrayValue(selectedSeverities, severity, checked);
+      router.replace(buildUrl({ severity: newSeverities }), { scroll: false });
     },
-    []
+    [selectedSeverities, router, buildUrl]
   );
 
   const handleTypeChange = useCallback(
     (type: IncidentType, checked: boolean) => {
-      setSelectedTypes((prev) =>
-        checked ? [...prev, type] : prev.filter((t) => t !== type)
-      );
+      const newTypes = toggleArrayValue(selectedTypes, type, checked);
+      router.replace(buildUrl({ type: newTypes }), { scroll: false });
     },
-    []
+    [selectedTypes, router, buildUrl]
+  );
+
+  const handleSearchChange = useCallback(
+    (value: string) => {
+      router.replace(buildUrl({ q: value }), { scroll: false });
+    },
+    [router, buildUrl]
   );
 
   return (
@@ -131,7 +174,7 @@ function IncidentsPageContent() {
         onStatusChange={handleStatusChange}
         onSeverityChange={handleSeverityChange}
         onTypeChange={handleTypeChange}
-        onSearchChange={setSearchValue}
+        onSearchChange={handleSearchChange}
       />
 
       {/* Main content: Table */}
@@ -182,13 +225,8 @@ function IncidentsLoading() {
 /**
  * Incidents Page
  *
- * Master-detail pattern with:
- * - FilterPanel (collapsible, left)
- * - DataTable (center)
- * - DetailDrawer (inline on desktop, right, pushes content)
- *
- * URL sync:
- * - Canonical: /incidents?id=123
+ * Master-detail pattern with URL sync (full state):
+ * - Canonical: /incidents?id=123&status=active&severity=critical&type=job_failure&q=sync
  * - Uses router.replace with scroll:false
  */
 export default function IncidentsPage() {

@@ -11,6 +11,18 @@ export type MatchStatus =
   | "postponed"
   | "cancelled";
 
+/**
+ * All match statuses (for validation and iteration)
+ */
+export const MATCH_STATUSES: readonly MatchStatus[] = [
+  "scheduled",
+  "live",
+  "ht",
+  "ft",
+  "postponed",
+  "cancelled",
+] as const;
+
 export type PredictionPick = "home" | "draw" | "away";
 export type ModelType = "A" | "Shadow";
 

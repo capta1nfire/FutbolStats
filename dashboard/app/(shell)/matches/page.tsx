@@ -1,26 +1,24 @@
 "use client";
 
-import { Suspense, useState, useCallback, useEffect } from "react";
+import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMatches, useMatch } from "@/lib/hooks";
-import { MatchSummary, MatchStatus, MatchFilters } from "@/lib/types";
+import { MatchSummary, MatchStatus, MatchFilters, MATCH_STATUSES } from "@/lib/types";
+import { getLeaguesMock } from "@/lib/mocks";
 import {
   MatchesTable,
   MatchesFilterPanel,
   MatchDetailDrawer,
 } from "@/components/matches";
+import {
+  parseNumericId,
+  parseArrayParam,
+  buildSearchParams,
+  toggleArrayValue,
+} from "@/lib/url-state";
 import { Loader2 } from "lucide-react";
 
-/**
- * Parse and validate match ID from URL parameter
- * Returns null if invalid (non-numeric, NaN, negative)
- */
-function parseMatchId(param: string | null): number | null {
-  if (!param) return null;
-  const parsed = parseInt(param, 10);
-  if (isNaN(parsed) || parsed < 0) return null;
-  return parsed;
-}
+const BASE_PATH = "/matches";
 
 /**
  * Matches Page Content
@@ -31,30 +29,47 @@ function MatchesPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // URL state: selected match ID (sanitized)
-  const selectedIdParam = searchParams.get("id");
-  const selectedMatchId = parseMatchId(selectedIdParam);
+  // Available leagues for filter
+  const availableLeagues = useMemo(() => getLeaguesMock(), []);
+
+  // Parse URL state
+  const selectedMatchId = useMemo(
+    () => parseNumericId(searchParams.get("id")),
+    [searchParams]
+  );
+  const selectedStatuses = useMemo(
+    () => parseArrayParam<MatchStatus>(searchParams, "status", MATCH_STATUSES),
+    [searchParams]
+  );
+  const selectedLeagues = useMemo(
+    () => parseArrayParam<string>(searchParams, "league", availableLeagues),
+    [searchParams, availableLeagues]
+  );
+  const searchValue = useMemo(
+    () => searchParams.get("q") ?? "",
+    [searchParams]
+  );
 
   // Normalize URL if id param is invalid
+  const selectedIdParam = searchParams.get("id");
   useEffect(() => {
     if (selectedIdParam && selectedMatchId === null) {
-      // Invalid id in URL → normalize to /matches
-      router.replace("/matches", { scroll: false });
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("id");
+      const search = params.toString();
+      router.replace(`${BASE_PATH}${search ? `?${search}` : ""}`, { scroll: false });
     }
-  }, [selectedIdParam, selectedMatchId, router]);
+  }, [selectedIdParam, selectedMatchId, router, searchParams]);
 
-  // UI state
+  // UI state (non-URL)
   const [filterCollapsed, setFilterCollapsed] = useState(false);
-  const [selectedStatuses, setSelectedStatuses] = useState<MatchStatus[]>([]);
-  const [selectedLeagues, setSelectedLeagues] = useState<string[]>([]);
-  const [searchValue, setSearchValue] = useState("");
 
-  // Construct filters
-  const filters: MatchFilters = {
+  // Construct filters for query
+  const filters: MatchFilters = useMemo(() => ({
     status: selectedStatuses.length > 0 ? selectedStatuses : undefined,
     leagues: selectedLeagues.length > 0 ? selectedLeagues : undefined,
     search: searchValue || undefined,
-  };
+  }), [selectedStatuses, selectedLeagues, searchValue]);
 
   // Fetch data
   const {
@@ -69,36 +84,61 @@ function MatchesPageContent() {
   // Drawer is open when there's a selected match
   const drawerOpen = selectedMatchId !== null;
 
+  // Build URL with current filters
+  const buildUrl = useCallback(
+    (overrides: {
+      id?: number | null;
+      status?: MatchStatus[];
+      league?: string[];
+      q?: string;
+    }) => {
+      const params = buildSearchParams({
+        id: overrides.id ?? selectedMatchId,
+        status: overrides.status ?? selectedStatuses,
+        league: overrides.league ?? selectedLeagues,
+        q: overrides.q ?? searchValue,
+      });
+      const search = params.toString();
+      return `${BASE_PATH}${search ? `?${search}` : ""}`;
+    },
+    [selectedMatchId, selectedStatuses, selectedLeagues, searchValue]
+  );
+
   // Handle row click - update URL with router.replace (no history entry)
   const handleRowClick = useCallback(
     (match: MatchSummary) => {
-      router.replace(`/matches?id=${match.id}`, { scroll: false });
+      router.replace(buildUrl({ id: match.id }), { scroll: false });
     },
-    [router]
+    [router, buildUrl]
   );
 
-  // Handle drawer close - remove id from URL
+  // Handle drawer close - remove id from URL, preserve filters
   const handleCloseDrawer = useCallback(() => {
-    router.replace("/matches", { scroll: false });
-  }, [router]);
+    router.replace(buildUrl({ id: null }), { scroll: false });
+  }, [router, buildUrl]);
 
   // Handle filter changes
   const handleStatusChange = useCallback(
     (status: MatchStatus, checked: boolean) => {
-      setSelectedStatuses((prev) =>
-        checked ? [...prev, status] : prev.filter((s) => s !== status)
-      );
+      const newStatuses = toggleArrayValue(selectedStatuses, status, checked);
+      router.replace(buildUrl({ status: newStatuses }), { scroll: false });
     },
-    []
+    [selectedStatuses, router, buildUrl]
   );
 
   const handleLeagueChange = useCallback(
     (league: string, checked: boolean) => {
-      setSelectedLeagues((prev) =>
-        checked ? [...prev, league] : prev.filter((l) => l !== league)
-      );
+      const newLeagues = toggleArrayValue(selectedLeagues, league, checked);
+      router.replace(buildUrl({ league: newLeagues }), { scroll: false });
     },
-    []
+    [selectedLeagues, router, buildUrl]
+  );
+
+  const handleSearchChange = useCallback(
+    (value: string) => {
+      router.replace(buildUrl({ q: value }), { scroll: false });
+    },
+    [router, buildUrl]
   );
 
   return (
@@ -112,7 +152,7 @@ function MatchesPageContent() {
         searchValue={searchValue}
         onStatusChange={handleStatusChange}
         onLeagueChange={handleLeagueChange}
-        onSearchChange={setSearchValue}
+        onSearchChange={handleSearchChange}
       />
 
       {/* Main content: Table */}
@@ -168,8 +208,8 @@ function MatchesLoading() {
  * - DataTable (center)
  * - DetailDrawer (inline, right, pushes content)
  *
- * URL sync:
- * - Canonical: /matches?id=123
+ * URL sync (full state):
+ * - Canonical: /matches?id=123&status=live&status=ft&league=Premier%20League&q=arsenal
  * - Uses router.replace with scroll:false
  */
 export default function MatchesPage() {

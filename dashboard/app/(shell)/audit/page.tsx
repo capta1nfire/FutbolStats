@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useCallback, useEffect } from "react";
+import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuditEvents, useAuditEvent } from "@/lib/hooks";
 import {
@@ -10,24 +10,26 @@ import {
   AuditActorKind,
   AuditTimeRange,
   AuditFilters,
+  AUDIT_EVENT_TYPES,
+  AUDIT_SEVERITIES,
+  AUDIT_ACTOR_KINDS,
+  AUDIT_TIME_RANGES,
 } from "@/lib/types";
 import {
   AuditTable,
   AuditFilterPanel,
   AuditDetailDrawer,
 } from "@/components/audit";
+import {
+  parseNumericId,
+  parseArrayParam,
+  parseSingleParam,
+  buildSearchParams,
+  toggleArrayValue,
+} from "@/lib/url-state";
 import { Loader2 } from "lucide-react";
 
-/**
- * Parse and validate event ID from URL parameter
- * Returns null if invalid (non-numeric, NaN, negative)
- */
-function parseEventId(param: string | null): number | null {
-  if (!param) return null;
-  const parsed = parseInt(param, 10);
-  if (isNaN(parsed) || parsed < 0) return null;
-  return parsed;
-}
+const BASE_PATH = "/audit";
 
 /**
  * Audit Page Content
@@ -38,34 +40,54 @@ function AuditPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // URL state: selected event ID (sanitized)
-  const selectedIdParam = searchParams.get("id");
-  const selectedEventId = parseEventId(selectedIdParam);
+  // Parse URL state
+  const selectedEventId = useMemo(
+    () => parseNumericId(searchParams.get("id")),
+    [searchParams]
+  );
+  const selectedTypes = useMemo(
+    () => parseArrayParam<AuditEventType>(searchParams, "type", AUDIT_EVENT_TYPES),
+    [searchParams]
+  );
+  const selectedSeverities = useMemo(
+    () => parseArrayParam<AuditSeverity>(searchParams, "severity", AUDIT_SEVERITIES),
+    [searchParams]
+  );
+  const selectedActorKinds = useMemo(
+    () => parseArrayParam<AuditActorKind>(searchParams, "actor", AUDIT_ACTOR_KINDS),
+    [searchParams]
+  );
+  const selectedTimeRange = useMemo(
+    () => parseSingleParam<AuditTimeRange>(searchParams.get("range"), AUDIT_TIME_RANGES),
+    [searchParams]
+  );
+  const searchValue = useMemo(
+    () => searchParams.get("q") ?? "",
+    [searchParams]
+  );
 
   // Normalize URL if id param is invalid
+  const selectedIdParam = searchParams.get("id");
   useEffect(() => {
     if (selectedIdParam && selectedEventId === null) {
-      // Invalid id in URL → normalize to /audit
-      router.replace("/audit", { scroll: false });
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("id");
+      const search = params.toString();
+      router.replace(`${BASE_PATH}${search ? `?${search}` : ""}`, { scroll: false });
     }
-  }, [selectedIdParam, selectedEventId, router]);
+  }, [selectedIdParam, selectedEventId, router, searchParams]);
 
-  // UI state
+  // UI state (non-URL)
   const [filterCollapsed, setFilterCollapsed] = useState(false);
-  const [selectedTypes, setSelectedTypes] = useState<AuditEventType[]>([]);
-  const [selectedSeverities, setSelectedSeverities] = useState<AuditSeverity[]>([]);
-  const [selectedActorKinds, setSelectedActorKinds] = useState<AuditActorKind[]>([]);
-  const [selectedTimeRange, setSelectedTimeRange] = useState<AuditTimeRange | null>(null);
-  const [searchValue, setSearchValue] = useState("");
 
-  // Construct filters
-  const filters: AuditFilters = {
+  // Construct filters for query
+  const filters: AuditFilters = useMemo(() => ({
     type: selectedTypes.length > 0 ? selectedTypes : undefined,
     severity: selectedSeverities.length > 0 ? selectedSeverities : undefined,
     actorKind: selectedActorKinds.length > 0 ? selectedActorKinds : undefined,
     timeRange: selectedTimeRange || undefined,
     search: searchValue || undefined,
-  };
+  }), [selectedTypes, selectedSeverities, selectedActorKinds, selectedTimeRange, searchValue]);
 
   // Fetch data
   const {
@@ -83,52 +105,80 @@ function AuditPageContent() {
   // Drawer is open when there's a selected event
   const drawerOpen = selectedEventId !== null;
 
+  // Build URL with current filters
+  const buildUrl = useCallback(
+    (overrides: {
+      id?: number | null;
+      type?: AuditEventType[];
+      severity?: AuditSeverity[];
+      actor?: AuditActorKind[];
+      range?: AuditTimeRange | null;
+      q?: string;
+    }) => {
+      const params = buildSearchParams({
+        id: overrides.id ?? selectedEventId,
+        type: overrides.type ?? selectedTypes,
+        severity: overrides.severity ?? selectedSeverities,
+        actor: overrides.actor ?? selectedActorKinds,
+        range: overrides.range ?? selectedTimeRange,
+        q: overrides.q ?? searchValue,
+      });
+      const search = params.toString();
+      return `${BASE_PATH}${search ? `?${search}` : ""}`;
+    },
+    [selectedEventId, selectedTypes, selectedSeverities, selectedActorKinds, selectedTimeRange, searchValue]
+  );
+
   // Handle row click - update URL with router.replace (no history entry)
   const handleRowClick = useCallback(
     (event: AuditEventRow) => {
-      router.replace(`/audit?id=${event.id}`, { scroll: false });
+      router.replace(buildUrl({ id: event.id }), { scroll: false });
     },
-    [router]
+    [router, buildUrl]
   );
 
-  // Handle drawer close - remove id from URL
+  // Handle drawer close - remove id from URL, preserve filters
   const handleCloseDrawer = useCallback(() => {
-    router.replace("/audit", { scroll: false });
-  }, [router]);
+    router.replace(buildUrl({ id: null }), { scroll: false });
+  }, [router, buildUrl]);
 
   // Handle filter changes
   const handleTypeChange = useCallback(
     (type: AuditEventType, checked: boolean) => {
-      setSelectedTypes((prev) =>
-        checked ? [...prev, type] : prev.filter((t) => t !== type)
-      );
+      const newTypes = toggleArrayValue(selectedTypes, type, checked);
+      router.replace(buildUrl({ type: newTypes }), { scroll: false });
     },
-    []
+    [selectedTypes, router, buildUrl]
   );
 
   const handleSeverityChange = useCallback(
     (severity: AuditSeverity, checked: boolean) => {
-      setSelectedSeverities((prev) =>
-        checked ? [...prev, severity] : prev.filter((s) => s !== severity)
-      );
+      const newSeverities = toggleArrayValue(selectedSeverities, severity, checked);
+      router.replace(buildUrl({ severity: newSeverities }), { scroll: false });
     },
-    []
+    [selectedSeverities, router, buildUrl]
   );
 
   const handleActorKindChange = useCallback(
     (actorKind: AuditActorKind, checked: boolean) => {
-      setSelectedActorKinds((prev) =>
-        checked ? [...prev, actorKind] : prev.filter((a) => a !== actorKind)
-      );
+      const newActorKinds = toggleArrayValue(selectedActorKinds, actorKind, checked);
+      router.replace(buildUrl({ actor: newActorKinds }), { scroll: false });
     },
-    []
+    [selectedActorKinds, router, buildUrl]
   );
 
   const handleTimeRangeChange = useCallback(
     (timeRange: AuditTimeRange | null) => {
-      setSelectedTimeRange(timeRange);
+      router.replace(buildUrl({ range: timeRange }), { scroll: false });
     },
-    []
+    [router, buildUrl]
+  );
+
+  const handleSearchChange = useCallback(
+    (value: string) => {
+      router.replace(buildUrl({ q: value }), { scroll: false });
+    },
+    [router, buildUrl]
   );
 
   return (
@@ -146,7 +196,7 @@ function AuditPageContent() {
         onSeverityChange={handleSeverityChange}
         onActorKindChange={handleActorKindChange}
         onTimeRangeChange={handleTimeRangeChange}
-        onSearchChange={setSearchValue}
+        onSearchChange={handleSearchChange}
       />
 
       {/* Main content: Table */}
@@ -198,13 +248,8 @@ function AuditLoading() {
 /**
  * Audit Page
  *
- * Master-detail pattern with:
- * - FilterPanel (collapsible, left)
- * - DataTable (center)
- * - DetailDrawer (inline on desktop, right, pushes content)
- *
- * URL sync:
- * - Canonical: /audit?id=123
+ * Master-detail pattern with URL sync (full state):
+ * - Canonical: /audit?id=123&type=job_run&severity=error&actor=system&range=24h&q=sync
  * - Uses router.replace with scroll:false
  */
 export default function AuditPage() {

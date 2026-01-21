@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useCallback, useEffect } from "react";
+import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useDataQualityChecks, useDataQualityCheck } from "@/lib/hooks";
 import {
@@ -8,24 +8,23 @@ import {
   DataQualityStatus,
   DataQualityCategory,
   DataQualityFilters,
+  DATA_QUALITY_STATUSES,
+  DATA_QUALITY_CATEGORIES,
 } from "@/lib/types";
 import {
   DataQualityTable,
   DataQualityFilterPanel,
   DataQualityDetailDrawer,
 } from "@/components/data-quality";
+import {
+  parseNumericId,
+  parseArrayParam,
+  buildSearchParams,
+  toggleArrayValue,
+} from "@/lib/url-state";
 import { Loader2 } from "lucide-react";
 
-/**
- * Parse and validate check ID from URL parameter
- * Returns null if invalid (non-numeric, NaN, negative)
- */
-function parseCheckId(param: string | null): number | null {
-  if (!param) return null;
-  const parsed = parseInt(param, 10);
-  if (isNaN(parsed) || parsed < 0) return null;
-  return parsed;
-}
+const BASE_PATH = "/data-quality";
 
 /**
  * Data Quality Page Content
@@ -36,30 +35,44 @@ function DataQualityPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // URL state: selected check ID (sanitized)
-  const selectedIdParam = searchParams.get("id");
-  const selectedCheckId = parseCheckId(selectedIdParam);
+  // Parse URL state
+  const selectedCheckId = useMemo(
+    () => parseNumericId(searchParams.get("id")),
+    [searchParams]
+  );
+  const selectedStatuses = useMemo(
+    () => parseArrayParam<DataQualityStatus>(searchParams, "status", DATA_QUALITY_STATUSES),
+    [searchParams]
+  );
+  const selectedCategories = useMemo(
+    () => parseArrayParam<DataQualityCategory>(searchParams, "category", DATA_QUALITY_CATEGORIES),
+    [searchParams]
+  );
+  const searchValue = useMemo(
+    () => searchParams.get("q") ?? "",
+    [searchParams]
+  );
 
   // Normalize URL if id param is invalid
+  const selectedIdParam = searchParams.get("id");
   useEffect(() => {
     if (selectedIdParam && selectedCheckId === null) {
-      // Invalid id in URL → normalize to /data-quality
-      router.replace("/data-quality", { scroll: false });
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("id");
+      const search = params.toString();
+      router.replace(`${BASE_PATH}${search ? `?${search}` : ""}`, { scroll: false });
     }
-  }, [selectedIdParam, selectedCheckId, router]);
+  }, [selectedIdParam, selectedCheckId, router, searchParams]);
 
-  // UI state
+  // UI state (non-URL)
   const [filterCollapsed, setFilterCollapsed] = useState(false);
-  const [selectedStatuses, setSelectedStatuses] = useState<DataQualityStatus[]>([]);
-  const [selectedCategories, setSelectedCategories] = useState<DataQualityCategory[]>([]);
-  const [searchValue, setSearchValue] = useState("");
 
-  // Construct filters
-  const filters: DataQualityFilters = {
+  // Construct filters for query
+  const filters: DataQualityFilters = useMemo(() => ({
     status: selectedStatuses.length > 0 ? selectedStatuses : undefined,
     category: selectedCategories.length > 0 ? selectedCategories : undefined,
     search: searchValue || undefined,
-  };
+  }), [selectedStatuses, selectedCategories, searchValue]);
 
   // Fetch data
   const {
@@ -77,36 +90,61 @@ function DataQualityPageContent() {
   // Drawer is open when there's a selected check
   const drawerOpen = selectedCheckId !== null;
 
+  // Build URL with current filters
+  const buildUrl = useCallback(
+    (overrides: {
+      id?: number | null;
+      status?: DataQualityStatus[];
+      category?: DataQualityCategory[];
+      q?: string;
+    }) => {
+      const params = buildSearchParams({
+        id: overrides.id ?? selectedCheckId,
+        status: overrides.status ?? selectedStatuses,
+        category: overrides.category ?? selectedCategories,
+        q: overrides.q ?? searchValue,
+      });
+      const search = params.toString();
+      return `${BASE_PATH}${search ? `?${search}` : ""}`;
+    },
+    [selectedCheckId, selectedStatuses, selectedCategories, searchValue]
+  );
+
   // Handle row click - update URL with router.replace (no history entry)
   const handleRowClick = useCallback(
     (check: DataQualityCheck) => {
-      router.replace(`/data-quality?id=${check.id}`, { scroll: false });
+      router.replace(buildUrl({ id: check.id }), { scroll: false });
     },
-    [router]
+    [router, buildUrl]
   );
 
-  // Handle drawer close - remove id from URL
+  // Handle drawer close - remove id from URL, preserve filters
   const handleCloseDrawer = useCallback(() => {
-    router.replace("/data-quality", { scroll: false });
-  }, [router]);
+    router.replace(buildUrl({ id: null }), { scroll: false });
+  }, [router, buildUrl]);
 
   // Handle filter changes
   const handleStatusChange = useCallback(
     (status: DataQualityStatus, checked: boolean) => {
-      setSelectedStatuses((prev) =>
-        checked ? [...prev, status] : prev.filter((s) => s !== status)
-      );
+      const newStatuses = toggleArrayValue(selectedStatuses, status, checked);
+      router.replace(buildUrl({ status: newStatuses }), { scroll: false });
     },
-    []
+    [selectedStatuses, router, buildUrl]
   );
 
   const handleCategoryChange = useCallback(
     (category: DataQualityCategory, checked: boolean) => {
-      setSelectedCategories((prev) =>
-        checked ? [...prev, category] : prev.filter((c) => c !== category)
-      );
+      const newCategories = toggleArrayValue(selectedCategories, category, checked);
+      router.replace(buildUrl({ category: newCategories }), { scroll: false });
     },
-    []
+    [selectedCategories, router, buildUrl]
+  );
+
+  const handleSearchChange = useCallback(
+    (value: string) => {
+      router.replace(buildUrl({ q: value }), { scroll: false });
+    },
+    [router, buildUrl]
   );
 
   // Calculate summary counts
@@ -125,7 +163,7 @@ function DataQualityPageContent() {
         searchValue={searchValue}
         onStatusChange={handleStatusChange}
         onCategoryChange={handleCategoryChange}
-        onSearchChange={setSearchValue}
+        onSearchChange={handleSearchChange}
       />
 
       {/* Main content: Table */}
@@ -179,13 +217,8 @@ function DataQualityLoading() {
 /**
  * Data Quality Page
  *
- * Master-detail pattern with:
- * - FilterPanel (collapsible, left)
- * - DataTable (center)
- * - DetailDrawer (inline on desktop, right, pushes content)
- *
- * URL sync:
- * - Canonical: /data-quality?id=123
+ * Master-detail pattern with URL sync (full state):
+ * - Canonical: /data-quality?id=123&status=failing&category=coverage&q=match
  * - Uses router.replace with scroll:false
  */
 export default function DataQualityPage() {

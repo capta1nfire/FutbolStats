@@ -730,3 +730,83 @@ PUT /ops/settings/feature-flags/{flag_id}
 GET /ops/settings/users
 POST /ops/settings/users/invite
 ```
+
+---
+
+## 13) URL State Convention (Fase 10)
+
+Todas las secciones persisten filtros y selección en la URL para permitir deep-linking, refresh sin perder estado, y URLs compartibles.
+
+### 13.1 Convención de Query Params
+
+| Tipo | Formato | Ejemplo |
+|------|---------|---------|
+| Selection (id) | `?id=<number>` | `?id=123` |
+| Search | `?q=<string>` | `?q=arsenal` |
+| Multi-select filter | Repetir param | `?status=live&status=ft` |
+| Single-select filter | Param único | `?range=24h` |
+
+### 13.2 URLs por Sección
+
+```
+/matches?id=123&status=live&status=ft&league=Premier%20League&q=arsenal
+/jobs?id=456&status=running&status=failed&job=global_sync&q=sync
+/incidents?id=789&status=active&severity=critical&type=job_failure&q=error
+/data-quality?id=101&status=failing&category=coverage&q=match
+/analytics?id=201&type=model_performance&q=accuracy
+/audit?id=301&type=job_run&severity=error&actor=system&range=24h&q=sync
+/predictions?id=401&status=missing&model=A&league=Premier%20League&range=24h&q=real
+```
+
+### 13.3 Utilidad Compartida
+
+Todas las funciones de parse/serialize están en `lib/url-state.ts`:
+
+```typescript
+// Parse numeric ID from URL (null if invalid)
+parseNumericId(param: string | null): number | null
+
+// Parse array param with validation
+parseArrayParam<T>(searchParams, key, validValues): T[]
+
+// Parse single param with validation
+parseSingleParam<T>(param, validValues): T | null
+
+// Build URLSearchParams from filter state
+buildSearchParams(filters): URLSearchParams
+
+// Toggle value in array filter
+toggleArrayValue<T>(current, value, checked): T[]
+```
+
+### 13.4 Implementación en Pages
+
+Cada page sigue este patrón:
+
+```typescript
+// 1. Parse URL state con useMemo
+const selectedStatuses = useMemo(
+  () => parseArrayParam<Status>(searchParams, "status", VALID_STATUSES),
+  [searchParams]
+);
+
+// 2. Build URL helper
+const buildUrl = useCallback((overrides) => {
+  const params = buildSearchParams({ ...currentFilters, ...overrides });
+  return `${BASE_PATH}${params.toString() ? `?${params}` : ""}`;
+}, [currentFilters]);
+
+// 3. Handler actualiza URL con router.replace
+const handleFilterChange = useCallback((value, checked) => {
+  const newValues = toggleArrayValue(current, value, checked);
+  router.replace(buildUrl({ filter: newValues }), { scroll: false });
+}, [current, router, buildUrl]);
+```
+
+### 13.5 UX Keyboard
+
+- **ESC**: Cierra drawer (desktop y mobile sheet)
+- **Enter/Space**: Abre drawer desde fila seleccionada
+- **Arrow Up/Down**: Navega entre filas de la tabla
+- **Home/End**: Salta a primera/última fila
+- Focus vuelve a la tabla cuando se cierra el drawer

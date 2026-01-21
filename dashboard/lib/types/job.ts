@@ -6,6 +6,16 @@
 
 export type JobStatus = "running" | "success" | "failed" | "pending";
 
+/**
+ * All job statuses for filtering
+ */
+export const JOB_STATUSES: readonly JobStatus[] = [
+  "running",
+  "success",
+  "failed",
+  "pending",
+] as const;
+
 export interface JobRun {
   id: number;
   jobName: string;
