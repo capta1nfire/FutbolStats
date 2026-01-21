@@ -2,14 +2,17 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMatches, useMatch } from "@/lib/hooks";
+import { useMatches, useMatch, useColumnVisibility } from "@/lib/hooks";
 import { MatchSummary, MatchStatus, MatchFilters, MATCH_STATUSES } from "@/lib/types";
 import { getLeaguesMock } from "@/lib/mocks";
 import {
   MatchesTable,
   MatchesFilterPanel,
   MatchDetailDrawer,
+  MATCHES_COLUMN_OPTIONS,
+  MATCHES_DEFAULT_VISIBILITY,
 } from "@/components/matches";
+import { CustomizeColumnsPanel } from "@/components/tables";
 import {
   parseNumericId,
   parseArrayParam,
@@ -62,7 +65,15 @@ function MatchesPageContent() {
   }, [selectedIdParam, selectedMatchId, router, searchParams]);
 
   // UI state (non-URL)
-  const [filterCollapsed, setFilterCollapsed] = useState(false);
+  const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
+
+  // Column visibility with localStorage persistence
+  const {
+    columnVisibility,
+    setColumnVisibility,
+    setColumnVisible,
+    resetToDefault,
+  } = useColumnVisibility("matches", MATCHES_DEFAULT_VISIBILITY);
 
   // Construct filters for query
   const filters: MatchFilters = useMemo(() => ({
@@ -141,19 +152,32 @@ function MatchesPageContent() {
     [router, buildUrl]
   );
 
+  // Handle "Done" button in CustomizeColumnsPanel
+  const handleCustomizeColumnsDone = useCallback(() => {
+    setLeftRailCollapsed(true);
+  }, []);
+
   return (
     <div className="h-full flex overflow-hidden relative">
-      {/* FilterPanel */}
+      {/* Left Rail: FilterPanel + CustomizeColumnsPanel */}
       <MatchesFilterPanel
-        collapsed={filterCollapsed}
-        onToggleCollapse={() => setFilterCollapsed(!filterCollapsed)}
+        collapsed={leftRailCollapsed}
+        onToggleCollapse={() => setLeftRailCollapsed(!leftRailCollapsed)}
         selectedStatuses={selectedStatuses}
         selectedLeagues={selectedLeagues}
         searchValue={searchValue}
         onStatusChange={handleStatusChange}
         onLeagueChange={handleLeagueChange}
         onSearchChange={handleSearchChange}
-      />
+      >
+        <CustomizeColumnsPanel
+          columns={MATCHES_COLUMN_OPTIONS}
+          columnVisibility={columnVisibility}
+          onColumnVisibilityChange={setColumnVisible}
+          onRestore={resetToDefault}
+          onDone={handleCustomizeColumnsDone}
+        />
+      </MatchesFilterPanel>
 
       {/* Main content: Table */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
@@ -173,6 +197,8 @@ function MatchesPageContent() {
           onRetry={() => refetch()}
           selectedMatchId={selectedMatchId}
           onRowClick={handleRowClick}
+          columnVisibility={columnVisibility}
+          onColumnVisibilityChange={setColumnVisibility}
         />
       </div>
 

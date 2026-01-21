@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, ReactNode } from "react";
 import { Circle, Trophy, Calendar } from "lucide-react";
 import { FilterPanel, FilterGroup } from "@/components/shell";
 import { MatchStatus } from "@/lib/types";
@@ -15,6 +15,8 @@ interface MatchesFilterPanelProps {
   onStatusChange: (status: MatchStatus, checked: boolean) => void;
   onLeagueChange: (league: string, checked: boolean) => void;
   onSearchChange: (value: string) => void;
+  /** Optional children to render below filters (e.g., CustomizeColumnsPanel) */
+  children?: ReactNode;
 }
 
 export function MatchesFilterPanel({
@@ -26,6 +28,7 @@ export function MatchesFilterPanel({
   onStatusChange,
   onLeagueChange,
   onSearchChange,
+  children,
 }: MatchesFilterPanelProps) {
   const statusCounts = useMemo(() => getStatusCountsMock(), []);
   const leagues = useMemo(() => getLeaguesMock(), []);
@@ -108,6 +111,8 @@ export function MatchesFilterPanel({
       onFilterChange={handleFilterChange}
       onSearchChange={onSearchChange}
       searchValue={searchValue}
-    />
+    >
+      {children}
+    </FilterPanel>
   );
 }

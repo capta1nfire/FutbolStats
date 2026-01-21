@@ -7,6 +7,7 @@ import {
   getCoreRowModel,
   getSortedRowModel,
   SortingState,
+  VisibilityState,
   useReactTable,
 } from "@tanstack/react-table";
 import { ArrowUpDown, ArrowUp, ArrowDown, Loader2 } from "lucide-react";
@@ -28,6 +29,10 @@ interface DataTableProps<TData> {
   onRowClick?: (row: TData) => void;
   getRowId?: (row: TData) => string | number;
   emptyMessage?: string;
+  /** Column visibility state (from useColumnVisibility hook) */
+  columnVisibility?: VisibilityState;
+  /** Called when column visibility changes (for controlled state) */
+  onColumnVisibilityChange?: (visibility: VisibilityState) => void;
 }
 
 /**
@@ -52,6 +57,8 @@ function DataTableInner<TData>(
     onRowClick,
     getRowId,
     emptyMessage = "No data found",
+    columnVisibility,
+    onColumnVisibilityChange,
   }: DataTableProps<TData>,
   ref: React.ForwardedRef<DataTableHandle>
 ) {
@@ -67,8 +74,10 @@ function DataTableInner<TData>(
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     onSortingChange: setSorting,
+    onColumnVisibilityChange: onColumnVisibilityChange,
     state: {
       sorting,
+      columnVisibility: columnVisibility ?? {},
     },
     getRowId: getRowId
       ? (row) => String(getRowId(row))
