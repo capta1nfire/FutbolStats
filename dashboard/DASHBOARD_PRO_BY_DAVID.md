@@ -328,6 +328,54 @@ interface ActiveIncident {
 }
 ```
 
+### ✅ DataQualityCheck (implementado)
+```typescript
+type DataQualityStatus = "passing" | "warning" | "failing";
+type DataQualityCategory = "coverage" | "consistency" | "completeness" | "freshness" | "odds";
+
+interface DataQualityCheck {
+  id: number;
+  name: string;
+  category: DataQualityCategory;
+  status: DataQualityStatus;
+  lastRunAt: string;                         // ISO timestamp
+  currentValue?: number | string;
+  threshold?: number | string;
+  affectedCount: number;
+  description?: string;
+}
+```
+
+### ✅ DataQualityCheckDetail (implementado)
+```typescript
+interface DataQualityAffectedItem {
+  id: string | number;
+  label: string;
+  kind: "match" | "team" | "league" | "job";
+  details?: Record<string, string | number>;
+}
+
+interface DataQualityHistoryEntry {
+  timestamp: string;                         // ISO timestamp
+  status: DataQualityStatus;
+  value?: number | string;
+}
+
+interface DataQualityCheckDetail extends DataQualityCheck {
+  affectedItems: DataQualityAffectedItem[];
+  history: DataQualityHistoryEntry[];
+}
+```
+
+### ✅ DataQualityFilters (implementado)
+```typescript
+interface DataQualityFilters {
+  status?: DataQualityStatus[];
+  category?: DataQualityCategory[];
+  search?: string;
+}
+```
+
 ---
 
 ## 9) Mock strategy (regla de oro)
