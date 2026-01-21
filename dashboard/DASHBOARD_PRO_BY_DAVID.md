@@ -422,6 +422,70 @@ interface AnalyticsFilters {
 }
 ```
 
+### ✅ AuditEventRow (implementado)
+```typescript
+type AuditEventType =
+  | "job_run"
+  | "prediction_generated"
+  | "prediction_frozen"
+  | "incident_ack"
+  | "incident_resolve"
+  | "config_changed"
+  | "data_quality_check"
+  | "system"
+  | "user_action";
+
+type AuditSeverity = "info" | "warning" | "error";
+
+type AuditActor =
+  | { kind: "user"; id: number; name: string }
+  | { kind: "system"; name: string };
+
+interface AuditEventRow {
+  id: number;
+  timestamp: string;                         // ISO timestamp
+  type: AuditEventType;
+  severity?: AuditSeverity;
+  actor: AuditActor;
+  message: string;
+  entity?: { kind: "match" | "job" | "prediction" | "incident" | "check"; id: number };
+}
+```
+
+### ✅ AuditEventDetail (implementado)
+```typescript
+interface AuditEventContext {
+  requestId?: string;
+  correlationId?: string;
+  ip?: string;
+  userAgent?: string;
+  env?: "prod" | "staging" | "local";
+}
+
+interface AuditRelatedEvent {
+  id: number;
+  timestamp: string;
+  message: string;
+}
+
+interface AuditEventDetail extends AuditEventRow {
+  context?: AuditEventContext;
+  payload?: Record<string, unknown>;
+  related?: AuditRelatedEvent[];
+}
+```
+
+### ✅ AuditFilters (implementado)
+```typescript
+interface AuditFilters {
+  type?: AuditEventType[];
+  severity?: AuditSeverity[];
+  actorKind?: ("user" | "system")[];
+  timeRange?: "1h" | "24h" | "7d" | "30d";
+  search?: string;
+}
+```
+
 ---
 
 ## 9) Mock strategy (regla de oro)
