@@ -99,7 +99,7 @@ function DataQualityPageContent() {
       q?: string;
     }) => {
       const params = buildSearchParams({
-        id: overrides.id ?? selectedCheckId,
+        id: overrides.id === undefined ? selectedCheckId : overrides.id,
         status: overrides.status ?? selectedStatuses,
         category: overrides.category ?? selectedCategories,
         q: overrides.q ?? searchValue,

@@ -91,7 +91,7 @@ function AnalyticsPageContent() {
       q?: string;
     }) => {
       const params = buildSearchParams({
-        id: overrides.id ?? selectedReportId,
+        id: overrides.id === undefined ? selectedReportId : overrides.id,
         type: overrides.type ?? selectedTypes,
         q: overrides.q ?? searchValue,
       });

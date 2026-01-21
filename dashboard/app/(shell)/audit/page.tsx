@@ -116,11 +116,11 @@ function AuditPageContent() {
       q?: string;
     }) => {
       const params = buildSearchParams({
-        id: overrides.id ?? selectedEventId,
+        id: overrides.id === undefined ? selectedEventId : overrides.id,
         type: overrides.type ?? selectedTypes,
         severity: overrides.severity ?? selectedSeverities,
         actor: overrides.actor ?? selectedActorKinds,
-        range: overrides.range ?? selectedTimeRange,
+        range: overrides.range === undefined ? selectedTimeRange : overrides.range,
         q: overrides.q ?? searchValue,
       });
       const search = params.toString();
