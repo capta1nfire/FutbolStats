@@ -96,7 +96,7 @@ export function DetailDrawer({
   return (
     <aside
       className={cn(
-        "border-l border-border bg-surface flex flex-col transition-smooth",
+        "border-l border-border bg-sidebar flex flex-col transition-smooth",
         variant === "overlay"
           ? "absolute right-0 top-0 h-full w-[400px] z-30 shadow-[-32px_0_32px_rgba(0,0,0,0.8)]"
           : "w-[320px]",
