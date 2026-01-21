@@ -72,23 +72,24 @@
 
 /*
  * Dark theme ONLY - UniFi-inspired palette
+ * Aligned with UniFi drawer/surfaces reference
  * No light theme needed for ops dashboard
  */
 :root {
-  /* Base backgrounds - very dark */
-  --background: #0d0d0d;
-  --surface: #1a1a1a;
-  --surface-elevated: #252525;
+  /* Base backgrounds - UniFi drawer palette */
+  --background: #131416;
+  --surface: #1c1e21;
+  --surface-elevated: #232326;
 
-  /* Foreground/text */
-  --foreground: #f5f5f5;
-  --muted-foreground: #9ca3af;
+  /* Foreground/text - UniFi typography */
+  --foreground: #f9fafa;
+  --muted-foreground: #b7bcc2;
 
   /* Cards and popovers */
-  --card: #1a1a1a;
-  --card-foreground: #f5f5f5;
-  --popover: #252525;
-  --popover-foreground: #f5f5f5;
+  --card: #1c1e21;
+  --card-foreground: #f9fafa;
+  --popover: #232326;
+  --popover-foreground: #f9fafa;
 
   /* Primary - accent blue (UniFi) */
   --primary: #4797FF;
@@ -96,41 +97,41 @@
   --primary-foreground: #ffffff;
 
   /* Secondary - muted */
-  --secondary: #252525;
-  --secondary-foreground: #f5f5f5;
+  --secondary: #232326;
+  --secondary-foreground: #f9fafa;
 
-  /* Muted - subtle backgrounds */
-  --muted: #1a1a1a;
+  /* Muted - consistent with surface */
+  --muted: #1c1e21;
 
-  /* Accent - for hover states, selection */
-  --accent: #2a2a2a;
-  --accent-foreground: #f5f5f5;
+  /* Accent - selected tab / selected state bg */
+  --accent: #282b2f;
+  --accent-foreground: #f9fafa;
 
-  /* Status colors */
-  --success: #4ade80;
+  /* Status colors - UniFi aligned */
+  --success: #37be5f;
   --warning: #eab308;
   --error: #ef4444;
   --info: #06b6d4;
   --destructive: #ef4444;
 
-  /* Borders - subtle */
-  --border: #2d2d2d;
-  --input: #333333;
+  /* Borders - UniFi subtle lines */
+  --border: rgba(249, 250, 250, 0.07);
+  --input: rgba(249, 250, 250, 0.10);
   --ring: #4797FF;
 
-  /* Sidebar */
-  --sidebar: #111111;
-  --sidebar-foreground: #f5f5f5;
+  /* Sidebar - same as background for unified rails */
+  --sidebar: #131416;
+  --sidebar-foreground: #f9fafa;
   --sidebar-primary: #4797FF;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #1a1a1a;
-  --sidebar-accent-foreground: #f5f5f5;
-  --sidebar-border: #2d2d2d;
+  --sidebar-accent: #1c1e21;
+  --sidebar-accent-foreground: #f9fafa;
+  --sidebar-border: rgba(249, 250, 250, 0.07);
   --sidebar-ring: #4797FF;
 
   /* Charts */
   --chart-1: #4797FF;
-  --chart-2: #4ade80;
+  --chart-2: #37be5f;
   --chart-3: #eab308;
   --chart-4: #ef4444;
   --chart-5: #06b6d4;
