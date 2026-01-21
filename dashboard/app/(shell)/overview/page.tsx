@@ -6,6 +6,7 @@ import {
   CoverageBar,
   UpcomingMatchesList,
   ActiveIncidentsList,
+  ApiBudgetCard,
 } from "@/components/overview";
 import { Loader2, RefreshCw, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -63,124 +64,134 @@ export default function OverviewPage() {
     return null;
   }
 
-  const { health, upcomingMatches, activeIncidents } = data;
+  const { health, upcomingMatches, activeIncidents, apiBudget } = data;
 
   return (
-    <ScrollArea className="h-full">
-      <div className="p-6 space-y-6">
-        {/* Page header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Overview</h1>
-            <p className="text-sm text-muted-foreground">
-              System health and real-time status
-            </p>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => refetch()}
-            aria-label="Refresh data"
-          >
-            <RefreshCw className="h-4 w-4" />
-          </Button>
+    <div className="h-full flex overflow-hidden">
+      {/* Side column: API Budget */}
+      <aside className="w-[240px] shrink-0 border-r border-border bg-background p-4 overflow-y-auto">
+        <div className="space-y-4">
+          {apiBudget && <ApiBudgetCard budget={apiBudget} />}
         </div>
+      </aside>
 
-        {/* Health cards grid */}
-        <section aria-labelledby="health-heading">
-          <h2 id="health-heading" className="sr-only">
-            Health Status
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {health.cards.map((card) => (
-              <HealthCard key={card.id} card={card} />
-            ))}
-          </div>
-        </section>
-
-        {/* Coverage bar */}
-        <section
-          aria-labelledby="coverage-heading"
-          className="bg-surface rounded-lg border border-border p-4"
-        >
-          <h2 id="coverage-heading" className="sr-only">
-            Prediction Coverage
-          </h2>
-          <CoverageBar percentage={health.coveragePct} />
-        </section>
-
-        {/* Two-column layout: Upcoming + Incidents */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Upcoming Matches */}
-          <section
-            aria-labelledby="upcoming-heading"
-            className="bg-surface rounded-lg border border-border p-4"
-          >
-            <div className="flex items-center justify-between mb-4">
-              <h2
-                id="upcoming-heading"
-                className="text-sm font-semibold text-foreground"
-              >
-                Upcoming Matches
-              </h2>
-              <span className="text-xs text-muted-foreground">
-                {upcomingMatches.length} matches
-              </span>
+      {/* Main content */}
+      <ScrollArea className="flex-1">
+        <div className="p-6 space-y-6">
+          {/* Page header */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-foreground">Overview</h1>
+              <p className="text-sm text-muted-foreground">
+                System health and real-time status
+              </p>
             </div>
-            <UpcomingMatchesList matches={upcomingMatches.slice(0, 6)} />
-            {upcomingMatches.length > 6 && (
-              <div className="mt-3 pt-3 border-t border-border">
-                <Link
-                  href="/matches"
-                  className="text-xs text-accent hover:underline"
-                >
-                  View all {upcomingMatches.length} matches →
-                </Link>
-              </div>
-            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refetch()}
+              aria-label="Refresh data"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {/* Health cards grid */}
+          <section aria-labelledby="health-heading">
+            <h2 id="health-heading" className="sr-only">
+              Health Status
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {health.cards.map((card) => (
+                <HealthCard key={card.id} card={card} />
+              ))}
+            </div>
           </section>
 
-          {/* Active Incidents */}
+          {/* Coverage bar */}
           <section
-            aria-labelledby="incidents-heading"
+            aria-labelledby="coverage-heading"
             className="bg-surface rounded-lg border border-border p-4"
           >
-            <div className="flex items-center justify-between mb-4">
-              <h2
-                id="incidents-heading"
-                className="text-sm font-semibold text-foreground"
-              >
-                Active Incidents
-              </h2>
-              <span className="text-xs text-muted-foreground">
-                {activeIncidents.length} active
-              </span>
-            </div>
-            <ActiveIncidentsList incidents={activeIncidents.slice(0, 5)} />
-            {activeIncidents.length > 5 && (
-              <div className="mt-3 pt-3 border-t border-border">
-                <Link
-                  href="/incidents"
-                  className="text-xs text-accent hover:underline"
-                >
-                  View all {activeIncidents.length} incidents →
-                </Link>
-              </div>
-            )}
+            <h2 id="coverage-heading" className="sr-only">
+              Prediction Coverage
+            </h2>
+            <CoverageBar percentage={health.coveragePct} />
           </section>
-        </div>
 
-        {/* Last updated */}
-        <div className="text-xs text-muted-foreground text-center">
-          Last updated:{" "}
-          {new Date(health.lastUpdated).toLocaleString("en-US", {
-            month: "short",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
+          {/* Two-column layout: Upcoming + Incidents */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Upcoming Matches */}
+            <section
+              aria-labelledby="upcoming-heading"
+              className="bg-surface rounded-lg border border-border p-4"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h2
+                  id="upcoming-heading"
+                  className="text-sm font-semibold text-foreground"
+                >
+                  Upcoming Matches
+                </h2>
+                <span className="text-xs text-muted-foreground">
+                  {upcomingMatches.length} matches
+                </span>
+              </div>
+              <UpcomingMatchesList matches={upcomingMatches.slice(0, 6)} />
+              {upcomingMatches.length > 6 && (
+                <div className="mt-3 pt-3 border-t border-border">
+                  <Link
+                    href="/matches"
+                    className="text-xs text-accent hover:underline"
+                  >
+                    View all {upcomingMatches.length} matches →
+                  </Link>
+                </div>
+              )}
+            </section>
+
+            {/* Active Incidents */}
+            <section
+              aria-labelledby="incidents-heading"
+              className="bg-surface rounded-lg border border-border p-4"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h2
+                  id="incidents-heading"
+                  className="text-sm font-semibold text-foreground"
+                >
+                  Active Incidents
+                </h2>
+                <span className="text-xs text-muted-foreground">
+                  {activeIncidents.length} active
+                </span>
+              </div>
+              <ActiveIncidentsList incidents={activeIncidents.slice(0, 5)} />
+              {activeIncidents.length > 5 && (
+                <div className="mt-3 pt-3 border-t border-border">
+                  <Link
+                    href="/incidents"
+                    className="text-xs text-accent hover:underline"
+                  >
+                    View all {activeIncidents.length} incidents →
+                  </Link>
+                </div>
+              )}
+            </section>
+          </div>
+
+          {/* Last updated */}
+          <div className="text-xs text-muted-foreground text-center">
+            Last updated:{" "}
+            {new Date(health.lastUpdated).toLocaleString("en-US", {
+              month: "short",
+              day: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </div>
         </div>
-      </div>
-    </ScrollArea>
+      </ScrollArea>
+    </div>
   );
 }
