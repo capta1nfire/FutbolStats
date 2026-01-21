@@ -376,6 +376,52 @@ interface DataQualityFilters {
 }
 ```
 
+### ✅ AnalyticsReportRow (implementado)
+```typescript
+type AnalyticsReportType = "model_performance" | "prediction_accuracy" | "system_metrics" | "api_usage";
+type AnalyticsReportStatus = "ok" | "warning" | "stale";
+type AnalyticsTimeRange = "7d" | "30d" | "90d";
+
+interface AnalyticsReportRow {
+  id: number;
+  type: AnalyticsReportType;
+  title: string;
+  periodLabel: string;                       // e.g. "Last 7 days"
+  lastUpdated: string;                       // ISO timestamp
+  status?: AnalyticsReportStatus;
+  summary: Record<string, string | number>;  // e.g. accuracy, brier, p95, errorRate
+}
+```
+
+### ✅ AnalyticsReportDetail (implementado)
+```typescript
+interface AnalyticsBreakdownTable {
+  columns: string[];
+  rows: (string | number)[][];
+}
+
+interface AnalyticsSeriesPlaceholder {
+  label: string;
+  points: number;
+}
+
+interface AnalyticsReportDetail {
+  row: AnalyticsReportRow;
+  breakdownTable?: AnalyticsBreakdownTable;
+  seriesPlaceholder?: AnalyticsSeriesPlaceholder[];
+}
+```
+
+### ✅ AnalyticsFilters (implementado)
+```typescript
+interface AnalyticsFilters {
+  type?: AnalyticsReportType[];
+  timeRange?: AnalyticsTimeRange;
+  league?: string[];
+  search?: string;
+}
+```
+
 ---
 
 ## 9) Mock strategy (regla de oro)
