@@ -142,7 +142,7 @@ function MatchesPageContent() {
   );
 
   return (
-    <div className="h-full flex overflow-hidden">
+    <div className="h-full flex overflow-hidden relative">
       {/* FilterPanel */}
       <MatchesFilterPanel
         collapsed={filterCollapsed}
@@ -176,7 +176,7 @@ function MatchesPageContent() {
         />
       </div>
 
-      {/* Detail Drawer (inline) */}
+      {/* Detail Drawer (overlay on desktop, sheet on mobile) */}
       <MatchDetailDrawer
         match={selectedMatch ?? null}
         open={drawerOpen}
@@ -206,7 +206,7 @@ function MatchesLoading() {
  * Master-detail pattern with:
  * - FilterPanel (collapsible, left)
  * - DataTable (center)
- * - DetailDrawer (inline, right, pushes content)
+ * - DetailDrawer (overlay, right, no reflow)
  *
  * URL sync (full state):
  * - Canonical: /matches?id=123&status=live&status=ft&league=Premier%20League&q=arsenal

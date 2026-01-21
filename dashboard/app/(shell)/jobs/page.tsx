@@ -138,7 +138,7 @@ function JobsPageContent() {
   );
 
   return (
-    <div className="h-full flex overflow-hidden">
+    <div className="h-full flex overflow-hidden relative">
       {/* FilterPanel */}
       <JobsFilterPanel
         collapsed={filterCollapsed}

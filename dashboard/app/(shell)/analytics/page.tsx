@@ -131,7 +131,7 @@ function AnalyticsPageContent() {
   );
 
   return (
-    <div className="h-full flex overflow-hidden">
+    <div className="h-full flex overflow-hidden relative">
       {/* FilterPanel */}
       <AnalyticsFilterPanel
         collapsed={filterCollapsed}
