@@ -174,37 +174,88 @@ Cada sección debe existir con:
 
 ## 8) Contratos TypeScript (mínimos, estables)
 > Estos tipos deben existir desde Fase 0 para que la migración a data real sea plug-and-play.
+> Los contratos marcados con ✅ están implementados; los marcados con 📋 son placeholder para fases futuras.
 
-- `MatchSummary`
-  - `id: number`
-  - `status: string`
-  - `leagueName: string`
-  - `home: string`, `away: string`
-  - `kickoffISO: string`
-  - `score?: { home: number; away: number }`
-  - `elapsed?: { min: number; extra?: number }`
-  - `prediction?: { model: "A"|"Shadow"; pick: "home"|"draw"|"away"; probs?: { home:number; draw:number; away:number } }`
+### ✅ MatchSummary (implementado)
+```typescript
+interface MatchSummary {
+  id: number;
+  status: "scheduled" | "live" | "ht" | "ft" | "postponed" | "cancelled";
+  leagueName: string;
+  leagueCountry: string;
+  home: string;
+  away: string;
+  kickoffISO: string;
+  score?: { home: number; away: number };
+  elapsed?: { min: number; extra?: number };
+  prediction?: {
+    model: "A" | "Shadow";
+    pick: "home" | "draw" | "away";
+    probs?: { home: number; draw: number; away: number };
+  };
+}
+```
 
-- `JobRun`
-  - `id: string`
-  - `job: string`
-  - `status: "ok"|"failed"|"running"`
-  - `startedAtISO: string`
-  - `durationMs?: number`
-  - `resultSummary?: string`
-  - `error?: string`
+### ✅ JobRun (implementado)
+```typescript
+type JobStatus = "running" | "success" | "failed" | "pending";
 
-- `Incident`
-  - `id: string`
-  - `type: string`
-  - `severity: "critical"|"warning"|"info"`
-  - `status: "active"|"acknowledged"|"resolved"`
-  - `createdAtISO: string`
-  - `title: string`
-  - `entity?: { kind: "match"|"job"|"prediction"; id: string }`
+interface JobRun {
+  id: number;
+  jobName: string;                           // e.g. "global_sync", "live_tick"
+  status: JobStatus;
+  startedAt: string;                         // ISO timestamp
+  finishedAt?: string;                       // ISO timestamp (undefined if running/pending)
+  durationMs?: number;                       // Runtime in milliseconds
+  triggeredBy: "scheduler" | "manual" | "retry";
+  error?: string;                            // Error message if failed
+  metadata?: Record<string, unknown>;        // Optional extra data
+}
+```
 
-- `HealthSummary`
-  - cards + counts + coveragePct
+### ✅ JobDefinition (implementado)
+```typescript
+interface JobDefinition {
+  name: string;
+  description: string;
+  schedule: string;                          // Cron or human-readable (e.g. "Every 1 minute")
+  lastRun?: JobRun;
+  nextRunAt?: string;                        // ISO timestamp
+  enabled: boolean;
+}
+```
+
+### ✅ JobFilters (implementado)
+```typescript
+interface JobFilters {
+  status?: JobStatus[];
+  jobName?: string[];
+  search?: string;
+  dateRange?: { start: string; end: string };
+}
+```
+
+### 📋 Incident (placeholder - Phase 1)
+```typescript
+interface Incident {
+  id: string;
+  type: string;
+  severity: "critical" | "warning" | "info";
+  status: "active" | "acknowledged" | "resolved";
+  createdAtISO: string;
+  title: string;
+  entity?: { kind: "match" | "job" | "prediction"; id: string };
+}
+```
+
+### 📋 HealthSummary (placeholder - Phase 1)
+```typescript
+interface HealthSummary {
+  cards: HealthCard[];
+  counts: Record<string, number>;
+  coveragePct: number;
+}
+```
 
 ---
 
