@@ -6,3 +6,4 @@ export * from "./use-overview";
 export * from "./use-data-quality";
 export * from "./use-analytics";
 export * from "./use-audit";
+export * from "./use-settings";

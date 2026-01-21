@@ -486,6 +486,60 @@ interface AuditFilters {
 }
 ```
 
+### ✅ SettingsSummary (implementado - read-only Phase 0)
+```typescript
+type SettingsSection = "general" | "timezone" | "notifications" | "api_keys" | "model_versions" | "feature_flags" | "users";
+type Environment = "prod" | "staging" | "local";
+type ApiKeyStatus = "missing" | "configured" | "invalid";
+type UserRole = "admin" | "readonly";
+
+interface ModelVersionInfo {
+  modelA: string;
+  shadow: string;
+  updatedAt: string;                           // ISO timestamp
+}
+
+interface FeatureFlag {
+  id: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  updatedAt?: string;                          // ISO timestamp
+}
+
+interface SettingsUser {
+  id: number;
+  email: string;
+  role: UserRole;
+  lastLogin?: string;                          // ISO timestamp
+  createdAt?: string;                          // ISO timestamp
+}
+
+interface SettingsSummary {
+  lastUpdated: string;                         // ISO timestamp
+  environment: Environment;
+  timezoneDisplay: string;
+  narrativeProvider: string;
+  apiFootballKeyStatus: ApiKeyStatus;
+  modelVersions: ModelVersionInfo;
+  featureFlags: FeatureFlag[];
+  users: SettingsUser[];
+}
+```
+
+### ✅ SettingsFilters (implementado)
+```typescript
+interface FeatureFlagsFilters {
+  search?: string;
+  enabled?: boolean;
+}
+
+interface UsersFilters {
+  search?: string;
+  role?: UserRole[];
+}
+```
+
 ---
 
 ## 9) Mock strategy (regla de oro)

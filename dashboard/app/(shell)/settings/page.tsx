@@ -1,15 +1,146 @@
-import { Settings } from "lucide-react";
+"use client";
 
+import { useState } from "react";
+import { useSettingsSummary } from "@/lib/hooks";
+import { SettingsSection } from "@/lib/types";
+import {
+  SettingsNav,
+  GeneralSection,
+  TimezoneSection,
+  NotificationsSection,
+  ApiKeysSection,
+  ModelVersionsSection,
+  FeatureFlagsSection,
+  UsersSection,
+} from "@/components/settings";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Loader2, AlertTriangle, RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
+
+/**
+ * Settings Content Renderer
+ *
+ * Renders the appropriate section based on the active section
+ */
+function SettingsContent({
+  section,
+  isLoading,
+  error,
+  onRetry,
+}: {
+  section: SettingsSection;
+  isLoading: boolean;
+  error: Error | null;
+  onRetry: () => void;
+}) {
+  const { data: settings } = useSettingsSummary();
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="flex flex-col items-center gap-2">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">Loading settings...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="flex flex-col items-center gap-4 text-center">
+          <AlertTriangle className="h-8 w-8 text-error" />
+          <div>
+            <p className="text-sm text-foreground mb-1">Failed to load settings</p>
+            <p className="text-xs text-muted-foreground">{error.message}</p>
+          </div>
+          <Button variant="outline" size="sm" onClick={onRetry}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Retry
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // No settings data
+  if (!settings) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-sm text-muted-foreground">No settings data available</p>
+      </div>
+    );
+  }
+
+  // Render section content
+  switch (section) {
+    case "general":
+      return <GeneralSection settings={settings} />;
+    case "timezone":
+      return <TimezoneSection settings={settings} />;
+    case "notifications":
+      return <NotificationsSection />;
+    case "api_keys":
+      return <ApiKeysSection settings={settings} />;
+    case "model_versions":
+      return <ModelVersionsSection settings={settings} />;
+    case "feature_flags":
+      return <FeatureFlagsSection />;
+    case "users":
+      return <UsersSection />;
+    default:
+      return (
+        <div className="flex items-center justify-center h-64">
+          <p className="text-sm text-muted-foreground">Unknown section</p>
+        </div>
+      );
+  }
+}
+
+/**
+ * Settings Page
+ *
+ * Two-column layout with navigation sidebar and content area
+ * All settings are read-only in Phase 0
+ */
 export default function SettingsPage() {
+  const [activeSection, setActiveSection] = useState<SettingsSection>("general");
+
+  const {
+    isLoading,
+    error,
+    refetch,
+  } = useSettingsSummary();
+
   return (
-    <div className="h-full flex items-center justify-center bg-background">
-      <div className="text-center">
-        <Settings className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-        <h1 className="text-xl font-semibold text-foreground mb-2">Settings</h1>
-        <p className="text-muted-foreground">
-          System configuration and feature flags.
-        </p>
-        <p className="text-sm text-muted-foreground mt-4">Coming soon</p>
+    <div className="h-full flex overflow-hidden">
+      {/* Settings Navigation */}
+      <SettingsNav
+        activeSection={activeSection}
+        onSectionChange={setActiveSection}
+      />
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col overflow-hidden bg-background">
+        {/* Header */}
+        <div className="h-12 flex items-center px-6 border-b border-border">
+          <h1 className="text-lg font-semibold text-foreground">Settings</h1>
+        </div>
+
+        {/* Content */}
+        <ScrollArea className="flex-1">
+          <div className="p-6 max-w-3xl">
+            <SettingsContent
+              section={activeSection}
+              isLoading={isLoading}
+              error={error}
+              onRetry={() => refetch()}
+            />
+          </div>
+        </ScrollArea>
       </div>
     </div>
   );
