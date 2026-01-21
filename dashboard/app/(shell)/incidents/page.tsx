@@ -162,7 +162,7 @@ function IncidentsPageContent() {
   );
 
   return (
-    <div className="h-full flex overflow-hidden">
+    <div className="h-full flex overflow-hidden relative">
       {/* FilterPanel */}
       <IncidentsFilterPanel
         collapsed={filterCollapsed}

@@ -129,8 +129,8 @@ All pages persist filters and selection in URL query params for deep-linking and
 
 ## Breakpoints
 
-- **Desktop (≥1280px)**: Drawer inline, pushes content (no overlay)
-- **Mobile/Tablet (<1280px)**: Drawer as Sheet overlay
+- **Desktop (≥1280px)**: Drawer overlay docked (~400px), no reflow, no backdrop, table remains interactive
+- **Mobile/Tablet (<1280px)**: Drawer as Sheet overlay (modal)
 
 Uses `useSyncExternalStore` for SSR-safe media query detection.
 
@@ -156,7 +156,7 @@ Uses `useSyncExternalStore` for SSR-safe media query detection.
 
 2. **Turbopack + Sandbox**: In restricted sandbox environments (CI, verifiers), `npm run build` may **fail** with `EPERM: operation not permitted` or `EACCES: permission denied`. Run build in local or normal CI environment.
 
-3. **SSR Media Query**: On server-render, `useIsDesktop()` defaults to `false` (mobile). Desktop users may see brief Sheet→inline drawer transition.
+3. **SSR Media Query**: On server-render, `useIsDesktop()` defaults to `false` (mobile). Desktop users may see brief Sheet→overlay drawer transition.
 
 4. **Mock Data Only**: All data is client-side mocks. No API calls.
 
@@ -164,8 +164,8 @@ Uses `useSyncExternalStore` for SSR-safe media query detection.
 
 ## Acceptance Criteria Checklist
 
-- [ ] Layout: TopBar + IconSidebar + FilterPanel + Table + Drawer inline
-- [ ] Drawer: inline (desktop), pushes content, no overlay
+- [ ] Layout: TopBar + IconSidebar + FilterPanel + Table + Drawer overlay
+- [ ] Drawer: overlay docked (desktop ~400px), no reflow, no backdrop
 - [ ] Table: sticky header, sorting, row hover/selected
 - [ ] Filters: collapsible panel, accordions, checkboxes with counts
 - [ ] Navigation: all routes exist, no 404, active states

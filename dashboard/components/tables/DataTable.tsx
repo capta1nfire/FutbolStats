@@ -7,6 +7,8 @@ import {
   getCoreRowModel,
   getSortedRowModel,
   SortingState,
+  VisibilityState,
+  Updater,
   useReactTable,
 } from "@tanstack/react-table";
 import { ArrowUpDown, ArrowUp, ArrowDown, Loader2 } from "lucide-react";
@@ -28,6 +30,10 @@ interface DataTableProps<TData> {
   onRowClick?: (row: TData) => void;
   getRowId?: (row: TData) => string | number;
   emptyMessage?: string;
+  /** Column visibility state (from useColumnVisibility hook) */
+  columnVisibility?: VisibilityState;
+  /** Called when column visibility changes (for controlled state) */
+  onColumnVisibilityChange?: (visibility: VisibilityState) => void;
 }
 
 /**
@@ -52,6 +58,8 @@ function DataTableInner<TData>(
     onRowClick,
     getRowId,
     emptyMessage = "No data found",
+    columnVisibility,
+    onColumnVisibilityChange,
   }: DataTableProps<TData>,
   ref: React.ForwardedRef<DataTableHandle>
 ) {
@@ -60,6 +68,23 @@ function DataTableInner<TData>(
   const tableBodyRef = useRef<HTMLTableSectionElement>(null);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
 
+  // Handle TanStack's Updater<VisibilityState> and convert to plain VisibilityState
+  const handleColumnVisibilityChange = useCallback(
+    (updaterOrValue: Updater<VisibilityState>) => {
+      if (!onColumnVisibilityChange) return;
+
+      if (typeof updaterOrValue === "function") {
+        // It's an updater function, call it with current state
+        const newValue = updaterOrValue(columnVisibility ?? {});
+        onColumnVisibilityChange(newValue);
+      } else {
+        // It's a direct value
+        onColumnVisibilityChange(updaterOrValue);
+      }
+    },
+    [onColumnVisibilityChange, columnVisibility]
+  );
+
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table is compatible
   const table = useReactTable({
     data,
@@ -67,8 +92,10 @@ function DataTableInner<TData>(
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     onSortingChange: setSorting,
+    onColumnVisibilityChange: handleColumnVisibilityChange,
     state: {
       sorting,
+      columnVisibility: columnVisibility ?? {},
     },
     getRowId: getRowId
       ? (row) => String(getRowId(row))

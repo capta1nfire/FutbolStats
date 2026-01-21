@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
+export type DrawerVariant = "inline" | "overlay";
+
 interface DetailDrawerProps {
   open: boolean;
   onClose: () => void;
@@ -14,13 +16,22 @@ interface DetailDrawerProps {
   className?: string;
   /** Ref to element that should receive focus when drawer closes */
   returnFocusRef?: React.RefObject<HTMLElement | null>;
+  /**
+   * Drawer behavior variant:
+   * - "inline": pushes content (original behavior)
+   * - "overlay": absolute positioned, overlays content (UniFi style)
+   * Default: "overlay" (new default for desktop)
+   */
+  variant?: DrawerVariant;
 }
 
 /**
- * Inline Detail Drawer
+ * Detail Drawer
  *
- * Desktop (>=1280px): Renders inline as part of the grid, pushing content.
- * NO overlay, NO modal behavior. Table remains interactive.
+ * Two variants:
+ * - "overlay" (default): Absolute positioned, overlays content (UniFi style).
+ *   No backdrop, no modal behavior. Table remains interactive where not covered.
+ * - "inline": Renders inline as part of the grid, pushing content.
  *
  * Mobile (<1280px): Should use Sheet component instead (handled by parent).
  *
@@ -35,6 +46,7 @@ export function DetailDrawer({
   children,
   className,
   returnFocusRef,
+  variant = "overlay",
 }: DetailDrawerProps) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
@@ -84,7 +96,10 @@ export function DetailDrawer({
   return (
     <aside
       className={cn(
-        "w-[320px] border-l border-border bg-surface flex flex-col transition-smooth",
+        "border-l border-border bg-surface flex flex-col transition-smooth",
+        variant === "overlay"
+          ? "absolute right-0 top-0 h-full w-[400px] z-30 shadow-[-32px_0_32px_rgba(0,0,0,0.8)]"
+          : "w-[320px]",
         className
       )}
       role="complementary"

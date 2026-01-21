@@ -153,7 +153,7 @@ function DataQualityPageContent() {
   const failingCount = checks.filter((c) => c.status === "failing").length;
 
   return (
-    <div className="h-full flex overflow-hidden">
+    <div className="h-full flex overflow-hidden relative">
       {/* FilterPanel */}
       <DataQualityFilterPanel
         collapsed={filterCollapsed}

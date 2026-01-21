@@ -13,6 +13,10 @@ interface JobsFilterPanelProps {
   onStatusChange: (status: JobStatus, checked: boolean) => void;
   onJobChange: (job: string, checked: boolean) => void;
   onSearchChange: (value: string) => void;
+  onCustomizeColumnsClick?: () => void;
+  showCustomizeColumns?: boolean;
+  /** Whether CustomizeColumnsPanel is open (hides collapse button) */
+  customizeColumnsOpen?: boolean;
 }
 
 const statusOptions: { id: JobStatus; label: string }[] = [
@@ -39,6 +43,9 @@ export function JobsFilterPanel({
   onStatusChange,
   onJobChange,
   onSearchChange,
+  onCustomizeColumnsClick,
+  showCustomizeColumns = false,
+  customizeColumnsOpen = false,
 }: JobsFilterPanelProps) {
   const filterGroups: FilterGroup[] = [
     {
@@ -83,6 +90,9 @@ export function JobsFilterPanel({
       onFilterChange={handleFilterChange}
       onSearchChange={onSearchChange}
       searchValue={searchValue}
+      onCustomizeColumnsClick={onCustomizeColumnsClick}
+      showCustomizeColumns={showCustomizeColumns}
+      customizeColumnsOpen={customizeColumnsOpen}
     />
   );
 }

@@ -1,9 +1,9 @@
 "use client";
 
 import { useMemo } from "react";
-import { ColumnDef } from "@tanstack/react-table";
+import { ColumnDef, VisibilityState } from "@tanstack/react-table";
 import { Incident, INCIDENT_TYPE_LABELS } from "@/lib/types";
-import { DataTable } from "@/components/tables";
+import { DataTable, ColumnOption } from "@/components/tables";
 import { SeverityBadge } from "./SeverityBadge";
 import { IncidentStatusChip } from "./IncidentStatusChip";
 import { formatDistanceToNow } from "@/lib/utils";
@@ -16,7 +16,26 @@ interface IncidentsTableProps {
   onRetry?: () => void;
   selectedIncidentId?: number | null;
   onRowClick?: (incident: Incident) => void;
+  columnVisibility?: VisibilityState;
+  onColumnVisibilityChange?: (visibility: VisibilityState) => void;
 }
+
+/**
+ * Column options for Customize Columns panel
+ */
+export const INCIDENTS_COLUMN_OPTIONS: ColumnOption[] = [
+  { id: "severity", label: "Severity", enableHiding: false },
+  { id: "status", label: "Status", enableHiding: false },
+  { id: "title", label: "Title", enableHiding: false },
+  { id: "type", label: "Type", enableHiding: true },
+  { id: "createdAt", label: "Created", enableHiding: true },
+  { id: "entity", label: "Related", enableHiding: true },
+];
+
+/**
+ * Default column visibility for Incidents table
+ */
+export const INCIDENTS_DEFAULT_VISIBILITY: VisibilityState = {};
 
 export function IncidentsTable({
   data,
@@ -25,6 +44,8 @@ export function IncidentsTable({
   onRetry,
   selectedIncidentId,
   onRowClick,
+  columnVisibility,
+  onColumnVisibilityChange,
 }: IncidentsTableProps) {
   const columns = useMemo<ColumnDef<Incident>[]>(
     () => [
@@ -99,6 +120,8 @@ export function IncidentsTable({
       onRowClick={onRowClick}
       getRowId={(row) => row.id}
       emptyMessage="No incidents found"
+      columnVisibility={columnVisibility}
+      onColumnVisibilityChange={onColumnVisibilityChange}
     />
   );
 }

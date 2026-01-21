@@ -182,7 +182,7 @@ function AuditPageContent() {
   );
 
   return (
-    <div className="h-full flex overflow-hidden">
+    <div className="h-full flex overflow-hidden relative">
       {/* FilterPanel */}
       <AuditFilterPanel
         collapsed={filterCollapsed}
