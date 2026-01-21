@@ -15,6 +15,12 @@ interface AnalyticsFilterPanelProps {
   searchValue: string;
   onTypeChange: (type: AnalyticsReportType, checked: boolean) => void;
   onSearchChange: (value: string) => void;
+  /** Whether to show the Customize Columns link in footer */
+  showCustomizeColumns?: boolean;
+  /** Callback for "Customize Columns" link click */
+  onCustomizeColumnsClick?: () => void;
+  /** Whether CustomizeColumnsPanel is currently open */
+  customizeColumnsOpen?: boolean;
 }
 
 const typeOptions: { id: AnalyticsReportType; label: string }[] =
@@ -30,6 +36,9 @@ export function AnalyticsFilterPanel({
   searchValue,
   onTypeChange,
   onSearchChange,
+  showCustomizeColumns = false,
+  onCustomizeColumnsClick,
+  customizeColumnsOpen = false,
 }: AnalyticsFilterPanelProps) {
   const filterGroups: FilterGroup[] = [
     {
@@ -62,6 +71,9 @@ export function AnalyticsFilterPanel({
       onFilterChange={handleFilterChange}
       onSearchChange={onSearchChange}
       searchValue={searchValue}
+      showCustomizeColumns={showCustomizeColumns}
+      onCustomizeColumnsClick={onCustomizeColumnsClick}
+      customizeColumnsOpen={customizeColumnsOpen}
     />
   );
 }

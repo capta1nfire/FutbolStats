@@ -182,6 +182,6 @@
     box-shadow: 0 22px 22px rgba(0, 0, 0, 0.8);
   }
   .shadow-elevation-left {
-    box-shadow: inset 22px 0 22px -22px rgba(0, 0, 0, 0.8);
+    box-shadow: -22px 0 22px rgba(0, 0, 0, 0.8);
   }
 }

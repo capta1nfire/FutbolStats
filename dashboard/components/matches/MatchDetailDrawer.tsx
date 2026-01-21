@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { MatchSummary } from "@/lib/types";
 import { useIsDesktop } from "@/lib/hooks";
 import { DetailDrawer } from "@/components/shell";
@@ -9,11 +10,11 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { IconTabs } from "@/components/ui/icon-tabs";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { StatusDot } from "./StatusDot";
-import { Calendar, TrendingUp, Radio } from "lucide-react";
+import { Calendar, TrendingUp, Radio, Info } from "lucide-react";
 
 interface MatchDetailDrawerProps {
   match: MatchSummary | null;
@@ -21,10 +22,19 @@ interface MatchDetailDrawerProps {
   onClose: () => void;
 }
 
+/** Tab definitions for match detail drawer */
+const MATCH_TABS = [
+  { id: "overview", icon: <Info />, label: "Overview" },
+  { id: "predictions", icon: <TrendingUp />, label: "Predictions" },
+  { id: "live", icon: <Radio />, label: "Live Data" },
+];
+
 /**
  * Match Detail Content - shared between desktop drawer and mobile sheet
  */
 function MatchDetailContent({ match }: { match: MatchSummary }) {
+  const [activeTab, setActiveTab] = useState("overview");
+
   const kickoffDate = new Date(match.kickoffISO);
   const formattedDate = kickoffDate.toLocaleDateString("en-US", {
     weekday: "short",
@@ -37,21 +47,16 @@ function MatchDetailContent({ match }: { match: MatchSummary }) {
   });
 
   return (
-    <Tabs defaultValue="overview" className="w-full">
-      <TabsList className="w-full grid grid-cols-3 mb-4">
-        <TabsTrigger value="overview" className="rounded-full text-xs">
-          Overview
-        </TabsTrigger>
-        <TabsTrigger value="predictions" className="rounded-full text-xs">
-          Predictions
-        </TabsTrigger>
-        <TabsTrigger value="live" className="rounded-full text-xs">
-          Live Data
-        </TabsTrigger>
-      </TabsList>
+    <div className="w-full space-y-4">
+      <IconTabs
+        tabs={MATCH_TABS}
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className="w-full"
+      />
 
       {/* Overview Tab */}
-      <TabsContent value="overview" className="space-y-4">
+      {activeTab === "overview" && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <StatusDot status={match.status} />
@@ -93,93 +98,97 @@ function MatchDetailContent({ match }: { match: MatchSummary }) {
             </div>
           </div>
         </div>
-      </TabsContent>
+      )}
 
       {/* Predictions Tab */}
-      <TabsContent value="predictions" className="space-y-4">
-        {match.prediction ? (
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-medium">Model {match.prediction.model}</span>
-            </div>
-
-            <div className="bg-background rounded-lg p-4 space-y-3">
-              <div className="text-center">
-                <div className="text-lg font-semibold text-primary capitalize">
-                  {match.prediction.pick === "home"
-                    ? match.home
-                    : match.prediction.pick === "away"
-                    ? match.away
-                    : "Draw"}
-                </div>
-                <div className="text-xs text-muted-foreground">Predicted winner</div>
+      {activeTab === "predictions" && (
+        <>
+          {match.prediction ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium">Model {match.prediction.model}</span>
               </div>
 
-              {match.prediction.probs && (
-                <div className="space-y-2 pt-2 border-t border-border">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">{match.home}</span>
-                    <span className="text-foreground font-medium">
-                      {(match.prediction.probs.home * 100).toFixed(0)}%
-                    </span>
+              <div className="bg-background rounded-lg p-4 space-y-3">
+                <div className="text-center">
+                  <div className="text-lg font-semibold text-primary capitalize">
+                    {match.prediction.pick === "home"
+                      ? match.home
+                      : match.prediction.pick === "away"
+                      ? match.away
+                      : "Draw"}
                   </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Draw</span>
-                    <span className="text-foreground font-medium">
-                      {(match.prediction.probs.draw * 100).toFixed(0)}%
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">{match.away}</span>
-                    <span className="text-foreground font-medium">
-                      {(match.prediction.probs.away * 100).toFixed(0)}%
-                    </span>
-                  </div>
+                  <div className="text-xs text-muted-foreground">Predicted winner</div>
                 </div>
-              )}
+
+                {match.prediction.probs && (
+                  <div className="space-y-2 pt-2 border-t border-border">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">{match.home}</span>
+                      <span className="text-foreground font-medium">
+                        {(match.prediction.probs.home * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Draw</span>
+                      <span className="text-foreground font-medium">
+                        {(match.prediction.probs.draw * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">{match.away}</span>
+                      <span className="text-foreground font-medium">
+                        {(match.prediction.probs.away * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ) : (
-          <div className="text-center py-8">
-            <TrendingUp className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">No prediction available</p>
-          </div>
-        )}
-      </TabsContent>
+          ) : (
+            <div className="text-center py-8">
+              <TrendingUp className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">No prediction available</p>
+            </div>
+          )}
+        </>
+      )}
 
       {/* Live Data Tab */}
-      <TabsContent value="live" className="space-y-4">
-        <div className="flex items-center gap-2 mb-4">
-          <Radio className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium">Live Data</span>
-        </div>
+      {activeTab === "live" && (
+        <>
+          <div className="flex items-center gap-2 mb-4">
+            <Radio className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-medium">Live Data</span>
+          </div>
 
-        {match.status === "live" || match.status === "ht" ? (
-          <div className="space-y-3">
-            <div className="bg-background rounded-lg p-4">
-              <div className="text-xs text-muted-foreground mb-2">Events</div>
+          {match.status === "live" || match.status === "ht" ? (
+            <div className="space-y-3">
+              <div className="bg-background rounded-lg p-4">
+                <div className="text-xs text-muted-foreground mb-2">Events</div>
+                <p className="text-sm text-muted-foreground">
+                  Live events feed coming soon
+                </p>
+              </div>
+              <div className="bg-background rounded-lg p-4">
+                <div className="text-xs text-muted-foreground mb-2">Statistics</div>
+                <p className="text-sm text-muted-foreground">
+                  Match statistics coming soon
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <Radio className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
               <p className="text-sm text-muted-foreground">
-                Live events feed coming soon
+                Match is not live
               </p>
             </div>
-            <div className="bg-background rounded-lg p-4">
-              <div className="text-xs text-muted-foreground mb-2">Statistics</div>
-              <p className="text-sm text-muted-foreground">
-                Match statistics coming soon
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="text-center py-8">
-            <Radio className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">
-              Match is not live
-            </p>
-          </div>
-        )}
-      </TabsContent>
-    </Tabs>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 

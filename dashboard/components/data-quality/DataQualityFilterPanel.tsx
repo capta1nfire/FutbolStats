@@ -19,6 +19,12 @@ interface DataQualityFilterPanelProps {
   onStatusChange: (status: DataQualityStatus, checked: boolean) => void;
   onCategoryChange: (category: DataQualityCategory, checked: boolean) => void;
   onSearchChange: (value: string) => void;
+  /** Whether to show the Customize Columns link in footer */
+  showCustomizeColumns?: boolean;
+  /** Callback for "Customize Columns" link click */
+  onCustomizeColumnsClick?: () => void;
+  /** Whether CustomizeColumnsPanel is currently open */
+  customizeColumnsOpen?: boolean;
 }
 
 const statusOptions: { id: DataQualityStatus; label: string }[] = DATA_QUALITY_STATUSES.map(
@@ -43,6 +49,9 @@ export function DataQualityFilterPanel({
   onStatusChange,
   onCategoryChange,
   onSearchChange,
+  showCustomizeColumns = false,
+  onCustomizeColumnsClick,
+  customizeColumnsOpen = false,
 }: DataQualityFilterPanelProps) {
   const filterGroups: FilterGroup[] = [
     {
@@ -87,6 +96,9 @@ export function DataQualityFilterPanel({
       onFilterChange={handleFilterChange}
       onSearchChange={onSearchChange}
       searchValue={searchValue}
+      showCustomizeColumns={showCustomizeColumns}
+      onCustomizeColumnsClick={onCustomizeColumnsClick}
+      customizeColumnsOpen={customizeColumnsOpen}
     />
   );
 }

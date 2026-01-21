@@ -30,6 +30,12 @@ interface AuditFilterPanelProps {
   onActorKindChange: (actorKind: AuditActorKind, checked: boolean) => void;
   onTimeRangeChange: (timeRange: AuditTimeRange | null) => void;
   onSearchChange: (value: string) => void;
+  /** Whether to show the Customize Columns link in footer */
+  showCustomizeColumns?: boolean;
+  /** Callback for "Customize Columns" link click */
+  onCustomizeColumnsClick?: () => void;
+  /** Whether CustomizeColumnsPanel is currently open */
+  customizeColumnsOpen?: boolean;
 }
 
 const typeOptions: { id: AuditEventType; label: string }[] =
@@ -69,6 +75,9 @@ export function AuditFilterPanel({
   onActorKindChange,
   onTimeRangeChange,
   onSearchChange,
+  showCustomizeColumns = false,
+  onCustomizeColumnsClick,
+  customizeColumnsOpen = false,
 }: AuditFilterPanelProps) {
   const filterGroups: FilterGroup[] = [
     {
@@ -142,6 +151,9 @@ export function AuditFilterPanel({
       onFilterChange={handleFilterChange}
       onSearchChange={onSearchChange}
       searchValue={searchValue}
+      showCustomizeColumns={showCustomizeColumns}
+      onCustomizeColumnsClick={onCustomizeColumnsClick}
+      customizeColumnsOpen={customizeColumnsOpen}
     />
   );
 }

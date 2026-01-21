@@ -23,6 +23,12 @@ interface IncidentsFilterPanelProps {
   onSeverityChange: (severity: IncidentSeverity, checked: boolean) => void;
   onTypeChange: (type: IncidentType, checked: boolean) => void;
   onSearchChange: (value: string) => void;
+  /** Whether to show the Customize Columns link in footer */
+  showCustomizeColumns?: boolean;
+  /** Callback for "Customize Columns" link click */
+  onCustomizeColumnsClick?: () => void;
+  /** Whether CustomizeColumnsPanel is currently open */
+  customizeColumnsOpen?: boolean;
 }
 
 const statusOptions: { id: IncidentStatus; label: string }[] = INCIDENT_STATUSES.map(
@@ -56,6 +62,9 @@ export function IncidentsFilterPanel({
   onSeverityChange,
   onTypeChange,
   onSearchChange,
+  showCustomizeColumns = false,
+  onCustomizeColumnsClick,
+  customizeColumnsOpen = false,
 }: IncidentsFilterPanelProps) {
   const filterGroups: FilterGroup[] = [
     {
@@ -112,6 +121,9 @@ export function IncidentsFilterPanel({
       onFilterChange={handleFilterChange}
       onSearchChange={onSearchChange}
       searchValue={searchValue}
+      showCustomizeColumns={showCustomizeColumns}
+      onCustomizeColumnsClick={onCustomizeColumnsClick}
+      customizeColumnsOpen={customizeColumnsOpen}
     />
   );
 }

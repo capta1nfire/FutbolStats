@@ -174,8 +174,8 @@ export function CustomizeColumnsPanel({
         </div>
       </ScrollArea>
 
-      {/* Footer: Restore + Done (UniFi style - text links) */}
-      <div className="px-3 py-2 border-t border-border flex items-center justify-between">
+      {/* Footer: Restore + Done (UniFi style - text links, same height as FilterPanel footer) */}
+      <div className="px-3 py-3 border-t border-border flex items-center justify-between">
         <button
           onClick={onRestore}
           className="text-sm font-medium text-primary hover:text-primary-hover transition-colors"

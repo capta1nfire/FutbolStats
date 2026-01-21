@@ -28,6 +28,12 @@ interface PredictionsFilterPanelProps {
   onLeagueChange: (league: string, checked: boolean) => void;
   onTimeRangeChange: (timeRange: PredictionTimeRange | null) => void;
   onSearchChange: (value: string) => void;
+  /** Whether to show the Customize Columns link in footer */
+  showCustomizeColumns?: boolean;
+  /** Callback for "Customize Columns" link click */
+  onCustomizeColumnsClick?: () => void;
+  /** Whether CustomizeColumnsPanel is currently open */
+  customizeColumnsOpen?: boolean;
 }
 
 const statusOptions = PREDICTION_STATUSES.map((status) => ({
@@ -59,6 +65,9 @@ export function PredictionsFilterPanel({
   onLeagueChange,
   onTimeRangeChange,
   onSearchChange,
+  showCustomizeColumns = false,
+  onCustomizeColumnsClick,
+  customizeColumnsOpen = false,
 }: PredictionsFilterPanelProps) {
   const leagueOptions = availableLeagues.map((league) => ({
     id: league,
@@ -137,6 +146,9 @@ export function PredictionsFilterPanel({
       onFilterChange={handleFilterChange}
       onSearchChange={onSearchChange}
       searchValue={searchValue}
+      showCustomizeColumns={showCustomizeColumns}
+      onCustomizeColumnsClick={onCustomizeColumnsClick}
+      customizeColumnsOpen={customizeColumnsOpen}
     />
   );
 }

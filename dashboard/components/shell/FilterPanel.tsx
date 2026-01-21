@@ -200,7 +200,7 @@ export function FilterPanel({
 
       {/* Footer with Customize Columns link (UniFi style) */}
       {showCustomizeColumns && (
-        <div className="px-3 py-2 border-t border-border">
+        <div className="px-3 py-3 border-t border-border flex items-center">
           <button
             onClick={onCustomizeColumnsClick}
             className="text-sm font-medium text-primary hover:text-primary-hover transition-colors"
