@@ -158,17 +158,27 @@ function MatchesPageContent() {
     setCustomizeColumnsOpen(true);
   }, []);
 
-  // Handle "Done" button in CustomizeColumnsPanel
+  // Handle "Done" button in CustomizeColumnsPanel - collapses entire Left Rail
   const handleCustomizeColumnsDone = useCallback(() => {
+    setLeftRailCollapsed(true);
     setCustomizeColumnsOpen(false);
   }, []);
+
+  // Handle Left Rail toggle - close CustomizeColumns when collapsing
+  const handleLeftRailToggle = useCallback(() => {
+    const newCollapsed = !leftRailCollapsed;
+    setLeftRailCollapsed(newCollapsed);
+    if (newCollapsed) {
+      setCustomizeColumnsOpen(false);
+    }
+  }, [leftRailCollapsed]);
 
   return (
     <div className="h-full flex overflow-hidden relative">
       {/* Left Rail: FilterPanel */}
       <MatchesFilterPanel
         collapsed={leftRailCollapsed}
-        onToggleCollapse={() => setLeftRailCollapsed(!leftRailCollapsed)}
+        onToggleCollapse={handleLeftRailToggle}
         selectedStatuses={selectedStatuses}
         selectedLeagues={selectedLeagues}
         searchValue={searchValue}
@@ -179,9 +189,9 @@ function MatchesPageContent() {
         onCustomizeColumnsClick={handleCustomizeColumnsClick}
       />
 
-      {/* Customize Columns Panel (separate column, appears when open) */}
+      {/* Customize Columns Panel (separate column, hidden when Left Rail collapsed) */}
       <CustomizeColumnsPanel
-        open={customizeColumnsOpen}
+        open={customizeColumnsOpen && !leftRailCollapsed}
         columns={MATCHES_COLUMN_OPTIONS}
         columnVisibility={columnVisibility}
         onColumnVisibilityChange={setColumnVisible}
