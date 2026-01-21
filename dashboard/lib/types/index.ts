@@ -5,3 +5,4 @@ export * from "./overview";
 export * from "./data-quality";
 export * from "./analytics";
 export * from "./audit";
+export * from "./settings";
