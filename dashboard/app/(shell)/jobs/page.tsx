@@ -154,9 +154,8 @@ function JobsPageContent() {
     setCustomizeColumnsOpen(true);
   }, []);
 
-  // Handle "Done" button in CustomizeColumnsPanel - collapses entire Left Rail
+  // Handle "Done" button in CustomizeColumnsPanel - only closes CC panel
   const handleCustomizeColumnsDone = useCallback(() => {
-    setLeftRailCollapsed(true);
     setCustomizeColumnsOpen(false);
   }, []);
 
