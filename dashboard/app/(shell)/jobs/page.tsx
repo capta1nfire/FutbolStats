@@ -62,6 +62,7 @@ function JobsPageContent() {
 
   // UI state (non-URL)
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
+  const [customizeColumnsOpen, setCustomizeColumnsOpen] = useState(false);
 
   // Column visibility with localStorage persistence
   const {
@@ -148,14 +149,19 @@ function JobsPageContent() {
     [router, buildUrl]
   );
 
+  // Handle "Customize Columns" link click
+  const handleCustomizeColumnsClick = useCallback(() => {
+    setCustomizeColumnsOpen(true);
+  }, []);
+
   // Handle "Done" button in CustomizeColumnsPanel
   const handleCustomizeColumnsDone = useCallback(() => {
-    setLeftRailCollapsed(true);
+    setCustomizeColumnsOpen(false);
   }, []);
 
   return (
     <div className="h-full flex overflow-hidden relative">
-      {/* Left Rail: FilterPanel + CustomizeColumnsPanel */}
+      {/* Left Rail: FilterPanel */}
       <JobsFilterPanel
         collapsed={leftRailCollapsed}
         onToggleCollapse={() => setLeftRailCollapsed(!leftRailCollapsed)}
@@ -165,15 +171,19 @@ function JobsPageContent() {
         onStatusChange={handleStatusChange}
         onJobChange={handleJobChange}
         onSearchChange={handleSearchChange}
-      >
-        <CustomizeColumnsPanel
-          columns={JOBS_COLUMN_OPTIONS}
-          columnVisibility={columnVisibility}
-          onColumnVisibilityChange={setColumnVisible}
-          onRestore={resetToDefault}
-          onDone={handleCustomizeColumnsDone}
-        />
-      </JobsFilterPanel>
+        showCustomizeColumns={true}
+        onCustomizeColumnsClick={handleCustomizeColumnsClick}
+      />
+
+      {/* Customize Columns Panel (separate column, appears when open) */}
+      <CustomizeColumnsPanel
+        open={customizeColumnsOpen}
+        columns={JOBS_COLUMN_OPTIONS}
+        columnVisibility={columnVisibility}
+        onColumnVisibilityChange={setColumnVisible}
+        onRestore={resetToDefault}
+        onDone={handleCustomizeColumnsDone}
+      />
 
       {/* Main content: Table */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">

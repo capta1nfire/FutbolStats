@@ -1,7 +1,7 @@
 "use client";
 
 import { ReactNode } from "react";
-import { ChevronLeft, ChevronRight, Search, Filter, Columns } from "lucide-react";
+import { ChevronLeft, ChevronRight, Search, Filter } from "lucide-react";
 import { useHasMounted } from "@/lib/hooks";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -42,8 +42,10 @@ interface FilterPanelProps {
   onFilterChange?: (groupId: string, optionId: string, checked: boolean) => void;
   onSearchChange?: (value: string) => void;
   searchValue?: string;
-  /** Optional children to render below filters (e.g., CustomizeColumnsPanel) */
-  children?: ReactNode;
+  /** Callback for "Customize Columns" link click (shows CustomizeColumnsPanel) */
+  onCustomizeColumnsClick?: () => void;
+  /** Whether to show the Customize Columns link in footer */
+  showCustomizeColumns?: boolean;
 }
 
 export function FilterPanel({
@@ -53,7 +55,8 @@ export function FilterPanel({
   onFilterChange,
   onSearchChange,
   searchValue = "",
-  children,
+  onCustomizeColumnsClick,
+  showCustomizeColumns = false,
 }: FilterPanelProps) {
   // Track client-side mount to avoid Radix Accordion hydration mismatch
   // Uses useSyncExternalStore instead of useState+useEffect to avoid lint error
@@ -96,24 +99,6 @@ export function FilterPanel({
               <p>Filters</p>
             </TooltipContent>
           </Tooltip>
-
-          {children && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-muted-foreground"
-                  aria-label="Customize columns"
-                >
-                  <Columns className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                <p>Customize columns</p>
-              </TooltipContent>
-            </Tooltip>
-          )}
         </TooltipProvider>
       </aside>
     );
@@ -208,8 +193,17 @@ export function FilterPanel({
         )}
       </ScrollArea>
 
-      {/* Children (e.g., CustomizeColumnsPanel) */}
-      {children}
+      {/* Footer with Customize Columns link (UniFi style) */}
+      {showCustomizeColumns && (
+        <div className="px-3 py-2 border-t border-border">
+          <button
+            onClick={onCustomizeColumnsClick}
+            className="text-sm text-accent hover:underline"
+          >
+            Customize Columns
+          </button>
+        </div>
+      )}
     </aside>
   );
 }

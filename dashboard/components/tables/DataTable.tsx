@@ -8,6 +8,7 @@ import {
   getSortedRowModel,
   SortingState,
   VisibilityState,
+  Updater,
   useReactTable,
 } from "@tanstack/react-table";
 import { ArrowUpDown, ArrowUp, ArrowDown, Loader2 } from "lucide-react";
@@ -67,6 +68,23 @@ function DataTableInner<TData>(
   const tableBodyRef = useRef<HTMLTableSectionElement>(null);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
 
+  // Handle TanStack's Updater<VisibilityState> and convert to plain VisibilityState
+  const handleColumnVisibilityChange = useCallback(
+    (updaterOrValue: Updater<VisibilityState>) => {
+      if (!onColumnVisibilityChange) return;
+
+      if (typeof updaterOrValue === "function") {
+        // It's an updater function, call it with current state
+        const newValue = updaterOrValue(columnVisibility ?? {});
+        onColumnVisibilityChange(newValue);
+      } else {
+        // It's a direct value
+        onColumnVisibilityChange(updaterOrValue);
+      }
+    },
+    [onColumnVisibilityChange, columnVisibility]
+  );
+
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table is compatible
   const table = useReactTable({
     data,
@@ -74,7 +92,7 @@ function DataTableInner<TData>(
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     onSortingChange: setSorting,
-    onColumnVisibilityChange: onColumnVisibilityChange,
+    onColumnVisibilityChange: handleColumnVisibilityChange,
     state: {
       sorting,
       columnVisibility: columnVisibility ?? {},

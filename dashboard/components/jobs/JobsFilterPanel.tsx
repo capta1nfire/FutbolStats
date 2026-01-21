@@ -1,6 +1,5 @@
 "use client";
 
-import { ReactNode } from "react";
 import { JobStatus, JOB_NAMES } from "@/lib/types";
 import { FilterPanel, FilterGroup } from "@/components/shell";
 import { Activity, Cog } from "lucide-react";
@@ -14,7 +13,8 @@ interface JobsFilterPanelProps {
   onStatusChange: (status: JobStatus, checked: boolean) => void;
   onJobChange: (job: string, checked: boolean) => void;
   onSearchChange: (value: string) => void;
-  children?: ReactNode;
+  onCustomizeColumnsClick?: () => void;
+  showCustomizeColumns?: boolean;
 }
 
 const statusOptions: { id: JobStatus; label: string }[] = [
@@ -41,7 +41,8 @@ export function JobsFilterPanel({
   onStatusChange,
   onJobChange,
   onSearchChange,
-  children,
+  onCustomizeColumnsClick,
+  showCustomizeColumns = false,
 }: JobsFilterPanelProps) {
   const filterGroups: FilterGroup[] = [
     {
@@ -86,8 +87,8 @@ export function JobsFilterPanel({
       onFilterChange={handleFilterChange}
       onSearchChange={onSearchChange}
       searchValue={searchValue}
-    >
-      {children}
-    </FilterPanel>
+      onCustomizeColumnsClick={onCustomizeColumnsClick}
+      showCustomizeColumns={showCustomizeColumns}
+    />
   );
 }

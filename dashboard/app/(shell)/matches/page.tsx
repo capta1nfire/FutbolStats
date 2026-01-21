@@ -66,6 +66,7 @@ function MatchesPageContent() {
 
   // UI state (non-URL)
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
+  const [customizeColumnsOpen, setCustomizeColumnsOpen] = useState(false);
 
   // Column visibility with localStorage persistence
   const {
@@ -152,14 +153,19 @@ function MatchesPageContent() {
     [router, buildUrl]
   );
 
+  // Handle "Customize Columns" link click
+  const handleCustomizeColumnsClick = useCallback(() => {
+    setCustomizeColumnsOpen(true);
+  }, []);
+
   // Handle "Done" button in CustomizeColumnsPanel
   const handleCustomizeColumnsDone = useCallback(() => {
-    setLeftRailCollapsed(true);
+    setCustomizeColumnsOpen(false);
   }, []);
 
   return (
     <div className="h-full flex overflow-hidden relative">
-      {/* Left Rail: FilterPanel + CustomizeColumnsPanel */}
+      {/* Left Rail: FilterPanel */}
       <MatchesFilterPanel
         collapsed={leftRailCollapsed}
         onToggleCollapse={() => setLeftRailCollapsed(!leftRailCollapsed)}
@@ -169,15 +175,19 @@ function MatchesPageContent() {
         onStatusChange={handleStatusChange}
         onLeagueChange={handleLeagueChange}
         onSearchChange={handleSearchChange}
-      >
-        <CustomizeColumnsPanel
-          columns={MATCHES_COLUMN_OPTIONS}
-          columnVisibility={columnVisibility}
-          onColumnVisibilityChange={setColumnVisible}
-          onRestore={resetToDefault}
-          onDone={handleCustomizeColumnsDone}
-        />
-      </MatchesFilterPanel>
+        showCustomizeColumns={true}
+        onCustomizeColumnsClick={handleCustomizeColumnsClick}
+      />
+
+      {/* Customize Columns Panel (separate column, appears when open) */}
+      <CustomizeColumnsPanel
+        open={customizeColumnsOpen}
+        columns={MATCHES_COLUMN_OPTIONS}
+        columnVisibility={columnVisibility}
+        onColumnVisibilityChange={setColumnVisible}
+        onRestore={resetToDefault}
+        onDone={handleCustomizeColumnsDone}
+      />
 
       {/* Main content: Table */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
