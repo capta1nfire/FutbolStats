@@ -9,7 +9,7 @@ export default function JobsPage() {
         <p className="text-muted-foreground">
           Scheduler status and job run history.
         </p>
-        <p className="text-sm text-muted-foreground mt-4">Coming in Phase 0</p>
+        <p className="text-sm text-muted-foreground mt-4">Coming soon</p>
       </div>
     </div>
   );

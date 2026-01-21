@@ -9,7 +9,7 @@ export default function AnalyticsPage() {
         <p className="text-muted-foreground">
           Model performance and accuracy metrics.
         </p>
-        <p className="text-sm text-muted-foreground mt-4">Coming in Phase 1</p>
+        <p className="text-sm text-muted-foreground mt-4">Coming soon</p>
       </div>
     </div>
   );

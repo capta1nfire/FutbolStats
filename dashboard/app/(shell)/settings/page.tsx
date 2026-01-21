@@ -9,7 +9,7 @@ export default function SettingsPage() {
         <p className="text-muted-foreground">
           System configuration and feature flags.
         </p>
-        <p className="text-sm text-muted-foreground mt-4">Read-only in Phase 0</p>
+        <p className="text-sm text-muted-foreground mt-4">Coming soon</p>
       </div>
     </div>
   );

@@ -96,8 +96,10 @@ Change `scenario` to test different states.
 
 ## Breakpoints
 
-- **Desktop (≥1280px)**: Drawer inline, pushes content
-- **Mobile (<1280px)**: Drawer as overlay (Sheet) - to be implemented
+- **Desktop (≥1280px)**: Drawer inline, pushes content (no overlay)
+- **Mobile/Tablet (<1280px)**: Drawer as Sheet overlay
+
+Uses `useSyncExternalStore` for SSR-safe media query detection.
 
 ## Phase 0 Scope
 
@@ -113,6 +115,20 @@ Change `scenario` to test different states.
 - Real data
 - Settings mutations
 - Analytics charts
+
+## Known Limitations
+
+1. **SSR Media Query Flicker**: On server-render, `useIsDesktop()` defaults to `false` (mobile).
+   Desktop users may see a brief flicker from Sheet to inline drawer on first load.
+
+2. **Filter State Not Persisted**: Filter selections reset on page refresh.
+   URL only persists the selected match ID.
+
+3. **Mock Data Only**: All data is client-side mocks. No API calls.
+
+4. **No Authentication**: Dashboard is fully open. No auth flow implemented.
+
+5. **Single Language**: UI is English-only. No i18n support.
 
 ## Acceptance Criteria Checklist
 

@@ -9,7 +9,7 @@ export default function AuditPage() {
         <p className="text-muted-foreground">
           Audit log and event history.
         </p>
-        <p className="text-sm text-muted-foreground mt-4">Coming in Phase 1</p>
+        <p className="text-sm text-muted-foreground mt-4">Coming soon</p>
       </div>
     </div>
   );

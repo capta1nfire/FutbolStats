@@ -9,7 +9,7 @@ export default function IncidentsPage() {
         <p className="text-muted-foreground">
           Active incidents and acknowledge/resolve actions.
         </p>
-        <p className="text-sm text-muted-foreground mt-4">Coming in Phase 0</p>
+        <p className="text-sm text-muted-foreground mt-4">Coming soon</p>
       </div>
     </div>
   );

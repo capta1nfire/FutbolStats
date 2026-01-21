@@ -9,7 +9,7 @@ export default function OverviewPage() {
         <p className="text-muted-foreground">
           Health cards, coverage metrics, and system status.
         </p>
-        <p className="text-sm text-muted-foreground mt-4">Coming in Phase 0</p>
+        <p className="text-sm text-muted-foreground mt-4">Coming soon</p>
       </div>
     </div>
   );

@@ -44,7 +44,10 @@ export function IconSidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-14 border-r border-border bg-sidebar flex flex-col items-center py-3 gap-1">
+    <nav
+      aria-label="Main navigation"
+      className="w-14 border-r border-border bg-sidebar flex flex-col items-center py-3 gap-1"
+    >
       <TooltipProvider delayDuration={0}>
         {navItems.map((item) => {
           const isActive = pathname.startsWith(item.href);
@@ -55,14 +58,16 @@ export function IconSidebar() {
               <TooltipTrigger asChild>
                 <Link
                   href={item.href}
+                  aria-label={item.label}
+                  aria-current={isActive ? "page" : undefined}
                   className={cn(
-                    "w-10 h-10 flex items-center justify-center rounded-lg transition-smooth",
+                    "w-10 h-10 flex items-center justify-center rounded-lg transition-smooth focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                     isActive
                       ? "bg-sidebar-accent text-sidebar-primary"
                       : "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent"
                   )}
                 >
-                  <Icon className="h-5 w-5" />
+                  <Icon className="h-5 w-5" aria-hidden="true" />
                 </Link>
               </TooltipTrigger>
               <TooltipContent side="right">
@@ -72,6 +77,6 @@ export function IconSidebar() {
           );
         })}
       </TooltipProvider>
-    </aside>
+    </nav>
   );
 }
