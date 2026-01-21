@@ -175,16 +175,6 @@ Cada sección debe existir con:
 - Upcoming list (mock)
 - Active incidents list (mock)
 - Timeseries charts: **mock** (placeholder)
-- **API Budget card** (columna secundaria ~240px pegada al sidebar):
-  - Header: "API Budget" + status pill (ok/warning/critical/degraded)
-  - Subtitle: `Plan {plan} • Expires {plan_end}`
-  - Main metric: `{requests_today} / {requests_limit}` grande
-  - Remaining count (una sola vez)
-  - Progress bar 0-100% con label "{used_pct}% used"
-  - Reset countdown: "Resets in: Xh Xm" (hacia `tokens_reset_at_la`)
-  - Cache freshness: "Cached: Xm ago" + badge "stale" si >10min
-  - Nota: requests_today es consumo diario (reset ~16:00 America/Los_Angeles), NO rolling 24h
-  - Future source: `GET /dashboard/ops.json → data.budget`
 
 ### 7.2 Matches
 - Tabla: status dot, match, league, kickoff, score, elapsed, prediction badge, model
@@ -365,32 +355,12 @@ interface ActiveIncident {
 }
 ```
 
-### ✅ ApiBudget (implementado)
-```typescript
-type ApiBudgetStatus = "ok" | "warning" | "critical" | "degraded";
-
-interface ApiBudget {
-  status: ApiBudgetStatus;
-  plan: string;                            // e.g. "Ultra", "Pro"
-  plan_end?: string;                       // ISO date (optional)
-  active: boolean;
-  requests_today: number;                  // daily consumption (resets ~16:00 LA)
-  requests_limit: number;
-  requests_remaining: number;
-  cached: boolean;
-  cache_age_seconds: number;
-  tokens_reset_at_la?: string;             // ISO timestamp
-  tokens_reset_note?: string;              // e.g. "Observed daily refresh around 4:00pm LA"
-}
-```
-
-### ✅ OverviewData (updated)
+### ✅ OverviewData (implementado)
 ```typescript
 interface OverviewData {
   health: HealthSummary;
   upcomingMatches: UpcomingMatch[];
   activeIncidents: ActiveIncident[];
-  apiBudget?: ApiBudget;                   // Optional API budget info
 }
 ```
 
@@ -702,14 +672,6 @@ interface PredictionCoverage {
 6. **Deep links**: `/matches/[id]` abre el drawer (mock) del match.
 7. **Consistencia visual**: tokens aplicados, sin estilos “default” visibles, dark theme pulido.
 8. **A11y base**: focus states visibles, navegación con teclado en tabs/accordion/drawer.
-
-### 10.1 API Budget Card (AC adicionales)
-- **AC-B1**: Overview muestra layout 2 columnas: side column (~240px) + main content.
-- **AC-B2**: API Budget card muestra: header con status pill, plan info, main metric (`today / limit`), remaining, progress bar, reset countdown.
-- **AC-B3**: Progress bar refleja `used_pct = requests_today / requests_limit * 100`.
-- **AC-B4**: Si `status != ok` o `active = false`: muestra alert "Degraded/Inactive" con CTA placeholder.
-- **AC-B5**: Si `limit = 0` o missing: oculta progress bar y muestra "Limit unavailable".
-- **AC-B6**: Si `cached = true` o `cache_age_seconds > 60`: muestra "Cached: Xm ago". Si >10min: badge "stale".
 
 ---
 
