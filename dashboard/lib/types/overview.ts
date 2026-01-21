@@ -57,10 +57,46 @@ export interface ActiveIncident {
 }
 
 /**
+ * API Budget status
+ */
+export type ApiBudgetStatus = "ok" | "warning" | "critical" | "degraded";
+
+/**
+ * API Budget information
+ *
+ * Future source: GET /dashboard/ops.json → data.budget
+ */
+export interface ApiBudget {
+  /** Current status of the API budget */
+  status: ApiBudgetStatus;
+  /** Plan name (e.g., "Ultra", "Pro") */
+  plan: string;
+  /** Plan expiration date (ISO string, optional) */
+  plan_end?: string;
+  /** Whether the API is currently active */
+  active: boolean;
+  /** Number of requests made today */
+  requests_today: number;
+  /** Daily request limit */
+  requests_limit: number;
+  /** Remaining requests for today */
+  requests_remaining: number;
+  /** Whether this data is from cache */
+  cached: boolean;
+  /** Age of the cache in seconds */
+  cache_age_seconds: number;
+  /** Timestamp when tokens reset (ISO string, LA timezone) */
+  tokens_reset_at_la?: string;
+  /** Human-readable note about reset timing */
+  tokens_reset_note?: string;
+}
+
+/**
  * Combined overview data
  */
 export interface OverviewData {
   health: HealthSummary;
   upcomingMatches: UpcomingMatch[];
   activeIncidents: ActiveIncident[];
+  apiBudget?: ApiBudget;
 }
