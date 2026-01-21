@@ -1,7 +1,8 @@
 "use client";
 
-import { ReactNode } from "react";
-import { ChevronLeft, ChevronRight, Search, Filter } from "lucide-react";
+import { ReactNode, useState, useEffect } from "react";
+import { ChevronLeft, ChevronRight, Search, Filter, Loader2 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -50,6 +51,13 @@ export function FilterPanel({
   onSearchChange,
   searchValue = "",
 }: FilterPanelProps) {
+  // Track client-side mount to avoid Radix Accordion hydration mismatch
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   // Collapsed state: show rail with icon + tooltips
   if (collapsed) {
     return (
@@ -122,46 +130,63 @@ export function FilterPanel({
         </div>
       </div>
 
-      {/* Filter groups */}
+      {/* Filter groups - render only on client to avoid Radix ID hydration mismatch */}
       <ScrollArea className="flex-1">
-        <Accordion type="multiple" defaultValue={groups.map((g) => g.id)} className="px-3">
-          {groups.map((group) => (
-            <AccordionItem key={group.id} value={group.id} className="border-b-0">
-              <AccordionTrigger className="py-3 text-sm hover:no-underline">
-                <span className="flex items-center gap-2">
-                  {group.icon}
-                  {group.label}
-                </span>
-              </AccordionTrigger>
-              <AccordionContent>
-                <div className="space-y-2 pb-2">
-                  {group.options.map((option) => (
-                    <label
-                      key={option.id}
-                      className="flex items-center gap-2 cursor-pointer group"
-                    >
-                      <Checkbox
-                        id={`${group.id}-${option.id}`}
-                        checked={option.checked}
-                        onCheckedChange={(checked) =>
-                          onFilterChange?.(group.id, option.id, checked === true)
-                        }
-                      />
-                      <span className="text-sm text-muted-foreground group-hover:text-foreground flex-1">
-                        {option.label}
-                      </span>
-                      {option.count !== undefined && (
-                        <span className="text-xs text-muted-foreground">
-                          ({option.count})
-                        </span>
-                      )}
-                    </label>
-                  ))}
+        {!mounted ? (
+          // SSR/initial render: show skeleton placeholders
+          <div className="px-3 space-y-4 py-3">
+            {groups.map((group) => (
+              <div key={group.id} className="space-y-2">
+                <Skeleton className="h-5 w-24" />
+                <div className="space-y-2 pl-1">
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-3/4" />
+                  <Skeleton className="h-4 w-5/6" />
                 </div>
-              </AccordionContent>
-            </AccordionItem>
-          ))}
-        </Accordion>
+              </div>
+            ))}
+          </div>
+        ) : (
+          // Client: render actual Accordion
+          <Accordion type="multiple" defaultValue={groups.map((g) => g.id)} className="px-3">
+            {groups.map((group) => (
+              <AccordionItem key={group.id} value={group.id} className="border-b-0">
+                <AccordionTrigger className="py-3 text-sm hover:no-underline">
+                  <span className="flex items-center gap-2">
+                    {group.icon}
+                    {group.label}
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent>
+                  <div className="space-y-2 pb-2">
+                    {group.options.map((option) => (
+                      <label
+                        key={option.id}
+                        className="flex items-center gap-2 cursor-pointer group"
+                      >
+                        <Checkbox
+                          id={`${group.id}-${option.id}`}
+                          checked={option.checked}
+                          onCheckedChange={(checked) =>
+                            onFilterChange?.(group.id, option.id, checked === true)
+                          }
+                        />
+                        <span className="text-sm text-muted-foreground group-hover:text-foreground flex-1">
+                          {option.label}
+                        </span>
+                        {option.count !== undefined && (
+                          <span className="text-xs text-muted-foreground">
+                            ({option.count})
+                          </span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            ))}
+          </Accordion>
+        )}
       </ScrollArea>
     </aside>
   );
