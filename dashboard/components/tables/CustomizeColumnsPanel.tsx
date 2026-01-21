@@ -162,13 +162,13 @@ export function CustomizeColumnsPanel({
       <div className="px-3 py-2 border-t border-border flex items-center justify-between">
         <button
           onClick={onRestore}
-          className="text-sm text-accent hover:underline"
+          className="text-sm text-primary hover:underline"
         >
           Restore
         </button>
         <button
           onClick={onDone}
-          className="text-sm text-accent hover:underline font-medium"
+          className="text-sm text-primary hover:underline font-medium"
         >
           Done
         </button>
