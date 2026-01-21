@@ -10,6 +10,7 @@ import {
   UpcomingMatch,
   ActiveIncident,
   OverviewData,
+  ApiBudget,
 } from "@/lib/types";
 import { mockConfig, simulateDelay, checkMockError } from "./config";
 
@@ -182,11 +183,63 @@ function createActiveIncidents(count: number): ActiveIncident[] {
   }));
 }
 
+/**
+ * Create deterministic API Budget data
+ */
+function createApiBudget(scenario: string): ApiBudget {
+  // Calculate reset time: today at 4pm LA (24:00 UTC or 00:00 UTC next day depending on DST)
+  const resetHour = 16; // 4pm LA
+  const laOffset = -8; // PST (simplification, ignores DST)
+  const resetDate = new Date(BASE_TIMESTAMP);
+  resetDate.setUTCHours(resetHour - laOffset, 0, 0, 0);
+
+  // If reset time has passed, add 24 hours
+  if (resetDate.getTime() < BASE_TIMESTAMP) {
+    resetDate.setTime(resetDate.getTime() + 24 * 3600000);
+  }
+
+  if (scenario === "empty") {
+    return {
+      status: "ok",
+      plan: "Ultra",
+      plan_end: "2026-06-15",
+      active: true,
+      requests_today: 0,
+      requests_limit: 75000,
+      requests_remaining: 75000,
+      cached: false,
+      cache_age_seconds: 0,
+      tokens_reset_at_la: resetDate.toISOString(),
+      tokens_reset_note: "Observed daily refresh around 4:00pm LA",
+    };
+  }
+
+  // Normal scenario: moderate usage
+  const requestsToday = 2847;
+  const requestsLimit = 75000;
+
+  return {
+    status: "ok",
+    plan: "Ultra",
+    plan_end: "2026-06-15",
+    active: true,
+    requests_today: requestsToday,
+    requests_limit: requestsLimit,
+    requests_remaining: requestsLimit - requestsToday,
+    cached: true,
+    cache_age_seconds: 45,
+    tokens_reset_at_la: resetDate.toISOString(),
+    tokens_reset_note: "Observed daily refresh around 4:00pm LA",
+  };
+}
+
 // Pre-generated datasets
 const normalUpcoming = createUpcomingMatches(6);
 const normalIncidents = createActiveIncidents(3);
 const largeUpcoming = createUpcomingMatches(12);
 const largeIncidents = createActiveIncidents(8);
+const normalApiBudget = createApiBudget("normal");
+const emptyApiBudget = createApiBudget("empty");
 
 /**
  * Get overview data based on scenario
@@ -202,6 +255,7 @@ export async function getOverviewDataMock(): Promise<OverviewData> {
       health: createHealthSummary("empty"),
       upcomingMatches: [],
       activeIncidents: [],
+      apiBudget: emptyApiBudget,
     };
   }
 
@@ -211,6 +265,7 @@ export async function getOverviewDataMock(): Promise<OverviewData> {
     health: createHealthSummary(scenario),
     upcomingMatches: isLarge ? largeUpcoming : normalUpcoming,
     activeIncidents: isLarge ? largeIncidents : normalIncidents,
+    apiBudget: normalApiBudget,
   };
 }
 
