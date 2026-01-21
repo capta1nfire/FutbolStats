@@ -46,6 +46,8 @@ interface FilterPanelProps {
   onCustomizeColumnsClick?: () => void;
   /** Whether to show the Customize Columns link in footer */
   showCustomizeColumns?: boolean;
+  /** Whether CustomizeColumnsPanel is currently open (hides collapse button) */
+  customizeColumnsOpen?: boolean;
 }
 
 export function FilterPanel({
@@ -57,6 +59,7 @@ export function FilterPanel({
   searchValue = "",
   onCustomizeColumnsClick,
   showCustomizeColumns = false,
+  customizeColumnsOpen = false,
 }: FilterPanelProps) {
   // Track client-side mount to avoid Radix Accordion hydration mismatch
   // Uses useSyncExternalStore instead of useState+useEffect to avoid lint error
@@ -107,18 +110,20 @@ export function FilterPanel({
   // Expanded state: full filter panel
   return (
     <aside className="w-[220px] border-r border-border bg-surface flex flex-col transition-smooth">
-      {/* Header */}
+      {/* Header - collapse button hidden when CustomizeColumnsPanel is open */}
       <div className="h-12 flex items-center justify-between px-3 border-b border-border">
         <span className="text-sm font-medium text-foreground">Filters</span>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onToggleCollapse}
-          className="h-8 w-8"
-          aria-label="Collapse filters"
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </Button>
+        {!customizeColumnsOpen && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onToggleCollapse}
+            className="h-8 w-8"
+            aria-label="Collapse filters"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+        )}
       </div>
 
       {/* Search */}

@@ -19,6 +19,8 @@ interface MatchesFilterPanelProps {
   onCustomizeColumnsClick?: () => void;
   /** Whether to show the Customize Columns link */
   showCustomizeColumns?: boolean;
+  /** Whether CustomizeColumnsPanel is open (hides collapse button) */
+  customizeColumnsOpen?: boolean;
 }
 
 export function MatchesFilterPanel({
@@ -32,6 +34,7 @@ export function MatchesFilterPanel({
   onSearchChange,
   onCustomizeColumnsClick,
   showCustomizeColumns = false,
+  customizeColumnsOpen = false,
 }: MatchesFilterPanelProps) {
   const statusCounts = useMemo(() => getStatusCountsMock(), []);
   const leagues = useMemo(() => getLeaguesMock(), []);
@@ -116,6 +119,7 @@ export function MatchesFilterPanel({
       searchValue={searchValue}
       onCustomizeColumnsClick={onCustomizeColumnsClick}
       showCustomizeColumns={showCustomizeColumns}
+      customizeColumnsOpen={customizeColumnsOpen}
     />
   );
 }

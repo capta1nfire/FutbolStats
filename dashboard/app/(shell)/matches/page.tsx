@@ -187,6 +187,7 @@ function MatchesPageContent() {
         onSearchChange={handleSearchChange}
         showCustomizeColumns={true}
         onCustomizeColumnsClick={handleCustomizeColumnsClick}
+        customizeColumnsOpen={customizeColumnsOpen}
       />
 
       {/* Customize Columns Panel (separate column, hidden when Left Rail collapsed) */}
@@ -197,6 +198,7 @@ function MatchesPageContent() {
         onColumnVisibilityChange={setColumnVisible}
         onRestore={resetToDefault}
         onDone={handleCustomizeColumnsDone}
+        onCollapse={handleLeftRailToggle}
       />
 
       {/* Main content: Table */}

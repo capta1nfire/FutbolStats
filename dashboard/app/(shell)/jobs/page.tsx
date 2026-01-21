@@ -183,6 +183,7 @@ function JobsPageContent() {
         onSearchChange={handleSearchChange}
         showCustomizeColumns={true}
         onCustomizeColumnsClick={handleCustomizeColumnsClick}
+        customizeColumnsOpen={customizeColumnsOpen}
       />
 
       {/* Customize Columns Panel (separate column, hidden when Left Rail collapsed) */}
@@ -193,6 +194,7 @@ function JobsPageContent() {
         onColumnVisibilityChange={setColumnVisible}
         onRestore={resetToDefault}
         onDone={handleCustomizeColumnsDone}
+        onCollapse={handleLeftRailToggle}
       />
 
       {/* Main content: Table */}

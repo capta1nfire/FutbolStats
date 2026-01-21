@@ -2,7 +2,9 @@
 
 import { useMemo, useCallback } from "react";
 import { VisibilityState } from "@tanstack/react-table";
+import { ChevronLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -31,6 +33,8 @@ interface CustomizeColumnsPanelProps {
   onRestore: () => void;
   /** Called when "Done" is clicked (closes panel) */
   onDone: () => void;
+  /** Called when collapse button is clicked (collapses entire Left Rail) */
+  onCollapse?: () => void;
   /** Additional class names */
   className?: string;
 }
@@ -61,6 +65,7 @@ export function CustomizeColumnsPanel({
   onColumnVisibilityChange,
   onRestore,
   onDone,
+  onCollapse,
   className,
 }: CustomizeColumnsPanelProps) {
   // Filter to only hideable columns
@@ -112,11 +117,22 @@ export function CustomizeColumnsPanel({
         className
       )}
     >
-      {/* Header - same height as FilterPanel header */}
-      <div className="h-12 flex items-center px-3 border-b border-border">
+      {/* Header - same height as FilterPanel header, with collapse button */}
+      <div className="h-12 flex items-center justify-between px-3 border-b border-border">
         <h3 className="text-sm font-medium text-foreground">
           Customize Columns
         </h3>
+        {onCollapse && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onCollapse}
+            className="h-8 w-8"
+            aria-label="Collapse filters"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+        )}
       </div>
 
       {/* "All" checkbox */}
