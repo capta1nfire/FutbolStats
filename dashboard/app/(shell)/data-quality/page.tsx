@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useDataQualityChecks, useDataQualityCheck } from "@/lib/hooks";
+import { useDataQualityChecks, useDataQualityCheck, useColumnVisibility } from "@/lib/hooks";
 import {
   DataQualityCheck,
   DataQualityStatus,
@@ -15,7 +15,10 @@ import {
   DataQualityTable,
   DataQualityFilterPanel,
   DataQualityDetailDrawer,
+  DATA_QUALITY_COLUMN_OPTIONS,
+  DATA_QUALITY_DEFAULT_VISIBILITY,
 } from "@/components/data-quality";
+import { CustomizeColumnsPanel } from "@/components/tables";
 import {
   parseNumericId,
   parseArrayParam,
@@ -65,7 +68,32 @@ function DataQualityPageContent() {
   }, [selectedIdParam, selectedCheckId, router, searchParams]);
 
   // UI state (non-URL)
-  const [filterCollapsed, setFilterCollapsed] = useState(false);
+  const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
+  const [customizeColumnsOpen, setCustomizeColumnsOpen] = useState(false);
+
+  // Column visibility with localStorage persistence
+  const { columnVisibility, setColumnVisibility, setColumnVisible, resetToDefault } = useColumnVisibility(
+    "data-quality",
+    DATA_QUALITY_DEFAULT_VISIBILITY
+  );
+
+  // Handlers for Customize Columns
+  const handleCustomizeColumnsClick = useCallback(() => {
+    setCustomizeColumnsOpen(true);
+  }, []);
+
+  // Done collapses entire Left Rail (UniFi behavior)
+  const handleCustomizeColumnsDone = useCallback(() => {
+    setLeftRailCollapsed(true);
+    setCustomizeColumnsOpen(false);
+  }, []);
+
+  const handleLeftRailToggle = useCallback(() => {
+    setLeftRailCollapsed((prev) => !prev);
+    if (!leftRailCollapsed) {
+      setCustomizeColumnsOpen(false);
+    }
+  }, [leftRailCollapsed]);
 
   // Construct filters for query
   const filters: DataQualityFilters = useMemo(() => ({
@@ -156,14 +184,28 @@ function DataQualityPageContent() {
     <div className="h-full flex overflow-hidden relative">
       {/* FilterPanel */}
       <DataQualityFilterPanel
-        collapsed={filterCollapsed}
-        onToggleCollapse={() => setFilterCollapsed(!filterCollapsed)}
+        collapsed={leftRailCollapsed}
+        onToggleCollapse={handleLeftRailToggle}
         selectedStatuses={selectedStatuses}
         selectedCategories={selectedCategories}
         searchValue={searchValue}
         onStatusChange={handleStatusChange}
         onCategoryChange={handleCategoryChange}
         onSearchChange={handleSearchChange}
+        showCustomizeColumns={true}
+        onCustomizeColumnsClick={handleCustomizeColumnsClick}
+        customizeColumnsOpen={customizeColumnsOpen}
+      />
+
+      {/* Customize Columns Panel */}
+      <CustomizeColumnsPanel
+        open={customizeColumnsOpen && !leftRailCollapsed}
+        columns={DATA_QUALITY_COLUMN_OPTIONS}
+        columnVisibility={columnVisibility}
+        onColumnVisibilityChange={setColumnVisible}
+        onRestore={resetToDefault}
+        onDone={handleCustomizeColumnsDone}
+        onCollapse={handleLeftRailToggle}
       />
 
       {/* Main content: Table */}
@@ -186,6 +228,8 @@ function DataQualityPageContent() {
           onRetry={() => refetch()}
           selectedCheckId={selectedCheckId}
           onRowClick={handleRowClick}
+          columnVisibility={columnVisibility}
+          onColumnVisibilityChange={setColumnVisibility}
         />
       </div>
 

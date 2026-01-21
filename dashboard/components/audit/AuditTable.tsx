@@ -1,9 +1,9 @@
 "use client";
 
 import { useMemo } from "react";
-import { ColumnDef } from "@tanstack/react-table";
+import { ColumnDef, VisibilityState } from "@tanstack/react-table";
 import { AuditEventRow } from "@/lib/types";
-import { DataTable } from "@/components/tables";
+import { DataTable, ColumnOption } from "@/components/tables";
 import { AuditSeverityBadge } from "./AuditSeverityBadge";
 import { AuditTypeBadge } from "./AuditTypeBadge";
 import { formatDistanceToNow } from "@/lib/utils";
@@ -16,7 +16,26 @@ interface AuditTableProps {
   onRetry?: () => void;
   selectedEventId?: number | null;
   onRowClick?: (event: AuditEventRow) => void;
+  columnVisibility?: VisibilityState;
+  onColumnVisibilityChange?: (visibility: VisibilityState) => void;
 }
+
+/**
+ * Column options for Customize Columns panel
+ */
+export const AUDIT_COLUMN_OPTIONS: ColumnOption[] = [
+  { id: "severity", label: "Severity", enableHiding: true },
+  { id: "timestamp", label: "Time", enableHiding: false },
+  { id: "type", label: "Type", enableHiding: true },
+  { id: "actor", label: "Actor", enableHiding: true },
+  { id: "message", label: "Message", enableHiding: false },
+  { id: "entity", label: "Entity", enableHiding: true },
+];
+
+/**
+ * Default column visibility for Audit table
+ */
+export const AUDIT_DEFAULT_VISIBILITY: VisibilityState = {};
 
 export function AuditTable({
   data,
@@ -25,6 +44,8 @@ export function AuditTable({
   onRetry,
   selectedEventId,
   onRowClick,
+  columnVisibility,
+  onColumnVisibilityChange,
 }: AuditTableProps) {
   const columns = useMemo<ColumnDef<AuditEventRow>[]>(
     () => [
@@ -115,6 +136,8 @@ export function AuditTable({
       onRowClick={onRowClick}
       getRowId={(row) => row.id}
       emptyMessage="No audit events found"
+      columnVisibility={columnVisibility}
+      onColumnVisibilityChange={onColumnVisibilityChange}
     />
   );
 }

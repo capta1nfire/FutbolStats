@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useAuditEvents, useAuditEvent } from "@/lib/hooks";
+import { useAuditEvents, useAuditEvent, useColumnVisibility } from "@/lib/hooks";
 import {
   AuditEventRow,
   AuditEventType,
@@ -19,7 +19,10 @@ import {
   AuditTable,
   AuditFilterPanel,
   AuditDetailDrawer,
+  AUDIT_COLUMN_OPTIONS,
+  AUDIT_DEFAULT_VISIBILITY,
 } from "@/components/audit";
+import { CustomizeColumnsPanel } from "@/components/tables";
 import {
   parseNumericId,
   parseArrayParam,
@@ -78,7 +81,32 @@ function AuditPageContent() {
   }, [selectedIdParam, selectedEventId, router, searchParams]);
 
   // UI state (non-URL)
-  const [filterCollapsed, setFilterCollapsed] = useState(false);
+  const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
+  const [customizeColumnsOpen, setCustomizeColumnsOpen] = useState(false);
+
+  // Column visibility with localStorage persistence
+  const { columnVisibility, setColumnVisibility, setColumnVisible, resetToDefault } = useColumnVisibility(
+    "audit",
+    AUDIT_DEFAULT_VISIBILITY
+  );
+
+  // Handlers for Customize Columns
+  const handleCustomizeColumnsClick = useCallback(() => {
+    setCustomizeColumnsOpen(true);
+  }, []);
+
+  // Done collapses entire Left Rail (UniFi behavior)
+  const handleCustomizeColumnsDone = useCallback(() => {
+    setLeftRailCollapsed(true);
+    setCustomizeColumnsOpen(false);
+  }, []);
+
+  const handleLeftRailToggle = useCallback(() => {
+    setLeftRailCollapsed((prev) => !prev);
+    if (!leftRailCollapsed) {
+      setCustomizeColumnsOpen(false);
+    }
+  }, [leftRailCollapsed]);
 
   // Construct filters for query
   const filters: AuditFilters = useMemo(() => ({
@@ -185,8 +213,8 @@ function AuditPageContent() {
     <div className="h-full flex overflow-hidden relative">
       {/* FilterPanel */}
       <AuditFilterPanel
-        collapsed={filterCollapsed}
-        onToggleCollapse={() => setFilterCollapsed(!filterCollapsed)}
+        collapsed={leftRailCollapsed}
+        onToggleCollapse={handleLeftRailToggle}
         selectedTypes={selectedTypes}
         selectedSeverities={selectedSeverities}
         selectedActorKinds={selectedActorKinds}
@@ -197,6 +225,20 @@ function AuditPageContent() {
         onActorKindChange={handleActorKindChange}
         onTimeRangeChange={handleTimeRangeChange}
         onSearchChange={handleSearchChange}
+        showCustomizeColumns={true}
+        onCustomizeColumnsClick={handleCustomizeColumnsClick}
+        customizeColumnsOpen={customizeColumnsOpen}
+      />
+
+      {/* Customize Columns Panel */}
+      <CustomizeColumnsPanel
+        open={customizeColumnsOpen && !leftRailCollapsed}
+        columns={AUDIT_COLUMN_OPTIONS}
+        columnVisibility={columnVisibility}
+        onColumnVisibilityChange={setColumnVisible}
+        onRestore={resetToDefault}
+        onDone={handleCustomizeColumnsDone}
+        onCollapse={handleLeftRailToggle}
       />
 
       {/* Main content: Table */}
@@ -217,6 +259,8 @@ function AuditPageContent() {
           onRetry={() => refetch()}
           selectedEventId={selectedEventId}
           onRowClick={handleRowClick}
+          columnVisibility={columnVisibility}
+          onColumnVisibilityChange={setColumnVisibility}
         />
       </div>
 

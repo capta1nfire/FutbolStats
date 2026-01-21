@@ -1,9 +1,9 @@
 "use client";
 
 import { useMemo } from "react";
-import { ColumnDef } from "@tanstack/react-table";
+import { ColumnDef, VisibilityState } from "@tanstack/react-table";
 import { DataQualityCheck } from "@/lib/types";
-import { DataTable } from "@/components/tables";
+import { DataTable, ColumnOption } from "@/components/tables";
 import { DataQualityStatusBadge } from "./DataQualityStatusBadge";
 import { DataQualityCategoryBadge } from "./DataQualityCategoryBadge";
 import { formatDistanceToNow } from "@/lib/utils";
@@ -16,7 +16,27 @@ interface DataQualityTableProps {
   onRetry?: () => void;
   selectedCheckId?: number | null;
   onRowClick?: (check: DataQualityCheck) => void;
+  columnVisibility?: VisibilityState;
+  onColumnVisibilityChange?: (visibility: VisibilityState) => void;
 }
+
+/**
+ * Column options for Customize Columns panel
+ */
+export const DATA_QUALITY_COLUMN_OPTIONS: ColumnOption[] = [
+  { id: "status", label: "Status", enableHiding: false },
+  { id: "name", label: "Check", enableHiding: false },
+  { id: "category", label: "Category", enableHiding: true },
+  { id: "currentValue", label: "Value", enableHiding: true },
+  { id: "threshold", label: "Threshold", enableHiding: true },
+  { id: "affectedCount", label: "Affected", enableHiding: true },
+  { id: "lastRunAt", label: "Last Run", enableHiding: true },
+];
+
+/**
+ * Default column visibility for Data Quality table
+ */
+export const DATA_QUALITY_DEFAULT_VISIBILITY: VisibilityState = {};
 
 export function DataQualityTable({
   data,
@@ -25,6 +45,8 @@ export function DataQualityTable({
   onRetry,
   selectedCheckId,
   onRowClick,
+  columnVisibility,
+  onColumnVisibilityChange,
 }: DataQualityTableProps) {
   const columns = useMemo<ColumnDef<DataQualityCheck>[]>(
     () => [
@@ -111,6 +133,8 @@ export function DataQualityTable({
       onRowClick={onRowClick}
       getRowId={(row) => row.id}
       emptyMessage="No data quality checks found"
+      columnVisibility={columnVisibility}
+      onColumnVisibilityChange={onColumnVisibilityChange}
     />
   );
 }

@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useIncidents, useIncident } from "@/lib/hooks";
+import { useIncidents, useIncident, useColumnVisibility } from "@/lib/hooks";
 import {
   Incident,
   IncidentStatus,
@@ -17,7 +17,10 @@ import {
   IncidentsTable,
   IncidentsFilterPanel,
   IncidentDetailDrawer,
+  INCIDENTS_COLUMN_OPTIONS,
+  INCIDENTS_DEFAULT_VISIBILITY,
 } from "@/components/incidents";
+import { CustomizeColumnsPanel } from "@/components/tables";
 import {
   parseNumericId,
   parseArrayParam,
@@ -71,7 +74,16 @@ function IncidentsPageContent() {
   }, [selectedIdParam, selectedIncidentId, router, searchParams]);
 
   // UI state (non-URL)
-  const [filterCollapsed, setFilterCollapsed] = useState(false);
+  const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
+  const [customizeColumnsOpen, setCustomizeColumnsOpen] = useState(false);
+
+  // Column visibility with localStorage persistence
+  const {
+    columnVisibility,
+    setColumnVisibility,
+    setColumnVisible,
+    resetToDefault,
+  } = useColumnVisibility("incidents", INCIDENTS_DEFAULT_VISIBILITY);
 
   // Construct filters for query
   const filters: IncidentFilters = useMemo(() => ({
@@ -161,12 +173,32 @@ function IncidentsPageContent() {
     [router, buildUrl]
   );
 
+  // Handle "Customize Columns" link click
+  const handleCustomizeColumnsClick = useCallback(() => {
+    setCustomizeColumnsOpen(true);
+  }, []);
+
+  // Handle "Done" button - collapses entire Left Rail (UniFi behavior)
+  const handleCustomizeColumnsDone = useCallback(() => {
+    setLeftRailCollapsed(true);
+    setCustomizeColumnsOpen(false);
+  }, []);
+
+  // Handle Left Rail toggle - close CustomizeColumns when collapsing
+  const handleLeftRailToggle = useCallback(() => {
+    const newCollapsed = !leftRailCollapsed;
+    setLeftRailCollapsed(newCollapsed);
+    if (newCollapsed) {
+      setCustomizeColumnsOpen(false);
+    }
+  }, [leftRailCollapsed]);
+
   return (
     <div className="h-full flex overflow-hidden relative">
-      {/* FilterPanel */}
+      {/* Left Rail: FilterPanel */}
       <IncidentsFilterPanel
-        collapsed={filterCollapsed}
-        onToggleCollapse={() => setFilterCollapsed(!filterCollapsed)}
+        collapsed={leftRailCollapsed}
+        onToggleCollapse={handleLeftRailToggle}
         selectedStatuses={selectedStatuses}
         selectedSeverities={selectedSeverities}
         selectedTypes={selectedTypes}
@@ -175,6 +207,20 @@ function IncidentsPageContent() {
         onSeverityChange={handleSeverityChange}
         onTypeChange={handleTypeChange}
         onSearchChange={handleSearchChange}
+        showCustomizeColumns={true}
+        onCustomizeColumnsClick={handleCustomizeColumnsClick}
+        customizeColumnsOpen={customizeColumnsOpen}
+      />
+
+      {/* Customize Columns Panel (separate column, hidden when Left Rail collapsed) */}
+      <CustomizeColumnsPanel
+        open={customizeColumnsOpen && !leftRailCollapsed}
+        columns={INCIDENTS_COLUMN_OPTIONS}
+        columnVisibility={columnVisibility}
+        onColumnVisibilityChange={setColumnVisible}
+        onRestore={resetToDefault}
+        onDone={handleCustomizeColumnsDone}
+        onCollapse={handleLeftRailToggle}
       />
 
       {/* Main content: Table */}
@@ -195,6 +241,8 @@ function IncidentsPageContent() {
           onRetry={() => refetch()}
           selectedIncidentId={selectedIncidentId}
           onRowClick={handleRowClick}
+          columnVisibility={columnVisibility}
+          onColumnVisibilityChange={setColumnVisibility}
         />
       </div>
 

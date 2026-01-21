@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { usePredictions, usePrediction, usePredictionCoverage } from "@/lib/hooks";
+import { usePredictions, usePrediction, usePredictionCoverage, useColumnVisibility } from "@/lib/hooks";
 import { getPredictionLeaguesMock } from "@/lib/mocks";
 import {
   PredictionRow,
@@ -19,7 +19,10 @@ import {
   PredictionsFilterPanel,
   PredictionDetailDrawer,
   PredictionsCoverageCard,
+  PREDICTIONS_COLUMN_OPTIONS,
+  PREDICTIONS_DEFAULT_VISIBILITY,
 } from "@/components/predictions";
+import { CustomizeColumnsPanel } from "@/components/tables";
 import {
   parseNumericId,
   parseArrayParam,
@@ -81,7 +84,32 @@ function PredictionsPageContent() {
   }, [selectedIdParam, selectedPredictionId, router, searchParams]);
 
   // UI state (non-URL)
-  const [filterCollapsed, setFilterCollapsed] = useState(false);
+  const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
+  const [customizeColumnsOpen, setCustomizeColumnsOpen] = useState(false);
+
+  // Column visibility with localStorage persistence
+  const { columnVisibility, setColumnVisibility, setColumnVisible, resetToDefault } = useColumnVisibility(
+    "predictions",
+    PREDICTIONS_DEFAULT_VISIBILITY
+  );
+
+  // Handlers for Customize Columns
+  const handleCustomizeColumnsClick = useCallback(() => {
+    setCustomizeColumnsOpen(true);
+  }, []);
+
+  // Done collapses entire Left Rail (UniFi behavior)
+  const handleCustomizeColumnsDone = useCallback(() => {
+    setLeftRailCollapsed(true);
+    setCustomizeColumnsOpen(false);
+  }, []);
+
+  const handleLeftRailToggle = useCallback(() => {
+    setLeftRailCollapsed((prev) => !prev);
+    if (!leftRailCollapsed) {
+      setCustomizeColumnsOpen(false);
+    }
+  }, [leftRailCollapsed]);
 
   // Construct filters for query
   const filters: PredictionFilters = useMemo(() => ({
@@ -198,8 +226,8 @@ function PredictionsPageContent() {
     <div className="h-full flex overflow-hidden relative">
       {/* FilterPanel */}
       <PredictionsFilterPanel
-        collapsed={filterCollapsed}
-        onToggleCollapse={() => setFilterCollapsed(!filterCollapsed)}
+        collapsed={leftRailCollapsed}
+        onToggleCollapse={handleLeftRailToggle}
         selectedStatuses={selectedStatuses}
         selectedModels={selectedModels}
         selectedLeagues={selectedLeagues}
@@ -211,6 +239,20 @@ function PredictionsPageContent() {
         onLeagueChange={handleLeagueChange}
         onTimeRangeChange={handleTimeRangeChange}
         onSearchChange={handleSearchChange}
+        showCustomizeColumns={true}
+        onCustomizeColumnsClick={handleCustomizeColumnsClick}
+        customizeColumnsOpen={customizeColumnsOpen}
+      />
+
+      {/* Customize Columns Panel */}
+      <CustomizeColumnsPanel
+        open={customizeColumnsOpen && !leftRailCollapsed}
+        columns={PREDICTIONS_COLUMN_OPTIONS}
+        columnVisibility={columnVisibility}
+        onColumnVisibilityChange={setColumnVisible}
+        onRestore={resetToDefault}
+        onDone={handleCustomizeColumnsDone}
+        onCollapse={handleLeftRailToggle}
       />
 
       {/* Main content */}
@@ -240,6 +282,8 @@ function PredictionsPageContent() {
           onRetry={() => refetch()}
           selectedPredictionId={selectedPredictionId}
           onRowClick={handleRowClick}
+          columnVisibility={columnVisibility}
+          onColumnVisibilityChange={setColumnVisibility}
         />
       </div>
 
