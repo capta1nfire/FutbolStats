@@ -1,0 +1,176 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * FutbolStats Ops Dashboard - Design Tokens
+ * Based on UniFi Network Dashboard aesthetic
+ * SSOT: dashboard/DASHBOARD_PRO_BY_DAVID.md Section 4
+ */
+
+@theme inline {
+  /* Typography - Inter from @fontsource/inter (offline-friendly) */
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  /* Colors mapped to semantic tokens */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Semantic status colors */
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
+  --color-info: var(--info);
+
+  /* Surface layers */
+  --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
+
+  /* Sidebar */
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Chart colors */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  /* Border radius - flat design, minimal rounding */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+  --radius-full: 9999px;
+}
+
+/*
+ * Dark theme ONLY - UniFi-inspired palette
+ * No light theme needed for ops dashboard
+ */
+:root {
+  /* Base backgrounds - very dark */
+  --background: #0d0d0d;
+  --surface: #1a1a1a;
+  --surface-elevated: #252525;
+
+  /* Foreground/text */
+  --foreground: #f5f5f5;
+  --muted-foreground: #9ca3af;
+
+  /* Cards and popovers */
+  --card: #1a1a1a;
+  --card-foreground: #f5f5f5;
+  --popover: #252525;
+  --popover-foreground: #f5f5f5;
+
+  /* Primary - accent blue */
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+
+  /* Secondary - muted */
+  --secondary: #252525;
+  --secondary-foreground: #f5f5f5;
+
+  /* Muted - subtle backgrounds */
+  --muted: #1a1a1a;
+
+  /* Accent - for hover states, selection */
+  --accent: #2a2a2a;
+  --accent-foreground: #f5f5f5;
+
+  /* Status colors */
+  --success: #4ade80;
+  --warning: #eab308;
+  --error: #ef4444;
+  --info: #06b6d4;
+  --destructive: #ef4444;
+
+  /* Borders - subtle */
+  --border: #2d2d2d;
+  --input: #333333;
+  --ring: #3b82f6;
+
+  /* Sidebar */
+  --sidebar: #111111;
+  --sidebar-foreground: #f5f5f5;
+  --sidebar-primary: #3b82f6;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1a1a1a;
+  --sidebar-accent-foreground: #f5f5f5;
+  --sidebar-border: #2d2d2d;
+  --sidebar-ring: #3b82f6;
+
+  /* Charts */
+  --chart-1: #3b82f6;
+  --chart-2: #4ade80;
+  --chart-3: #eab308;
+  --chart-4: #ef4444;
+  --chart-5: #06b6d4;
+
+  /* Radius */
+  --radius: 0.5rem;
+}
+
+/* Dark class for compatibility */
+.dark {
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* Focus states - visible for a11y */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+}
+
+@layer utilities {
+  /* High-density padding utility */
+  .p-dense {
+    padding: 8px 12px;
+  }
+
+  /* No shadows utility (UniFi flat design) */
+  .shadow-none {
+    box-shadow: none !important;
+  }
+
+  /* Transition utility matching spec (150-200ms) */
+  .transition-smooth {
+    transition: all 150ms ease-in-out;
+  }
+}
