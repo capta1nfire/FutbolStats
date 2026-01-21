@@ -178,8 +178,9 @@ function IncidentsPageContent() {
     setCustomizeColumnsOpen(true);
   }, []);
 
-  // Handle "Done" button in CustomizeColumnsPanel
+  // Handle "Done" button - collapses entire Left Rail (UniFi behavior)
   const handleCustomizeColumnsDone = useCallback(() => {
+    setLeftRailCollapsed(true);
     setCustomizeColumnsOpen(false);
   }, []);
 

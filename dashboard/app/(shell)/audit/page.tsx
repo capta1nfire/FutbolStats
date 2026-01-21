@@ -85,8 +85,8 @@ function AuditPageContent() {
   const [customizeColumnsOpen, setCustomizeColumnsOpen] = useState(false);
 
   // Column visibility with localStorage persistence
-  const { columnVisibility, setColumnVisibility, resetToDefaults } = useColumnVisibility(
-    "columns:audit",
+  const { columnVisibility, setColumnVisibility, setColumnVisible, resetToDefault } = useColumnVisibility(
+    "audit",
     AUDIT_DEFAULT_VISIBILITY
   );
 
@@ -95,7 +95,9 @@ function AuditPageContent() {
     setCustomizeColumnsOpen(true);
   }, []);
 
+  // Done collapses entire Left Rail (UniFi behavior)
   const handleCustomizeColumnsDone = useCallback(() => {
+    setLeftRailCollapsed(true);
     setCustomizeColumnsOpen(false);
   }, []);
 
@@ -232,9 +234,9 @@ function AuditPageContent() {
       <CustomizeColumnsPanel
         open={customizeColumnsOpen && !leftRailCollapsed}
         columns={AUDIT_COLUMN_OPTIONS}
-        visibility={columnVisibility}
-        onVisibilityChange={setColumnVisibility}
-        onRestore={resetToDefaults}
+        columnVisibility={columnVisibility}
+        onColumnVisibilityChange={setColumnVisible}
+        onRestore={resetToDefault}
         onDone={handleCustomizeColumnsDone}
         onCollapse={handleLeftRailToggle}
       />
