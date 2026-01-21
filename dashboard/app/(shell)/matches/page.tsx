@@ -158,8 +158,9 @@ function MatchesPageContent() {
     setCustomizeColumnsOpen(true);
   }, []);
 
-  // Handle "Done" button in CustomizeColumnsPanel - only closes CC panel
+  // Handle "Done" button - collapses entire Left Rail (UniFi behavior)
   const handleCustomizeColumnsDone = useCallback(() => {
+    setLeftRailCollapsed(true);
     setCustomizeColumnsOpen(false);
   }, []);
 
