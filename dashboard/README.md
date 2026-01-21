@@ -154,11 +154,13 @@ Uses `useSyncExternalStore` for SSR-safe media query detection.
 
 1. **Turbopack + Multiple Lockfiles**: Warning about workspace root when multiple `package-lock.json` files exist. Cosmetic only, does not affect build.
 
-2. **SSR Media Query**: On server-render, `useIsDesktop()` defaults to `false` (mobile). Desktop users may see brief Sheet→inline drawer transition.
+2. **Turbopack + Sandbox**: In restricted sandbox environments (CI, verifiers), `npm run build` may **fail** with `EPERM: operation not permitted` or `EACCES: permission denied`. Run build in local or normal CI environment.
 
-3. **Mock Data Only**: All data is client-side mocks. No API calls.
+3. **SSR Media Query**: On server-render, `useIsDesktop()` defaults to `false` (mobile). Desktop users may see brief Sheet→inline drawer transition.
 
-4. **No Authentication**: Dashboard is fully open. No auth flow implemented.
+4. **Mock Data Only**: All data is client-side mocks. No API calls.
+
+5. **No Authentication**: Dashboard is fully open. No auth flow implemented.
 
 ## Acceptance Criteria Checklist
 

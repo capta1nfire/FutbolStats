@@ -839,8 +839,15 @@ Next.js 14+ con Turbopack puede mostrar warning sobre workspace root cuando exis
 
 **Solución (opcional)**: Configurar `turbopack.root` en `next.config.ts` o mantener un solo lockfile.
 
-**Fontsource + Sandbox**
-En entornos con sandbox estricto, `@fontsource/inter` puede fallar al escribir en cache. El build funciona correctamente; es un warning de desarrollo.
+**Turbopack + Sandbox (CI restringido)**
+En entornos con sandbox estricto (CI restringido, verificadores aislados), `npm run build` con Turbopack puede **FALLAR** por permisos de binding o escritura:
+
+```
+Error: EPERM: operation not permitted, bind
+Error: EACCES: permission denied, open '/tmp/.fontsource/...'
+```
+
+**Solución**: Ejecutar build en entorno local o CI con permisos normales. El sandbox de Claude Code / verificadores no soporta Turbopack.
 
 ### 14.3 Phase 0 Indicators
 
