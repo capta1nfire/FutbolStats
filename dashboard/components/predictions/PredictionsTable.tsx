@@ -1,9 +1,9 @@
 "use client";
 
 import { useMemo } from "react";
-import { ColumnDef } from "@tanstack/react-table";
+import { ColumnDef, VisibilityState } from "@tanstack/react-table";
 import { PredictionRow } from "@/lib/types";
-import { DataTable } from "@/components/tables";
+import { DataTable, ColumnOption } from "@/components/tables";
 import { PredictionStatusBadge } from "./PredictionStatusBadge";
 import { ModelBadge } from "./ModelBadge";
 import { PickBadge } from "./PickBadge";
@@ -16,7 +16,27 @@ interface PredictionsTableProps {
   onRetry?: () => void;
   selectedPredictionId?: number | null;
   onRowClick?: (prediction: PredictionRow) => void;
+  columnVisibility?: VisibilityState;
+  onColumnVisibilityChange?: (visibility: VisibilityState) => void;
 }
+
+/**
+ * Column options for Customize Columns panel
+ */
+export const PREDICTIONS_COLUMN_OPTIONS: ColumnOption[] = [
+  { id: "status", label: "Status", enableHiding: false },
+  { id: "matchLabel", label: "Match", enableHiding: false },
+  { id: "kickoffISO", label: "Kickoff", enableHiding: true },
+  { id: "model", label: "Model", enableHiding: true },
+  { id: "probs", label: "Probabilities", enableHiding: true },
+  { id: "pick", label: "Pick", enableHiding: false },
+  { id: "generatedAt", label: "Generated", enableHiding: true },
+];
+
+/**
+ * Default column visibility for Predictions table
+ */
+export const PREDICTIONS_DEFAULT_VISIBILITY: VisibilityState = {};
 
 export function PredictionsTable({
   data,
@@ -25,6 +45,8 @@ export function PredictionsTable({
   onRetry,
   selectedPredictionId,
   onRowClick,
+  columnVisibility,
+  onColumnVisibilityChange,
 }: PredictionsTableProps) {
   const columns = useMemo<ColumnDef<PredictionRow>[]>(
     () => [
@@ -131,6 +153,8 @@ export function PredictionsTable({
       onRowClick={onRowClick}
       getRowId={(row) => row.id}
       emptyMessage="No predictions found"
+      columnVisibility={columnVisibility}
+      onColumnVisibilityChange={onColumnVisibilityChange}
     />
   );
 }

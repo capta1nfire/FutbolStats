@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useAnalyticsReports, useAnalyticsReport } from "@/lib/hooks";
+import { useAnalyticsReports, useAnalyticsReport, useColumnVisibility } from "@/lib/hooks";
 import {
   AnalyticsReportRow,
   AnalyticsReportType,
@@ -13,7 +13,10 @@ import {
   AnalyticsTable,
   AnalyticsFilterPanel,
   AnalyticsDetailDrawer,
+  ANALYTICS_COLUMN_OPTIONS,
+  ANALYTICS_DEFAULT_VISIBILITY,
 } from "@/components/analytics";
+import { CustomizeColumnsPanel } from "@/components/tables";
 import {
   parseNumericId,
   parseArrayParam,
@@ -59,7 +62,30 @@ function AnalyticsPageContent() {
   }, [selectedIdParam, selectedReportId, router, searchParams]);
 
   // UI state (non-URL)
-  const [filterCollapsed, setFilterCollapsed] = useState(false);
+  const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
+  const [customizeColumnsOpen, setCustomizeColumnsOpen] = useState(false);
+
+  // Column visibility with localStorage persistence
+  const { columnVisibility, setColumnVisibility, resetToDefaults } = useColumnVisibility(
+    "columns:analytics",
+    ANALYTICS_DEFAULT_VISIBILITY
+  );
+
+  // Handlers for Customize Columns
+  const handleCustomizeColumnsClick = useCallback(() => {
+    setCustomizeColumnsOpen(true);
+  }, []);
+
+  const handleCustomizeColumnsDone = useCallback(() => {
+    setCustomizeColumnsOpen(false);
+  }, []);
+
+  const handleLeftRailToggle = useCallback(() => {
+    setLeftRailCollapsed((prev) => !prev);
+    if (!leftRailCollapsed) {
+      setCustomizeColumnsOpen(false);
+    }
+  }, [leftRailCollapsed]);
 
   // Construct filters for query
   const filters: AnalyticsFilters = useMemo(() => ({
@@ -134,12 +160,26 @@ function AnalyticsPageContent() {
     <div className="h-full flex overflow-hidden relative">
       {/* FilterPanel */}
       <AnalyticsFilterPanel
-        collapsed={filterCollapsed}
-        onToggleCollapse={() => setFilterCollapsed(!filterCollapsed)}
+        collapsed={leftRailCollapsed}
+        onToggleCollapse={handleLeftRailToggle}
         selectedTypes={selectedTypes}
         searchValue={searchValue}
         onTypeChange={handleTypeChange}
         onSearchChange={handleSearchChange}
+        showCustomizeColumns={true}
+        onCustomizeColumnsClick={handleCustomizeColumnsClick}
+        customizeColumnsOpen={customizeColumnsOpen}
+      />
+
+      {/* Customize Columns Panel */}
+      <CustomizeColumnsPanel
+        open={customizeColumnsOpen && !leftRailCollapsed}
+        columns={ANALYTICS_COLUMN_OPTIONS}
+        visibility={columnVisibility}
+        onVisibilityChange={setColumnVisibility}
+        onRestore={resetToDefaults}
+        onDone={handleCustomizeColumnsDone}
+        onCollapse={handleLeftRailToggle}
       />
 
       {/* Main content: Table */}
@@ -160,6 +200,8 @@ function AnalyticsPageContent() {
           onRetry={() => refetch()}
           selectedReportId={selectedReportId}
           onRowClick={handleRowClick}
+          columnVisibility={columnVisibility}
+          onColumnVisibilityChange={setColumnVisibility}
         />
       </div>
 

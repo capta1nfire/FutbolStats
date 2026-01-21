@@ -1,9 +1,9 @@
 "use client";
 
 import { useMemo } from "react";
-import { ColumnDef } from "@tanstack/react-table";
+import { ColumnDef, VisibilityState } from "@tanstack/react-table";
 import { AnalyticsReportRow } from "@/lib/types";
-import { DataTable } from "@/components/tables";
+import { DataTable, ColumnOption } from "@/components/tables";
 import { ReportStatusBadge } from "./ReportStatusBadge";
 import { ReportTypeBadge } from "./ReportTypeBadge";
 import { formatDistanceToNow } from "@/lib/utils";
@@ -15,7 +15,26 @@ interface AnalyticsTableProps {
   onRetry?: () => void;
   selectedReportId?: number | null;
   onRowClick?: (report: AnalyticsReportRow) => void;
+  columnVisibility?: VisibilityState;
+  onColumnVisibilityChange?: (visibility: VisibilityState) => void;
 }
+
+/**
+ * Column options for Customize Columns panel
+ */
+export const ANALYTICS_COLUMN_OPTIONS: ColumnOption[] = [
+  { id: "status", label: "Status", enableHiding: true },
+  { id: "title", label: "Report", enableHiding: false },
+  { id: "type", label: "Type", enableHiding: true },
+  { id: "periodLabel", label: "Period", enableHiding: true },
+  { id: "summary", label: "Summary", enableHiding: true },
+  { id: "lastUpdated", label: "Updated", enableHiding: true },
+];
+
+/**
+ * Default column visibility for Analytics table
+ */
+export const ANALYTICS_DEFAULT_VISIBILITY: VisibilityState = {};
 
 export function AnalyticsTable({
   data,
@@ -24,6 +43,8 @@ export function AnalyticsTable({
   onRetry,
   selectedReportId,
   onRowClick,
+  columnVisibility,
+  onColumnVisibilityChange,
 }: AnalyticsTableProps) {
   const columns = useMemo<ColumnDef<AnalyticsReportRow>[]>(
     () => [
@@ -108,6 +129,8 @@ export function AnalyticsTable({
       onRowClick={onRowClick}
       getRowId={(row) => row.id}
       emptyMessage="No analytics reports found"
+      columnVisibility={columnVisibility}
+      onColumnVisibilityChange={onColumnVisibilityChange}
     />
   );
 }
