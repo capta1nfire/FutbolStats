@@ -116,7 +116,7 @@ function IncidentsPageContent() {
       q?: string;
     }) => {
       const params = buildSearchParams({
-        id: overrides.id ?? selectedIncidentId,
+        id: overrides.id === undefined ? selectedIncidentId : overrides.id,
         status: overrides.status ?? selectedStatuses,
         severity: overrides.severity ?? selectedSeverities,
         type: overrides.type ?? selectedTypes,

@@ -152,11 +152,11 @@ function PredictionsPageContent() {
       q?: string;
     }) => {
       const params = buildSearchParams({
-        id: overrides.id ?? selectedPredictionId,
+        id: overrides.id === undefined ? selectedPredictionId : overrides.id,
         status: overrides.status ?? selectedStatuses,
         model: overrides.model ?? selectedModels,
         league: overrides.league ?? selectedLeagues,
-        range: overrides.range ?? selectedTimeRange,
+        range: overrides.range === undefined ? selectedTimeRange : overrides.range,
         q: overrides.q ?? searchValue,
       });
       const search = params.toString();

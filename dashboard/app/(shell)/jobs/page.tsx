@@ -101,7 +101,7 @@ function JobsPageContent() {
       q?: string;
     }) => {
       const params = buildSearchParams({
-        id: overrides.id ?? selectedJobId,
+        id: overrides.id === undefined ? selectedJobId : overrides.id,
         status: overrides.status ?? selectedStatuses,
         job: overrides.job ?? selectedJobs,
         q: overrides.q ?? searchValue,

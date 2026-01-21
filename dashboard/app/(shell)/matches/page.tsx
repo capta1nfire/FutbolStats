@@ -105,7 +105,7 @@ function MatchesPageContent() {
       q?: string;
     }) => {
       const params = buildSearchParams({
-        id: overrides.id ?? selectedMatchId,
+        id: overrides.id === undefined ? selectedMatchId : overrides.id,
         status: overrides.status ?? selectedStatuses,
         league: overrides.league ?? selectedLeagues,
         q: overrides.q ?? searchValue,
