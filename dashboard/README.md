@@ -32,27 +32,26 @@ dashboard/
 │   ├── page.tsx                # Redirects to /overview
 │   └── (shell)/                # Route group with shell layout
 │       ├── layout.tsx          # TopBar + IconSidebar + main
-│       ├── overview/           # Placeholder
-│       ├── matches/            # Full implementation
-│       │   ├── page.tsx        # Matches table + filters + drawer
-│       │   └── [matchId]/      # Deep-link redirect
-│       ├── predictions/        # Placeholder
-│       ├── jobs/               # Placeholder
-│       ├── incidents/          # Placeholder
-│       ├── analytics/          # Placeholder
-│       ├── data-quality/       # Placeholder
-│       ├── audit/              # Placeholder
-│       └── settings/           # Placeholder
+│       ├── overview/           # Health cards, coverage, upcoming
+│       ├── matches/            # Table + filters + drawer
+│       ├── jobs/               # Job runs table
+│       ├── incidents/          # Active incidents
+│       ├── data-quality/       # DQ checks
+│       ├── analytics/          # Reports (model perf, etc.)
+│       ├── audit/              # Audit trail
+│       ├── predictions/        # Prediction coverage
+│       └── settings/           # Read-only config
 ├── components/
 │   ├── shell/                  # TopBar, IconSidebar, FilterPanel, DetailDrawer
-│   ├── tables/                 # DataTable (TanStack wrapper), Pagination
-│   ├── matches/                # MatchesTable, MatchDetailDrawer, StatusDot
+│   ├── tables/                 # DataTable (TanStack wrapper)
+│   ├── [section]/              # Section-specific components
 │   ├── ui/                     # shadcn/ui components
 │   └── providers.tsx           # TanStack Query provider
 ├── lib/
-│   ├── types/                  # TypeScript contracts (MatchSummary, etc.)
+│   ├── types/                  # TypeScript contracts
 │   ├── mocks/                  # Mock data and factories
-│   ├── hooks/                  # useMatches, useMatch
+│   ├── hooks/                  # Data fetching hooks
+│   ├── url-state.ts            # URL state utilities
 │   └── utils.ts                # cn utility
 └── DASHBOARD_PRO_BY_DAVID.md   # SSOT spec
 ```
@@ -88,11 +87,45 @@ export const mockConfig = {
 
 Change `scenario` to test different states.
 
-## URL Routing
+## URL State Convention
+
+All pages persist filters and selection in URL query params for deep-linking and shareability.
+
+### Query Param Convention
+
+| Type | Format | Example |
+|------|--------|---------|
+| Selection | `?id=<number>` | `?id=123` |
+| Search | `?q=<string>` | `?q=arsenal` |
+| Multi-select | Repeated params | `?status=live&status=ft` |
+| Single-select | Single param | `?range=24h` |
+
+### Example URLs by Section
+
+```
+/matches?id=123&status=live&status=ft&league=Premier%20League&q=arsenal
+/jobs?id=456&status=running&status=failed&job=global_sync&q=sync
+/incidents?id=789&status=active&severity=critical&type=job_failure&q=error
+/data-quality?id=101&status=failing&category=coverage&q=match
+/analytics?id=201&type=model_performance&q=accuracy
+/audit?id=301&type=job_run&severity=error&actor=system&range=24h&q=sync
+/predictions?id=401&status=missing&model=A&league=Premier%20League&range=24h&q=real
+```
+
+### Deep Links
 
 - **Canonical URL**: `/matches?id=123`
 - **Deep-link**: `/matches/123` → redirects to canonical
 - Uses `router.replace` with `scroll: false` (no history pollution)
+
+### Keyboard Navigation
+
+| Key | Action |
+|-----|--------|
+| `ESC` | Close drawer |
+| `Enter`/`Space` | Open drawer from focused row |
+| `Arrow Up/Down` | Navigate table rows |
+| `Home`/`End` | Jump to first/last row |
 
 ## Breakpoints
 
@@ -105,30 +138,27 @@ Uses `useSyncExternalStore` for SSR-safe media query detection.
 
 ✅ Implemented:
 - Shell layout (TopBar, IconSidebar, FilterPanel collapsible)
-- Matches page with table, filters, inline drawer
-- URL sync for match selection
+- All sections: Matches, Jobs, Incidents, Data Quality, Analytics, Audit, Predictions, Settings
+- Full URL state persistence for all filters and selection
 - Mock data with loading/empty/error states
 - Dark theme with UniFi-inspired tokens
+- Keyboard navigation (ESC, Enter, arrows)
+- Accessible with aria-labels
 
 🚫 Not in Phase 0:
 - Backend integration
 - Real data
-- Settings mutations
-- Analytics charts
+- Settings mutations (read-only UI)
 
-## Known Limitations
+## Known Caveats
 
-1. **SSR Media Query Flicker**: On server-render, `useIsDesktop()` defaults to `false` (mobile).
-   Desktop users may see a brief flicker from Sheet to inline drawer on first load.
+1. **Turbopack + Multiple Lockfiles**: Warning about workspace root when multiple `package-lock.json` files exist. Cosmetic only, does not affect build.
 
-2. **Filter State Not Persisted**: Filter selections reset on page refresh.
-   URL only persists the selected match ID.
+2. **SSR Media Query**: On server-render, `useIsDesktop()` defaults to `false` (mobile). Desktop users may see brief Sheet→inline drawer transition.
 
 3. **Mock Data Only**: All data is client-side mocks. No API calls.
 
 4. **No Authentication**: Dashboard is fully open. No auth flow implemented.
-
-5. **Single Language**: UI is English-only. No i18n support.
 
 ## Acceptance Criteria Checklist
 
