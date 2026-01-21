@@ -116,11 +116,26 @@ function createEvents(count: number): AuditEventRow[] {
 }
 
 /**
- * Create context for an event
+ * Create deterministic hash suffix from eventId
+ * Uses simple string manipulation to create unique-looking IDs
+ */
+function deterministicSuffix(eventId: number): string {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+  let seed = eventId * 2654435761; // Knuth's multiplicative hash
+  for (let i = 0; i < 9; i++) {
+    result += chars[Math.abs(seed) % chars.length];
+    seed = Math.floor(seed / 36) + eventId;
+  }
+  return result;
+}
+
+/**
+ * Create context for an event (deterministic)
  */
 function createContext(eventId: number): AuditEventContext {
   return {
-    requestId: `req_${eventId}_${Math.random().toString(36).substr(2, 9)}`,
+    requestId: `req_${eventId}_${deterministicSuffix(eventId)}`,
     correlationId: `corr_${Math.floor(eventId / 10)}_batch`,
     ip: eventId % 3 === 0 ? "10.0.0.1" : eventId % 3 === 1 ? "10.0.0.2" : undefined,
     userAgent: eventId % 2 === 0 ? "FutbolStats-Scheduler/1.0" : "Mozilla/5.0 (Macintosh)",

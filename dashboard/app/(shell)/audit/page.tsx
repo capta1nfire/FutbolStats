@@ -7,6 +7,8 @@ import {
   AuditEventRow,
   AuditEventType,
   AuditSeverity,
+  AuditActorKind,
+  AuditTimeRange,
   AuditFilters,
 } from "@/lib/types";
 import {
@@ -52,12 +54,16 @@ function AuditPageContent() {
   const [filterCollapsed, setFilterCollapsed] = useState(false);
   const [selectedTypes, setSelectedTypes] = useState<AuditEventType[]>([]);
   const [selectedSeverities, setSelectedSeverities] = useState<AuditSeverity[]>([]);
+  const [selectedActorKinds, setSelectedActorKinds] = useState<AuditActorKind[]>([]);
+  const [selectedTimeRange, setSelectedTimeRange] = useState<AuditTimeRange | null>(null);
   const [searchValue, setSearchValue] = useState("");
 
   // Construct filters
   const filters: AuditFilters = {
     type: selectedTypes.length > 0 ? selectedTypes : undefined,
     severity: selectedSeverities.length > 0 ? selectedSeverities : undefined,
+    actorKind: selectedActorKinds.length > 0 ? selectedActorKinds : undefined,
+    timeRange: selectedTimeRange || undefined,
     search: searchValue || undefined,
   };
 
@@ -109,6 +115,22 @@ function AuditPageContent() {
     []
   );
 
+  const handleActorKindChange = useCallback(
+    (actorKind: AuditActorKind, checked: boolean) => {
+      setSelectedActorKinds((prev) =>
+        checked ? [...prev, actorKind] : prev.filter((a) => a !== actorKind)
+      );
+    },
+    []
+  );
+
+  const handleTimeRangeChange = useCallback(
+    (timeRange: AuditTimeRange | null) => {
+      setSelectedTimeRange(timeRange);
+    },
+    []
+  );
+
   return (
     <div className="h-full flex overflow-hidden">
       {/* FilterPanel */}
@@ -117,9 +139,13 @@ function AuditPageContent() {
         onToggleCollapse={() => setFilterCollapsed(!filterCollapsed)}
         selectedTypes={selectedTypes}
         selectedSeverities={selectedSeverities}
+        selectedActorKinds={selectedActorKinds}
+        selectedTimeRange={selectedTimeRange}
         searchValue={searchValue}
         onTypeChange={handleTypeChange}
         onSeverityChange={handleSeverityChange}
+        onActorKindChange={handleActorKindChange}
+        onTimeRangeChange={handleTimeRangeChange}
         onSearchChange={setSearchValue}
       />
 
