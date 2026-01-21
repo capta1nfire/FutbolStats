@@ -21,6 +21,7 @@
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
@@ -90,7 +91,8 @@
   --popover-foreground: #f5f5f5;
 
   /* Primary - accent blue */
-  --primary: #3b82f6;
+  --primary: #4797FF;
+  --primary-hover: #71B7FF;
   --primary-foreground: #ffffff;
 
   /* Secondary - muted */
@@ -114,20 +116,20 @@
   /* Borders - subtle */
   --border: #2d2d2d;
   --input: #333333;
-  --ring: #3b82f6;
+  --ring: #4797FF;
 
   /* Sidebar */
   --sidebar: #111111;
   --sidebar-foreground: #f5f5f5;
-  --sidebar-primary: #3b82f6;
+  --sidebar-primary: #4797FF;
   --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: #1a1a1a;
   --sidebar-accent-foreground: #f5f5f5;
   --sidebar-border: #2d2d2d;
-  --sidebar-ring: #3b82f6;
+  --sidebar-ring: #4797FF;
 
   /* Charts */
-  --chart-1: #3b82f6;
+  --chart-1: #4797FF;
   --chart-2: #4ade80;
   --chart-3: #eab308;
   --chart-4: #ef4444;

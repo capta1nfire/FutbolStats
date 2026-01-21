@@ -162,13 +162,13 @@ export function CustomizeColumnsPanel({
       <div className="px-3 py-2 border-t border-border flex items-center justify-between">
         <button
           onClick={onRestore}
-          className="text-sm font-medium text-primary hover:text-blue-400 transition-colors"
+          className="text-sm font-medium text-primary hover:text-primary-hover transition-colors"
         >
           Restore
         </button>
         <button
           onClick={onDone}
-          className="text-sm font-semibold text-primary hover:text-blue-400 transition-colors"
+          className="text-sm font-semibold text-primary hover:text-primary-hover transition-colors"
         >
           Done
         </button>
