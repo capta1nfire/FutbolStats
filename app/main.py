@@ -9679,9 +9679,9 @@ async def get_upcoming_matches_dashboard(
 # -----------------------------------------------------------------------------
 
 # Cache for matches table - keyed by query params
-# TTL: 20s for LIVE, 60s for NS/FT (auditor recommendation: 15-30s LIVE, 60s NS/FT)
+# TTL: 15s for LIVE, 60s for NS/FT (P1 auditor: 10-15s LIVE for Ops responsiveness)
 _matches_table_cache: dict[str, dict] = {}
-_MATCHES_CACHE_TTL_LIVE = 20  # seconds
+_MATCHES_CACHE_TTL_LIVE = 15  # seconds
 _MATCHES_CACHE_TTL_DEFAULT = 60  # seconds
 
 
