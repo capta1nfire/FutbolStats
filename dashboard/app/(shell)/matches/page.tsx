@@ -2,9 +2,9 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMatches, useMatch, useColumnVisibility, usePageSize } from "@/lib/hooks";
+import { useMatchesApi, useMatch, useColumnVisibility, usePageSize } from "@/lib/hooks";
 import { MatchSummary, MatchStatus, MatchFilters, MATCH_STATUSES } from "@/lib/types";
-import { getLeaguesMock } from "@/lib/mocks";
+import { getLeaguesMock, getMatchesMock } from "@/lib/mocks";
 import {
   MatchesTable,
   MatchesFilterPanel,
@@ -87,13 +87,23 @@ function MatchesPageContent() {
     search: searchValue || undefined,
   }), [selectedStatuses, selectedLeagues, searchValue]);
 
-  // Fetch data
+  // Fetch data from API with mock fallback
   const {
-    data: matches = [],
+    matches: apiMatches,
+    pagination,
+    isDegraded,
     isLoading,
     error,
     refetch,
-  } = useMatches(filters);
+  } = useMatchesApi({
+    status: selectedStatuses.length > 0 ? selectedStatuses : undefined,
+    page: currentPage,
+    limit: pageSize,
+  });
+
+  // Use API data if available, fallback to mocks
+  const mockMatches = useMemo(() => getMatchesMock(filters), [filters]);
+  const matches = apiMatches ?? mockMatches;
 
   const { data: selectedMatch } = useMatch(selectedMatchId);
 
@@ -222,11 +232,18 @@ function MatchesPageContent() {
         {/* Pagination */}
         <Pagination
           currentPage={currentPage}
-          totalItems={matches.length}
+          totalItems={isDegraded ? matches.length : pagination.total}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
           onPageSizeChange={setPageSize}
         />
+
+        {/* Degraded indicator */}
+        {isDegraded && (
+          <div className="absolute bottom-12 left-1/2 -translate-x-1/2 text-xs text-muted-foreground/70 bg-surface px-2 py-1 rounded border border-border">
+            Showing mock data
+          </div>
+        )}
       </div>
 
       {/* Detail Drawer (overlay on desktop, sheet on mobile) */}
