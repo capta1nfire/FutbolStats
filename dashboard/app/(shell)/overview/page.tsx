@@ -160,7 +160,7 @@ export default function OverviewPage() {
                 <div className="mt-3 pt-3 border-t border-border">
                   <Link
                     href="/matches"
-                    className="text-xs text-accent hover:underline"
+                    className="text-xs text-primary hover:text-primary-hover hover:underline"
                   >
                     View all {upcomingMatches.length} matches →
                   </Link>
@@ -189,7 +189,7 @@ export default function OverviewPage() {
                 <div className="mt-3 pt-3 border-t border-border">
                   <Link
                     href="/incidents"
-                    className="text-xs text-accent hover:underline"
+                    className="text-xs text-primary hover:text-primary-hover hover:underline"
                   >
                     View all {activeIncidents.length} incidents →
                   </Link>

@@ -3,7 +3,7 @@
 import { useMemo, useState, useEffect } from "react";
 import { ApiBudget, ApiBudgetStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { Info, AlertTriangle, ExternalLink } from "lucide-react";
+import { Info, AlertTriangle, ExternalLink, CloudCog } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -187,7 +187,10 @@ export function ApiBudgetCard({ budget, className, isMockFallback = false, reque
     >
       {/* Header: Title + Status Pill */}
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-foreground">API-Football</h3>
+        <h3 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+          <CloudCog className="h-4 w-4 text-muted-foreground" />
+          API-Football
+        </h3>
         <span
           className={cn(
             "px-2 py-0.5 text-xs font-medium rounded-full border",

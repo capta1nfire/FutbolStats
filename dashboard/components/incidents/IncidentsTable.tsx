@@ -96,7 +96,7 @@ export function IncidentsTable({
         header: "Related",
         cell: ({ row }) =>
           row.original.entity ? (
-            <span className="text-accent text-xs flex items-center gap-1">
+            <span className="text-primary text-xs flex items-center gap-1">
               {row.original.entity.kind} #{row.original.entity.id}
               <ExternalLink className="h-3 w-3" />
             </span>

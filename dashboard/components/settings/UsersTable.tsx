@@ -44,7 +44,7 @@ export function UsersTable({
           return (
             <div className="flex items-center gap-1.5">
               {isAdmin ? (
-                <Shield className="h-3.5 w-3.5 text-accent" />
+                <Shield className="h-3.5 w-3.5 text-primary" />
               ) : (
                 <Eye className="h-3.5 w-3.5 text-muted-foreground" />
               )}

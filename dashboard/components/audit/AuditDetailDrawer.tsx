@@ -85,7 +85,7 @@ function AuditTabContent({ event, activeTab }: { event: AuditEventDetail; active
                 <Server className="h-4 w-4 text-muted-foreground" />
               )}
               <span className="text-muted-foreground">Actor:</span>
-              <span className={isUserActor ? "text-accent" : "text-foreground"}>
+              <span className={isUserActor ? "text-primary" : "text-foreground"}>
                 {event.actor.name}
                 {isUserActor && event.actor.kind === "user" && ` (ID: ${event.actor.id})`}
               </span>
@@ -95,7 +95,7 @@ function AuditTabContent({ event, activeTab }: { event: AuditEventDetail; active
               <div className="flex items-center gap-2 text-sm">
                 <Link2 className="h-4 w-4 text-muted-foreground" />
                 <span className="text-muted-foreground">Entity:</span>
-                <span className="text-accent flex items-center gap-1">
+                <span className="text-primary flex items-center gap-1">
                   {event.entity.kind} #{event.entity.id}
                   <ExternalLink className="h-3 w-3" />
                 </span>

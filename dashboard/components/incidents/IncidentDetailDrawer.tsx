@@ -123,7 +123,7 @@ function IncidentTabContent({
               <div className="flex items-center gap-2 text-sm">
                 <ExternalLink className="h-4 w-4 text-muted-foreground" />
                 <span className="text-muted-foreground">Related:</span>
-                <span className="text-accent">
+                <span className="text-primary">
                   {incident.entity.kind} #{incident.entity.id}
                 </span>
               </div>

@@ -89,7 +89,7 @@ export function AuditTable({
               ) : (
                 <Server className="h-3 w-3 text-muted-foreground" />
               )}
-              <span className={isUser ? "text-accent" : "text-muted-foreground"}>
+              <span className={isUser ? "text-primary" : "text-muted-foreground"}>
                 {actor.name}
               </span>
             </span>
@@ -112,7 +112,7 @@ export function AuditTable({
         header: "Entity",
         cell: ({ row }) =>
           row.original.entity ? (
-            <span className="text-accent text-xs flex items-center gap-1">
+            <span className="text-primary text-xs flex items-center gap-1">
               {row.original.entity.kind} #{row.original.entity.id}
               <ExternalLink className="h-3 w-3" />
             </span>
