@@ -2,33 +2,70 @@
 
 import { useMemo } from "react";
 import { ColumnDef, VisibilityState } from "@tanstack/react-table";
-import { MatchSummary, ProbabilitySet } from "@/lib/types";
+import { MatchSummary, MatchScore, ProbabilitySet } from "@/lib/types";
 import { DataTable } from "@/components/tables";
 import { ColumnOption } from "@/components/tables";
 import { StatusDot } from "./StatusDot";
 
 /**
+ * Determine actual match outcome from score
+ * Returns: "home" | "draw" | "away" | null (if no score yet)
+ */
+function getOutcome(score?: MatchScore): "home" | "draw" | "away" | null {
+  if (!score) return null;
+  if (score.home > score.away) return "home";
+  if (score.home < score.away) return "away";
+  return "draw";
+}
+
+interface ProbabilityCellProps {
+  probs?: ProbabilitySet;
+  outcome?: "home" | "draw" | "away" | null;
+}
+
+/**
  * Cell component for displaying 1X2 probability distribution
  * Shows pick with highest probability highlighted
+ * When match is finished (outcome provided), shows green/red badges
  */
-function ProbabilityCell({ probs }: { probs?: ProbabilitySet }) {
+function ProbabilityCell({ probs, outcome }: ProbabilityCellProps) {
   if (!probs) {
     return <span className="text-muted-foreground text-xs">-</span>;
   }
 
-  // Find the pick with highest probability
+  // Find the pick with highest probability (the model's prediction)
   const maxProb = Math.max(probs.home, probs.draw, probs.away);
-  const pick = probs.home === maxProb ? "1" : probs.draw === maxProb ? "X" : "2";
+
+  // Style for each outcome based on whether it matches the actual result
+  const getStyle = (probType: "home" | "draw" | "away", prob: number) => {
+    const isPick = prob === maxProb;
+
+    // If match not finished yet, just highlight the pick
+    if (!outcome) {
+      return isPick ? "text-foreground font-medium" : "text-muted-foreground";
+    }
+
+    // Match finished - show result badges
+    const isCorrect = outcome === probType;
+
+    if (isCorrect) {
+      // Green badge for correct outcome
+      return "text-success font-medium";
+    } else {
+      // Red badge for wrong outcomes
+      return "text-error/70";
+    }
+  };
 
   return (
     <div className="flex flex-col text-xs font-mono leading-tight">
-      <span className={probs.home === maxProb ? "text-foreground font-medium" : "text-muted-foreground"}>
+      <span className={getStyle("home", probs.home)}>
         1: {(probs.home * 100).toFixed(0)}%
       </span>
-      <span className={probs.draw === maxProb ? "text-foreground font-medium" : "text-muted-foreground"}>
+      <span className={getStyle("draw", probs.draw)}>
         X: {(probs.draw * 100).toFixed(0)}%
       </span>
-      <span className={probs.away === maxProb ? "text-foreground font-medium" : "text-muted-foreground"}>
+      <span className={getStyle("away", probs.away)}>
         2: {(probs.away * 100).toFixed(0)}%
       </span>
     </div>
@@ -177,28 +214,48 @@ export function MatchesTable({
         id: "market",
         header: "Market",
         size: 90,
-        cell: ({ row }) => <ProbabilityCell probs={row.original.market} />,
+        cell: ({ row }) => (
+          <ProbabilityCell
+            probs={row.original.market}
+            outcome={row.original.status === "ft" ? getOutcome(row.original.score) : null}
+          />
+        ),
         enableSorting: false,
       },
       {
         id: "modelA",
         header: "Model A",
         size: 90,
-        cell: ({ row }) => <ProbabilityCell probs={row.original.modelA} />,
+        cell: ({ row }) => (
+          <ProbabilityCell
+            probs={row.original.modelA}
+            outcome={row.original.status === "ft" ? getOutcome(row.original.score) : null}
+          />
+        ),
         enableSorting: false,
       },
       {
         id: "shadow",
         header: "Shadow",
         size: 90,
-        cell: ({ row }) => <ProbabilityCell probs={row.original.shadow} />,
+        cell: ({ row }) => (
+          <ProbabilityCell
+            probs={row.original.shadow}
+            outcome={row.original.status === "ft" ? getOutcome(row.original.score) : null}
+          />
+        ),
         enableSorting: false,
       },
       {
         id: "sensorB",
         header: "Sensor B",
         size: 90,
-        cell: ({ row }) => <ProbabilityCell probs={row.original.sensorB} />,
+        cell: ({ row }) => (
+          <ProbabilityCell
+            probs={row.original.sensorB}
+            outcome={row.original.status === "ft" ? getOutcome(row.original.score) : null}
+          />
+        ),
         enableSorting: false,
       },
     ],
