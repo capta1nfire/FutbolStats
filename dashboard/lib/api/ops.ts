@@ -365,22 +365,24 @@ export function parseOpsHealth(ops: OpsResponse): HealthSummary | null {
 export type SentryIssueLevel = "error" | "warning" | "info";
 
 /**
- * Sentry top issue
+ * Sentry top issue (normalized)
+ * Accepts both old shape (count_24h, level) and new shape (count)
  */
 export interface SentryTopIssue {
   title: string;
   count_24h: number;
-  level: SentryIssueLevel;
+  level?: SentryIssueLevel;
 }
 
 /**
  * Sentry summary from ops.json
+ * Flexible to support both old and new backend contracts
  */
 export interface OpsSentrySummary {
   status: ApiBudgetStatus; // ok | warning | critical | degraded
-  cached: boolean;
-  cache_age_seconds: number;
-  generated_at: string;
+  cached?: boolean;
+  cache_age_seconds?: number;
+  generated_at?: string;
   project: {
     org_slug: string;
     project_slug: string;
@@ -389,6 +391,8 @@ export interface OpsSentrySummary {
   counts: {
     new_issues_1h: number;
     new_issues_24h: number;
+    active_issues_1h?: number;
+    active_issues_24h?: number;
     open_issues: number;
   };
   last_event_at?: string;
@@ -420,7 +424,8 @@ export function extractSentry(ops: OpsResponse): unknown | null {
 /**
  * Adapt raw sentry object to OpsSentrySummary type
  *
- * Returns null if critical fields are missing or have wrong types.
+ * Returns null only if critical fields (status, project, counts.open_issues) are missing.
+ * Other fields default to 0 or undefined (best-effort).
  */
 export function adaptOpsSentry(raw: unknown): OpsSentrySummary | null {
   if (!isObject(raw)) return null;
@@ -439,52 +444,48 @@ export function adaptOpsSentry(raw: unknown): OpsSentrySummary | null {
     return null;
   }
 
-  // Required: counts
+  // Required: counts with open_issues minimum
   const counts = raw.counts;
   if (!isObject(counts)) return null;
-  const new_issues_1h = counts.new_issues_1h;
-  const new_issues_24h = counts.new_issues_24h;
   const open_issues = counts.open_issues;
-  if (
-    typeof new_issues_1h !== "number" ||
-    typeof new_issues_24h !== "number" ||
-    typeof open_issues !== "number"
-  ) {
-    return null;
-  }
+  if (typeof open_issues !== "number") return null;
 
-  // Required: generated_at
-  const generated_at = raw.generated_at;
-  if (typeof generated_at !== "string") return null;
+  // Optional counts with defaults
+  const new_issues_1h = typeof counts.new_issues_1h === "number" ? counts.new_issues_1h : 0;
+  const new_issues_24h = typeof counts.new_issues_24h === "number" ? counts.new_issues_24h : 0;
+  const active_issues_1h = typeof counts.active_issues_1h === "number" ? counts.active_issues_1h : undefined;
+  const active_issues_24h = typeof counts.active_issues_24h === "number" ? counts.active_issues_24h : undefined;
 
-  // Optional fields with defaults
-  const cached = typeof raw.cached === "boolean" ? raw.cached : false;
-  const cache_age_seconds =
-    typeof raw.cache_age_seconds === "number" ? raw.cache_age_seconds : 0;
+  // Optional: generated_at (no longer required)
+  const generated_at = typeof raw.generated_at === "string" ? raw.generated_at : undefined;
+
+  // Optional: cached/cache_age_seconds
+  const cached = typeof raw.cached === "boolean" ? raw.cached : undefined;
+  const cache_age_seconds = typeof raw.cache_age_seconds === "number" ? raw.cache_age_seconds : undefined;
 
   // Optional: last_event_at
-  const last_event_at =
-    typeof raw.last_event_at === "string" ? raw.last_event_at : undefined;
+  const last_event_at = typeof raw.last_event_at === "string" ? raw.last_event_at : undefined;
 
   // Optional: note
   const note = typeof raw.note === "string" ? raw.note : undefined;
 
-  // Optional: top_issues (array)
+  // Optional: top_issues (array) - supports both old {count_24h, level} and new {count} shapes
   let top_issues: SentryTopIssue[] | undefined;
   if (Array.isArray(raw.top_issues)) {
     top_issues = [];
     for (const issue of raw.top_issues) {
-      if (
-        isObject(issue) &&
-        typeof issue.title === "string" &&
-        typeof issue.count_24h === "number" &&
-        isValidSentryLevel(issue.level)
-      ) {
-        top_issues.push({
-          title: issue.title,
-          count_24h: issue.count_24h,
-          level: issue.level,
-        });
+      if (isObject(issue) && typeof issue.title === "string") {
+        // Normalize count: prefer count_24h, fallback to count
+        const count_24h = typeof issue.count_24h === "number"
+          ? issue.count_24h
+          : typeof issue.count === "number"
+            ? issue.count
+            : 0;
+
+        // Level is optional now
+        const level = isValidSentryLevel(issue.level) ? issue.level : undefined;
+
+        top_issues.push({ title: issue.title, count_24h, level });
       }
     }
     if (top_issues.length === 0) {
@@ -498,7 +499,7 @@ export function adaptOpsSentry(raw: unknown): OpsSentrySummary | null {
     cache_age_seconds,
     generated_at,
     project: { org_slug, project_slug, env },
-    counts: { new_issues_1h, new_issues_24h, open_issues },
+    counts: { new_issues_1h, new_issues_24h, active_issues_1h, active_issues_24h, open_issues },
     last_event_at,
     top_issues,
     note,

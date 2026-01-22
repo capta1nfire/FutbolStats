@@ -39,6 +39,9 @@ const levelIcons: Record<SentryIssueLevel, React.ReactNode> = {
   info: <Info className="h-3 w-3 text-blue-400" />,
 };
 
+// Default icon when level is not provided
+const defaultLevelIcon = <Bug className="h-3 w-3 text-muted-foreground" />;
+
 /**
  * Format relative time from ISO string
  */
@@ -135,19 +138,19 @@ export function SentryHealthCard({
         </div>
       )}
 
-      {/* Issue Counts */}
+      {/* Issue Counts: Active 24h, New 24h, Open */}
       <div className="grid grid-cols-3 gap-2 mb-4">
         <div className="text-center">
           <div className="text-lg font-bold text-foreground tabular-nums">
-            {sentry?.counts.new_issues_1h ?? 0}
+            {sentry?.counts.active_issues_24h ?? sentry?.counts.new_issues_24h ?? 0}
           </div>
-          <div className="text-[10px] text-muted-foreground">1h</div>
+          <div className="text-[10px] text-muted-foreground">Active 24h</div>
         </div>
         <div className="text-center">
           <div className="text-lg font-bold text-foreground tabular-nums">
             {sentry?.counts.new_issues_24h ?? 0}
           </div>
-          <div className="text-[10px] text-muted-foreground">24h</div>
+          <div className="text-[10px] text-muted-foreground">New 24h</div>
         </div>
         <div className="text-center">
           <div className="text-lg font-bold text-foreground tabular-nums">
@@ -177,7 +180,7 @@ export function SentryHealthCard({
                 key={idx}
                 className="flex items-center gap-1.5 text-xs"
               >
-                {levelIcons[issue.level]}
+                {issue.level ? levelIcons[issue.level] : defaultLevelIcon}
                 <span className="text-muted-foreground truncate flex-1" title={issue.title}>
                   {issue.title.length > 30
                     ? `${issue.title.slice(0, 30)}...`
@@ -199,8 +202,8 @@ export function SentryHealthCard({
         </div>
       )}
 
-      {/* Cache freshness */}
-      {sentry && !isDegraded && (
+      {/* Cache freshness - only render if cache_age_seconds is available */}
+      {sentry && !isDegraded && typeof sentry.cache_age_seconds === "number" && (
         <div className="flex items-center gap-2 pt-3 border-t border-border">
           <span className="text-xs text-muted-foreground">
             Cached: {formatCacheAge(sentry.cache_age_seconds)}
