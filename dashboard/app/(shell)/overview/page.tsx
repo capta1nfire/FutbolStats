@@ -1,6 +1,7 @@
 "use client";
 
-import { useOverviewData } from "@/lib/hooks";
+import { useOverviewData, useOpsBudget } from "@/lib/hooks";
+import { mockApiBudget } from "@/lib/mocks";
 import {
   HealthCard,
   CoverageBar,
@@ -24,6 +25,13 @@ import Link from "next/link";
  */
 export default function OverviewPage() {
   const { data, isLoading, error, refetch } = useOverviewData();
+
+  // Fetch real API budget via proxy (enterprise-safe)
+  const {
+    budget: realBudget,
+    isDegraded: isBudgetDegraded,
+    requestId: budgetRequestId,
+  } = useOpsBudget();
 
   // Loading state
   if (isLoading) {
@@ -62,7 +70,10 @@ export default function OverviewPage() {
     return null;
   }
 
-  const { health, upcomingMatches, activeIncidents, apiBudget } = data;
+  const { health, upcomingMatches, activeIncidents } = data;
+
+  // Use real budget if available, fallback to mock
+  const displayBudget = realBudget ?? mockApiBudget;
 
   return (
     <div className="h-full flex overflow-hidden">
@@ -74,7 +85,11 @@ export default function OverviewPage() {
         </div>
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-3">
-          {apiBudget && <ApiBudgetCard budget={apiBudget} />}
+          <ApiBudgetCard
+            budget={displayBudget}
+            isMockFallback={isBudgetDegraded}
+            requestId={budgetRequestId}
+          />
         </div>
       </aside>
 

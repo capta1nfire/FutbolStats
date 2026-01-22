@@ -14,6 +14,10 @@ import {
 interface ApiBudgetCardProps {
   budget: ApiBudget;
   className?: string;
+  /** True when showing mock data due to backend unavailability */
+  isMockFallback?: boolean;
+  /** Request ID for debugging */
+  requestId?: string;
 }
 
 const statusColors: Record<ApiBudgetStatus, string> = {
@@ -128,7 +132,7 @@ function formatCacheAge(seconds: number): string {
  * - Real-time countdown that updates every 30 seconds
  * - Precise percentage display with appropriate decimal precision
  */
-export function ApiBudgetCard({ budget, className }: ApiBudgetCardProps) {
+export function ApiBudgetCard({ budget, className, isMockFallback = false, requestId }: ApiBudgetCardProps) {
   // Real-time clock for countdown (updates every 30s)
   const now = useNow(30000);
 
@@ -284,7 +288,7 @@ export function ApiBudgetCard({ budget, className }: ApiBudgetCardProps) {
       </div>
 
       {/* Cache freshness */}
-      {showCached && (
+      {showCached && !isMockFallback && (
         <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border">
           <span className="text-xs text-muted-foreground">
             Cached: {formatCacheAge(budget.cache_age_seconds)}
@@ -295,6 +299,31 @@ export function ApiBudgetCard({ budget, className }: ApiBudgetCardProps) {
             </span>
           )}
         </div>
+      )}
+
+      {/* Mock fallback indicator */}
+      {isMockFallback && (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border cursor-help">
+                <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-muted text-muted-foreground border border-border">
+                  Degraded (mock)
+                </span>
+                {requestId && (
+                  <span className="text-[10px] text-muted-foreground/50 font-mono">
+                    {requestId}
+                  </span>
+                )}
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-[220px]">
+              <p className="text-xs">
+                Backend unavailable. Showing cached/sample data.
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       )}
     </div>
   );
