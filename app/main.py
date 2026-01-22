@@ -9639,14 +9639,25 @@ async def get_upcoming_matches_dashboard(
     result = await session.execute(query)
     rows = result.all()
 
-    # Build league name lookup (reuse existing pattern)
-    league_name_by_id: dict[int, str] = LEAGUE_NAMES_FALLBACK.copy()
+    # Build league name lookup
+    # Inline fallback - same as _load_ops_data() but self-contained
+    league_name_by_id: dict[int, str] = {
+        1: "World Cup", 2: "Champions League", 3: "Europa League",
+        4: "Euro", 5: "Nations League", 9: "Copa América",
+        13: "Libertadores", 11: "Sudamericana", 848: "Conference League",
+        39: "Premier League", 140: "La Liga", 78: "Bundesliga",
+        135: "Serie A", 61: "Ligue 1", 94: "Primeira Liga",
+        88: "Eredivisie", 71: "Brazil Serie A", 128: "Argentina Primera",
+        239: "Colombia Primera A", 203: "Super Lig", 253: "MLS",
+        262: "Liga MX", 265: "Chile Primera", 34: "WCQ CONMEBOL",
+        32: "WCQ UEFA", 31: "WCQ CONCACAF",
+    }
+    # Merge with COMPETITIONS if available
     try:
-        for league_id, comp in (COMPETITIONS or {}).items():
-            if league_id is not None and comp is not None:
-                name = getattr(comp, "name", None)
-                if name:
-                    league_name_by_id[int(league_id)] = name
+        from app.config import COMPETITIONS
+        for lid, comp in (COMPETITIONS or {}).items():
+            if lid and comp and hasattr(comp, "name") and comp.name:
+                league_name_by_id[int(lid)] = comp.name
     except Exception:
         pass
 
