@@ -46,3 +46,9 @@ ios/**/Secrets.xcconfig
 
 # Xcode user state (personal IDE state)
 *.xcuserstate
+
+# Claude / AI tooling scratch (should never be committed)
+.claude/
+
+# Local screenshots / scratch assets
+ios/FutbolStats/FutbolStats/capta.PNG
