@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 
 /**
  * Proxy route handler for /dashboard/ops.json
@@ -19,7 +20,13 @@ const TIMEOUT_MS = parseInt(process.env.OPS_TIMEOUT_MS || "8000", 10);
  * Generate a cryptographically secure request ID for tracing
  */
 function generateRequestId(): string {
-  return `ops-${crypto.randomUUID()}`;
+  // Prefer Node's crypto.randomUUID (stable in server runtime).
+  // Fall back to a timestamp-based ID if unavailable for any reason.
+  try {
+    return `ops-${randomUUID()}`;
+  } catch {
+    return `ops-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
 }
 
 /**
