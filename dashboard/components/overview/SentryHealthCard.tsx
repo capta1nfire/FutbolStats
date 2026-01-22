@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { OpsSentrySummary, SentryIssueLevel } from "@/lib/api/ops";
 import { ApiBudgetStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { Bug, AlertTriangle, Info, Clock } from "lucide-react";
+import { Bug, AlertTriangle, Info, Clock, ExternalLink } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -108,11 +108,22 @@ export function SentryHealthCard({
         className
       )}
     >
-      {/* Header: Title + Status */}
+      {/* Header: Title + Link + Status */}
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
           <Bug className="h-4 w-4 text-primary" />
           Sentry
+          {sentry?.project && (
+            <a
+              href={`https://${sentry.project.org_slug}.sentry.io/issues/?project=${sentry.project.project_slug}&environment=${sentry.project.env}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-muted-foreground hover:text-primary transition-colors"
+              aria-label="Open Sentry issues"
+            >
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
         </h3>
         {displayStatus === "ok" ? (
           <span className="h-2.5 w-2.5 rounded-full bg-green-500" title="OK" />
