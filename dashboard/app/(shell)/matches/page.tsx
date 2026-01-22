@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMatches, useMatch, useColumnVisibility } from "@/lib/hooks";
+import { useMatches, useMatch, useColumnVisibility, usePageSize } from "@/lib/hooks";
 import { MatchSummary, MatchStatus, MatchFilters, MATCH_STATUSES } from "@/lib/types";
 import { getLeaguesMock } from "@/lib/mocks";
 import {
@@ -12,7 +12,7 @@ import {
   MATCHES_COLUMN_OPTIONS,
   MATCHES_DEFAULT_VISIBILITY,
 } from "@/components/matches";
-import { CustomizeColumnsPanel } from "@/components/tables";
+import { CustomizeColumnsPanel, Pagination } from "@/components/tables";
 import {
   parseNumericId,
   parseArrayParam,
@@ -67,6 +67,10 @@ function MatchesPageContent() {
   // UI state (non-URL)
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
   const [customizeColumnsOpen, setCustomizeColumnsOpen] = useState(false);
+
+  // Pagination state with localStorage persistence
+  const [currentPage, setCurrentPage] = useState(1);
+  const { pageSize, setPageSize } = usePageSize("matches");
 
   // Column visibility with localStorage persistence
   const {
@@ -221,6 +225,15 @@ function MatchesPageContent() {
           onRowClick={handleRowClick}
           columnVisibility={columnVisibility}
           onColumnVisibilityChange={setColumnVisibility}
+        />
+
+        {/* Pagination */}
+        <Pagination
+          currentPage={currentPage}
+          totalItems={matches.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
         />
       </div>
 

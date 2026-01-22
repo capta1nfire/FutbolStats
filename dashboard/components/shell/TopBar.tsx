@@ -11,7 +11,7 @@ import {
 
 export function TopBar() {
   return (
-    <header className="h-14 bg-accent flex items-center justify-between px-4 shadow-elevation-down relative z-40">
+    <header className="h-[50px] bg-accent flex items-center justify-between px-4 shadow-elevation-down relative z-40">
       {/* Left: Logo + Site Switcher */}
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
@@ -28,7 +28,7 @@ export function TopBar() {
           className="text-muted-foreground hover:text-foreground gap-1"
         >
           Production
-          <ChevronDown className="h-4 w-4" />
+          <ChevronDown className="h-4 w-4" strokeWidth={1.5} />
         </Button>
       </div>
 
@@ -61,7 +61,7 @@ export function TopBar() {
                 className="relative"
                 aria-label="Notifications"
               >
-                <Bell className="h-5 w-5 text-muted-foreground" />
+                <Bell className="h-5 w-5 text-muted-foreground" strokeWidth={1.5} />
                 {/* Notification badge */}
                 <span className="absolute top-1 right-1 w-2 h-2 bg-error rounded-full" />
               </Button>
@@ -80,7 +80,7 @@ export function TopBar() {
           aria-label="User menu"
         >
           <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
-            <User className="h-4 w-4 text-muted-foreground" />
+            <User className="h-4 w-4 text-muted-foreground" strokeWidth={1.5} />
           </div>
         </Button>
       </div>

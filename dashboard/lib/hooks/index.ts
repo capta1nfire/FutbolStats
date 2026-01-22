@@ -9,3 +9,4 @@ export * from "./use-audit";
 export * from "./use-settings";
 export * from "./use-predictions";
 export * from "./use-column-visibility";
+export * from "./use-page-size";

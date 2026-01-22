@@ -196,95 +196,101 @@ function DataTableInner<TData>(
   }
 
   return (
-    <div className="flex-1 overflow-auto">
-      <table className="w-full border-collapse text-sm">
-        {/* Sticky header */}
-        <thead className="sticky top-0 z-10 bg-surface border-b border-border">
-          {table.getHeaderGroups().map((headerGroup) => (
-            <tr key={headerGroup.id}>
-              {headerGroup.headers.map((header) => {
-                const canSort = header.column.getCanSort();
-                const sorted = header.column.getIsSorted();
-                const headerContent = header.isPlaceholder
-                  ? null
-                  : flexRender(header.column.columnDef.header, header.getContext());
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Fixed header - outside scroll area */}
+      <div className="flex-shrink-0 bg-surface border-b border-border">
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            {table.getHeaderGroups().map((headerGroup) => (
+              <tr key={headerGroup.id}>
+                {headerGroup.headers.map((header) => {
+                  const canSort = header.column.getCanSort();
+                  const sorted = header.column.getIsSorted();
+                  const headerContent = header.isPlaceholder
+                    ? null
+                    : flexRender(header.column.columnDef.header, header.getContext());
 
-                return (
-                  <th
-                    key={header.id}
-                    className="px-3 py-2 text-left font-medium text-muted-foreground text-xs uppercase tracking-wider"
-                  >
-                    {canSort ? (
-                      <button
-                        type="button"
-                        onClick={header.column.getToggleSortingHandler()}
-                        className="flex items-center gap-1 cursor-pointer select-none hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 rounded"
-                        aria-label={`Sort by ${typeof headerContent === "string" ? headerContent : header.id}`}
-                      >
-                        {headerContent}
-                        <span className="text-muted-foreground">
-                          {sorted === "asc" ? (
-                            <ArrowUp className="h-3.5 w-3.5" />
-                          ) : sorted === "desc" ? (
-                            <ArrowDown className="h-3.5 w-3.5" />
-                          ) : (
-                            <ArrowUpDown className="h-3.5 w-3.5 opacity-50" />
-                          )}
-                        </span>
-                      </button>
-                    ) : (
-                      <div className="flex items-center gap-1">{headerContent}</div>
-                    )}
-                  </th>
-                );
-              })}
-            </tr>
-          ))}
-        </thead>
-
-        {/* Body */}
-        <tbody ref={tableBodyRef} role="rowgroup">
-          {rows.map((row, rowIndex) => {
-            const isSelected =
-              selectedRowId !== null &&
-              selectedRowId !== undefined &&
-              row.id === String(selectedRowId);
-            const isFocused = focusedRowIndex === rowIndex;
-
-            return (
-              <tr
-                key={row.id}
-                ref={(el) => {
-                  if (el) {
-                    rowRefs.current.set(rowIndex, el);
-                  } else {
-                    rowRefs.current.delete(rowIndex);
-                  }
-                }}
-                tabIndex={isFocused || (focusedRowIndex === -1 && rowIndex === 0) ? 0 : -1}
-                role="row"
-                aria-selected={isSelected}
-                onClick={() => onRowClick?.(row.original)}
-                onKeyDown={(e) => handleRowKeyDown(e, rowIndex, row.original)}
-                onFocus={() => setFocusedRowIndex(rowIndex)}
-                className={cn(
-                  "border-b border-border transition-colors cursor-pointer",
-                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-                  isSelected
-                    ? "bg-primary/10 border-l-2 border-l-primary"
-                    : "hover:bg-accent/50"
-                )}
-              >
-                {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id} className="px-3 py-2.5">
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </td>
-                ))}
+                  return (
+                    <th
+                      key={header.id}
+                      className="px-3 py-2 text-left font-semibold text-muted-foreground text-sm"
+                    >
+                      {canSort ? (
+                        <button
+                          type="button"
+                          onClick={header.column.getToggleSortingHandler()}
+                          className="flex items-center gap-1 cursor-pointer select-none hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 rounded"
+                          aria-label={`Sort by ${typeof headerContent === "string" ? headerContent : header.id}`}
+                        >
+                          {headerContent}
+                          <span className="text-muted-foreground">
+                            {sorted === "asc" ? (
+                              <ArrowUp className="h-3.5 w-3.5" />
+                            ) : sorted === "desc" ? (
+                              <ArrowDown className="h-3.5 w-3.5" />
+                            ) : (
+                              <ArrowUpDown className="h-3.5 w-3.5 opacity-50" />
+                            )}
+                          </span>
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-1">{headerContent}</div>
+                      )}
+                    </th>
+                  );
+                })}
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
+            ))}
+          </thead>
+        </table>
+      </div>
+
+      {/* Scrollable body */}
+      <div className="flex-1 overflow-auto mx-1">
+        <table className="w-full border-collapse text-sm">
+          <tbody ref={tableBodyRef} role="rowgroup">
+            {rows.map((row, rowIndex) => {
+              const isSelected =
+                selectedRowId !== null &&
+                selectedRowId !== undefined &&
+                row.id === String(selectedRowId);
+              const isFocused = focusedRowIndex === rowIndex;
+
+              return (
+                <tr
+                  key={row.id}
+                  ref={(el) => {
+                    if (el) {
+                      rowRefs.current.set(rowIndex, el);
+                    } else {
+                      rowRefs.current.delete(rowIndex);
+                    }
+                  }}
+                  tabIndex={isFocused || (focusedRowIndex === -1 && rowIndex === 0) ? 0 : -1}
+                  role="row"
+                  aria-selected={isSelected}
+                  onClick={() => onRowClick?.(row.original)}
+                  onKeyDown={(e) => handleRowKeyDown(e, rowIndex, row.original)}
+                  onFocus={() => setFocusedRowIndex(rowIndex)}
+                  className={cn(
+                    "border-b border-border transition-colors cursor-pointer",
+                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                    isSelected
+                      ? "bg-primary/10 border-l-2 border-l-primary"
+                      : "hover:bg-accent/50"
+                  )}
+                >
+                  {row.getVisibleCells().map((cell) => (
+                    <td key={cell.id} className="px-3 py-2.5">
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

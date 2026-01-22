@@ -159,6 +159,33 @@
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-ring;
   }
+
+  /* UniFi-style thin scrollbar (8px variant for tables) */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: rgba(183, 188, 194, 0.25);
+    background-clip: padding-box;
+    border: 3px solid transparent;
+    border-radius: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-corner {
+    background-color: transparent;
+  }
+
+  /* Firefox - solo estilos de scroll, sin gutter global */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(183, 188, 194, 0.25) transparent;
+  }
 }
 
 @layer utilities {
