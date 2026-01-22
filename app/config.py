@@ -136,6 +136,11 @@ class Settings(BaseSettings):
     GRAFANA_BASE_URL: str = ""  # e.g. https://capta1nfire.grafana.net
     GITHUB_REPO_URL: str = "https://github.com/capta1nfire/FutbolStats"  # For runbook links
 
+    # Sentry API (for ops dashboard health aggregation - server-side only)
+    SENTRY_AUTH_TOKEN: str = ""  # Read-only auth token for Sentry API
+    SENTRY_PROJECT_SLUG: str = ""  # e.g. futbolstats (project slug, not ID)
+    SENTRY_ENV: str = "production"  # Environment filter (default: production)
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

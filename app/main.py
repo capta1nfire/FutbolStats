@@ -7584,6 +7584,202 @@ async def predictions_performance_endpoint(
     return report
 
 
+# =============================================================================
+# SENTRY HEALTH (server-side aggregation for ops dashboard)
+# =============================================================================
+
+_sentry_health_cache: dict = {
+    "data": None,
+    "timestamp": 0,
+    "ttl": 90,  # 90 seconds cache (balance between freshness and API limits)
+}
+
+# Sentry API thresholds for status determination
+_SENTRY_CRITICAL_THRESHOLD_1H = 5  # new_issues_1h >= 5 → critical
+_SENTRY_WARNING_THRESHOLD_24H = 20  # new_issues_24h >= 20 → warning
+
+
+async def _fetch_sentry_health() -> dict:
+    """
+    Fetch Sentry health metrics via Sentry API (server-side only).
+
+    Best-effort: returns degraded status if credentials missing or API fails.
+    Uses in-memory cache with 90s TTL to avoid API rate limits.
+
+    Sentry API endpoints used:
+    - GET /api/0/projects/{org}/{project}/issues/ (for issue counts)
+    - Query params: statsPeriod=1h, statsPeriod=24h, query=is:unresolved
+
+    Returns:
+        dict with status, counts, top_issues, etc.
+    """
+    import time as time_module
+
+    now_ts = time_module.time()
+    now_iso = datetime.utcnow().isoformat()
+
+    # Check cache first
+    if _sentry_health_cache["data"] and (now_ts - _sentry_health_cache["timestamp"]) < _sentry_health_cache["ttl"]:
+        cached = _sentry_health_cache["data"].copy()
+        cached["cached"] = True
+        cached["cache_age_seconds"] = int(now_ts - _sentry_health_cache["timestamp"])
+        return cached
+
+    # Base response structure (degraded fallback)
+    base_response = {
+        "status": "degraded",
+        "cached": False,
+        "cache_age_seconds": 0,
+        "generated_at": now_iso,
+        "project": {
+            "org_slug": settings.SENTRY_ORG or None,
+            "project_slug": settings.SENTRY_PROJECT_SLUG or None,
+            "env": settings.SENTRY_ENV or "production",
+        },
+        "counts": {
+            "new_issues_1h": 0,
+            "new_issues_24h": 0,
+            "open_issues": 0,
+        },
+        "last_event_at": None,
+        "top_issues": [],
+        "note": "best-effort, aggregated server-side",
+    }
+
+    # Check if credentials are configured
+    if not settings.SENTRY_AUTH_TOKEN or not settings.SENTRY_ORG or not settings.SENTRY_PROJECT_SLUG:
+        base_response["error"] = "Sentry credentials not configured"
+        _sentry_health_cache["data"] = base_response
+        _sentry_health_cache["timestamp"] = now_ts
+        return base_response
+
+    org_slug = settings.SENTRY_ORG
+    project_slug = settings.SENTRY_PROJECT_SLUG
+    auth_token = settings.SENTRY_AUTH_TOKEN
+    env_filter = settings.SENTRY_ENV or "production"
+
+    headers = {
+        "Authorization": f"Bearer {auth_token}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(headers=headers, timeout=10.0) as client:
+            # 1) Fetch issues from last 1h (new issues)
+            issues_1h_url = f"https://sentry.io/api/0/projects/{org_slug}/{project_slug}/issues/"
+            params_1h = {
+                "statsPeriod": "1h",
+                "query": f"is:unresolved environment:{env_filter}",
+                "limit": 100,
+            }
+            resp_1h = await client.get(issues_1h_url, params=params_1h)
+
+            # 2) Fetch issues from last 24h
+            params_24h = {
+                "statsPeriod": "24h",
+                "query": f"is:unresolved environment:{env_filter}",
+                "limit": 100,
+            }
+            resp_24h = await client.get(issues_1h_url, params=params_24h)
+
+            # 3) Fetch all unresolved (open) issues
+            params_open = {
+                "query": f"is:unresolved environment:{env_filter}",
+                "limit": 100,
+            }
+            resp_open = await client.get(issues_1h_url, params=params_open)
+
+            # Parse responses
+            new_issues_1h = 0
+            new_issues_24h = 0
+            open_issues = 0
+            last_event_at = None
+            top_issues = []
+
+            if resp_1h.status_code == 200:
+                issues_1h = resp_1h.json()
+                new_issues_1h = len(issues_1h) if isinstance(issues_1h, list) else 0
+
+            if resp_24h.status_code == 200:
+                issues_24h = resp_24h.json()
+                new_issues_24h = len(issues_24h) if isinstance(issues_24h, list) else 0
+
+                # Extract top issues (top 3 by event count, sanitized)
+                if isinstance(issues_24h, list) and len(issues_24h) > 0:
+                    # Sort by count descending
+                    sorted_issues = sorted(
+                        issues_24h,
+                        key=lambda x: int(x.get("count", 0)),
+                        reverse=True
+                    )[:3]
+
+                    for issue in sorted_issues:
+                        title = issue.get("title", "Unknown")[:80]  # Truncate to 80 chars
+                        # Sanitize: remove any potential PII patterns
+                        title = title.replace("@", "[at]")  # Basic email sanitization
+                        top_issues.append({
+                            "title": title,
+                            "count_24h": int(issue.get("count", 0)),
+                            "level": issue.get("level", "error"),
+                        })
+
+                    # Get last event timestamp from most recent issue
+                    if sorted_issues:
+                        last_event_at = sorted_issues[0].get("lastSeen")
+
+            if resp_open.status_code == 200:
+                issues_open = resp_open.json()
+                open_issues = len(issues_open) if isinstance(issues_open, list) else 0
+
+            # Determine status based on thresholds
+            status = "ok"
+            if new_issues_1h >= _SENTRY_CRITICAL_THRESHOLD_1H:
+                status = "critical"
+            elif new_issues_24h >= _SENTRY_WARNING_THRESHOLD_24H:
+                status = "warning"
+
+            result = {
+                "status": status,
+                "cached": False,
+                "cache_age_seconds": 0,
+                "generated_at": now_iso,
+                "project": {
+                    "org_slug": org_slug,
+                    "project_slug": project_slug,
+                    "env": env_filter,
+                },
+                "counts": {
+                    "new_issues_1h": new_issues_1h,
+                    "new_issues_24h": new_issues_24h,
+                    "open_issues": open_issues,
+                },
+                "last_event_at": last_event_at,
+                "top_issues": top_issues,
+                "note": "best-effort, aggregated server-side",
+            }
+
+            # Update cache
+            _sentry_health_cache["data"] = result
+            _sentry_health_cache["timestamp"] = now_ts
+
+            return result
+
+    except httpx.TimeoutException:
+        base_response["error"] = "Sentry API timeout"
+        logger.warning("Sentry health fetch timeout")
+    except httpx.HTTPStatusError as e:
+        base_response["error"] = f"Sentry API HTTP {e.response.status_code}"
+        logger.warning(f"Sentry health fetch HTTP error: {e}")
+    except Exception as e:
+        base_response["error"] = f"Sentry fetch error: {str(e)[:50]}"
+        logger.warning(f"Sentry health fetch error: {e}")
+
+    # Cache degraded response too (to avoid hammering on errors)
+    _sentry_health_cache["data"] = base_response
+    _sentry_health_cache["timestamp"] = now_ts
+    return base_response
+
+
 async def _load_ops_data() -> dict:
     """
     Ops dashboard: read-only aggregated metrics from DB + in-process state.
@@ -7631,6 +7827,9 @@ async def _load_ops_data() -> dict:
         )
     except Exception:
         pass
+
+    # Sentry health - fetch aggregated metrics (best-effort, cached)
+    sentry_health: dict = await _fetch_sentry_health()
 
     league_mode = os.environ.get("LEAGUE_MODE", "tracked").strip().lower()
     last_sync = get_last_sync_time()
@@ -8178,6 +8377,7 @@ async def _load_ops_data() -> dict:
         "tracked_leagues_count": tracked_leagues_count,
         "last_sync_at": last_sync.isoformat() if last_sync else None,
         "budget": budget_status,
+        "sentry": sentry_health,
         "pit": {
             "live_60m": pit_live_60m,
             "live_24h": pit_live_24h,
