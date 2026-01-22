@@ -15,7 +15,12 @@ import {
   AUDIT_TIME_RANGE_LABELS,
 } from "@/lib/types";
 import { FilterPanel, FilterGroup } from "@/components/shell";
-import { FileText, AlertTriangle, User, Clock } from "lucide-react";
+import {
+  SeverityQuickFilter,
+  SeverityFilterItem,
+} from "@/components/ui/severity-quick-filter";
+import { SeverityLevel } from "@/components/ui/severity-bars";
+import { FileText, User, Clock } from "lucide-react";
 
 interface AuditFilterPanelProps {
   collapsed: boolean;
@@ -36,18 +41,14 @@ interface AuditFilterPanelProps {
   onCustomizeColumnsClick?: () => void;
   /** Whether CustomizeColumnsPanel is currently open */
   customizeColumnsOpen?: boolean;
+  /** Optional counts per severity for quick filter badges */
+  severityCounts?: Record<AuditSeverity, number>;
 }
 
 const typeOptions: { id: AuditEventType; label: string }[] =
   AUDIT_EVENT_TYPES.map((type) => ({
     id: type,
     label: AUDIT_EVENT_TYPE_LABELS[type],
-  }));
-
-const severityOptions: { id: AuditSeverity; label: string }[] =
-  AUDIT_SEVERITIES.map((severity) => ({
-    id: severity,
-    label: AUDIT_SEVERITY_LABELS[severity],
   }));
 
 const actorKindOptions: { id: AuditActorKind; label: string }[] =
@@ -61,6 +62,22 @@ const timeRangeOptions: { id: AuditTimeRange; label: string }[] =
     id: range,
     label: AUDIT_TIME_RANGE_LABELS[range],
   }));
+
+/** Map AuditSeverity to SeverityLevel for bars */
+const severityToLevel: Record<AuditSeverity, SeverityLevel> = {
+  info: 1,
+  warning: 2,
+  error: 4,
+};
+
+/** Severity items for quick filter (Audit has: info, warning, error - no "high"/level 3) */
+const severityFilterItems: SeverityFilterItem[] = AUDIT_SEVERITIES.map(
+  (severity) => ({
+    level: severityToLevel[severity],
+    id: severity,
+    label: AUDIT_SEVERITY_LABELS[severity],
+  })
+);
 
 export function AuditFilterPanel({
   collapsed,
@@ -78,7 +95,9 @@ export function AuditFilterPanel({
   showCustomizeColumns = false,
   onCustomizeColumnsClick,
   customizeColumnsOpen = false,
+  severityCounts,
 }: AuditFilterPanelProps) {
+  // Build filter groups (excluding severity - now handled by quick filter)
   const filterGroups: FilterGroup[] = [
     {
       id: "type",
@@ -88,16 +107,6 @@ export function AuditFilterPanel({
         id: opt.id,
         label: opt.label,
         checked: selectedTypes.includes(opt.id),
-      })),
-    },
-    {
-      id: "severity",
-      label: "Severity",
-      icon: <AlertTriangle className="h-4 w-4" />,
-      options: severityOptions.map((opt) => ({
-        id: opt.id,
-        label: opt.label,
-        checked: selectedSeverities.includes(opt.id),
       })),
     },
     {
@@ -129,8 +138,6 @@ export function AuditFilterPanel({
   ) => {
     if (groupId === "type") {
       onTypeChange(optionId as AuditEventType, checked);
-    } else if (groupId === "severity") {
-      onSeverityChange(optionId as AuditSeverity, checked);
     } else if (groupId === "actorKind") {
       onActorKindChange(optionId as AuditActorKind, checked);
     } else if (groupId === "timeRange") {
@@ -143,6 +150,18 @@ export function AuditFilterPanel({
     }
   };
 
+  const handleSeverityToggle = (severityId: string) => {
+    const severity = severityId as AuditSeverity;
+    const isSelected = selectedSeverities.includes(severity);
+    onSeverityChange(severity, !isSelected);
+  };
+
+  // Build severity items with optional counts
+  const severityItemsWithCounts = severityFilterItems.map((item) => ({
+    ...item,
+    count: severityCounts?.[item.id as AuditSeverity],
+  }));
+
   return (
     <FilterPanel
       collapsed={collapsed}
@@ -154,6 +173,13 @@ export function AuditFilterPanel({
       showCustomizeColumns={showCustomizeColumns}
       onCustomizeColumnsClick={onCustomizeColumnsClick}
       customizeColumnsOpen={customizeColumnsOpen}
+      quickFilterContent={
+        <SeverityQuickFilter
+          items={severityItemsWithCounts}
+          selectedIds={selectedSeverities}
+          onToggle={handleSeverityToggle}
+        />
+      }
     />
   );
 }

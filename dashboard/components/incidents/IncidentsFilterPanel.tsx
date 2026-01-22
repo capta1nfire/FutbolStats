@@ -10,7 +10,12 @@ import {
   INCIDENT_TYPE_LABELS,
 } from "@/lib/types";
 import { FilterPanel, FilterGroup } from "@/components/shell";
-import { AlertTriangle, Activity, Tag } from "lucide-react";
+import {
+  SeverityQuickFilter,
+  SeverityFilterItem,
+} from "@/components/ui/severity-quick-filter";
+import { SeverityLevel } from "@/components/ui/severity-bars";
+import { Activity, Tag } from "lucide-react";
 
 interface IncidentsFilterPanelProps {
   collapsed: boolean;
@@ -29,6 +34,8 @@ interface IncidentsFilterPanelProps {
   onCustomizeColumnsClick?: () => void;
   /** Whether CustomizeColumnsPanel is currently open */
   customizeColumnsOpen?: boolean;
+  /** Optional counts per severity for quick filter badges */
+  severityCounts?: Record<IncidentSeverity, number>;
 }
 
 const statusOptions: { id: IncidentStatus; label: string }[] = INCIDENT_STATUSES.map(
@@ -38,16 +45,33 @@ const statusOptions: { id: IncidentStatus; label: string }[] = INCIDENT_STATUSES
   })
 );
 
-const severityOptions: { id: IncidentSeverity; label: string }[] =
-  INCIDENT_SEVERITIES.map((severity) => ({
-    id: severity,
-    label: severity.charAt(0).toUpperCase() + severity.slice(1),
-  }));
-
 const typeOptions: { id: IncidentType; label: string }[] = INCIDENT_TYPES.map(
   (type) => ({
     id: type,
     label: INCIDENT_TYPE_LABELS[type],
+  })
+);
+
+/** Map IncidentSeverity to SeverityLevel for bars */
+const severityToLevel: Record<IncidentSeverity, SeverityLevel> = {
+  info: 1,
+  warning: 2,
+  critical: 4,
+};
+
+/** Severity labels for display */
+const severityLabels: Record<IncidentSeverity, string> = {
+  info: "Info",
+  warning: "Warning",
+  critical: "Critical",
+};
+
+/** Severity items for quick filter (Incidents has: info, warning, critical - no "high"/level 3) */
+const severityFilterItems: SeverityFilterItem[] = INCIDENT_SEVERITIES.map(
+  (severity) => ({
+    level: severityToLevel[severity],
+    id: severity,
+    label: severityLabels[severity],
   })
 );
 
@@ -65,7 +89,9 @@ export function IncidentsFilterPanel({
   showCustomizeColumns = false,
   onCustomizeColumnsClick,
   customizeColumnsOpen = false,
+  severityCounts,
 }: IncidentsFilterPanelProps) {
+  // Build filter groups (excluding severity - now handled by quick filter)
   const filterGroups: FilterGroup[] = [
     {
       id: "status",
@@ -75,16 +101,6 @@ export function IncidentsFilterPanel({
         id: opt.id,
         label: opt.label,
         checked: selectedStatuses.includes(opt.id),
-      })),
-    },
-    {
-      id: "severity",
-      label: "Severity",
-      icon: <AlertTriangle className="h-4 w-4" />,
-      options: severityOptions.map((opt) => ({
-        id: opt.id,
-        label: opt.label,
-        checked: selectedSeverities.includes(opt.id),
       })),
     },
     {
@@ -106,12 +122,22 @@ export function IncidentsFilterPanel({
   ) => {
     if (groupId === "status") {
       onStatusChange(optionId as IncidentStatus, checked);
-    } else if (groupId === "severity") {
-      onSeverityChange(optionId as IncidentSeverity, checked);
     } else if (groupId === "type") {
       onTypeChange(optionId as IncidentType, checked);
     }
   };
+
+  const handleSeverityToggle = (severityId: string) => {
+    const severity = severityId as IncidentSeverity;
+    const isSelected = selectedSeverities.includes(severity);
+    onSeverityChange(severity, !isSelected);
+  };
+
+  // Build severity items with optional counts
+  const severityItemsWithCounts = severityFilterItems.map((item) => ({
+    ...item,
+    count: severityCounts?.[item.id as IncidentSeverity],
+  }));
 
   return (
     <FilterPanel
@@ -124,6 +150,13 @@ export function IncidentsFilterPanel({
       showCustomizeColumns={showCustomizeColumns}
       onCustomizeColumnsClick={onCustomizeColumnsClick}
       customizeColumnsOpen={customizeColumnsOpen}
+      quickFilterContent={
+        <SeverityQuickFilter
+          items={severityItemsWithCounts}
+          selectedIds={selectedSeverities}
+          onToggle={handleSeverityToggle}
+        />
+      }
     />
   );
 }

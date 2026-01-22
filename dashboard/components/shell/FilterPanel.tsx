@@ -48,6 +48,8 @@ interface FilterPanelProps {
   showCustomizeColumns?: boolean;
   /** Whether CustomizeColumnsPanel is currently open (hides collapse button) */
   customizeColumnsOpen?: boolean;
+  /** Optional content to render below search (e.g., quick filters) */
+  quickFilterContent?: ReactNode;
 }
 
 export function FilterPanel({
@@ -60,6 +62,7 @@ export function FilterPanel({
   onCustomizeColumnsClick,
   showCustomizeColumns = false,
   customizeColumnsOpen = false,
+  quickFilterContent,
 }: FilterPanelProps) {
   // Track client-side mount to avoid Radix Accordion hydration mismatch
   // Uses useSyncExternalStore instead of useState+useEffect to avoid lint error
@@ -135,6 +138,13 @@ export function FilterPanel({
           className="bg-background"
         />
       </div>
+
+      {/* Quick filter slot (e.g., severity bars) */}
+      {quickFilterContent && (
+        <div className="px-3 pb-3">
+          {quickFilterContent}
+        </div>
+      )}
 
       {/* Filter groups - render only on client to avoid Radix ID hydration mismatch */}
       <ScrollArea className="flex-1">
