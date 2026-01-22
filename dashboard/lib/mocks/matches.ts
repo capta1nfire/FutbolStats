@@ -8,8 +8,7 @@ import {
   MatchSummary,
   MatchStatus,
   MatchFilters,
-  ModelType,
-  PredictionPick,
+  ProbabilitySet,
 } from "@/lib/types";
 import { mockConfig, simulateDelay, checkMockError } from "./config";
 
@@ -47,7 +46,6 @@ const teams = [
 ];
 
 const statuses: MatchStatus[] = ["scheduled", "live", "ht", "ft", "ft", "ft", "scheduled", "scheduled"];
-const models: ModelType[] = ["A", "Shadow"];
 
 /**
  * Create a deterministic mock match based on index
@@ -94,26 +92,46 @@ function createDeterministicMatch(index: number): MatchSummary {
     match.elapsed = { min: 45 };
   }
 
-  // Add prediction (most matches have one)
+  // Add predictions (most matches have them)
   if (index % 6 !== 0) {
     // Base probabilities that vary by index
     const homeBase = 25 + ((index * 11) % 35);
     const drawBase = 15 + ((index * 7) % 20);
     const awayBase = 100 - homeBase - drawBase;
 
-    const home = homeBase / 100;
-    const draw = drawBase / 100;
-    const away = awayBase / 100;
-
-    const maxProb = Math.max(home, draw, away);
-    const pick: PredictionPick =
-      maxProb === home ? "home" : maxProb === draw ? "draw" : "away";
-
-    match.prediction = {
-      model: models[index % models.length],
-      pick,
-      probs: { home, draw, away },
+    const probs: ProbabilitySet = {
+      home: homeBase / 100,
+      draw: drawBase / 100,
+      away: awayBase / 100,
     };
+
+    // Model A (always present if has prediction)
+    match.modelA = probs;
+
+    // Market (slightly different, simulating odds)
+    match.market = {
+      home: Math.max(0.1, probs.home + ((index % 10) - 5) / 100),
+      draw: Math.max(0.1, probs.draw + ((index % 8) - 4) / 100),
+      away: Math.max(0.1, probs.away + ((index % 6) - 3) / 100),
+    };
+
+    // Shadow (50% of matches)
+    if (index % 2 === 0) {
+      match.shadow = {
+        home: Math.max(0.1, probs.home + ((index % 12) - 6) / 100),
+        draw: Math.max(0.1, probs.draw + ((index % 9) - 4) / 100),
+        away: Math.max(0.1, probs.away + ((index % 7) - 3) / 100),
+      };
+    }
+
+    // Sensor B (33% of matches)
+    if (index % 3 === 0) {
+      match.sensorB = {
+        home: Math.max(0.1, probs.home + ((index % 14) - 7) / 100),
+        draw: Math.max(0.1, probs.draw + ((index % 11) - 5) / 100),
+        away: Math.max(0.1, probs.away + ((index % 8) - 4) / 100),
+      };
+    }
   }
 
   return match;

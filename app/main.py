@@ -24,7 +24,7 @@ from app.etl.competitions import ALL_LEAGUE_IDS, COMPETITIONS
 from app.features import FeatureEngineer
 from app.ml import XGBoostEngine
 from app.ml.persistence import load_active_model, persist_model_snapshot
-from app.models import Match, OddsHistory, PITReport, PostMatchAudit, Prediction, PredictionOutcome, Team, TeamAdjustment, TeamOverride
+from app.models import Match, OddsHistory, PITReport, PostMatchAudit, Prediction, PredictionOutcome, SensorPrediction, ShadowPrediction, Team, TeamAdjustment, TeamOverride
 from app.teams.overrides import preload_team_overrides, resolve_team_display
 from app.scheduler import start_scheduler, stop_scheduler, get_last_sync_time, get_sync_leagues, SYNC_LEAGUES, global_sync_window
 from app.security import limiter, verify_api_key, verify_api_key_or_ops_session
@@ -9780,18 +9780,11 @@ async def get_matches_dashboard(
         start_dt = now_dt - timedelta(hours=hours)
         end_dt = now_dt + timedelta(hours=hours)
 
-    # EXISTS subquery for has_prediction
-    has_prediction_subq = (
-        exists()
-        .where(Prediction.match_id == Match.id)
-        .correlate(Match)
-    )
-
     # Team aliases
     home_team = aliased(Team, name="home_team")
     away_team = aliased(Team, name="away_team")
 
-    # Base query
+    # Base query with LEFT JOINs for predictions
     base_query = (
         select(
             Match.id,
@@ -9804,10 +9797,28 @@ async def get_matches_dashboard(
             Match.elapsed_extra,
             home_team.name.label("home_name"),
             away_team.name.label("away_name"),
-            has_prediction_subq.label("has_prediction"),
+            # Model A (production) prediction
+            Prediction.home_prob.label("model_a_home"),
+            Prediction.draw_prob.label("model_a_draw"),
+            Prediction.away_prob.label("model_a_away"),
+            # Market odds (frozen at prediction time)
+            Prediction.frozen_odds_home.label("market_home"),
+            Prediction.frozen_odds_draw.label("market_draw"),
+            Prediction.frozen_odds_away.label("market_away"),
+            # Shadow/Two-Stage prediction
+            ShadowPrediction.shadow_home_prob.label("shadow_home"),
+            ShadowPrediction.shadow_draw_prob.label("shadow_draw"),
+            ShadowPrediction.shadow_away_prob.label("shadow_away"),
+            # Sensor B prediction
+            SensorPrediction.b_home_prob.label("sensor_b_home"),
+            SensorPrediction.b_draw_prob.label("sensor_b_draw"),
+            SensorPrediction.b_away_prob.label("sensor_b_away"),
         )
         .join(home_team, Match.home_team_id == home_team.id)
         .join(away_team, Match.away_team_id == away_team.id)
+        .outerjoin(Prediction, Prediction.match_id == Match.id)
+        .outerjoin(ShadowPrediction, ShadowPrediction.match_id == Match.id)
+        .outerjoin(SensorPrediction, SensorPrediction.match_id == Match.id)
         .where(Match.date >= start_dt)
         .where(Match.date <= end_dt)
     )
@@ -9858,7 +9869,6 @@ async def get_matches_dashboard(
             "home": row.home_name,
             "away": row.away_name,
             "status": row.status,
-            "has_prediction": bool(row.has_prediction),
         }
 
         # Score (only if played/playing)
@@ -9870,6 +9880,38 @@ async def get_matches_dashboard(
             match_data["elapsed"] = row.elapsed
             if row.elapsed_extra is not None:
                 match_data["elapsed_extra"] = row.elapsed_extra
+
+        # Market odds (converted from decimal odds to implied probabilities)
+        if row.market_home is not None:
+            match_data["market"] = {
+                "home": round(1 / row.market_home, 3) if row.market_home > 0 else None,
+                "draw": round(1 / row.market_draw, 3) if row.market_draw and row.market_draw > 0 else None,
+                "away": round(1 / row.market_away, 3) if row.market_away and row.market_away > 0 else None,
+            }
+
+        # Model A prediction
+        if row.model_a_home is not None:
+            match_data["model_a"] = {
+                "home": round(row.model_a_home, 3),
+                "draw": round(row.model_a_draw, 3),
+                "away": round(row.model_a_away, 3),
+            }
+
+        # Shadow/Two-Stage prediction
+        if row.shadow_home is not None:
+            match_data["shadow"] = {
+                "home": round(row.shadow_home, 3),
+                "draw": round(row.shadow_draw, 3),
+                "away": round(row.shadow_away, 3),
+            }
+
+        # Sensor B prediction
+        if row.sensor_b_home is not None:
+            match_data["sensor_b"] = {
+                "home": round(row.sensor_b_home, 3),
+                "draw": round(row.sensor_b_draw, 3),
+                "away": round(row.sensor_b_away, 3),
+            }
 
         matches.append(match_data)
 

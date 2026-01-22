@@ -24,7 +24,6 @@ export const MATCH_STATUSES: readonly MatchStatus[] = [
 ] as const;
 
 export type PredictionPick = "home" | "draw" | "away";
-export type ModelType = "A" | "Shadow";
 
 export interface MatchScore {
   home: number;
@@ -36,14 +35,13 @@ export interface MatchElapsed {
   extra?: number;
 }
 
-export interface MatchPrediction {
-  model: ModelType;
-  pick: PredictionPick;
-  probs?: {
-    home: number;
-    draw: number;
-    away: number;
-  };
+/**
+ * Probability distribution for 1X2 predictions
+ */
+export interface ProbabilitySet {
+  home: number;
+  draw: number;
+  away: number;
 }
 
 export interface MatchSummary {
@@ -56,7 +54,14 @@ export interface MatchSummary {
   kickoffISO: string;
   score?: MatchScore;
   elapsed?: MatchElapsed;
-  prediction?: MatchPrediction;
+  /** Market implied probabilities (from frozen odds) */
+  market?: ProbabilitySet;
+  /** Model A prediction (production model) */
+  modelA?: ProbabilitySet;
+  /** Shadow/Two-Stage prediction (experimental) */
+  shadow?: ProbabilitySet;
+  /** Sensor B prediction (calibration diagnostic) */
+  sensorB?: ProbabilitySet;
 }
 
 /**

@@ -2,11 +2,38 @@
 
 import { useMemo } from "react";
 import { ColumnDef, VisibilityState } from "@tanstack/react-table";
-import { MatchSummary } from "@/lib/types";
+import { MatchSummary, ProbabilitySet } from "@/lib/types";
 import { DataTable } from "@/components/tables";
 import { ColumnOption } from "@/components/tables";
-import { Badge } from "@/components/ui/badge";
 import { StatusDot } from "./StatusDot";
+
+/**
+ * Cell component for displaying 1X2 probability distribution
+ * Shows pick with highest probability highlighted
+ */
+function ProbabilityCell({ probs }: { probs?: ProbabilitySet }) {
+  if (!probs) {
+    return <span className="text-muted-foreground text-xs">-</span>;
+  }
+
+  // Find the pick with highest probability
+  const maxProb = Math.max(probs.home, probs.draw, probs.away);
+  const pick = probs.home === maxProb ? "1" : probs.draw === maxProb ? "X" : "2";
+
+  return (
+    <div className="flex flex-col text-xs font-mono leading-tight">
+      <span className={probs.home === maxProb ? "text-foreground font-medium" : "text-muted-foreground"}>
+        1: {(probs.home * 100).toFixed(0)}%
+      </span>
+      <span className={probs.draw === maxProb ? "text-foreground font-medium" : "text-muted-foreground"}>
+        X: {(probs.draw * 100).toFixed(0)}%
+      </span>
+      <span className={probs.away === maxProb ? "text-foreground font-medium" : "text-muted-foreground"}>
+        2: {(probs.away * 100).toFixed(0)}%
+      </span>
+    </div>
+  );
+}
 
 interface MatchesTableProps {
   data: MatchSummary[];
@@ -32,8 +59,10 @@ export const MATCHES_COLUMN_OPTIONS: ColumnOption[] = [
   { id: "kickoffISO", label: "Kickoff", enableHiding: true },
   { id: "score", label: "Score", enableHiding: true },
   { id: "elapsed", label: "Elapsed", enableHiding: true },
-  { id: "prediction", label: "Prediction", enableHiding: true },
-  { id: "model", label: "Model", enableHiding: true },
+  { id: "market", label: "Market", enableHiding: true },
+  { id: "modelA", label: "Model A", enableHiding: true },
+  { id: "shadow", label: "Shadow", enableHiding: true },
+  { id: "sensorB", label: "Sensor B", enableHiding: true },
 ];
 
 /**
@@ -58,17 +87,18 @@ export function MatchesTable({
       {
         accessorKey: "status",
         header: "Status",
+        size: 100,
         cell: ({ row }) => <StatusDot status={row.original.status} />,
         enableSorting: true,
       },
       {
         id: "match",
         header: "Match",
+        size: 200,
         cell: ({ row }) => (
-          <div className="font-medium text-foreground">
-            {row.original.home}{" "}
-            <span className="text-muted-foreground">vs</span>{" "}
-            {row.original.away}
+          <div className="flex flex-col leading-tight">
+            <span className="font-medium text-foreground truncate">{row.original.home}</span>
+            <span className="text-muted-foreground text-sm truncate">{row.original.away}</span>
           </div>
         ),
         enableSorting: false,
@@ -76,8 +106,9 @@ export function MatchesTable({
       {
         accessorKey: "leagueName",
         header: "League",
+        size: 180,
         cell: ({ row }) => (
-          <span className="text-muted-foreground text-sm">
+          <span className="text-muted-foreground text-sm truncate block">
             {row.original.leagueName}
           </span>
         ),
@@ -86,6 +117,7 @@ export function MatchesTable({
       {
         accessorKey: "kickoffISO",
         header: "Kickoff",
+        size: 90,
         cell: ({ row }) => {
           const date = new Date(row.original.kickoffISO);
           return (
@@ -110,6 +142,7 @@ export function MatchesTable({
       {
         id: "score",
         header: "Score",
+        size: 70,
         cell: ({ row }) => {
           const score = row.original.score;
           if (!score) {
@@ -126,6 +159,7 @@ export function MatchesTable({
       {
         id: "elapsed",
         header: "Elapsed",
+        size: 70,
         cell: ({ row }) => {
           const elapsed = row.original.elapsed;
           if (!elapsed) {
@@ -140,52 +174,31 @@ export function MatchesTable({
         enableSorting: false,
       },
       {
-        id: "prediction",
-        header: "Prediction",
-        cell: ({ row }) => {
-          const prediction = row.original.prediction;
-          if (!prediction) {
-            return <span className="text-muted-foreground text-xs">-</span>;
-          }
-
-          const pickLabel =
-            prediction.pick === "home"
-              ? row.original.home.split(" ")[0]
-              : prediction.pick === "away"
-              ? row.original.away.split(" ")[0]
-              : "Draw";
-
-          const prob = prediction.probs
-            ? prediction.probs[prediction.pick]
-            : null;
-
-          return (
-            <Badge variant="secondary" className="text-xs font-normal">
-              {pickLabel}
-              {prob && (
-                <span className="ml-1 text-muted-foreground">
-                  {(prob * 100).toFixed(0)}%
-                </span>
-              )}
-            </Badge>
-          );
-        },
+        id: "market",
+        header: "Market",
+        size: 90,
+        cell: ({ row }) => <ProbabilityCell probs={row.original.market} />,
         enableSorting: false,
       },
       {
-        id: "model",
-        header: "Model",
-        cell: ({ row }) => {
-          const prediction = row.original.prediction;
-          if (!prediction) {
-            return <span className="text-muted-foreground text-xs">-</span>;
-          }
-          return (
-            <span className="text-xs text-muted-foreground font-mono">
-              {prediction.model}
-            </span>
-          );
-        },
+        id: "modelA",
+        header: "Model A",
+        size: 90,
+        cell: ({ row }) => <ProbabilityCell probs={row.original.modelA} />,
+        enableSorting: false,
+      },
+      {
+        id: "shadow",
+        header: "Shadow",
+        size: 90,
+        cell: ({ row }) => <ProbabilityCell probs={row.original.shadow} />,
+        enableSorting: false,
+      },
+      {
+        id: "sensorB",
+        header: "Sensor B",
+        size: 90,
+        cell: ({ row }) => <ProbabilityCell probs={row.original.sensorB} />,
         enableSorting: false,
       },
     ],

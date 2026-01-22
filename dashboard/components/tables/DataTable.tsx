@@ -198,7 +198,7 @@ function DataTableInner<TData>(
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Fixed header - outside scroll area */}
       <div className="flex-shrink-0 bg-background border-b border-border">
-        <table className="w-full border-collapse text-sm">
+        <table className="w-full border-collapse text-sm table-fixed">
           <thead>
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
@@ -212,6 +212,7 @@ function DataTableInner<TData>(
                   return (
                     <th
                       key={header.id}
+                      style={{ width: header.getSize() !== 150 ? header.getSize() : undefined }}
                       className="px-3 pt-3 pb-2 text-left font-semibold text-muted-foreground text-sm align-bottom"
                     >
                       {canSort ? (
@@ -249,8 +250,8 @@ function DataTableInner<TData>(
       </div>
 
       {/* Scrollable body */}
-      <div className="flex-1 overflow-auto mx-1">
-        <table className="w-full border-collapse text-sm">
+      <div className="flex-1 overflow-auto">
+        <table className="w-full border-collapse text-sm table-fixed">
           <tbody ref={tableBodyRef} role="rowgroup">
             {rows.map((row, rowIndex) => {
               const isSelected =
@@ -284,7 +285,11 @@ function DataTableInner<TData>(
                   )}
                 >
                   {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id} className="px-3 py-2.5">
+                    <td
+                      key={cell.id}
+                      style={{ width: cell.column.getSize() !== 150 ? cell.column.getSize() : undefined }}
+                      className="px-3 py-2.5"
+                    >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </td>
                   ))}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { MatchSummary } from "@/lib/types";
+import { MatchSummary, ProbabilitySet } from "@/lib/types";
 import { useIsDesktop } from "@/lib/hooks";
 import { DetailDrawer } from "@/components/shell";
 import {
@@ -15,6 +15,60 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { StatusDot } from "./StatusDot";
 import { Calendar, TrendingUp, Radio, Info } from "lucide-react";
+
+/** Section for displaying a single prediction model */
+function PredictionSection({
+  label,
+  probs,
+  home,
+  away,
+}: {
+  label: string;
+  probs: ProbabilitySet;
+  home: string;
+  away: string;
+}) {
+  const maxProb = Math.max(probs.home, probs.draw, probs.away);
+  const pick =
+    probs.home === maxProb ? home : probs.draw === maxProb ? "Draw" : away;
+
+  return (
+    <div className="space-y-2 pb-3 border-b border-border last:border-b-0">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium text-foreground">{label}</span>
+        <Badge variant="secondary" className="text-xs">
+          {pick}
+        </Badge>
+      </div>
+      <div className="space-y-1">
+        <div className="flex justify-between text-xs">
+          <span className={probs.home === maxProb ? "text-foreground" : "text-muted-foreground"}>
+            {home}
+          </span>
+          <span className={probs.home === maxProb ? "text-foreground font-medium" : "text-muted-foreground"}>
+            {(probs.home * 100).toFixed(0)}%
+          </span>
+        </div>
+        <div className="flex justify-between text-xs">
+          <span className={probs.draw === maxProb ? "text-foreground" : "text-muted-foreground"}>
+            Draw
+          </span>
+          <span className={probs.draw === maxProb ? "text-foreground font-medium" : "text-muted-foreground"}>
+            {(probs.draw * 100).toFixed(0)}%
+          </span>
+        </div>
+        <div className="flex justify-between text-xs">
+          <span className={probs.away === maxProb ? "text-foreground" : "text-muted-foreground"}>
+            {away}
+          </span>
+          <span className={probs.away === maxProb ? "text-foreground font-medium" : "text-muted-foreground"}>
+            {(probs.away * 100).toFixed(0)}%
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface MatchDetailDrawerProps {
   match: MatchSummary | null;
@@ -93,52 +147,53 @@ function MatchTabContent({ match, activeTab }: { match: MatchSummary; activeTab:
 
       {/* Predictions Tab */}
       {activeTab === "predictions" && (
-        <div className="bg-surface rounded-lg p-4">
-          {match.prediction ? (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-medium">Model {match.prediction.model}</span>
-              </div>
-
-              <div className="text-center">
-                <div className="text-lg font-semibold text-primary capitalize">
-                  {match.prediction.pick === "home"
-                    ? match.home
-                    : match.prediction.pick === "away"
-                    ? match.away
-                    : "Draw"}
-                </div>
-                <div className="text-xs text-muted-foreground">Predicted winner</div>
-              </div>
-
-              {match.prediction.probs && (
-                <div className="space-y-2 pt-3 border-t border-border">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">{match.home}</span>
-                    <span className="text-foreground font-medium">
-                      {(match.prediction.probs.home * 100).toFixed(0)}%
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Draw</span>
-                    <span className="text-foreground font-medium">
-                      {(match.prediction.probs.draw * 100).toFixed(0)}%
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">{match.away}</span>
-                    <span className="text-foreground font-medium">
-                      {(match.prediction.probs.away * 100).toFixed(0)}%
-                    </span>
-                  </div>
-                </div>
+        <div className="bg-surface rounded-lg p-4 space-y-4">
+          {match.modelA || match.shadow || match.sensorB || match.market ? (
+            <>
+              {/* Model A */}
+              {match.modelA && (
+                <PredictionSection
+                  label="Model A"
+                  probs={match.modelA}
+                  home={match.home}
+                  away={match.away}
+                />
               )}
-            </div>
+
+              {/* Shadow */}
+              {match.shadow && (
+                <PredictionSection
+                  label="Shadow"
+                  probs={match.shadow}
+                  home={match.home}
+                  away={match.away}
+                />
+              )}
+
+              {/* Sensor B */}
+              {match.sensorB && (
+                <PredictionSection
+                  label="Sensor B"
+                  probs={match.sensorB}
+                  home={match.home}
+                  away={match.away}
+                />
+              )}
+
+              {/* Market */}
+              {match.market && (
+                <PredictionSection
+                  label="Market"
+                  probs={match.market}
+                  home={match.home}
+                  away={match.away}
+                />
+              )}
+            </>
           ) : (
             <div className="text-center py-8">
               <TrendingUp className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">No prediction available</p>
+              <p className="text-sm text-muted-foreground">No predictions available</p>
             </div>
           )}
         </div>

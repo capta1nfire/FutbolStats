@@ -4,12 +4,12 @@
  * Types for the Predictions section
  */
 
-import { ModelType } from "./match";
-
 export type PredictionStatus = "generated" | "missing" | "frozen" | "evaluated";
 
-// Re-export ModelType for convenience
-export type { ModelType };
+/**
+ * Model types for predictions
+ */
+export type ModelType = "A" | "Shadow";
 
 export type PickOutcome = "home" | "draw" | "away";
 

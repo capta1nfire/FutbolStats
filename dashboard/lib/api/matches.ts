@@ -5,7 +5,7 @@
  * Designed to be resilient to partial or malformed responses.
  */
 
-import { MatchSummary, MatchStatus } from "@/lib/types";
+import { MatchSummary, MatchStatus, ProbabilitySet } from "@/lib/types";
 
 /**
  * Expected response structure from backend
@@ -145,17 +145,40 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
     };
   }
 
-  // Optional: prediction (backend only sends has_prediction for now)
-  // Full prediction details would come from a detail endpoint
-  if (raw.has_prediction === true) {
-    // Placeholder - real prediction data would come from detail view
-    result.prediction = {
-      model: "A",
-      pick: "home", // Placeholder, actual pick unknown at list level
-    };
-  }
+  // Optional: Market implied probabilities
+  const market = parseProbabilitySet(raw.market);
+  if (market) result.market = market;
+
+  // Optional: Model A prediction
+  const modelA = parseProbabilitySet(raw.model_a);
+  if (modelA) result.modelA = modelA;
+
+  // Optional: Shadow/Two-Stage prediction
+  const shadow = parseProbabilitySet(raw.shadow);
+  if (shadow) result.shadow = shadow;
+
+  // Optional: Sensor B prediction
+  const sensorB = parseProbabilitySet(raw.sensor_b);
+  if (sensorB) result.sensorB = sensorB;
 
   return result;
+}
+
+/**
+ * Parse probability set from raw object
+ */
+function parseProbabilitySet(raw: unknown): ProbabilitySet | null {
+  if (!isObject(raw)) return null;
+
+  const home = raw.home;
+  const draw = raw.draw;
+  const away = raw.away;
+
+  if (typeof home !== "number" || typeof draw !== "number" || typeof away !== "number") {
+    return null;
+  }
+
+  return { home, draw, away };
 }
 
 /**
