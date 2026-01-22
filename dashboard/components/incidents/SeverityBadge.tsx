@@ -1,47 +1,47 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
-import { AlertTriangle, AlertCircle, Info } from "lucide-react";
 import { IncidentSeverity } from "@/lib/types";
+import { SeverityBars, SeverityLevel } from "@/components/ui/severity-bars";
 import { cn } from "@/lib/utils";
 
 interface SeverityBadgeProps {
   severity: IncidentSeverity;
+  /** Show text label next to bars */
+  showLabel?: boolean;
   className?: string;
 }
 
-const severityConfig: Record<
-  IncidentSeverity,
-  { label: string; icon: typeof AlertTriangle; className: string }
-> = {
-  critical: {
-    label: "Critical",
-    icon: AlertTriangle,
-    className: "bg-red-500/20 text-red-400 border-red-500/30",
-  },
-  warning: {
-    label: "Warning",
-    icon: AlertCircle,
-    className: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-  },
-  info: {
-    label: "Info",
-    icon: Info,
-    className: "bg-blue-500/20 text-blue-400 border-blue-500/30",
-  },
+/** Map incident severity to SeverityBars level */
+const severityToLevel: Record<IncidentSeverity, SeverityLevel> = {
+  info: 1,      // Low - green
+  warning: 2,   // Medium - yellow
+  critical: 4,  // Very High - red
 };
 
-export function SeverityBadge({ severity, className }: SeverityBadgeProps) {
-  const config = severityConfig[severity];
-  const Icon = config.icon;
+/** Map incident severity to display label */
+const severityLabels: Record<IncidentSeverity, string> = {
+  info: "Info",
+  warning: "Warning",
+  critical: "Critical",
+};
+
+/**
+ * Incident severity indicator using UniFi-style bars
+ */
+export function SeverityBadge({
+  severity,
+  showLabel = true,
+  className,
+}: SeverityBadgeProps) {
+  const level = severityToLevel[severity];
+  const label = severityLabels[severity];
 
   return (
-    <Badge
-      variant="outline"
-      className={cn("gap-1 font-medium", config.className, className)}
-    >
-      <Icon className="h-3 w-3" />
-      {config.label}
-    </Badge>
+    <SeverityBars
+      level={level}
+      label={label}
+      showLabel={showLabel}
+      className={cn(className)}
+    />
   );
 }
