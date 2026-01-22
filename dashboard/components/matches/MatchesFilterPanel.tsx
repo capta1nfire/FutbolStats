@@ -1,18 +1,27 @@
 "use client";
 
 import { useMemo } from "react";
-import { Circle, Trophy, Calendar } from "lucide-react";
+import { Trophy, Calendar } from "lucide-react";
 import { FilterPanel, FilterGroup } from "@/components/shell";
-import { MatchStatus } from "@/lib/types";
-import { getStatusCountsMock, getLeaguesMock } from "@/lib/mocks";
+import { getLeaguesMock } from "@/lib/mocks";
+import { MatchesViewTabs, MatchesView } from "./MatchesViewTabs";
+
+/** Time range options for filtering */
+export type TimeRange = "24h" | "48h" | "7d";
 
 interface MatchesFilterPanelProps {
   collapsed: boolean;
   onToggleCollapse: () => void;
-  selectedStatuses: MatchStatus[];
+  /** Current view: upcoming or finished */
+  activeView: MatchesView;
+  /** Callback when view changes */
+  onViewChange: (view: MatchesView) => void;
+  /** Selected time range */
+  selectedTimeRange: TimeRange;
+  /** Callback when time range changes */
+  onTimeRangeChange: (range: TimeRange) => void;
   selectedLeagues: string[];
   searchValue: string;
-  onStatusChange: (status: MatchStatus, checked: boolean) => void;
   onLeagueChange: (league: string, checked: boolean) => void;
   onSearchChange: (value: string) => void;
   /** Callback for "Customize Columns" link click */
@@ -26,49 +35,58 @@ interface MatchesFilterPanelProps {
 export function MatchesFilterPanel({
   collapsed,
   onToggleCollapse,
-  selectedStatuses,
+  activeView,
+  onViewChange,
+  selectedTimeRange,
+  onTimeRangeChange,
   selectedLeagues,
   searchValue,
-  onStatusChange,
   onLeagueChange,
   onSearchChange,
   onCustomizeColumnsClick,
   showCustomizeColumns = false,
   customizeColumnsOpen = false,
 }: MatchesFilterPanelProps) {
-  const statusCounts = useMemo(() => getStatusCountsMock(), []);
   const leagues = useMemo(() => getLeaguesMock(), []);
+
+  // Time range labels depend on active view
+  const timeRangeLabels = useMemo(() => {
+    if (activeView === "upcoming") {
+      return {
+        "24h": "Next 24 hours",
+        "48h": "Next 48 hours",
+        "7d": "Next 7 days",
+      };
+    } else {
+      return {
+        "24h": "Last 24 hours",
+        "48h": "Last 48 hours",
+        "7d": "Last 7 days",
+      };
+    }
+  }, [activeView]);
 
   const filterGroups: FilterGroup[] = useMemo(
     () => [
       {
-        id: "status",
-        label: "Status",
-        icon: <Circle className="h-4 w-4" strokeWidth={1.5} />,
+        id: "timeRange",
+        label: "Time Range",
+        icon: <Calendar className="h-4 w-4" strokeWidth={1.5} />,
         options: [
           {
-            id: "scheduled",
-            label: "Scheduled",
-            count: statusCounts.scheduled,
-            checked: selectedStatuses.includes("scheduled"),
+            id: "24h",
+            label: timeRangeLabels["24h"],
+            checked: selectedTimeRange === "24h",
           },
           {
-            id: "live",
-            label: "Live",
-            count: statusCounts.live,
-            checked: selectedStatuses.includes("live"),
+            id: "48h",
+            label: timeRangeLabels["48h"],
+            checked: selectedTimeRange === "48h",
           },
           {
-            id: "ht",
-            label: "Half Time",
-            count: statusCounts.ht,
-            checked: selectedStatuses.includes("ht"),
-          },
-          {
-            id: "ft",
-            label: "Full Time",
-            count: statusCounts.ft,
-            checked: selectedStatuses.includes("ft"),
+            id: "7d",
+            label: timeRangeLabels["7d"],
+            checked: selectedTimeRange === "7d",
           },
         ],
       },
@@ -82,18 +100,8 @@ export function MatchesFilterPanel({
           checked: selectedLeagues.includes(league),
         })),
       },
-      {
-        id: "date",
-        label: "Date Range",
-        icon: <Calendar className="h-4 w-4" strokeWidth={1.5} />,
-        options: [
-          { id: "today", label: "Today", checked: false },
-          { id: "tomorrow", label: "Tomorrow", checked: false },
-          { id: "week", label: "This Week", checked: false },
-        ],
-      },
     ],
-    [statusCounts, leagues, selectedStatuses, selectedLeagues]
+    [leagues, selectedLeagues, selectedTimeRange, timeRangeLabels]
   );
 
   const handleFilterChange = (
@@ -101,19 +109,25 @@ export function MatchesFilterPanel({
     optionId: string,
     checked: boolean
   ) => {
-    if (groupId === "status") {
-      onStatusChange(optionId as MatchStatus, checked);
+    if (groupId === "timeRange" && checked) {
+      // Time range is single-select (radio behavior)
+      onTimeRangeChange(optionId as TimeRange);
     } else if (groupId === "league") {
       onLeagueChange(optionId, checked);
     }
-    // Date range filter not implemented in Phase 0
   };
+
+  // Render tabs in header content slot
+  const headerContent = (
+    <MatchesViewTabs activeView={activeView} onViewChange={onViewChange} />
+  );
 
   return (
     <FilterPanel
       title="Matches"
       collapsed={collapsed}
       onToggleCollapse={onToggleCollapse}
+      headerContent={headerContent}
       groups={filterGroups}
       onFilterChange={handleFilterChange}
       onSearchChange={onSearchChange}

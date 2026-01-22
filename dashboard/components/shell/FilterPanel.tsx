@@ -48,6 +48,8 @@ interface FilterPanelProps {
   showCustomizeColumns?: boolean;
   /** Whether CustomizeColumnsPanel is currently open (hides collapse button) */
   customizeColumnsOpen?: boolean;
+  /** Optional content to render below title, before search (e.g., view tabs) */
+  headerContent?: ReactNode;
   /** Optional content to render below search (e.g., quick filters) */
   quickFilterContent?: ReactNode;
   /** Section title to display in header (e.g., "Matches", "Jobs") */
@@ -64,6 +66,7 @@ export function FilterPanel({
   onCustomizeColumnsClick,
   showCustomizeColumns = false,
   customizeColumnsOpen = false,
+  headerContent,
   quickFilterContent,
   title = "Filters",
 }: FilterPanelProps) {
@@ -131,6 +134,13 @@ export function FilterPanel({
           </Button>
         )}
       </div>
+
+      {/* Header content slot (e.g., view tabs) */}
+      {headerContent && (
+        <div className="px-3 pb-3">
+          {headerContent}
+        </div>
+      )}
 
       {/* Search */}
       <div className="p-3">

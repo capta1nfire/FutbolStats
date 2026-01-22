@@ -3,7 +3,7 @@
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMatchesApi, useMatch, useColumnVisibility, usePageSize } from "@/lib/hooks";
-import { MatchSummary, MatchStatus, MatchFilters, MATCH_STATUSES } from "@/lib/types";
+import { MatchSummary, MatchFilters } from "@/lib/types";
 import { getLeaguesMock, getMatchesMockSync } from "@/lib/mocks";
 import {
   MatchesTable,
@@ -11,6 +11,8 @@ import {
   MatchDetailDrawer,
   MATCHES_COLUMN_OPTIONS,
   MATCHES_DEFAULT_VISIBILITY,
+  type MatchesView,
+  type TimeRange,
 } from "@/components/matches";
 import { CustomizeColumnsPanel, Pagination } from "@/components/tables";
 import {
@@ -22,6 +24,22 @@ import {
 import { Loader } from "@/components/ui/loader";
 
 const BASE_PATH = "/matches";
+
+/** Valid view values */
+const VALID_VIEWS: MatchesView[] = ["upcoming", "finished"];
+
+/** Valid time range values */
+const VALID_TIME_RANGES: TimeRange[] = ["24h", "48h", "7d"];
+
+/** Convert time range to hours for API */
+function timeRangeToHours(range: TimeRange): number {
+  switch (range) {
+    case "24h": return 24;
+    case "48h": return 48;
+    case "7d": return 168;
+    default: return 168;
+  }
+}
 
 /**
  * Matches Page Content
@@ -40,10 +58,25 @@ function MatchesPageContent() {
     () => parseNumericId(searchParams.get("id")),
     [searchParams]
   );
-  const selectedStatuses = useMemo(
-    () => parseArrayParam<MatchStatus>(searchParams, "status", MATCH_STATUSES),
-    [searchParams]
-  );
+
+  // Parse view from URL (default: upcoming)
+  const activeView = useMemo((): MatchesView => {
+    const viewParam = searchParams.get("view");
+    if (viewParam && VALID_VIEWS.includes(viewParam as MatchesView)) {
+      return viewParam as MatchesView;
+    }
+    return "upcoming";
+  }, [searchParams]);
+
+  // Parse time range from URL (default: 7d)
+  const selectedTimeRange = useMemo((): TimeRange => {
+    const rangeParam = searchParams.get("range");
+    if (rangeParam && VALID_TIME_RANGES.includes(rangeParam as TimeRange)) {
+      return rangeParam as TimeRange;
+    }
+    return "7d";
+  }, [searchParams]);
+
   const selectedLeagues = useMemo(
     () => parseArrayParam<string>(searchParams, "league", availableLeagues),
     [searchParams, availableLeagues]
@@ -82,12 +115,11 @@ function MatchesPageContent() {
 
   // Construct filters for query
   const filters: MatchFilters = useMemo(() => ({
-    status: selectedStatuses.length > 0 ? selectedStatuses : undefined,
     leagues: selectedLeagues.length > 0 ? selectedLeagues : undefined,
     search: searchValue || undefined,
-  }), [selectedStatuses, selectedLeagues, searchValue]);
+  }), [selectedLeagues, searchValue]);
 
-  // Fetch data from API with mock fallback
+  // Fetch data from API with view-specific status
   const {
     matches: apiMatches,
     pagination,
@@ -96,7 +128,9 @@ function MatchesPageContent() {
     error,
     refetch,
   } = useMatchesApi({
-    status: selectedStatuses.length > 0 ? selectedStatuses : undefined,
+    // Map view to backend status
+    status: activeView === "upcoming" ? ["scheduled"] : ["ft"],
+    hours: timeRangeToHours(selectedTimeRange),
     page: currentPage,
     limit: pageSize,
   });
@@ -114,20 +148,22 @@ function MatchesPageContent() {
   const buildUrl = useCallback(
     (overrides: {
       id?: number | null;
-      status?: MatchStatus[];
+      view?: MatchesView;
+      range?: TimeRange;
       league?: string[];
       q?: string;
     }) => {
       const params = buildSearchParams({
         id: overrides.id === undefined ? selectedMatchId : overrides.id,
-        status: overrides.status ?? selectedStatuses,
+        view: overrides.view ?? activeView,
+        range: overrides.range ?? selectedTimeRange,
         league: overrides.league ?? selectedLeagues,
         q: overrides.q ?? searchValue,
       });
       const search = params.toString();
       return `${BASE_PATH}${search ? `?${search}` : ""}`;
     },
-    [selectedMatchId, selectedStatuses, selectedLeagues, searchValue]
+    [selectedMatchId, activeView, selectedTimeRange, selectedLeagues, searchValue]
   );
 
   // Handle row click - update URL with router.replace (no history entry)
@@ -143,14 +179,22 @@ function MatchesPageContent() {
     router.replace(buildUrl({ id: null }), { scroll: false });
   }, [router, buildUrl]);
 
-  // Handle filter changes - reset page to 1 when filters change (P1 auditor check)
-  const handleStatusChange = useCallback(
-    (status: MatchStatus, checked: boolean) => {
-      const newStatuses = toggleArrayValue(selectedStatuses, status, checked);
-      setCurrentPage(1); // Reset pagination on filter change
-      router.replace(buildUrl({ status: newStatuses }), { scroll: false });
+  // Handle view change - reset page to 1
+  const handleViewChange = useCallback(
+    (view: MatchesView) => {
+      setCurrentPage(1);
+      router.replace(buildUrl({ view, id: null }), { scroll: false });
     },
-    [selectedStatuses, router, buildUrl]
+    [router, buildUrl]
+  );
+
+  // Handle time range change - reset page to 1
+  const handleTimeRangeChange = useCallback(
+    (range: TimeRange) => {
+      setCurrentPage(1);
+      router.replace(buildUrl({ range }), { scroll: false });
+    },
+    [router, buildUrl]
   );
 
   const handleLeagueChange = useCallback(
@@ -196,10 +240,12 @@ function MatchesPageContent() {
       <MatchesFilterPanel
         collapsed={leftRailCollapsed}
         onToggleCollapse={handleLeftRailToggle}
-        selectedStatuses={selectedStatuses}
+        activeView={activeView}
+        onViewChange={handleViewChange}
+        selectedTimeRange={selectedTimeRange}
+        onTimeRangeChange={handleTimeRangeChange}
         selectedLeagues={selectedLeagues}
         searchValue={searchValue}
-        onStatusChange={handleStatusChange}
         onLeagueChange={handleLeagueChange}
         onSearchChange={handleSearchChange}
         showCustomizeColumns={true}
@@ -274,12 +320,12 @@ function MatchesLoading() {
  * Matches Page
  *
  * Master-detail pattern with:
- * - FilterPanel (collapsible, left)
+ * - FilterPanel (collapsible, left) with Upcoming/Finished tabs
  * - DataTable (center)
  * - DetailDrawer (overlay, right, no reflow)
  *
  * URL sync (full state):
- * - Canonical: /matches?id=123&status=live&status=ft&league=Premier%20League&q=arsenal
+ * - Canonical: /matches?view=upcoming&range=7d&id=123&league=Premier%20League&q=arsenal
  * - Uses router.replace with scroll:false
  */
 export default function MatchesPage() {
