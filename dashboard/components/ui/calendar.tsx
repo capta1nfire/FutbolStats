@@ -42,6 +42,9 @@ function Calendar({
       formatters={{
         formatMonthDropdown: (date) =>
           date.toLocaleString("default", { month: "short" }),
+        // Show only the first letter of weekday names (M, T, W, T, F, S, S)
+        formatWeekdayName: (date) =>
+          date.toLocaleString("default", { weekday: "narrow" }),
         ...formatters,
       }}
       classNames={{

@@ -113,7 +113,7 @@ export function CustomizeColumnsPanel({
   return (
     <aside
       className={cn(
-        "w-[200px] border-r border-border bg-sidebar flex flex-col shrink-0",
+        "w-[200px] border-r border-border bg-sidebar flex flex-col shrink-0 overflow-hidden",
         className
       )}
     >
@@ -148,7 +148,8 @@ export function CustomizeColumnsPanel({
       </div>
 
       {/* Column list with scroll */}
-      <ScrollArea className="flex-1">
+      {/* min-h-0 is the flexbox trick to allow shrinking below content size */}
+      <ScrollArea className="flex-1 min-h-0">
         <div className="px-3 py-2 space-y-0.5">
           {hideableColumns.map((column) => {
             const isVisible = columnVisibility[column.id] !== false;
@@ -174,20 +175,24 @@ export function CustomizeColumnsPanel({
         </div>
       </ScrollArea>
 
-      {/* Footer: Restore + Done (UniFi style - text links, same height as FilterPanel footer) */}
-      <div className="px-3 py-3 flex items-center justify-between">
-        <button
-          onClick={onRestore}
-          className="text-sm font-medium text-primary hover:text-primary-hover transition-colors"
-        >
-          Restore
-        </button>
-        <button
-          onClick={onDone}
-          className="text-sm font-semibold text-primary hover:text-primary-hover transition-colors"
-        >
-          Done
-        </button>
+      {/* Footer: Restore + Done - same height as table pagination (py-4 + h-8 content) */}
+      <div className="px-4 py-4 flex items-center justify-between shadow-elevation-up bg-sidebar shrink-0 relative z-10">
+        <div className="h-8 flex items-center">
+          <button
+            onClick={onRestore}
+            className="text-sm font-medium text-primary hover:text-primary-hover transition-colors"
+          >
+            Restore
+          </button>
+        </div>
+        <div className="h-8 flex items-center">
+          <button
+            onClick={onDone}
+            className="text-sm font-semibold text-primary hover:text-primary-hover transition-colors"
+          >
+            Done
+          </button>
+        </div>
       </div>
     </aside>
   );

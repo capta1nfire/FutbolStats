@@ -30,10 +30,24 @@ const BASE_PATH = "/matches";
 const VALID_VIEWS: MatchesView[] = ["upcoming", "finished", "calendar"];
 
 /** Valid time range values */
-const VALID_TIME_RANGES: TimeRange[] = ["24h", "48h", "7d"];
+const VALID_TIME_RANGES: TimeRange[] = ["today", "24h", "48h", "7d"];
 
 /** Convert time range to hours for API */
-function timeRangeToHours(range: TimeRange): number {
+function timeRangeToHours(range: TimeRange, view: MatchesView): number {
+  if (range === "today") {
+    const now = new Date();
+    if (view === "upcoming") {
+      // Hours remaining until end of today
+      const endOfDay = new Date(now);
+      endOfDay.setHours(23, 59, 59, 999);
+      return Math.ceil((endOfDay.getTime() - now.getTime()) / (1000 * 60 * 60)) || 1;
+    } else {
+      // Hours since start of today (for finished view)
+      const startOfDay = new Date(now);
+      startOfDay.setHours(0, 0, 0, 0);
+      return Math.ceil((now.getTime() - startOfDay.getTime()) / (1000 * 60 * 60)) || 1;
+    }
+  }
   switch (range) {
     case "24h": return 24;
     case "48h": return 48;
@@ -162,7 +176,7 @@ function MatchesPageContent() {
       const diffMs = customDateRange.to.getTime() - customDateRange.from.getTime();
       return Math.ceil(diffMs / (1000 * 60 * 60));
     }
-    return timeRangeToHours(selectedTimeRange);
+    return timeRangeToHours(selectedTimeRange, activeView);
   }, [activeView, customDateRange, selectedTimeRange]);
 
   // Fetch data from API with view-specific status
@@ -299,9 +313,8 @@ function MatchesPageContent() {
     setCustomizeColumnsOpen(true);
   }, []);
 
-  // Handle "Done" button - collapses entire Left Rail (UniFi behavior)
+  // Handle "Done" button - closes CustomizeColumnsPanel only
   const handleCustomizeColumnsDone = useCallback(() => {
-    setLeftRailCollapsed(true);
     setCustomizeColumnsOpen(false);
   }, []);
 
@@ -346,7 +359,7 @@ function MatchesPageContent() {
         onColumnVisibilityChange={setColumnVisible}
         onRestore={resetToDefault}
         onDone={handleCustomizeColumnsDone}
-        onCollapse={handleLeftRailToggle}
+        onCollapse={handleCustomizeColumnsDone}
       />
 
       {/* Main content: Table */}

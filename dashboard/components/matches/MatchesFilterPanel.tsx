@@ -8,7 +8,7 @@ import { DateRangePicker, DateRangeValue } from "./DateRangePicker";
 import { MatchSummary, MatchStatus } from "@/lib/types";
 
 /** Time range options for filtering */
-export type TimeRange = "24h" | "48h" | "7d";
+export type TimeRange = "today" | "24h" | "48h" | "7d";
 
 /** Status display labels */
 const STATUS_LABELS: Record<MatchStatus, string> = {
@@ -73,50 +73,31 @@ export function MatchesFilterPanel({
   showCustomizeColumns = false,
   customizeColumnsOpen = false,
 }: MatchesFilterPanelProps) {
-  // Calculate counts from current matches (intelligent filters)
-  const { leagueCounts, statusCounts } = useMemo(() => {
-    const leagueCounts: Record<string, number> = {};
-    const statusCounts: Record<MatchStatus, number> = {
-      scheduled: 0,
-      live: 0,
-      ht: 0,
-      ft: 0,
-      postponed: 0,
-      cancelled: 0,
-    };
-
+  // Get unique leagues from current page matches
+  // Note: These are from the current page only, not the full dataset
+  const availableLeagues = useMemo(() => {
+    const leagues = new Set<string>();
     for (const match of matches) {
-      // Count leagues
-      leagueCounts[match.leagueName] = (leagueCounts[match.leagueName] || 0) + 1;
-      // Count statuses
-      statusCounts[match.status]++;
+      leagues.add(match.leagueName);
     }
-
-    return { leagueCounts, statusCounts };
+    return Array.from(leagues).sort();
   }, [matches]);
 
-  // Get unique leagues from matches (only leagues with data)
-  const availableLeagues = useMemo(() => {
-    return Object.keys(leagueCounts).sort();
-  }, [leagueCounts]);
-
-  // Get statuses that have matches (only for calendar view)
-  const availableStatuses = useMemo(() => {
-    return (Object.keys(statusCounts) as MatchStatus[]).filter(
-      (status) => statusCounts[status] > 0
-    );
-  }, [statusCounts]);
+  // All possible statuses for calendar view filter
+  const allStatuses: MatchStatus[] = ["scheduled", "live", "ht", "ft", "postponed", "cancelled"];
 
   // Time range labels depend on active view
   const timeRangeLabels = useMemo(() => {
     if (activeView === "upcoming") {
       return {
+        "today": "Today",
         "24h": "Next 24 hours",
         "48h": "Next 48 hours",
         "7d": "Next 7 days",
       };
     } else {
       return {
+        "today": "Today",
         "24h": "Last 24 hours",
         "48h": "Last 48 hours",
         "7d": "Last 7 days",
@@ -136,6 +117,11 @@ export function MatchesFilterPanel({
         icon: <Calendar className="h-4 w-4" strokeWidth={1.5} />,
         options: [
           {
+            id: "today",
+            label: timeRangeLabels["today"],
+            checked: selectedTimeRange === "today",
+          },
+          {
             id: "24h",
             label: timeRangeLabels["24h"],
             checked: selectedTimeRange === "24h",
@@ -154,22 +140,23 @@ export function MatchesFilterPanel({
       });
     }
 
-    // Status filter (only for calendar view, only statuses with matches)
-    if (activeView === "calendar" && availableStatuses.length > 0) {
+    // Status filter (only for calendar view)
+    // Shows all statuses without counts to avoid confusion with paginated data
+    if (activeView === "calendar") {
       groups.push({
         id: "status",
         label: "Status",
         icon: <Activity className="h-4 w-4" strokeWidth={1.5} />,
-        options: availableStatuses.map((status) => ({
+        options: allStatuses.map((status) => ({
           id: status,
           label: STATUS_LABELS[status],
-          count: statusCounts[status],
           checked: selectedStatuses.includes(status),
         })),
       });
     }
 
-    // League filter (only leagues with matches)
+    // League filter
+    // Shows leagues from current page without counts to avoid confusion
     if (availableLeagues.length > 0) {
       groups.push({
         id: "league",
@@ -178,7 +165,6 @@ export function MatchesFilterPanel({
         options: availableLeagues.map((league) => ({
           id: league,
           label: league,
-          count: leagueCounts[league],
           checked: selectedLeagues.includes(league),
         })),
       });
@@ -187,10 +173,8 @@ export function MatchesFilterPanel({
     return groups;
   }, [
     activeView,
+    allStatuses,
     availableLeagues,
-    availableStatuses,
-    leagueCounts,
-    statusCounts,
     selectedLeagues,
     selectedStatuses,
     selectedTimeRange,

@@ -117,8 +117,9 @@ export function FilterPanel({
   }
 
   // Expanded state: full filter panel (277px matches UniFi Left Rail width)
+  // overflow-hidden ensures flex-col works and footer stays at bottom
   return (
-    <aside className="w-[277px] shrink-0 border-r border-border bg-sidebar flex flex-col transition-smooth">
+    <aside className="w-[277px] shrink-0 border-r border-border bg-sidebar flex flex-col overflow-hidden transition-smooth">
       {/* Header - collapse button hidden when CustomizeColumnsPanel is open */}
       <div className="h-12 flex items-center justify-between px-3">
         <span className="text-sm font-semibold text-foreground">{title}</span>
@@ -159,7 +160,8 @@ export function FilterPanel({
       )}
 
       {/* Filter groups - render only on client to avoid Radix ID hydration mismatch */}
-      <ScrollArea className="flex-1">
+      {/* min-h-0 is the flexbox trick to allow shrinking below content size */}
+      <ScrollArea className="flex-1 min-h-0">
         {!mounted ? (
           // SSR/initial render: show skeleton placeholders
           <div className="px-3 space-y-4 py-3">
@@ -217,15 +219,17 @@ export function FilterPanel({
         )}
       </ScrollArea>
 
-      {/* Footer with Customize Columns link (UniFi style) */}
+      {/* Footer with Customize Columns link - same height as table pagination (py-4 + h-8 content) */}
       {showCustomizeColumns && (
-        <div className="px-3 py-3 flex items-center">
-          <button
-            onClick={onCustomizeColumnsClick}
-            className="text-sm font-medium text-primary hover:text-primary-hover transition-colors"
-          >
-            Customize Columns
-          </button>
+        <div className="px-4 py-4 flex items-center shadow-elevation-up bg-sidebar shrink-0 relative z-10">
+          <div className="h-8 flex items-center">
+            <button
+              onClick={onCustomizeColumnsClick}
+              className="text-sm font-medium text-primary hover:text-primary-hover transition-colors"
+            >
+              Customize Columns
+            </button>
+          </div>
         </div>
       )}
     </aside>

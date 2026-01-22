@@ -204,12 +204,15 @@
     transition: all 150ms ease-in-out;
   }
 
-  /* UniFi-style shadow for elevated surfaces (TopBar, Drawer) */
+  /* UniFi-style shadow for elevated surfaces (TopBar, Drawer, Footers) */
   .shadow-elevation-down {
-    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.375);
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.28);
+  }
+  .shadow-elevation-up {
+    box-shadow: 0 -8px 16px rgba(0, 0, 0, 0.28);
   }
   .shadow-elevation-left {
-    box-shadow: -8px 0 16px rgba(0, 0, 0, 0.375);
+    box-shadow: -8px 0 16px rgba(0, 0, 0, 0.28);
   }
 }
 
