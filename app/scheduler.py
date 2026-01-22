@@ -504,12 +504,13 @@ async def freeze_predictions_before_kickoff() -> dict:
     """
     from datetime import timedelta
     from app.models import Match, Prediction
+    from app.database import get_session_with_retry
 
     frozen_count = 0
     errors = []
 
     try:
-        async with AsyncSessionLocal() as session:
+        async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
             # Find predictions that need freezing:
             # 1. Prediction is not frozen yet
             # 2. Match status is NOT 'NS' (match has started or finished)
@@ -706,8 +707,23 @@ async def freeze_predictions_before_kickoff() -> dict:
             }
 
     except Exception as e:
-        logger.error(f"freeze_predictions_before_kickoff failed: {e}")
-        return {"frozen_count": 0, "error": str(e)}
+        # Log full exception info to capture root cause (not just rollback failure)
+        import traceback
+        error_type = type(e).__name__
+        error_msg = str(e)
+        # Check if this is a connection-related error
+        is_connection_error = any(
+            keyword in error_msg.lower()
+            for keyword in ["connection", "closed", "terminated", "rollback", "interface"]
+        )
+        if is_connection_error:
+            logger.error(
+                f"freeze_predictions_before_kickoff DB connection error [{error_type}]: {error_msg}\n"
+                f"Traceback: {traceback.format_exc()}"
+            )
+        else:
+            logger.error(f"freeze_predictions_before_kickoff failed [{error_type}]: {error_msg}")
+        return {"frozen_count": 0, "error": f"[{error_type}] {error_msg}"}
 
 
 # Module-level metrics for monitoring (reset weekly)
