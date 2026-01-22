@@ -1,15 +1,15 @@
 "use client";
 
 import { Calendar, History } from "lucide-react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+import { IconTabs } from "@/components/ui/icon-tabs";
 
 export type MatchesView = "upcoming" | "finished";
+
+/** Tab definitions for matches view */
+const MATCHES_VIEW_TABS = [
+  { id: "upcoming", icon: <Calendar />, label: "Upcoming" },
+  { id: "finished", icon: <History />, label: "Finished" },
+];
 
 interface MatchesViewTabsProps {
   activeView: MatchesView;
@@ -18,56 +18,16 @@ interface MatchesViewTabsProps {
 
 /**
  * Tab selector for switching between Upcoming and Finished matches
- * Uses icons with tooltips for compact display
+ * Uses the standard IconTabs component with labels shown
  */
 export function MatchesViewTabs({ activeView, onViewChange }: MatchesViewTabsProps) {
   return (
-    <TooltipProvider delayDuration={0}>
-      <div className="flex gap-1 p-1 bg-surface rounded-lg border border-border">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={() => onViewChange("upcoming")}
-              className={cn(
-                "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
-                activeView === "upcoming"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-accent"
-              )}
-              aria-label="Upcoming matches"
-              aria-pressed={activeView === "upcoming"}
-            >
-              <Calendar className="h-4 w-4" strokeWidth={1.5} />
-              <span>Upcoming</span>
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">
-            <p>View upcoming matches</p>
-          </TooltipContent>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={() => onViewChange("finished")}
-              className={cn(
-                "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
-                activeView === "finished"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-accent"
-              )}
-              aria-label="Finished matches"
-              aria-pressed={activeView === "finished"}
-            >
-              <History className="h-4 w-4" strokeWidth={1.5} />
-              <span>Finished</span>
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">
-            <p>View finished matches with results</p>
-          </TooltipContent>
-        </Tooltip>
-      </div>
-    </TooltipProvider>
+    <IconTabs
+      tabs={MATCHES_VIEW_TABS}
+      value={activeView}
+      onValueChange={(value) => onViewChange(value as MatchesView)}
+      showLabels
+      className="w-full"
+    />
   );
 }
