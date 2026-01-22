@@ -4,8 +4,8 @@ import { useState } from "react";
 import { useUsers } from "@/lib/hooks";
 import { SettingsSectionHeader } from "./SettingsSectionHeader";
 import { UsersTable } from "./UsersTable";
-import { Input } from "@/components/ui/input";
-import { Search, Users, Shield, Eye } from "lucide-react";
+import { SearchInput } from "@/components/ui/search-input";
+import { Users, Shield, Eye } from "lucide-react";
 
 export function UsersSection() {
   const [searchValue, setSearchValue] = useState("");
@@ -51,13 +51,12 @@ export function UsersSection() {
         </div>
 
         {/* Search */}
-        <div className="relative max-w-sm">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
+        <div className="max-w-sm">
+          <SearchInput
             placeholder="Search users..."
             value={searchValue}
-            onChange={(e) => setSearchValue(e.target.value)}
-            className="pl-8 h-9 bg-background"
+            onChange={setSearchValue}
+            className="bg-background"
           />
         </div>
 

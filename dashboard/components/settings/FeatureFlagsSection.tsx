@@ -4,8 +4,8 @@ import { useState } from "react";
 import { useFeatureFlags } from "@/lib/hooks";
 import { SettingsSectionHeader } from "./SettingsSectionHeader";
 import { FeatureFlagsTable } from "./FeatureFlagsTable";
-import { Input } from "@/components/ui/input";
-import { Search, ToggleLeft } from "lucide-react";
+import { SearchInput } from "@/components/ui/search-input";
+import { ToggleLeft } from "lucide-react";
 
 export function FeatureFlagsSection() {
   const [searchValue, setSearchValue] = useState("");
@@ -45,13 +45,12 @@ export function FeatureFlagsSection() {
         </div>
 
         {/* Search */}
-        <div className="relative max-w-sm">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
+        <div className="max-w-sm">
+          <SearchInput
             placeholder="Search flags..."
             value={searchValue}
-            onChange={(e) => setSearchValue(e.target.value)}
-            className="pl-8 h-9 bg-background"
+            onChange={setSearchValue}
+            className="bg-background"
           />
         </div>
 

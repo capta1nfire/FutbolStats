@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { PredictionDetail, PREDICTION_STATUS_LABELS, MATCH_RESULT_LABELS } from "@/lib/types";
 import { useIsDesktop } from "@/lib/hooks";
 import { DetailDrawer } from "@/components/shell";
@@ -9,7 +10,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { IconTabs } from "@/components/ui/icon-tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { PredictionStatusBadge } from "./PredictionStatusBadge";
 import { ModelBadge } from "./ModelBadge";
@@ -22,7 +23,15 @@ import {
   History,
   CheckCircle,
   XCircle,
+  Info,
 } from "lucide-react";
+
+/** Tab definitions for prediction detail drawer */
+const PREDICTION_TABS = [
+  { id: "details", icon: <Info />, label: "Details" },
+  { id: "model", icon: <Cpu />, label: "Model Info" },
+  { id: "evaluation", icon: <History />, label: "Evaluation" },
+];
 
 interface PredictionDetailDrawerProps {
   prediction: PredictionDetail | null;
@@ -32,9 +41,9 @@ interface PredictionDetailDrawerProps {
 }
 
 /**
- * Prediction Detail Content - shared between desktop drawer and mobile sheet
+ * Prediction Tab Content - content only, without tabs (for desktop drawer with fixedContent)
  */
-function PredictionDetailContent({ prediction }: { prediction: PredictionDetail }) {
+function PredictionTabContent({ prediction, activeTab }: { prediction: PredictionDetail; activeTab: string }) {
   const kickoffDate = new Date(prediction.kickoffISO);
   const formattedKickoff = kickoffDate.toLocaleString("en-US", {
     weekday: "short",
@@ -50,29 +59,17 @@ function PredictionDetailContent({ prediction }: { prediction: PredictionDetail 
       : undefined;
 
   return (
-    <Tabs defaultValue="details" className="w-full">
-      <TabsList className="w-full grid grid-cols-3 mb-4">
-        <TabsTrigger value="details" className="rounded-full text-xs">
-          Details
-        </TabsTrigger>
-        <TabsTrigger value="model" className="rounded-full text-xs">
-          Model Info
-        </TabsTrigger>
-        <TabsTrigger value="evaluation" className="rounded-full text-xs">
-          Evaluation
-        </TabsTrigger>
-      </TabsList>
-
+    <div className="w-full">
       {/* Details Tab */}
-      <TabsContent value="details" className="space-y-4">
-        <div className="space-y-3">
+      {activeTab === "details" && (
+        <div className="bg-surface rounded-lg p-4 space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <PredictionStatusBadge status={prediction.status} />
             <ModelBadge model={prediction.model} />
           </div>
 
           {/* Match Info */}
-          <div className="bg-background rounded-lg p-4">
+          <div>
             <h3 className="text-sm font-medium text-foreground mb-2">
               {prediction.matchLabel}
             </h3>
@@ -82,7 +79,7 @@ function PredictionDetailContent({ prediction }: { prediction: PredictionDetail 
           </div>
 
           {/* Metadata */}
-          <div className="bg-background rounded-lg p-4 space-y-3">
+          <div className="space-y-3 pt-3 border-t border-border">
             <div className="flex items-center gap-2 text-sm">
               <Clock className="h-4 w-4 text-muted-foreground" />
               <span className="text-muted-foreground">Kickoff:</span>
@@ -102,25 +99,25 @@ function PredictionDetailContent({ prediction }: { prediction: PredictionDetail 
 
           {/* Probabilities */}
           {prediction.probs && (
-            <div className="bg-background rounded-lg p-4">
+            <div className="pt-3 border-t border-border">
               <div className="flex items-center gap-2 mb-3">
                 <BarChart3 className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm font-medium">Probabilities</span>
               </div>
               <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="bg-surface rounded p-2">
+                <div className="bg-background rounded p-2">
                   <div className="text-lg font-bold text-foreground">
                     {(prediction.probs.home * 100).toFixed(0)}%
                   </div>
                   <div className="text-xs text-muted-foreground">Home</div>
                 </div>
-                <div className="bg-surface rounded p-2">
+                <div className="bg-background rounded p-2">
                   <div className="text-lg font-bold text-foreground">
                     {(prediction.probs.draw * 100).toFixed(0)}%
                   </div>
                   <div className="text-xs text-muted-foreground">Draw</div>
                 </div>
-                <div className="bg-surface rounded p-2">
+                <div className="bg-background rounded p-2">
                   <div className="text-lg font-bold text-foreground">
                     {(prediction.probs.away * 100).toFixed(0)}%
                   </div>
@@ -132,7 +129,7 @@ function PredictionDetailContent({ prediction }: { prediction: PredictionDetail 
 
           {/* Pick */}
           {prediction.pick && (
-            <div className="bg-background rounded-lg p-4">
+            <div className="pt-3 border-t border-border">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Prediction Pick:</span>
                 <PickBadge pick={prediction.pick} isCorrect={isCorrect} />
@@ -153,42 +150,44 @@ function PredictionDetailContent({ prediction }: { prediction: PredictionDetail 
             Data from mocks - Phase 0
           </p>
         </div>
-      </TabsContent>
+      )}
 
       {/* Model Info Tab */}
-      <TabsContent value="model" className="space-y-4">
-        <div className="flex items-center gap-2 mb-4">
-          <Cpu className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium">Model Features</span>
-        </div>
+      {activeTab === "model" && (
+        <div className="bg-surface rounded-lg p-4">
+          <div className="flex items-center gap-2 mb-4">
+            <Cpu className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-medium">Model Features</span>
+          </div>
 
-        {prediction.featuresTop && prediction.featuresTop.length > 0 ? (
-          <div className="bg-background rounded-lg p-4 space-y-2">
-            {prediction.featuresTop.map((feature, idx) => (
-              <div
-                key={idx}
-                className="flex items-center justify-between text-sm py-1 border-b border-border last:border-0"
-              >
-                <span className="text-muted-foreground">{feature.name}</span>
-                <span className="text-foreground font-mono">{feature.value}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="text-center py-8">
-            <Cpu className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">No feature data available</p>
-          </div>
-        )}
-      </TabsContent>
+          {prediction.featuresTop && prediction.featuresTop.length > 0 ? (
+            <div className="space-y-2">
+              {prediction.featuresTop.map((feature, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center justify-between text-sm py-1 border-b border-border last:border-0"
+                >
+                  <span className="text-muted-foreground">{feature.name}</span>
+                  <span className="text-foreground font-mono">{feature.value}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <Cpu className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">No feature data available</p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Evaluation Tab */}
-      <TabsContent value="evaluation" className="space-y-4">
-        {prediction.status === "evaluated" && prediction.evaluation ? (
-          <>
-            {/* Evaluation Result */}
-            <div className="bg-background rounded-lg p-4">
-              <div className="flex items-center justify-center gap-2 mb-4">
+      {activeTab === "evaluation" && (
+        <div className="bg-surface rounded-lg p-4">
+          {prediction.status === "evaluated" && prediction.evaluation ? (
+            <div className="space-y-4">
+              {/* Evaluation Result */}
+              <div className="flex items-center justify-center gap-2">
                 {isCorrect ? (
                   <CheckCircle className="h-6 w-6 text-success" />
                 ) : (
@@ -223,52 +222,71 @@ function PredictionDetailContent({ prediction }: { prediction: PredictionDetail 
               </div>
 
               {prediction.evaluation.notes && (
-                <p className="text-sm text-muted-foreground mt-4 text-center">
+                <p className="text-sm text-muted-foreground text-center">
                   {prediction.evaluation.notes}
                 </p>
               )}
-            </div>
 
-            {/* History */}
-            {prediction.history && prediction.history.length > 0 && (
-              <>
-                <div className="flex items-center gap-2 mt-4">
-                  <History className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-medium">History</span>
-                </div>
-                <div className="space-y-2">
-                  {prediction.history.map((entry, idx) => (
-                    <div
-                      key={idx}
-                      className="bg-background rounded-lg p-3 flex items-center justify-between"
-                    >
-                      <div>
-                        <span className="text-sm text-foreground">
-                          {PREDICTION_STATUS_LABELS[entry.status]}
-                        </span>
-                        <p className="text-xs text-muted-foreground">
-                          {new Date(entry.ts).toLocaleString()}
-                        </p>
+              {/* History */}
+              {prediction.history && prediction.history.length > 0 && (
+                <div className="pt-3 border-t border-border">
+                  <div className="flex items-center gap-2 mb-3">
+                    <History className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">History</span>
+                  </div>
+                  <div className="space-y-2">
+                    {prediction.history.map((entry, idx) => (
+                      <div
+                        key={idx}
+                        className="bg-background rounded-lg p-3 flex items-center justify-between"
+                      >
+                        <div>
+                          <span className="text-sm text-foreground">
+                            {PREDICTION_STATUS_LABELS[entry.status]}
+                          </span>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(entry.ts).toLocaleString()}
+                          </p>
+                        </div>
+                        <ModelBadge model={entry.model} />
                       </div>
-                      <ModelBadge model={entry.model} />
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </>
-            )}
-          </>
-        ) : (
-          <div className="text-center py-8">
-            <Clock className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">
-              {prediction.status === "missing"
-                ? "No prediction generated"
-                : "Evaluation pending - match not finished"}
-            </p>
-          </div>
-        )}
-      </TabsContent>
-    </Tabs>
+              )}
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <Clock className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">
+                {prediction.status === "missing"
+                  ? "No prediction generated"
+                  : "Evaluation pending - match not finished"}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Prediction Detail Content - used for mobile sheet (tabs + content together)
+ */
+function PredictionDetailContentMobile({ prediction }: { prediction: PredictionDetail }) {
+  const [activeTab, setActiveTab] = useState("details");
+
+  return (
+    <div className="w-full space-y-3">
+      <IconTabs
+        tabs={PREDICTION_TABS}
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className="w-full"
+      />
+      <PredictionTabContent prediction={prediction} activeTab={activeTab} />
+    </div>
   );
 }
 
@@ -285,6 +303,7 @@ export function PredictionDetailDrawer({
   isLoading,
 }: PredictionDetailDrawerProps) {
   const isDesktop = useIsDesktop();
+  const [activeTab, setActiveTab] = useState("details");
   const predictionTitle = prediction
     ? `Prediction #${prediction.id}`
     : "Prediction Details";
@@ -298,14 +317,28 @@ export function PredictionDetailDrawer({
     </div>
   );
 
-  // Desktop: overlay drawer
+  // Desktop: overlay drawer with tabs in fixedContent
   if (isDesktop) {
     return (
-      <DetailDrawer open={open} onClose={onClose} title={predictionTitle}>
+      <DetailDrawer
+        open={open}
+        onClose={onClose}
+        title={predictionTitle}
+        fixedContent={
+          prediction && !isLoading && (
+            <IconTabs
+              tabs={PREDICTION_TABS}
+              value={activeTab}
+              onValueChange={setActiveTab}
+              className="w-full"
+            />
+          )
+        }
+      >
         {isLoading ? (
           loadingContent
         ) : prediction ? (
-          <PredictionDetailContent prediction={prediction} />
+          <PredictionTabContent prediction={prediction} activeTab={activeTab} />
         ) : (
           <p className="text-muted-foreground text-sm">
             Select a prediction to view details
@@ -329,7 +362,7 @@ export function PredictionDetailDrawer({
             {isLoading ? (
               loadingContent
             ) : prediction ? (
-              <PredictionDetailContent prediction={prediction} />
+              <PredictionDetailContentMobile prediction={prediction} />
             ) : (
               <p className="text-muted-foreground text-sm">
                 Select a prediction to view details

@@ -179,9 +179,9 @@
 
   /* UniFi-style shadow for elevated surfaces (TopBar, Drawer) */
   .shadow-elevation-down {
-    box-shadow: 0 22px 22px rgba(0, 0, 0, 0.8);
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.5);
   }
   .shadow-elevation-left {
-    box-shadow: -22px 0 22px rgba(0, 0, 0, 0.8);
+    box-shadow: -8px 0 16px rgba(0, 0, 0, 0.5);
   }
 }

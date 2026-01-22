@@ -118,7 +118,7 @@ export function CustomizeColumnsPanel({
       )}
     >
       {/* Header - same height as FilterPanel header, with collapse button */}
-      <div className="h-12 flex items-center justify-between px-3 border-b border-border">
+      <div className="h-12 flex items-center justify-between px-3">
         <h3 className="text-sm font-medium text-foreground">
           Customize Columns
         </h3>
@@ -136,7 +136,7 @@ export function CustomizeColumnsPanel({
       </div>
 
       {/* "All" checkbox */}
-      <div className="px-3 py-2 border-b border-border">
+      <div className="px-3 py-2">
         <label className="flex items-center gap-2 cursor-pointer">
           <Checkbox
             checked={allIndeterminate ? "indeterminate" : allChecked}
@@ -175,7 +175,7 @@ export function CustomizeColumnsPanel({
       </ScrollArea>
 
       {/* Footer: Restore + Done (UniFi style - text links, same height as FilterPanel footer) */}
-      <div className="px-3 py-3 border-t border-border flex items-center justify-between">
+      <div className="px-3 py-3 flex items-center justify-between">
         <button
           onClick={onRestore}
           className="text-sm font-medium text-primary hover:text-primary-hover transition-colors"

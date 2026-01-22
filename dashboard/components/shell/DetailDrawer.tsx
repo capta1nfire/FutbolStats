@@ -23,6 +23,11 @@ interface DetailDrawerProps {
    * Default: "overlay" (new default for desktop)
    */
   variant?: DrawerVariant;
+  /**
+   * Fixed content rendered above the scroll area (e.g., tabs).
+   * This content won't scroll and tooltips won't be clipped.
+   */
+  fixedContent?: ReactNode;
 }
 
 /**
@@ -47,6 +52,7 @@ export function DetailDrawer({
   className,
   returnFocusRef,
   variant = "overlay",
+  fixedContent,
 }: DetailDrawerProps) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
@@ -122,12 +128,17 @@ export function DetailDrawer({
         </Button>
       </div>
 
-      {/* Content - UniFi style: card inside drawer */}
+      {/* Fixed content (tabs, etc.) - outside ScrollArea to prevent tooltip clipping */}
+      {fixedContent && (
+        <div className="px-3 pt-3 shrink-0">
+          {fixedContent}
+        </div>
+      )}
+
+      {/* Scrollable content */}
       <ScrollArea className="flex-1">
         <div className="p-3">
-          <div className="bg-surface rounded-lg p-4">
-            {children}
-          </div>
+          {children}
         </div>
       </ScrollArea>
     </aside>

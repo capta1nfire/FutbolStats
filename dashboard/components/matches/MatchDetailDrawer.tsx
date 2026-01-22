@@ -30,11 +30,9 @@ const MATCH_TABS = [
 ];
 
 /**
- * Match Detail Content - shared between desktop drawer and mobile sheet
+ * Tab content only - without tabs component (for desktop drawer with fixedContent)
  */
-function MatchDetailContent({ match }: { match: MatchSummary }) {
-  const [activeTab, setActiveTab] = useState("overview");
-
+function MatchTabContent({ match, activeTab }: { match: MatchSummary; activeTab: string }) {
   const kickoffDate = new Date(match.kickoffISO);
   const formattedDate = kickoffDate.toLocaleDateString("en-US", {
     weekday: "short",
@@ -47,17 +45,10 @@ function MatchDetailContent({ match }: { match: MatchSummary }) {
   });
 
   return (
-    <div className="w-full space-y-4">
-      <IconTabs
-        tabs={MATCH_TABS}
-        value={activeTab}
-        onValueChange={setActiveTab}
-        className="w-full"
-      />
-
+    <div className="w-full">
       {/* Overview Tab */}
       {activeTab === "overview" && (
-        <div className="space-y-3">
+        <div className="bg-surface rounded-lg p-4 space-y-3">
           <div className="flex items-center justify-between">
             <StatusDot status={match.status} />
             <Badge variant="secondary" className="text-xs">
@@ -67,7 +58,7 @@ function MatchDetailContent({ match }: { match: MatchSummary }) {
 
           {/* Score (if available) */}
           {match.score && (
-            <div className="bg-background rounded-lg p-4 text-center">
+            <div className="text-center py-2">
               <div className="text-3xl font-bold text-foreground">
                 {match.score.home} - {match.score.away}
               </div>
@@ -102,7 +93,7 @@ function MatchDetailContent({ match }: { match: MatchSummary }) {
 
       {/* Predictions Tab */}
       {activeTab === "predictions" && (
-        <>
+        <div className="bg-surface rounded-lg p-4">
           {match.prediction ? (
             <div className="space-y-4">
               <div className="flex items-center gap-2">
@@ -110,41 +101,39 @@ function MatchDetailContent({ match }: { match: MatchSummary }) {
                 <span className="text-sm font-medium">Model {match.prediction.model}</span>
               </div>
 
-              <div className="bg-background rounded-lg p-4 space-y-3">
-                <div className="text-center">
-                  <div className="text-lg font-semibold text-primary capitalize">
-                    {match.prediction.pick === "home"
-                      ? match.home
-                      : match.prediction.pick === "away"
-                      ? match.away
-                      : "Draw"}
-                  </div>
-                  <div className="text-xs text-muted-foreground">Predicted winner</div>
+              <div className="text-center">
+                <div className="text-lg font-semibold text-primary capitalize">
+                  {match.prediction.pick === "home"
+                    ? match.home
+                    : match.prediction.pick === "away"
+                    ? match.away
+                    : "Draw"}
                 </div>
-
-                {match.prediction.probs && (
-                  <div className="space-y-2 pt-2 border-t border-border">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">{match.home}</span>
-                      <span className="text-foreground font-medium">
-                        {(match.prediction.probs.home * 100).toFixed(0)}%
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Draw</span>
-                      <span className="text-foreground font-medium">
-                        {(match.prediction.probs.draw * 100).toFixed(0)}%
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">{match.away}</span>
-                      <span className="text-foreground font-medium">
-                        {(match.prediction.probs.away * 100).toFixed(0)}%
-                      </span>
-                    </div>
-                  </div>
-                )}
+                <div className="text-xs text-muted-foreground">Predicted winner</div>
               </div>
+
+              {match.prediction.probs && (
+                <div className="space-y-2 pt-3 border-t border-border">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">{match.home}</span>
+                    <span className="text-foreground font-medium">
+                      {(match.prediction.probs.home * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Draw</span>
+                    <span className="text-foreground font-medium">
+                      {(match.prediction.probs.draw * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">{match.away}</span>
+                    <span className="text-foreground font-medium">
+                      {(match.prediction.probs.away * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="text-center py-8">
@@ -152,12 +141,12 @@ function MatchDetailContent({ match }: { match: MatchSummary }) {
               <p className="text-sm text-muted-foreground">No prediction available</p>
             </div>
           )}
-        </>
+        </div>
       )}
 
       {/* Live Data Tab */}
       {activeTab === "live" && (
-        <>
+        <div className="bg-surface rounded-lg p-4">
           <div className="flex items-center gap-2 mb-4">
             <Radio className="h-4 w-4 text-muted-foreground" />
             <span className="text-sm font-medium">Live Data</span>
@@ -165,14 +154,14 @@ function MatchDetailContent({ match }: { match: MatchSummary }) {
 
           {match.status === "live" || match.status === "ht" ? (
             <div className="space-y-3">
-              <div className="bg-background rounded-lg p-4">
-                <div className="text-xs text-muted-foreground mb-2">Events</div>
+              <div>
+                <div className="text-xs text-muted-foreground mb-1">Events</div>
                 <p className="text-sm text-muted-foreground">
                   Live events feed coming soon
                 </p>
               </div>
-              <div className="bg-background rounded-lg p-4">
-                <div className="text-xs text-muted-foreground mb-2">Statistics</div>
+              <div className="pt-3 border-t border-border">
+                <div className="text-xs text-muted-foreground mb-1">Statistics</div>
                 <p className="text-sm text-muted-foreground">
                   Match statistics coming soon
                 </p>
@@ -186,8 +175,27 @@ function MatchDetailContent({ match }: { match: MatchSummary }) {
               </p>
             </div>
           )}
-        </>
+        </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Match Detail Content - used for mobile sheet (tabs + content together)
+ */
+function MatchDetailContentMobile({ match }: { match: MatchSummary }) {
+  const [activeTab, setActiveTab] = useState("overview");
+
+  return (
+    <div className="w-full space-y-3">
+      <IconTabs
+        tabs={MATCH_TABS}
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className="w-full"
+      />
+      <MatchTabContent match={match} activeTab={activeTab} />
     </div>
   );
 }
@@ -204,14 +212,29 @@ export function MatchDetailDrawer({
   onClose,
 }: MatchDetailDrawerProps) {
   const isDesktop = useIsDesktop();
+  const [activeTab, setActiveTab] = useState("overview");
   const matchTitle = match ? `${match.home} vs ${match.away}` : "Match Details";
 
-  // Desktop: overlay drawer
+  // Desktop: overlay drawer with tabs in fixedContent (prevents tooltip clipping)
   if (isDesktop) {
     return (
-      <DetailDrawer open={open} onClose={onClose} title={matchTitle}>
+      <DetailDrawer
+        open={open}
+        onClose={onClose}
+        title={matchTitle}
+        fixedContent={
+          match && (
+            <IconTabs
+              tabs={MATCH_TABS}
+              value={activeTab}
+              onValueChange={setActiveTab}
+              className="w-full"
+            />
+          )
+        }
+      >
         {match ? (
-          <MatchDetailContent match={match} />
+          <MatchTabContent match={match} activeTab={activeTab} />
         ) : (
           <p className="text-muted-foreground text-sm">Select a match to view details</p>
         )}
@@ -231,7 +254,7 @@ export function MatchDetailDrawer({
         <ScrollArea className="h-[calc(100vh-60px)]">
           <div className="p-4">
             {match ? (
-              <MatchDetailContent match={match} />
+              <MatchDetailContentMobile match={match} />
             ) : (
               <p className="text-muted-foreground text-sm">Select a match to view details</p>
             )}

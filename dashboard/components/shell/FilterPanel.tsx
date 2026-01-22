@@ -1,11 +1,11 @@
 "use client";
 
 import { ReactNode } from "react";
-import { ChevronLeft, ChevronRight, Search, Filter } from "lucide-react";
+import { ChevronLeft, ChevronRight, Filter } from "lucide-react";
 import { useHasMounted } from "@/lib/hooks";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Accordion,
@@ -111,7 +111,7 @@ export function FilterPanel({
   return (
     <aside className="w-[277px] shrink-0 border-r border-border bg-sidebar flex flex-col transition-smooth">
       {/* Header - collapse button hidden when CustomizeColumnsPanel is open */}
-      <div className="h-12 flex items-center justify-between px-3 border-b border-border">
+      <div className="h-12 flex items-center justify-between px-3">
         <span className="text-sm font-medium text-foreground">Filters</span>
         {!customizeColumnsOpen && (
           <Button
@@ -127,16 +127,13 @@ export function FilterPanel({
       </div>
 
       {/* Search */}
-      <div className="p-3 border-b border-border">
-        <div className="relative">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search..."
-            value={searchValue}
-            onChange={(e) => onSearchChange?.(e.target.value)}
-            className="pl-8 h-9 bg-background"
-          />
-        </div>
+      <div className="p-3">
+        <SearchInput
+          placeholder="Search..."
+          value={searchValue}
+          onChange={(value) => onSearchChange?.(value)}
+          className="bg-background"
+        />
       </div>
 
       {/* Filter groups - render only on client to avoid Radix ID hydration mismatch */}
@@ -200,7 +197,7 @@ export function FilterPanel({
 
       {/* Footer with Customize Columns link (UniFi style) */}
       {showCustomizeColumns && (
-        <div className="px-3 py-3 border-t border-border flex items-center">
+        <div className="px-3 py-3 flex items-center">
           <button
             onClick={onCustomizeColumnsClick}
             className="text-sm font-medium text-primary hover:text-primary-hover transition-colors"

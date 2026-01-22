@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { JobRun } from "@/lib/types";
 import { useIsDesktop } from "@/lib/hooks";
 import { DetailDrawer } from "@/components/shell";
@@ -9,12 +10,18 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { IconTabs } from "@/components/ui/icon-tabs";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { JobStatusBadge } from "./JobStatusBadge";
 import { formatDistanceToNow } from "@/lib/utils";
-import { Clock, Terminal, AlertCircle } from "lucide-react";
+import { Clock, Terminal, AlertCircle, Info } from "lucide-react";
+
+/** Tab definitions for job detail drawer */
+const JOB_TABS = [
+  { id: "overview", icon: <Info />, label: "Overview" },
+  { id: "logs", icon: <Terminal />, label: "Logs" },
+];
 
 interface JobDetailDrawerProps {
   job: JobRun | null;
@@ -43,9 +50,9 @@ function formatDuration(ms?: number): string {
 }
 
 /**
- * Job Detail Content - shared between desktop drawer and mobile sheet
+ * Job Tab Content - content only, without tabs (for desktop drawer with fixedContent)
  */
-function JobDetailContent({ job }: { job: JobRun }) {
+function JobTabContent({ job, activeTab }: { job: JobRun; activeTab: string }) {
   const startedAt = new Date(job.startedAt);
   const formattedStarted = startedAt.toLocaleString("en-US", {
     weekday: "short",
@@ -57,19 +64,10 @@ function JobDetailContent({ job }: { job: JobRun }) {
   });
 
   return (
-    <Tabs defaultValue="overview" className="w-full">
-      <TabsList className="w-full grid grid-cols-2 mb-4">
-        <TabsTrigger value="overview" className="rounded-full text-xs">
-          Overview
-        </TabsTrigger>
-        <TabsTrigger value="logs" className="rounded-full text-xs">
-          Logs
-        </TabsTrigger>
-      </TabsList>
-
+    <div className="w-full">
       {/* Overview Tab */}
-      <TabsContent value="overview" className="space-y-4">
-        <div className="space-y-3">
+      {activeTab === "overview" && (
+        <div className="bg-surface rounded-lg p-4 space-y-3">
           <div className="flex items-center justify-between">
             <JobStatusBadge status={job.status} />
             <Badge variant="outline" className="text-xs">
@@ -78,7 +76,7 @@ function JobDetailContent({ job }: { job: JobRun }) {
           </div>
 
           {/* Timing info */}
-          <div className="bg-background rounded-lg p-4 space-y-3">
+          <div className="space-y-3 pt-3 border-t border-border">
             <div className="flex items-center gap-2 text-sm">
               <Clock className="h-4 w-4 text-muted-foreground" />
               <span className="text-muted-foreground">Started:</span>
@@ -122,7 +120,7 @@ function JobDetailContent({ job }: { job: JobRun }) {
           )}
 
           {/* Metadata */}
-          <div className="space-y-2">
+          <div className="space-y-2 pt-3 border-t border-border">
             <div className="text-sm">
               <span className="text-muted-foreground">Job ID:</span>{" "}
               <span className="text-foreground font-mono">{job.id}</span>
@@ -133,16 +131,16 @@ function JobDetailContent({ job }: { job: JobRun }) {
             </div>
           </div>
         </div>
-      </TabsContent>
+      )}
 
       {/* Logs Tab */}
-      <TabsContent value="logs" className="space-y-4">
-        <div className="flex items-center gap-2 mb-4">
-          <Terminal className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium">Execution Logs</span>
-        </div>
+      {activeTab === "logs" && (
+        <div className="bg-surface rounded-lg p-4">
+          <div className="flex items-center gap-2 mb-4">
+            <Terminal className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-medium">Execution Logs</span>
+          </div>
 
-        <div className="bg-background rounded-lg p-4">
           <div className="font-mono text-xs text-muted-foreground space-y-1">
             <p>[{formattedStarted}] Starting {job.jobName}...</p>
             {job.status === "running" && (
@@ -170,8 +168,27 @@ function JobDetailContent({ job }: { job: JobRun }) {
             Full logs coming soon
           </p>
         </div>
-      </TabsContent>
-    </Tabs>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Job Detail Content - used for mobile sheet (tabs + content together)
+ */
+function JobDetailContentMobile({ job }: { job: JobRun }) {
+  const [activeTab, setActiveTab] = useState("overview");
+
+  return (
+    <div className="w-full space-y-3">
+      <IconTabs
+        tabs={JOB_TABS}
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className="w-full"
+      />
+      <JobTabContent job={job} activeTab={activeTab} />
+    </div>
   );
 }
 
@@ -187,14 +204,29 @@ export function JobDetailDrawer({
   onClose,
 }: JobDetailDrawerProps) {
   const isDesktop = useIsDesktop();
+  const [activeTab, setActiveTab] = useState("overview");
   const jobTitle = job ? formatJobName(job.jobName) : "Job Details";
 
-  // Desktop: overlay drawer
+  // Desktop: overlay drawer with tabs in fixedContent
   if (isDesktop) {
     return (
-      <DetailDrawer open={open} onClose={onClose} title={jobTitle}>
+      <DetailDrawer
+        open={open}
+        onClose={onClose}
+        title={jobTitle}
+        fixedContent={
+          job && (
+            <IconTabs
+              tabs={JOB_TABS}
+              value={activeTab}
+              onValueChange={setActiveTab}
+              className="w-full"
+            />
+          )
+        }
+      >
         {job ? (
-          <JobDetailContent job={job} />
+          <JobTabContent job={job} activeTab={activeTab} />
         ) : (
           <p className="text-muted-foreground text-sm">Select a job to view details</p>
         )}
@@ -214,7 +246,7 @@ export function JobDetailDrawer({
         <ScrollArea className="h-[calc(100vh-60px)]">
           <div className="p-4">
             {job ? (
-              <JobDetailContent job={job} />
+              <JobDetailContentMobile job={job} />
             ) : (
               <p className="text-muted-foreground text-sm">Select a job to view details</p>
             )}
