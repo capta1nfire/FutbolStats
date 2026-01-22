@@ -9760,8 +9760,8 @@ async def get_matches_dashboard(
                 "data": cached_entry["data"],
             }
 
-    # Build query with EXISTS subquery
-    from sqlalchemy import exists, func
+    # Build query with GROUP BY to deduplicate prediction rows
+    from sqlalchemy import func
     from sqlalchemy.orm import aliased
 
     now_dt = datetime.utcnow()
@@ -9785,6 +9785,7 @@ async def get_matches_dashboard(
     away_team = aliased(Team, name="away_team")
 
     # Base query with LEFT JOINs for predictions
+    # Use GROUP BY and MAX to get one row per match when there are multiple predictions
     base_query = (
         select(
             Match.id,
@@ -9797,22 +9798,22 @@ async def get_matches_dashboard(
             Match.elapsed_extra,
             home_team.name.label("home_name"),
             away_team.name.label("away_name"),
-            # Model A (production) prediction
-            Prediction.home_prob.label("model_a_home"),
-            Prediction.draw_prob.label("model_a_draw"),
-            Prediction.away_prob.label("model_a_away"),
+            # Model A (production) prediction - use MAX to pick one value
+            func.max(Prediction.home_prob).label("model_a_home"),
+            func.max(Prediction.draw_prob).label("model_a_draw"),
+            func.max(Prediction.away_prob).label("model_a_away"),
             # Market odds (frozen at prediction time)
-            Prediction.frozen_odds_home.label("market_home"),
-            Prediction.frozen_odds_draw.label("market_draw"),
-            Prediction.frozen_odds_away.label("market_away"),
+            func.max(Prediction.frozen_odds_home).label("market_home"),
+            func.max(Prediction.frozen_odds_draw).label("market_draw"),
+            func.max(Prediction.frozen_odds_away).label("market_away"),
             # Shadow/Two-Stage prediction
-            ShadowPrediction.shadow_home_prob.label("shadow_home"),
-            ShadowPrediction.shadow_draw_prob.label("shadow_draw"),
-            ShadowPrediction.shadow_away_prob.label("shadow_away"),
+            func.max(ShadowPrediction.shadow_home_prob).label("shadow_home"),
+            func.max(ShadowPrediction.shadow_draw_prob).label("shadow_draw"),
+            func.max(ShadowPrediction.shadow_away_prob).label("shadow_away"),
             # Sensor B prediction
-            SensorPrediction.b_home_prob.label("sensor_b_home"),
-            SensorPrediction.b_draw_prob.label("sensor_b_draw"),
-            SensorPrediction.b_away_prob.label("sensor_b_away"),
+            func.max(SensorPrediction.b_home_prob).label("sensor_b_home"),
+            func.max(SensorPrediction.b_draw_prob).label("sensor_b_draw"),
+            func.max(SensorPrediction.b_away_prob).label("sensor_b_away"),
         )
         .join(home_team, Match.home_team_id == home_team.id)
         .join(away_team, Match.away_team_id == away_team.id)
@@ -9821,6 +9822,18 @@ async def get_matches_dashboard(
         .outerjoin(SensorPrediction, SensorPrediction.match_id == Match.id)
         .where(Match.date >= start_dt)
         .where(Match.date <= end_dt)
+        .group_by(
+            Match.id,
+            Match.date,
+            Match.league_id,
+            Match.status,
+            Match.home_goals,
+            Match.away_goals,
+            Match.elapsed,
+            Match.elapsed_extra,
+            home_team.name,
+            away_team.name,
+        )
     )
 
     # Status filter
@@ -9840,8 +9853,22 @@ async def get_matches_dashboard(
     if league_id is not None:
         base_query = base_query.where(Match.league_id == league_id)
 
-    # Count total for pagination
-    count_query = select(func.count()).select_from(base_query.subquery())
+    # Count total for pagination (count distinct match IDs)
+    count_query = select(func.count(func.distinct(Match.id))).select_from(
+        Match
+        .join(home_team, Match.home_team_id == home_team.id)
+        .join(away_team, Match.away_team_id == away_team.id)
+    ).where(Match.date >= start_dt).where(Match.date <= end_dt)
+
+    if status == "LIVE":
+        count_query = count_query.where(Match.status.in_(["1H", "HT", "2H", "ET", "BT", "P", "SUSP", "INT", "LIVE"]))
+    elif status == "NS":
+        count_query = count_query.where(Match.status == "NS")
+    elif status == "FT":
+        count_query = count_query.where(Match.status.in_(["FT", "AET", "PEN"]))
+    if league_id is not None:
+        count_query = count_query.where(Match.league_id == league_id)
+
     total_result = await session.execute(count_query)
     total = total_result.scalar() or 0
 
