@@ -1,7 +1,7 @@
 "use client";
 
-import { useOverviewData, useOpsOverview } from "@/lib/hooks";
-import { mockApiBudget, mockHealthSummary } from "@/lib/mocks";
+import { useOverviewData, useOpsOverview, useUpcomingMatches } from "@/lib/hooks";
+import { mockApiBudget, mockHealthSummary, mockUpcomingMatches } from "@/lib/mocks";
 import {
   HealthCard,
   CoverageBar,
@@ -34,6 +34,12 @@ export default function OverviewPage() {
     isHealthDegraded,
     requestId: opsRequestId,
   } = useOpsOverview();
+
+  // Fetch upcoming matches from dedicated endpoint
+  const {
+    matches: realUpcomingMatches,
+    isDegraded: isUpcomingDegraded,
+  } = useUpcomingMatches();
 
   // Loading state
   if (isLoading) {
@@ -72,11 +78,12 @@ export default function OverviewPage() {
     return null;
   }
 
-  const { health: mockHealth, upcomingMatches, activeIncidents } = data;
+  const { health: mockHealth, upcomingMatches: mockUpcoming, activeIncidents } = data;
 
   // Use real data if available, fallback to mock
   const displayBudget = realBudget ?? mockApiBudget;
   const displayHealth = realHealth ?? mockHealth ?? mockHealthSummary;
+  const displayUpcoming = realUpcomingMatches ?? mockUpcoming ?? mockUpcomingMatches;
 
   return (
     <div className="h-full flex overflow-hidden">
@@ -157,19 +164,24 @@ export default function OverviewPage() {
                   className="text-sm font-semibold text-foreground"
                 >
                   Upcoming Matches
+                  {isUpcomingDegraded && (
+                    <span className="ml-2 text-[10px] font-normal text-muted-foreground/70">
+                      (mock)
+                    </span>
+                  )}
                 </h2>
                 <span className="text-xs text-muted-foreground">
-                  {upcomingMatches.length} matches
+                  {displayUpcoming.length} matches
                 </span>
               </div>
-              <UpcomingMatchesList matches={upcomingMatches.slice(0, 6)} />
-              {upcomingMatches.length > 6 && (
+              <UpcomingMatchesList matches={displayUpcoming.slice(0, 6)} />
+              {displayUpcoming.length > 6 && (
                 <div className="mt-3 pt-3 border-t border-border">
                   <Link
                     href="/matches"
                     className="text-xs text-primary hover:text-primary-hover hover:underline"
                   >
-                    View all {upcomingMatches.length} matches →
+                    View all {displayUpcoming.length} matches →
                   </Link>
                 </div>
               )}

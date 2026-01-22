@@ -6,13 +6,11 @@ import { useQuery } from "@tanstack/react-query";
 import {
   OverviewData,
   HealthSummary,
-  UpcomingMatch,
   ActiveIncident,
 } from "@/lib/types";
 import {
   getOverviewDataMock,
   getHealthSummaryMock,
-  getUpcomingMatchesMock,
   getActiveIncidentsMock,
 } from "@/lib/mocks";
 
@@ -33,16 +31,6 @@ export function useHealthSummary() {
   return useQuery<HealthSummary>({
     queryKey: ["overview", "health"],
     queryFn: getHealthSummaryMock,
-  });
-}
-
-/**
- * Fetch upcoming matches only
- */
-export function useUpcomingMatches() {
-  return useQuery<UpcomingMatch[]>({
-    queryKey: ["overview", "upcoming"],
-    queryFn: getUpcomingMatchesMock,
   });
 }
 

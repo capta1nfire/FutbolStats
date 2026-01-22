@@ -252,6 +252,11 @@ export const mockApiBudget = normalApiBudget;
 export const mockHealthSummary = createHealthSummary("normal");
 
 /**
+ * Exported mock upcoming matches for fallback usage
+ */
+export const mockUpcomingMatches = normalUpcoming;
+
+/**
  * Get overview data based on scenario
  */
 export async function getOverviewDataMock(): Promise<OverviewData> {
