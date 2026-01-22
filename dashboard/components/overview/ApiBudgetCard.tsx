@@ -185,20 +185,24 @@ export function ApiBudgetCard({ budget, className, isMockFallback = false, reque
         className
       )}
     >
-      {/* Header: Title + Status Pill */}
+      {/* Header: Title + Status Indicator */}
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-          <CloudCog className="h-4 w-4 text-muted-foreground" />
+          <CloudCog className="h-4 w-4 text-primary" />
           API-Football
         </h3>
-        <span
-          className={cn(
-            "px-2 py-0.5 text-xs font-medium rounded-full border",
-            statusColors[displayStatus]
-          )}
-        >
-          {isInactive ? "Inactive" : statusLabels[displayStatus]}
-        </span>
+        {displayStatus === "ok" ? (
+          <span className="h-2.5 w-2.5 rounded-full bg-green-500" title="OK" />
+        ) : (
+          <span
+            className={cn(
+              "px-2 py-0.5 text-xs font-medium rounded-full border",
+              statusColors[displayStatus]
+            )}
+          >
+            {isInactive ? "Inactive" : statusLabels[displayStatus]}
+          </span>
+        )}
       </div>
 
       {/* Subtitle: Plan info */}
@@ -282,8 +286,8 @@ export function ApiBudgetCard({ budget, className, isMockFallback = false, reque
                   <Info className="h-3.5 w-3.5" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="top" className="max-w-[200px]">
-                <p className="text-xs">{budget.tokens_reset_note}</p>
+              <TooltipContent side="top">
+                <p>{budget.tokens_reset_note}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -320,10 +324,8 @@ export function ApiBudgetCard({ budget, className, isMockFallback = false, reque
                 )}
               </div>
             </TooltipTrigger>
-            <TooltipContent side="top" className="max-w-[220px]">
-              <p className="text-xs">
-                Backend unavailable. Showing cached/sample data.
-              </p>
+            <TooltipContent side="top">
+              <p>Backend unavailable. Showing cached/sample data.</p>
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
