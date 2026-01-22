@@ -7614,6 +7614,7 @@ async def _fetch_sentry_health() -> dict:
         dict with status, counts, top_issues, etc.
     """
     import time as time_module
+    import httpx
 
     now_ts = time_module.time()
     now_iso = datetime.utcnow().isoformat()
