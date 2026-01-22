@@ -166,12 +166,17 @@ export function useMatchesApi(options?: {
     limit,
   };
 
+  // Cache timing aligned with backend TTL (P1 auditor)
+  const isLive = backendStatus === "LIVE";
+  const staleTime = isLive ? 15_000 : 60_000;
+  const refetchInterval = isLive ? 15_000 : 60_000;
+
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["matches-api", queryParams],
     queryFn: () => fetchMatches(queryParams),
     retry: 1,
-    staleTime: 15_000, // Consider data fresh for 15s (LIVE needs faster refresh)
-    refetchInterval: backendStatus === "LIVE" ? 15_000 : 60_000,
+    staleTime,
+    refetchInterval,
     refetchOnWindowFocus: false,
     throwOnError: false,
     enabled,
