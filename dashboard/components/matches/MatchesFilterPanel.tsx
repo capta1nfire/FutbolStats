@@ -83,9 +83,6 @@ export function MatchesFilterPanel({
     return Array.from(leagues).sort();
   }, [matches]);
 
-  // All possible statuses for calendar view filter
-  const allStatuses: MatchStatus[] = ["scheduled", "live", "ht", "ft", "postponed", "cancelled"];
-
   // Time range labels depend on active view
   const timeRangeLabels = useMemo(() => {
     if (activeView === "upcoming") {
@@ -108,6 +105,16 @@ export function MatchesFilterPanel({
   // Build filter groups based on active view
   const filterGroups: FilterGroup[] = useMemo(() => {
     const groups: FilterGroup[] = [];
+
+    // All possible statuses for calendar view filter
+    const allStatuses: MatchStatus[] = [
+      "scheduled",
+      "live",
+      "ht",
+      "ft",
+      "postponed",
+      "cancelled",
+    ];
 
     // Only show time range filter for upcoming/finished views (not calendar)
     if (activeView !== "calendar") {
@@ -173,7 +180,6 @@ export function MatchesFilterPanel({
     return groups;
   }, [
     activeView,
-    allStatuses,
     availableLeagues,
     selectedLeagues,
     selectedStatuses,
