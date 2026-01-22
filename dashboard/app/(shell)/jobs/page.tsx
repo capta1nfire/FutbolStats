@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useJobRuns, useJobRun, useColumnVisibility } from "@/lib/hooks";
+import { useJobRuns, useJobRun, useColumnVisibility, usePageSize } from "@/lib/hooks";
 import { JobRun, JobStatus, JobFilters, JOB_STATUSES, JOB_NAMES } from "@/lib/types";
 import {
   JobsTable,
@@ -11,14 +11,14 @@ import {
   JOBS_COLUMN_OPTIONS,
   JOBS_DEFAULT_VISIBILITY,
 } from "@/components/jobs";
-import { CustomizeColumnsPanel } from "@/components/tables";
+import { CustomizeColumnsPanel, Pagination } from "@/components/tables";
 import {
   parseNumericId,
   parseArrayParam,
   buildSearchParams,
   toggleArrayValue,
 } from "@/lib/url-state";
-import { Loader2 } from "lucide-react";
+import { Loader } from "@/components/ui/loader";
 
 const BASE_PATH = "/jobs";
 
@@ -63,6 +63,10 @@ function JobsPageContent() {
   // UI state (non-URL)
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
   const [customizeColumnsOpen, setCustomizeColumnsOpen] = useState(false);
+
+  // Pagination state with localStorage persistence
+  const [currentPage, setCurrentPage] = useState(1);
+  const { pageSize, setPageSize } = usePageSize("jobs");
 
   // Column visibility with localStorage persistence
   const {
@@ -210,6 +214,15 @@ function JobsPageContent() {
           columnVisibility={columnVisibility}
           onColumnVisibilityChange={setColumnVisibility}
         />
+
+        {/* Pagination */}
+        <Pagination
+          currentPage={currentPage}
+          totalItems={jobRuns.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+        />
       </div>
 
       {/* Detail Drawer (inline on desktop, sheet on mobile) */}
@@ -228,10 +241,7 @@ function JobsPageContent() {
 function JobsLoading() {
   return (
     <div className="h-full flex items-center justify-center bg-background">
-      <div className="flex flex-col items-center gap-2">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">Loading jobs...</p>
-      </div>
+      <Loader size="md" />
     </div>
   );
 }

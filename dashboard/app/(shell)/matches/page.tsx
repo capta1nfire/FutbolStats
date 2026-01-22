@@ -19,7 +19,7 @@ import {
   buildSearchParams,
   toggleArrayValue,
 } from "@/lib/url-state";
-import { Loader2 } from "lucide-react";
+import { Loader } from "@/components/ui/loader";
 
 const BASE_PATH = "/matches";
 
@@ -245,10 +245,7 @@ function MatchesPageContent() {
 function MatchesLoading() {
   return (
     <div className="h-full flex items-center justify-center bg-background">
-      <div className="flex flex-col items-center gap-2">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">Loading matches...</p>
-      </div>
+      <Loader size="md" />
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { usePredictions, usePrediction, usePredictionCoverage, useColumnVisibility } from "@/lib/hooks";
+import { usePredictions, usePrediction, usePredictionCoverage, useColumnVisibility, usePageSize } from "@/lib/hooks";
 import { getPredictionLeaguesMock } from "@/lib/mocks";
 import {
   PredictionRow,
@@ -22,7 +22,7 @@ import {
   PREDICTIONS_COLUMN_OPTIONS,
   PREDICTIONS_DEFAULT_VISIBILITY,
 } from "@/components/predictions";
-import { CustomizeColumnsPanel } from "@/components/tables";
+import { CustomizeColumnsPanel, Pagination } from "@/components/tables";
 import {
   parseNumericId,
   parseArrayParam,
@@ -30,7 +30,7 @@ import {
   buildSearchParams,
   toggleArrayValue,
 } from "@/lib/url-state";
-import { Loader2 } from "lucide-react";
+import { Loader } from "@/components/ui/loader";
 
 const BASE_PATH = "/predictions";
 
@@ -86,6 +86,10 @@ function PredictionsPageContent() {
   // UI state (non-URL)
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
   const [customizeColumnsOpen, setCustomizeColumnsOpen] = useState(false);
+
+  // Pagination state with localStorage persistence
+  const [currentPage, setCurrentPage] = useState(1);
+  const { pageSize, setPageSize } = usePageSize("predictions");
 
   // Column visibility with localStorage persistence
   const { columnVisibility, setColumnVisibility, setColumnVisible, resetToDefault } = useColumnVisibility(
@@ -277,6 +281,15 @@ function PredictionsPageContent() {
           columnVisibility={columnVisibility}
           onColumnVisibilityChange={setColumnVisibility}
         />
+
+        {/* Pagination */}
+        <Pagination
+          currentPage={currentPage}
+          totalItems={predictions.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+        />
       </div>
 
       {/* Detail Drawer (inline on desktop, sheet on mobile) */}
@@ -296,10 +309,7 @@ function PredictionsPageContent() {
 function PredictionsLoading() {
   return (
     <div className="h-full flex items-center justify-center bg-background">
-      <div className="flex flex-col items-center gap-2">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">Loading predictions...</p>
-      </div>
+      <Loader size="md" />
     </div>
   );
 }

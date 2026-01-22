@@ -11,7 +11,8 @@ import {
   Updater,
   useReactTable,
 } from "@tanstack/react-table";
-import { ArrowUpDown, ArrowUp, ArrowDown, Loader2 } from "lucide-react";
+import { ChevronUp, ChevronDown } from "lucide-react";
+import { Loader } from "@/components/ui/loader";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -93,6 +94,7 @@ function DataTableInner<TData>(
     getSortedRowModel: getSortedRowModel(),
     onSortingChange: setSorting,
     onColumnVisibilityChange: handleColumnVisibilityChange,
+    sortDescFirst: false, // First click sorts ascending (arrow up)
     state: {
       sorting,
       columnVisibility: columnVisibility ?? {},
@@ -162,10 +164,7 @@ function DataTableInner<TData>(
   if (isLoading) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-2">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">Loading...</p>
-        </div>
+        <Loader size="md" />
       </div>
     );
   }
@@ -213,28 +212,32 @@ function DataTableInner<TData>(
                   return (
                     <th
                       key={header.id}
-                      className="px-3 py-2 text-left font-semibold text-muted-foreground text-sm"
+                      className="px-3 pt-3 pb-2 text-left font-semibold text-muted-foreground text-sm align-bottom"
                     >
                       {canSort ? (
                         <button
                           type="button"
                           onClick={header.column.getToggleSortingHandler()}
-                          className="flex items-center gap-1 cursor-pointer select-none hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 rounded"
+                          className={cn(
+                            "group flex items-end gap-0.5 cursor-pointer select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 rounded",
+                            sorted ? "text-primary" : "hover:text-foreground"
+                          )}
                           aria-label={`Sort by ${typeof headerContent === "string" ? headerContent : header.id}`}
                         >
                           {headerContent}
-                          <span className="text-muted-foreground">
+                          <span className={cn(
+                            "opacity-0 group-hover:opacity-100 transition-opacity",
+                            sorted && "text-primary"
+                          )}>
                             {sorted === "asc" ? (
-                              <ArrowUp className="h-3.5 w-3.5" />
-                            ) : sorted === "desc" ? (
-                              <ArrowDown className="h-3.5 w-3.5" />
+                              <ChevronUp className="h-4 w-4" />
                             ) : (
-                              <ArrowUpDown className="h-3.5 w-3.5 opacity-50" />
+                              <ChevronDown className="h-4 w-4" />
                             )}
                           </span>
                         </button>
                       ) : (
-                        <div className="flex items-center gap-1">{headerContent}</div>
+                        <div className="flex items-end gap-1">{headerContent}</div>
                       )}
                     </th>
                   );
@@ -316,16 +319,17 @@ export function SortableHeader({
   const sorted = column.getIsSorted();
 
   return (
-    <div className="flex items-center gap-1">
+    <div className={cn(
+      "group flex items-center gap-0.5",
+      sorted && "text-primary"
+    )}>
       {children}
       {column.getCanSort() && (
-        <span>
+        <span className="opacity-0 group-hover:opacity-100 transition-opacity">
           {sorted === "asc" ? (
-            <ArrowUp className="h-3.5 w-3.5" />
-          ) : sorted === "desc" ? (
-            <ArrowDown className="h-3.5 w-3.5" />
+            <ChevronUp className="h-4 w-4" />
           ) : (
-            <ArrowUpDown className="h-3.5 w-3.5 opacity-50" />
+            <ChevronDown className="h-4 w-4" />
           )}
         </span>
       )}

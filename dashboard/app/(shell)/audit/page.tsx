@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useAuditEvents, useAuditEvent, useColumnVisibility } from "@/lib/hooks";
+import { useAuditEvents, useAuditEvent, useColumnVisibility, usePageSize } from "@/lib/hooks";
 import {
   AuditEventRow,
   AuditEventType,
@@ -22,7 +22,7 @@ import {
   AUDIT_COLUMN_OPTIONS,
   AUDIT_DEFAULT_VISIBILITY,
 } from "@/components/audit";
-import { CustomizeColumnsPanel } from "@/components/tables";
+import { CustomizeColumnsPanel, Pagination } from "@/components/tables";
 import {
   parseNumericId,
   parseArrayParam,
@@ -30,7 +30,7 @@ import {
   buildSearchParams,
   toggleArrayValue,
 } from "@/lib/url-state";
-import { Loader2 } from "lucide-react";
+import { Loader } from "@/components/ui/loader";
 
 const BASE_PATH = "/audit";
 
@@ -83,6 +83,10 @@ function AuditPageContent() {
   // UI state (non-URL)
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
   const [customizeColumnsOpen, setCustomizeColumnsOpen] = useState(false);
+
+  // Pagination state with localStorage persistence
+  const [currentPage, setCurrentPage] = useState(1);
+  const { pageSize, setPageSize } = usePageSize("audit");
 
   // Column visibility with localStorage persistence
   const { columnVisibility, setColumnVisibility, setColumnVisible, resetToDefault } = useColumnVisibility(
@@ -254,6 +258,15 @@ function AuditPageContent() {
           columnVisibility={columnVisibility}
           onColumnVisibilityChange={setColumnVisibility}
         />
+
+        {/* Pagination */}
+        <Pagination
+          currentPage={currentPage}
+          totalItems={events.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+        />
       </div>
 
       {/* Detail Drawer (inline on desktop, sheet on mobile) */}
@@ -273,10 +286,7 @@ function AuditPageContent() {
 function AuditLoading() {
   return (
     <div className="h-full flex items-center justify-center bg-background">
-      <div className="flex flex-col items-center gap-2">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">Loading audit events...</p>
-      </div>
+      <Loader size="md" />
     </div>
   );
 }

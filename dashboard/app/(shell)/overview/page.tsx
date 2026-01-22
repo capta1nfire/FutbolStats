@@ -8,7 +8,8 @@ import {
   ActiveIncidentsList,
   ApiBudgetCard,
 } from "@/components/overview";
-import { Loader2, RefreshCw, AlertCircle } from "lucide-react";
+import { RefreshCw, AlertCircle } from "lucide-react";
+import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import Link from "next/link";
@@ -28,10 +29,7 @@ export default function OverviewPage() {
   if (isLoading) {
     return (
       <div className="h-full flex items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-2">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">Loading overview...</p>
-        </div>
+        <Loader size="md" />
       </div>
     );
   }

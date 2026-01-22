@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useIncidents, useIncident, useColumnVisibility } from "@/lib/hooks";
+import { useIncidents, useIncident, useColumnVisibility, usePageSize } from "@/lib/hooks";
 import {
   Incident,
   IncidentStatus,
@@ -20,14 +20,14 @@ import {
   INCIDENTS_COLUMN_OPTIONS,
   INCIDENTS_DEFAULT_VISIBILITY,
 } from "@/components/incidents";
-import { CustomizeColumnsPanel } from "@/components/tables";
+import { CustomizeColumnsPanel, Pagination } from "@/components/tables";
 import {
   parseNumericId,
   parseArrayParam,
   buildSearchParams,
   toggleArrayValue,
 } from "@/lib/url-state";
-import { Loader2 } from "lucide-react";
+import { Loader } from "@/components/ui/loader";
 
 const BASE_PATH = "/incidents";
 
@@ -76,6 +76,10 @@ function IncidentsPageContent() {
   // UI state (non-URL)
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
   const [customizeColumnsOpen, setCustomizeColumnsOpen] = useState(false);
+
+  // Pagination state with localStorage persistence
+  const [currentPage, setCurrentPage] = useState(1);
+  const { pageSize, setPageSize } = usePageSize("incidents");
 
   // Column visibility with localStorage persistence
   const {
@@ -236,6 +240,15 @@ function IncidentsPageContent() {
           columnVisibility={columnVisibility}
           onColumnVisibilityChange={setColumnVisibility}
         />
+
+        {/* Pagination */}
+        <Pagination
+          currentPage={currentPage}
+          totalItems={incidents.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+        />
       </div>
 
       {/* Detail Drawer (inline on desktop, sheet on mobile) */}
@@ -254,10 +267,7 @@ function IncidentsPageContent() {
 function IncidentsLoading() {
   return (
     <div className="h-full flex items-center justify-center bg-background">
-      <div className="flex flex-col items-center gap-2">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">Loading incidents...</p>
-      </div>
+      <Loader size="md" />
     </div>
   );
 }
