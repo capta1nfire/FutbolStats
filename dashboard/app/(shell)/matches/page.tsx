@@ -143,10 +143,11 @@ function MatchesPageContent() {
     router.replace(buildUrl({ id: null }), { scroll: false });
   }, [router, buildUrl]);
 
-  // Handle filter changes
+  // Handle filter changes - reset page to 1 when filters change (P1 auditor check)
   const handleStatusChange = useCallback(
     (status: MatchStatus, checked: boolean) => {
       const newStatuses = toggleArrayValue(selectedStatuses, status, checked);
+      setCurrentPage(1); // Reset pagination on filter change
       router.replace(buildUrl({ status: newStatuses }), { scroll: false });
     },
     [selectedStatuses, router, buildUrl]
@@ -155,6 +156,7 @@ function MatchesPageContent() {
   const handleLeagueChange = useCallback(
     (league: string, checked: boolean) => {
       const newLeagues = toggleArrayValue(selectedLeagues, league, checked);
+      setCurrentPage(1); // Reset pagination on filter change
       router.replace(buildUrl({ league: newLeagues }), { scroll: false });
     },
     [selectedLeagues, router, buildUrl]
@@ -162,6 +164,7 @@ function MatchesPageContent() {
 
   const handleSearchChange = useCallback(
     (value: string) => {
+      setCurrentPage(1); // Reset pagination on search change
       router.replace(buildUrl({ q: value }), { scroll: false });
     },
     [router, buildUrl]
