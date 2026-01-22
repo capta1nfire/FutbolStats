@@ -32,6 +32,7 @@ class GeminiResult:
     raw_output: dict
     error: Optional[str] = None
     finish_reason: Optional[str] = None  # STOP, MAX_TOKENS, SAFETY, RECITATION, OTHER
+    delay_ms: int = 0  # Queue/startup delay (0 for direct Gemini API, used by RunPod)
 
 
 class GeminiError(Exception):
