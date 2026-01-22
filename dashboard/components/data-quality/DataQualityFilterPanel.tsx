@@ -57,7 +57,7 @@ export function DataQualityFilterPanel({
     {
       id: "status",
       label: "Status",
-      icon: <CheckCircle2 className="h-4 w-4" />,
+      icon: <CheckCircle2 className="h-4 w-4" strokeWidth={1.5} />,
       options: statusOptions.map((opt) => ({
         id: opt.id,
         label: opt.label,
@@ -67,7 +67,7 @@ export function DataQualityFilterPanel({
     {
       id: "category",
       label: "Category",
-      icon: <FolderOpen className="h-4 w-4" />,
+      icon: <FolderOpen className="h-4 w-4" strokeWidth={1.5} />,
       options: categoryOptions.map((opt) => ({
         id: opt.id,
         label: opt.label,
@@ -90,6 +90,7 @@ export function DataQualityFilterPanel({
 
   return (
     <FilterPanel
+      title="Data Quality"
       collapsed={collapsed}
       onToggleCollapse={onToggleCollapse}
       groups={filterGroups}

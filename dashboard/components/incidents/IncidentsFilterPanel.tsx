@@ -96,7 +96,7 @@ export function IncidentsFilterPanel({
     {
       id: "status",
       label: "Status",
-      icon: <Activity className="h-4 w-4" />,
+      icon: <Activity className="h-4 w-4" strokeWidth={1.5} />,
       options: statusOptions.map((opt) => ({
         id: opt.id,
         label: opt.label,
@@ -106,7 +106,7 @@ export function IncidentsFilterPanel({
     {
       id: "type",
       label: "Type",
-      icon: <Tag className="h-4 w-4" />,
+      icon: <Tag className="h-4 w-4" strokeWidth={1.5} />,
       options: typeOptions.map((opt) => ({
         id: opt.id,
         label: opt.label,
@@ -141,6 +141,7 @@ export function IncidentsFilterPanel({
 
   return (
     <FilterPanel
+      title="Incidents"
       collapsed={collapsed}
       onToggleCollapse={onToggleCollapse}
       groups={filterGroups}

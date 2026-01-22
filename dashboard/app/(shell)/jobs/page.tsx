@@ -199,14 +199,6 @@ function JobsPageContent() {
 
       {/* Main content: Table */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
-        {/* Table header */}
-        <div className="h-12 flex items-center justify-between px-4 border-b border-border">
-          <h1 className="text-lg font-semibold text-foreground">Jobs</h1>
-          <span className="text-sm text-muted-foreground">
-            {jobRuns.length} runs
-          </span>
-        </div>
-
         {/* Table */}
         <JobsTable
           data={jobRuns}

@@ -23,13 +23,13 @@ interface SettingsNavProps {
 }
 
 const sectionIcons: Record<SettingsSection, React.ReactNode> = {
-  general: <Settings className="h-4 w-4" />,
-  timezone: <Clock className="h-4 w-4" />,
-  notifications: <Bell className="h-4 w-4" />,
-  api_keys: <Key className="h-4 w-4" />,
-  model_versions: <Cpu className="h-4 w-4" />,
-  feature_flags: <ToggleLeft className="h-4 w-4" />,
-  users: <Users className="h-4 w-4" />,
+  general: <Settings className="h-4 w-4" strokeWidth={1.5} />,
+  timezone: <Clock className="h-4 w-4" strokeWidth={1.5} />,
+  notifications: <Bell className="h-4 w-4" strokeWidth={1.5} />,
+  api_keys: <Key className="h-4 w-4" strokeWidth={1.5} />,
+  model_versions: <Cpu className="h-4 w-4" strokeWidth={1.5} />,
+  feature_flags: <ToggleLeft className="h-4 w-4" strokeWidth={1.5} />,
+  users: <Users className="h-4 w-4" strokeWidth={1.5} />,
 };
 
 export function SettingsNav({

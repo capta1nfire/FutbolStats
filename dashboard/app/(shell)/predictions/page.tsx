@@ -257,14 +257,6 @@ function PredictionsPageContent() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
-        {/* Header */}
-        <div className="h-12 flex items-center justify-between px-4 border-b border-border">
-          <h1 className="text-lg font-semibold text-foreground">Predictions</h1>
-          <span className="text-sm text-muted-foreground">
-            {predictions.length} predictions
-          </span>
-        </div>
-
         {/* Coverage Card */}
         <div className="p-4 border-b border-border">
           <PredictionsCoverageCard

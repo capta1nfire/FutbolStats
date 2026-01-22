@@ -44,7 +44,7 @@ export function MatchesFilterPanel({
       {
         id: "status",
         label: "Status",
-        icon: <Circle className="h-4 w-4" />,
+        icon: <Circle className="h-4 w-4" strokeWidth={1.5} />,
         options: [
           {
             id: "scheduled",
@@ -75,7 +75,7 @@ export function MatchesFilterPanel({
       {
         id: "league",
         label: "League",
-        icon: <Trophy className="h-4 w-4" />,
+        icon: <Trophy className="h-4 w-4" strokeWidth={1.5} />,
         options: leagues.map((league) => ({
           id: league,
           label: league,
@@ -85,7 +85,7 @@ export function MatchesFilterPanel({
       {
         id: "date",
         label: "Date Range",
-        icon: <Calendar className="h-4 w-4" />,
+        icon: <Calendar className="h-4 w-4" strokeWidth={1.5} />,
         options: [
           { id: "today", label: "Today", checked: false },
           { id: "tomorrow", label: "Tomorrow", checked: false },
@@ -111,6 +111,7 @@ export function MatchesFilterPanel({
 
   return (
     <FilterPanel
+      title="Matches"
       collapsed={collapsed}
       onToggleCollapse={onToggleCollapse}
       groups={filterGroups}

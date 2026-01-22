@@ -198,7 +198,7 @@ function DataTableInner<TData>(
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Fixed header - outside scroll area */}
-      <div className="flex-shrink-0 bg-surface border-b border-border">
+      <div className="flex-shrink-0 bg-background border-b border-border">
         <table className="w-full border-collapse text-sm">
           <thead>
             {table.getHeaderGroups().map((headerGroup) => (

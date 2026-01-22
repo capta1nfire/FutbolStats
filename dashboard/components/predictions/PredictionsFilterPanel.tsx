@@ -78,7 +78,7 @@ export function PredictionsFilterPanel({
     {
       id: "status",
       label: "Status",
-      icon: <TrendingUp className="h-4 w-4" />,
+      icon: <TrendingUp className="h-4 w-4" strokeWidth={1.5} />,
       options: statusOptions.map((opt) => ({
         id: opt.id,
         label: opt.label,
@@ -88,7 +88,7 @@ export function PredictionsFilterPanel({
     {
       id: "model",
       label: "Model",
-      icon: <Cpu className="h-4 w-4" />,
+      icon: <Cpu className="h-4 w-4" strokeWidth={1.5} />,
       options: modelOptions.map((opt) => ({
         id: opt.id,
         label: opt.label,
@@ -98,7 +98,7 @@ export function PredictionsFilterPanel({
     {
       id: "timeRange",
       label: "Time Range",
-      icon: <Clock className="h-4 w-4" />,
+      icon: <Clock className="h-4 w-4" strokeWidth={1.5} />,
       options: timeRangeOptions.map((opt) => ({
         id: opt.id,
         label: opt.label,
@@ -108,7 +108,7 @@ export function PredictionsFilterPanel({
     {
       id: "league",
       label: "League",
-      icon: <MapPin className="h-4 w-4" />,
+      icon: <MapPin className="h-4 w-4" strokeWidth={1.5} />,
       options: leagueOptions.map((opt) => ({
         id: opt.id,
         label: opt.label,
@@ -140,6 +140,7 @@ export function PredictionsFilterPanel({
 
   return (
     <FilterPanel
+      title="Predictions"
       collapsed={collapsed}
       onToggleCollapse={onToggleCollapse}
       groups={filterGroups}

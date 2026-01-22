@@ -102,7 +102,7 @@ export function AuditFilterPanel({
     {
       id: "type",
       label: "Event Type",
-      icon: <FileText className="h-4 w-4" />,
+      icon: <FileText className="h-4 w-4" strokeWidth={1.5} />,
       options: typeOptions.map((opt) => ({
         id: opt.id,
         label: opt.label,
@@ -112,7 +112,7 @@ export function AuditFilterPanel({
     {
       id: "actorKind",
       label: "Actor",
-      icon: <User className="h-4 w-4" />,
+      icon: <User className="h-4 w-4" strokeWidth={1.5} />,
       options: actorKindOptions.map((opt) => ({
         id: opt.id,
         label: opt.label,
@@ -122,7 +122,7 @@ export function AuditFilterPanel({
     {
       id: "timeRange",
       label: "Time Range",
-      icon: <Clock className="h-4 w-4" />,
+      icon: <Clock className="h-4 w-4" strokeWidth={1.5} />,
       options: timeRangeOptions.map((opt) => ({
         id: opt.id,
         label: opt.label,
@@ -164,6 +164,7 @@ export function AuditFilterPanel({
 
   return (
     <FilterPanel
+      title="Audit"
       collapsed={collapsed}
       onToggleCollapse={onToggleCollapse}
       groups={filterGroups}

@@ -46,7 +46,7 @@ export function Pagination({
   const isNextDisabled = currentPage === totalPages;
 
   return (
-    <div className="py-4 px-4 border-t border-border bg-surface">
+    <div className="py-4 px-4 border-t border-border bg-background">
       <div className="h-8 flex items-center">
         {/* All content aligned left: Nav buttons + Range text + Rows per page */}
         <div className="flex items-center gap-6">

@@ -130,7 +130,7 @@ export function CustomizeColumnsPanel({
             className="h-8 w-8"
             aria-label="Collapse filters"
           >
-            <ChevronLeft className="h-4 w-4" />
+            <ChevronLeft className="h-4 w-4" strokeWidth={1.5} />
           </Button>
         )}
       </div>

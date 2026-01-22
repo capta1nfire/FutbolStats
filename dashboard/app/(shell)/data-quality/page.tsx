@@ -175,11 +175,6 @@ function DataQualityPageContent() {
     [router, buildUrl]
   );
 
-  // Calculate summary counts
-  const passingCount = checks.filter((c) => c.status === "passing").length;
-  const warningCount = checks.filter((c) => c.status === "warning").length;
-  const failingCount = checks.filter((c) => c.status === "failing").length;
-
   return (
     <div className="h-full flex overflow-hidden relative">
       {/* FilterPanel */}
@@ -210,16 +205,6 @@ function DataQualityPageContent() {
 
       {/* Main content: Table */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
-        {/* Table header */}
-        <div className="h-12 flex items-center justify-between px-4 border-b border-border">
-          <h1 className="text-lg font-semibold text-foreground">Data Quality</h1>
-          <div className="flex items-center gap-4 text-sm">
-            <span className="text-green-400">{passingCount} passing</span>
-            <span className="text-yellow-400">{warningCount} warning</span>
-            <span className="text-red-400">{failingCount} failing</span>
-          </div>
-        </div>
-
         {/* Table */}
         <DataQualityTable
           data={checks}

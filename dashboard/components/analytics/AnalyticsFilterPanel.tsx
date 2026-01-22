@@ -44,7 +44,7 @@ export function AnalyticsFilterPanel({
     {
       id: "type",
       label: "Report Type",
-      icon: <BarChart3 className="h-4 w-4" />,
+      icon: <BarChart3 className="h-4 w-4" strokeWidth={1.5} />,
       options: typeOptions.map((opt) => ({
         id: opt.id,
         label: opt.label,
@@ -65,6 +65,7 @@ export function AnalyticsFilterPanel({
 
   return (
     <FilterPanel
+      title="Analytics"
       collapsed={collapsed}
       onToggleCollapse={onToggleCollapse}
       groups={filterGroups}

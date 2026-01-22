@@ -51,7 +51,7 @@ export function JobsFilterPanel({
     {
       id: "status",
       label: "Status",
-      icon: <Activity className="h-4 w-4" />,
+      icon: <Activity className="h-4 w-4" strokeWidth={1.5} />,
       options: statusOptions.map((opt) => ({
         id: opt.id,
         label: opt.label,
@@ -61,7 +61,7 @@ export function JobsFilterPanel({
     {
       id: "job",
       label: "Job Type",
-      icon: <Cog className="h-4 w-4" />,
+      icon: <Cog className="h-4 w-4" strokeWidth={1.5} />,
       options: jobOptions.map((opt) => ({
         id: opt.id,
         label: opt.label,
@@ -84,6 +84,7 @@ export function JobsFilterPanel({
 
   return (
     <FilterPanel
+      title="Jobs"
       collapsed={collapsed}
       onToggleCollapse={onToggleCollapse}
       groups={filterGroups}

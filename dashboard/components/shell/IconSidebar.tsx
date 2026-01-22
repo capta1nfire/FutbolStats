@@ -67,7 +67,7 @@ export function IconSidebar() {
                       : "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent"
                   )}
                 >
-                  <Icon className="h-5 w-5" aria-hidden="true" />
+                  <Icon className="h-5 w-5" strokeWidth={1.5} aria-hidden="true" />
                 </Link>
               </TooltipTrigger>
               <TooltipContent side="right">

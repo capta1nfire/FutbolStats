@@ -33,7 +33,7 @@ const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           className={cn(
-            "flex h-9 w-full rounded-md border border-input bg-background px-8 py-2 text-sm",
+            "flex h-9 w-full rounded-md border border-border bg-[#282b2f] px-8 py-2 text-sm",
             "placeholder:text-muted-foreground",
             "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
             "disabled:cursor-not-allowed disabled:opacity-50",
@@ -48,7 +48,7 @@ const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
             className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground hover:text-foreground transition-colors"
             aria-label="Clear search"
           >
-            <X className="h-4 w-4" />
+            <X className="h-4 w-4" strokeWidth={1.5} />
           </button>
         )}
       </div>

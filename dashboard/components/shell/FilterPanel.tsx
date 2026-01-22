@@ -50,6 +50,8 @@ interface FilterPanelProps {
   customizeColumnsOpen?: boolean;
   /** Optional content to render below search (e.g., quick filters) */
   quickFilterContent?: ReactNode;
+  /** Section title to display in header (e.g., "Matches", "Jobs") */
+  title?: string;
 }
 
 export function FilterPanel({
@@ -63,6 +65,7 @@ export function FilterPanel({
   showCustomizeColumns = false,
   customizeColumnsOpen = false,
   quickFilterContent,
+  title = "Filters",
 }: FilterPanelProps) {
   // Track client-side mount to avoid Radix Accordion hydration mismatch
   // Uses useSyncExternalStore instead of useState+useEffect to avoid lint error
@@ -82,7 +85,7 @@ export function FilterPanel({
                 className="mb-2"
                 aria-label="Expand filters"
               >
-                <ChevronRight className="h-4 w-4" />
+                <ChevronRight className="h-4 w-4" strokeWidth={1.5} />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="right">
@@ -98,7 +101,7 @@ export function FilterPanel({
                 className="text-muted-foreground"
                 aria-label="Filters"
               >
-                <Filter className="h-4 w-4" />
+                <Filter className="h-4 w-4" strokeWidth={1.5} />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="right">
@@ -115,7 +118,7 @@ export function FilterPanel({
     <aside className="w-[277px] shrink-0 border-r border-border bg-sidebar flex flex-col transition-smooth">
       {/* Header - collapse button hidden when CustomizeColumnsPanel is open */}
       <div className="h-12 flex items-center justify-between px-3">
-        <span className="text-sm font-medium text-foreground">Filters</span>
+        <span className="text-sm font-semibold text-foreground">{title}</span>
         {!customizeColumnsOpen && (
           <Button
             variant="ghost"
@@ -124,7 +127,7 @@ export function FilterPanel({
             className="h-8 w-8"
             aria-label="Collapse filters"
           >
-            <ChevronLeft className="h-4 w-4" />
+            <ChevronLeft className="h-4 w-4" strokeWidth={1.5} />
           </Button>
         )}
       </div>
@@ -135,7 +138,6 @@ export function FilterPanel({
           placeholder="Search..."
           value={searchValue}
           onChange={(value) => onSearchChange?.(value)}
-          className="bg-background"
         />
       </div>
 
