@@ -9854,11 +9854,12 @@ async def get_matches_dashboard(
         base_query = base_query.where(Match.league_id == league_id)
 
     # Count total for pagination (count distinct match IDs)
-    count_query = select(func.count(func.distinct(Match.id))).select_from(
-        Match
-        .join(home_team, Match.home_team_id == home_team.id)
-        .join(away_team, Match.away_team_id == away_team.id)
-    ).where(Match.date >= start_dt).where(Match.date <= end_dt)
+    # Note: We just count Match rows, no need to join Team tables for count
+    count_query = (
+        select(func.count(Match.id))
+        .where(Match.date >= start_dt)
+        .where(Match.date <= end_dt)
+    )
 
     if status == "LIVE":
         count_query = count_query.where(Match.status.in_(["1H", "HT", "2H", "ET", "BT", "P", "SUSP", "INT", "LIVE"]))
