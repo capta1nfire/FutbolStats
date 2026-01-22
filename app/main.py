@@ -9652,9 +9652,9 @@ async def get_upcoming_matches_dashboard(
         262: "Liga MX", 265: "Chile Primera", 34: "WCQ CONMEBOL",
         32: "WCQ UEFA", 31: "WCQ CONCACAF",
     }
-    # Merge with COMPETITIONS if available
+    # Merge with COMPETITIONS if available (has full league names)
     try:
-        from app.config import COMPETITIONS
+        from app.etl.competitions import COMPETITIONS
         for lid, comp in (COMPETITIONS or {}).items():
             if lid and comp and hasattr(comp, "name") and comp.name:
                 league_name_by_id[int(lid)] = comp.name
