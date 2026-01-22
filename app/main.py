@@ -9904,6 +9904,171 @@ async def get_matches_dashboard(
     }
 
 
+# -----------------------------------------------------------------------------
+# Dashboard Jobs History Endpoint
+# -----------------------------------------------------------------------------
+
+# Cache for jobs table
+_jobs_table_cache: dict[str, dict] = {}
+_JOBS_CACHE_TTL = 30  # seconds
+
+
+def _get_jobs_cache_key(status: str | None, job_name: str | None, hours: int, page: int, limit: int) -> str:
+    """Generate cache key including all query params."""
+    return f"jobs:{status}:{job_name}:{hours}:{page}:{limit}"
+
+
+@app.get("/dashboard/jobs.json")
+async def get_jobs_dashboard(
+    request: Request,
+    status: str | None = None,  # ok, error, rate_limited, budget_exceeded
+    job_name: str | None = None,  # Filter by job name
+    hours: int = 24,  # Time window (default 24h)
+    page: int = 1,
+    limit: int = 50,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Job runs history for dashboard /jobs page.
+
+    Returns paginated job runs with filtering by status and job name.
+
+    Auth: X-Dashboard-Token header (read-only).
+
+    Query params:
+    - status: ok, error, rate_limited, budget_exceeded (optional)
+    - job_name: stats_backfill, odds_sync, fastpath, etc. (optional)
+    - hours: time window (1-168, default 24)
+    - page: pagination (1-indexed)
+    - limit: rows per page (1-100)
+
+    Response:
+    {
+        "generated_at": "2026-01-22T...",
+        "cached": true/false,
+        "cache_age_seconds": 15,
+        "data": {
+            "runs": [...],
+            "total": 234,
+            "page": 1,
+            "limit": 50,
+            "pages": 5,
+            "jobs_summary": {...}  // Per-job health summary
+        }
+    }
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    # Normalize and validate params
+    hours = min(max(hours, 1), 168)  # 1-168 hours (7 days max)
+    page = max(page, 1)
+    limit = min(max(limit, 1), 100)
+
+    cache_key = _get_jobs_cache_key(status, job_name, hours, page, limit)
+    now = time.time()
+
+    # Check cache
+    if cache_key in _jobs_table_cache:
+        cached_entry = _jobs_table_cache[cache_key]
+        age = now - cached_entry["timestamp"]
+        if age < _JOBS_CACHE_TTL:
+            return {
+                "generated_at": cached_entry["generated_at"],
+                "cached": True,
+                "cache_age_seconds": round(age, 1),
+                "data": cached_entry["data"],
+            }
+
+    from sqlalchemy import func
+
+    now_dt = datetime.utcnow()
+    cutoff_dt = now_dt - timedelta(hours=hours)
+
+    # Base query
+    base_query = (
+        select(JobRun)
+        .where(JobRun.started_at >= cutoff_dt)
+    )
+
+    # Status filter
+    if status:
+        base_query = base_query.where(JobRun.status == status)
+
+    # Job name filter
+    if job_name:
+        base_query = base_query.where(JobRun.job_name == job_name)
+
+    # Count total for pagination
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total_result = await session.execute(count_query)
+    total = total_result.scalar() or 0
+
+    # Order and paginate
+    offset = (page - 1) * limit
+    query = base_query.order_by(JobRun.started_at.desc()).offset(offset).limit(limit)
+
+    result = await session.execute(query)
+    rows = result.scalars().all()
+
+    # Format response
+    runs = []
+    for row in rows:
+        run_data = {
+            "id": row.id,
+            "job_name": row.job_name,
+            "status": row.status,
+            "started_at": row.started_at.isoformat() + "Z" if row.started_at else None,
+            "finished_at": row.finished_at.isoformat() + "Z" if row.finished_at else None,
+            "duration_ms": row.duration_ms,
+        }
+
+        # Only include error if failed
+        if row.status == "error" and row.error_message:
+            run_data["error"] = row.error_message[:500]  # Truncate long errors
+
+        # Include metrics if present
+        if row.metrics:
+            run_data["metrics"] = row.metrics
+
+        runs.append(run_data)
+
+    # Get jobs summary (per-job health) using existing function
+    from app.jobs.tracking import get_jobs_health_from_db
+    jobs_summary = await get_jobs_health_from_db(session)
+
+    generated_at = datetime.utcnow().isoformat() + "Z"
+    pages = (total + limit - 1) // limit if limit > 0 else 1
+
+    response_data = {
+        "runs": runs,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": pages,
+        "jobs_summary": jobs_summary,
+    }
+
+    # Update cache
+    _jobs_table_cache[cache_key] = {
+        "generated_at": generated_at,
+        "timestamp": now,
+        "data": response_data,
+    }
+
+    # Clean old cache entries (simple LRU: keep last 20)
+    if len(_jobs_table_cache) > 20:
+        oldest_key = min(_jobs_table_cache.keys(), key=lambda k: _jobs_table_cache[k]["timestamp"])
+        del _jobs_table_cache[oldest_key]
+
+    return {
+        "generated_at": generated_at,
+        "cached": False,
+        "cache_age_seconds": 0,
+        "data": response_data,
+    }
+
+
 @app.get("/dashboard/ops/logs.json")
 async def ops_dashboard_logs_json(
     request: Request,
