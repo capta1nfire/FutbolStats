@@ -187,7 +187,7 @@ export function ApiBudgetCard({ budget, className, isMockFallback = false, reque
     >
       {/* Header: Title + Status Pill */}
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-foreground">API Budget</h3>
+        <h3 className="text-sm font-semibold text-foreground">API-Football</h3>
         <span
           className={cn(
             "px-2 py-0.5 text-xs font-medium rounded-full border",

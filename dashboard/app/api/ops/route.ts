@@ -16,10 +16,10 @@ const AUTH_HEADER_VALUE = process.env.OPS_AUTH_HEADER_VALUE;
 const TIMEOUT_MS = parseInt(process.env.OPS_TIMEOUT_MS || "8000", 10);
 
 /**
- * Generate a simple request ID for tracing
+ * Generate a cryptographically secure request ID for tracing
  */
 function generateRequestId(): string {
-  return `ops-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return `ops-${crypto.randomUUID()}`;
 }
 
 /**
@@ -112,11 +112,10 @@ export async function GET() {
         });
       }
 
-      // 4xx errors - don't retry
+      // 4xx errors - don't retry, don't leak backend details
       if (response.status >= 400 && response.status < 500) {
-        const errorText = await response.text().catch(() => "Unknown error");
         return NextResponse.json(
-          { error: `Backend returned ${response.status}`, details: errorText, requestId },
+          { error: `Backend returned ${response.status}`, requestId },
           {
             status: response.status,
             headers: {
@@ -149,16 +148,13 @@ export async function GET() {
         continue;
       }
 
-      // Final attempt - return error
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
+      // Final attempt - return error (no internal details exposed)
       const isTimeout =
         error instanceof Error && error.name === "AbortError";
 
       return NextResponse.json(
         {
           error: isTimeout ? "Backend timeout" : "Backend unreachable",
-          details: errorMessage,
           requestId,
         },
         {
