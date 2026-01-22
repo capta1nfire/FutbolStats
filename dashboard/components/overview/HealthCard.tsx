@@ -7,6 +7,8 @@ import { TrendingUp, TrendingDown, Minus } from "lucide-react";
 interface HealthCardProps {
   card: HealthCardType;
   className?: string;
+  /** True when showing mock data due to backend unavailability (unused for now) */
+  isMockFallback?: boolean;
 }
 
 const statusColors: Record<HealthStatus, string> = {

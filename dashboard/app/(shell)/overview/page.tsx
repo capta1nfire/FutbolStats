@@ -1,7 +1,7 @@
 "use client";
 
-import { useOverviewData, useOpsBudget } from "@/lib/hooks";
-import { mockApiBudget } from "@/lib/mocks";
+import { useOverviewData, useOpsOverview } from "@/lib/hooks";
+import { mockApiBudget, mockHealthSummary } from "@/lib/mocks";
 import {
   HealthCard,
   CoverageBar,
@@ -26,12 +26,14 @@ import Link from "next/link";
 export default function OverviewPage() {
   const { data, isLoading, error, refetch } = useOverviewData();
 
-  // Fetch real API budget via proxy (enterprise-safe)
+  // Fetch real ops data (budget + health) via proxy (enterprise-safe)
   const {
     budget: realBudget,
-    isDegraded: isBudgetDegraded,
-    requestId: budgetRequestId,
-  } = useOpsBudget();
+    health: realHealth,
+    isBudgetDegraded,
+    isHealthDegraded,
+    requestId: opsRequestId,
+  } = useOpsOverview();
 
   // Loading state
   if (isLoading) {
@@ -70,10 +72,11 @@ export default function OverviewPage() {
     return null;
   }
 
-  const { health, upcomingMatches, activeIncidents } = data;
+  const { health: mockHealth, upcomingMatches, activeIncidents } = data;
 
-  // Use real budget if available, fallback to mock
+  // Use real data if available, fallback to mock
   const displayBudget = realBudget ?? mockApiBudget;
+  const displayHealth = realHealth ?? mockHealth ?? mockHealthSummary;
 
   return (
     <div className="h-full flex overflow-hidden">
@@ -88,7 +91,7 @@ export default function OverviewPage() {
           <ApiBudgetCard
             budget={displayBudget}
             isMockFallback={isBudgetDegraded}
-            requestId={budgetRequestId}
+            requestId={opsRequestId}
           />
         </div>
       </aside>
@@ -120,8 +123,12 @@ export default function OverviewPage() {
               Health Status
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {health.cards.map((card) => (
-                <HealthCard key={card.id} card={card} />
+              {displayHealth.cards.map((card) => (
+                <HealthCard
+                  key={card.id}
+                  card={card}
+                  isMockFallback={isHealthDegraded}
+                />
               ))}
             </div>
           </section>
@@ -134,7 +141,7 @@ export default function OverviewPage() {
             <h2 id="coverage-heading" className="sr-only">
               Prediction Coverage
             </h2>
-            <CoverageBar percentage={health.coveragePct} />
+            <CoverageBar percentage={displayHealth.coveragePct} />
           </section>
 
           {/* Two-column layout: Upcoming + Incidents */}
@@ -201,12 +208,15 @@ export default function OverviewPage() {
           {/* Last updated */}
           <div className="text-xs text-muted-foreground text-center">
             Last updated:{" "}
-            {new Date(health.lastUpdated).toLocaleString("en-US", {
+            {new Date(displayHealth.lastUpdated).toLocaleString("en-US", {
               month: "short",
               day: "numeric",
               hour: "2-digit",
               minute: "2-digit",
             })}
+            {isHealthDegraded && (
+              <span className="ml-2 text-muted-foreground/70">(mock data)</span>
+            )}
           </div>
         </div>
       </ScrollArea>

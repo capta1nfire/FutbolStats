@@ -247,6 +247,11 @@ const emptyApiBudget = createApiBudget("empty");
 export const mockApiBudget = normalApiBudget;
 
 /**
+ * Exported mock health summary for fallback usage
+ */
+export const mockHealthSummary = createHealthSummary("normal");
+
+/**
  * Get overview data based on scenario
  */
 export async function getOverviewDataMock(): Promise<OverviewData> {
