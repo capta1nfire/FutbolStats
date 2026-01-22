@@ -3,3 +3,4 @@ export { CoverageBar } from "./CoverageBar";
 export { UpcomingMatchesList } from "./UpcomingMatchesList";
 export { ActiveIncidentsList } from "./ActiveIncidentsList";
 export { ApiBudgetCard } from "./ApiBudgetCard";
+export { SentryHealthCard } from "./SentryHealthCard";

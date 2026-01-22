@@ -8,6 +8,7 @@ import {
   UpcomingMatchesList,
   ActiveIncidentsList,
   ApiBudgetCard,
+  SentryHealthCard,
 } from "@/components/overview";
 import { RefreshCw, AlertCircle } from "lucide-react";
 import { Loader } from "@/components/ui/loader";
@@ -26,12 +27,14 @@ import Link from "next/link";
 export default function OverviewPage() {
   const { data, isLoading, error, refetch } = useOverviewData();
 
-  // Fetch real ops data (budget + health) via proxy (enterprise-safe)
+  // Fetch real ops data (budget + health + sentry) via proxy (enterprise-safe)
   const {
     budget: realBudget,
     health: realHealth,
+    sentry: realSentry,
     isBudgetDegraded,
     isHealthDegraded,
+    isSentryDegraded,
     requestId: opsRequestId,
   } = useOpsOverview();
 
@@ -87,18 +90,22 @@ export default function OverviewPage() {
 
   return (
     <div className="h-full flex overflow-hidden">
-      {/* Left Rail: API Budget (aligned with FilterPanel at 277px) */}
+      {/* Left Rail: API Budget + Sentry (aligned with FilterPanel at 277px) */}
       <aside className="w-[277px] shrink-0 border-r border-border bg-sidebar flex flex-col">
         {/* Header - consistent with FilterPanel */}
         <div className="h-12 flex items-center px-3 border-b border-border">
           <span className="text-sm font-medium text-foreground">Dashboard</span>
         </div>
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-3">
+        <div className="flex-1 overflow-y-auto p-3 space-y-3">
           <ApiBudgetCard
             budget={displayBudget}
             isMockFallback={isBudgetDegraded}
             requestId={opsRequestId}
+          />
+          <SentryHealthCard
+            sentry={realSentry}
+            isMockFallback={isSentryDegraded}
           />
         </div>
       </aside>

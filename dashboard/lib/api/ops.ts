@@ -354,3 +354,164 @@ export function adaptHealthSummary(ops: OpsResponse): HealthSummary | null {
 export function parseOpsHealth(ops: OpsResponse): HealthSummary | null {
   return adaptHealthSummary(ops);
 }
+
+// ============================================================================
+// Sentry Summary Extraction (best-effort)
+// ============================================================================
+
+/**
+ * Sentry issue level
+ */
+export type SentryIssueLevel = "error" | "warning" | "info";
+
+/**
+ * Sentry top issue
+ */
+export interface SentryTopIssue {
+  title: string;
+  count_24h: number;
+  level: SentryIssueLevel;
+}
+
+/**
+ * Sentry summary from ops.json
+ */
+export interface OpsSentrySummary {
+  status: ApiBudgetStatus; // ok | warning | critical | degraded
+  cached: boolean;
+  cache_age_seconds: number;
+  generated_at: string;
+  project: {
+    org_slug: string;
+    project_slug: string;
+    env: string;
+  };
+  counts: {
+    new_issues_1h: number;
+    new_issues_24h: number;
+    open_issues: number;
+  };
+  last_event_at?: string;
+  top_issues?: SentryTopIssue[];
+  note?: string;
+}
+
+/**
+ * Validate SentryIssueLevel
+ */
+function isValidSentryLevel(level: unknown): level is SentryIssueLevel {
+  return level === "error" || level === "warning" || level === "info";
+}
+
+/**
+ * Extract sentry object from ops response
+ *
+ * Expected structure: { data: { sentry: {...} } }
+ */
+export function extractSentry(ops: OpsResponse): unknown | null {
+  if (!isObject(ops)) return null;
+
+  const sentry = getNestedValue(ops, "data", "sentry");
+  if (!isObject(sentry)) return null;
+
+  return sentry;
+}
+
+/**
+ * Adapt raw sentry object to OpsSentrySummary type
+ *
+ * Returns null if critical fields are missing or have wrong types.
+ */
+export function adaptOpsSentry(raw: unknown): OpsSentrySummary | null {
+  if (!isObject(raw)) return null;
+
+  // Required: status
+  const status = raw.status;
+  if (!isValidStatus(status)) return null;
+
+  // Required: project
+  const project = raw.project;
+  if (!isObject(project)) return null;
+  const org_slug = project.org_slug;
+  const project_slug = project.project_slug;
+  const env = project.env;
+  if (typeof org_slug !== "string" || typeof project_slug !== "string" || typeof env !== "string") {
+    return null;
+  }
+
+  // Required: counts
+  const counts = raw.counts;
+  if (!isObject(counts)) return null;
+  const new_issues_1h = counts.new_issues_1h;
+  const new_issues_24h = counts.new_issues_24h;
+  const open_issues = counts.open_issues;
+  if (
+    typeof new_issues_1h !== "number" ||
+    typeof new_issues_24h !== "number" ||
+    typeof open_issues !== "number"
+  ) {
+    return null;
+  }
+
+  // Required: generated_at
+  const generated_at = raw.generated_at;
+  if (typeof generated_at !== "string") return null;
+
+  // Optional fields with defaults
+  const cached = typeof raw.cached === "boolean" ? raw.cached : false;
+  const cache_age_seconds =
+    typeof raw.cache_age_seconds === "number" ? raw.cache_age_seconds : 0;
+
+  // Optional: last_event_at
+  const last_event_at =
+    typeof raw.last_event_at === "string" ? raw.last_event_at : undefined;
+
+  // Optional: note
+  const note = typeof raw.note === "string" ? raw.note : undefined;
+
+  // Optional: top_issues (array)
+  let top_issues: SentryTopIssue[] | undefined;
+  if (Array.isArray(raw.top_issues)) {
+    top_issues = [];
+    for (const issue of raw.top_issues) {
+      if (
+        isObject(issue) &&
+        typeof issue.title === "string" &&
+        typeof issue.count_24h === "number" &&
+        isValidSentryLevel(issue.level)
+      ) {
+        top_issues.push({
+          title: issue.title,
+          count_24h: issue.count_24h,
+          level: issue.level,
+        });
+      }
+    }
+    if (top_issues.length === 0) {
+      top_issues = undefined;
+    }
+  }
+
+  return {
+    status,
+    cached,
+    cache_age_seconds,
+    generated_at,
+    project: { org_slug, project_slug, env },
+    counts: { new_issues_1h, new_issues_24h, open_issues },
+    last_event_at,
+    top_issues,
+    note,
+  };
+}
+
+/**
+ * Combined extraction and adaptation for sentry
+ *
+ * Returns OpsSentrySummary if successful, null otherwise
+ */
+export function parseOpsSentry(ops: OpsResponse): OpsSentrySummary | null {
+  const rawSentry = extractSentry(ops);
+  if (!rawSentry) return null;
+  return adaptOpsSentry(rawSentry);
+}

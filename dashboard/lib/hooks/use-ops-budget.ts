@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { ApiBudget, HealthSummary } from "@/lib/types";
-import { parseOpsBudget, parseOpsHealth } from "@/lib/api/ops";
+import { parseOpsBudget, parseOpsHealth, parseOpsSentry, OpsSentrySummary } from "@/lib/api/ops";
 
 /**
  * Response from useOpsBudget hook
@@ -28,6 +28,7 @@ export interface UseOpsBudgetResult {
 interface OpsData {
   budget: ApiBudget | null;
   health: HealthSummary | null;
+  sentry: OpsSentrySummary | null;
   requestId?: string;
 }
 
@@ -50,14 +51,15 @@ async function fetchOpsData(): Promise<OpsData> {
   if (!response.ok) {
     // Return degraded state instead of throwing
     // This allows fallback to mocks without breaking the UI
-    return { budget: null, health: null, requestId };
+    return { budget: null, health: null, sentry: null, requestId };
   }
 
   const data = await response.json();
   const budget = parseOpsBudget(data);
   const health = parseOpsHealth(data);
+  const sentry = parseOpsSentry(data);
 
-  return { budget, health, requestId };
+  return { budget, health, sentry, requestId };
 }
 
 /**
@@ -120,12 +122,16 @@ export interface UseOpsOverviewResult {
   budget: ApiBudget | null;
   /** Parsed health summary, null if unavailable */
   health: HealthSummary | null;
+  /** Parsed sentry summary, null if unavailable */
+  sentry: OpsSentrySummary | null;
   /** True if data fetch failed or all parsing failed */
   isDegraded: boolean;
   /** True if budget specifically is degraded */
   isBudgetDegraded: boolean;
   /** True if health specifically is degraded */
   isHealthDegraded: boolean;
+  /** True if sentry specifically is degraded */
+  isSentryDegraded: boolean;
   /** Request ID for debugging (from response header) */
   requestId?: string;
   /** Loading state */
@@ -162,18 +168,22 @@ export function useOpsOverview(): UseOpsOverviewResult {
 
   const budget = data?.budget ?? null;
   const health = data?.health ?? null;
+  const sentry = data?.sentry ?? null;
   const requestId = data?.requestId;
 
   const isBudgetDegraded = !!error || budget === null;
   const isHealthDegraded = !!error || health === null;
-  const isDegraded = isBudgetDegraded && isHealthDegraded;
+  const isSentryDegraded = !!error || sentry === null;
+  const isDegraded = isBudgetDegraded && isHealthDegraded && isSentryDegraded;
 
   return {
     budget,
     health,
+    sentry,
     isDegraded,
     isBudgetDegraded,
     isHealthDegraded,
+    isSentryDegraded,
     requestId,
     isLoading,
     error: error as Error | null,
