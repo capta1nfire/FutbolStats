@@ -9534,6 +9534,151 @@ async def ops_dashboard_json(request: Request):
     }
 
 
+# -----------------------------------------------------------------------------
+# Upcoming Matches for Dashboard Overview Card
+# -----------------------------------------------------------------------------
+_upcoming_matches_cache = {
+    "data": None,
+    "timestamp": 0,
+    "ttl": 60,  # seconds - recommended by auditor
+}
+
+
+@app.get("/dashboard/upcoming_matches.json")
+async def get_upcoming_matches_dashboard(
+    request: Request,
+    hours: int = 24,
+    limit: int = 20,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Upcoming scheduled matches for dashboard Overview card.
+
+    Returns next N hours of scheduled matches with prediction status.
+    Uses EXISTS subquery to avoid N+1 queries (P0 requirement).
+
+    Auth: X-Dashboard-Token header (read-only, separate from X-API-Key).
+
+    Response:
+    {
+        "generated_at": "2026-01-22T...",
+        "cached": true/false,
+        "cache_age_seconds": 45,
+        "data": {
+            "upcoming": [
+                {
+                    "id": 12345,
+                    "home": "Real Madrid",
+                    "away": "Barcelona",
+                    "kickoff_iso": "2026-01-22T20:00:00Z",
+                    "league_name": "La Liga",
+                    "has_prediction": true
+                }
+            ]
+        }
+    }
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    # Enforce limits (P1 recommendation)
+    hours = min(max(hours, 1), 72)  # 1-72 hours
+    limit = min(max(limit, 1), 50)  # 1-50 matches
+
+    now = time.time()
+
+    # Check cache
+    if (
+        _upcoming_matches_cache["data"] is not None
+        and (now - _upcoming_matches_cache["timestamp"]) < _upcoming_matches_cache["ttl"]
+    ):
+        cached_data = _upcoming_matches_cache["data"]
+        return {
+            "generated_at": cached_data["generated_at"],
+            "cached": True,
+            "cache_age_seconds": round(now - _upcoming_matches_cache["timestamp"], 1),
+            "data": cached_data["data"],
+        }
+
+    # Build query with EXISTS subquery to avoid N+1 (P0 requirement)
+    from sqlalchemy import exists, literal_column
+    from sqlalchemy.orm import aliased
+
+    now_dt = datetime.utcnow()
+    cutoff_dt = now_dt + timedelta(hours=hours)
+
+    # Subquery: EXISTS prediction for this match
+    has_prediction_subq = (
+        exists()
+        .where(Prediction.match_id == Match.id)
+        .correlate(Match)
+    )
+
+    # Main query with team names via JOIN
+    home_team = aliased(Team, name="home_team")
+    away_team = aliased(Team, name="away_team")
+
+    query = (
+        select(
+            Match.id,
+            Match.date,
+            Match.league_id,
+            home_team.name.label("home_name"),
+            away_team.name.label("away_name"),
+            has_prediction_subq.label("has_prediction"),
+        )
+        .join(home_team, Match.home_team_id == home_team.id)
+        .join(away_team, Match.away_team_id == away_team.id)
+        .where(Match.status == "NS")
+        .where(Match.date >= now_dt)
+        .where(Match.date <= cutoff_dt)
+        .order_by(Match.date)
+        .limit(limit)
+    )
+
+    result = await session.execute(query)
+    rows = result.all()
+
+    # Build league name lookup (reuse existing pattern)
+    league_name_by_id: dict[int, str] = LEAGUE_NAMES_FALLBACK.copy()
+    try:
+        for league_id, comp in (COMPETITIONS or {}).items():
+            if league_id is not None and comp is not None:
+                name = getattr(comp, "name", None)
+                if name:
+                    league_name_by_id[int(league_id)] = name
+    except Exception:
+        pass
+
+    # Format response
+    upcoming = []
+    for row in rows:
+        upcoming.append({
+            "id": row.id,
+            "home": row.home_name,
+            "away": row.away_name,
+            "kickoff_iso": row.date.isoformat() + "Z" if row.date else None,
+            "league_name": league_name_by_id.get(row.league_id, f"League {row.league_id}"),
+            "has_prediction": bool(row.has_prediction),
+        })
+
+    generated_at = datetime.utcnow().isoformat() + "Z"
+
+    # Update cache
+    _upcoming_matches_cache["data"] = {
+        "generated_at": generated_at,
+        "data": {"upcoming": upcoming},
+    }
+    _upcoming_matches_cache["timestamp"] = now
+
+    return {
+        "generated_at": generated_at,
+        "cached": False,
+        "cache_age_seconds": 0,
+        "data": {"upcoming": upcoming},
+    }
+
+
 @app.get("/dashboard/ops/logs.json")
 async def ops_dashboard_logs_json(
     request: Request,
