@@ -9674,6 +9674,236 @@ async def get_upcoming_matches_dashboard(
     }
 
 
+# -----------------------------------------------------------------------------
+# Dashboard Matches Table Endpoint
+# -----------------------------------------------------------------------------
+
+# Cache for matches table - keyed by query params
+# TTL: 20s for LIVE, 60s for NS/FT (auditor recommendation: 15-30s LIVE, 60s NS/FT)
+_matches_table_cache: dict[str, dict] = {}
+_MATCHES_CACHE_TTL_LIVE = 20  # seconds
+_MATCHES_CACHE_TTL_DEFAULT = 60  # seconds
+
+
+def _get_matches_cache_key(status: str, hours: int, league_id: int | None, page: int, limit: int) -> str:
+    """Generate cache key including all query params (P1 guardrail)."""
+    return f"matches:{status}:{hours}:{league_id}:{page}:{limit}"
+
+
+@app.get("/dashboard/matches.json")
+async def get_matches_dashboard(
+    request: Request,
+    status: str = "NS",  # NS, LIVE, FT, or ALL
+    hours: int = 168,  # 7 days default for table view
+    league_id: int | None = None,
+    page: int = 1,
+    limit: int = 50,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Matches table for dashboard /matches page.
+
+    Returns paginated matches with filtering by status, time window, and league.
+    Uses EXISTS subquery to avoid N+1 queries.
+
+    Auth: X-Dashboard-Token header (read-only).
+
+    Query params:
+    - status: NS (scheduled), LIVE (in-play), FT (finished), ALL
+    - hours: time window (1-168, default 168 = 7 days)
+    - league_id: optional filter by league
+    - page: pagination (1-indexed)
+    - limit: rows per page (1-100)
+
+    Response:
+    {
+        "generated_at": "2026-01-22T...",
+        "cached": true/false,
+        "cache_age_seconds": 15,
+        "data": {
+            "matches": [...],
+            "total": 234,
+            "page": 1,
+            "limit": 50,
+            "pages": 5
+        }
+    }
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    # Normalize and validate params
+    status = status.upper()
+    valid_statuses = {"NS", "LIVE", "FT", "ALL"}
+    if status not in valid_statuses:
+        status = "ALL"
+
+    hours = min(max(hours, 1), 168)  # 1-168 hours (7 days max)
+    page = max(page, 1)
+    limit = min(max(limit, 1), 100)
+
+    # Cache TTL based on status
+    cache_ttl = _MATCHES_CACHE_TTL_LIVE if status == "LIVE" else _MATCHES_CACHE_TTL_DEFAULT
+    cache_key = _get_matches_cache_key(status, hours, league_id, page, limit)
+
+    now = time.time()
+
+    # Check cache
+    if cache_key in _matches_table_cache:
+        cached_entry = _matches_table_cache[cache_key]
+        age = now - cached_entry["timestamp"]
+        if age < cache_ttl:
+            return {
+                "generated_at": cached_entry["generated_at"],
+                "cached": True,
+                "cache_age_seconds": round(age, 1),
+                "data": cached_entry["data"],
+            }
+
+    # Build query with EXISTS subquery
+    from sqlalchemy import exists, func
+    from sqlalchemy.orm import aliased
+
+    now_dt = datetime.utcnow()
+
+    # Time window depends on status
+    if status == "NS":
+        # Upcoming: now to +hours
+        start_dt = now_dt
+        end_dt = now_dt + timedelta(hours=hours)
+    elif status == "FT":
+        # Finished: -hours to now
+        start_dt = now_dt - timedelta(hours=hours)
+        end_dt = now_dt
+    else:
+        # LIVE or ALL: both directions
+        start_dt = now_dt - timedelta(hours=hours)
+        end_dt = now_dt + timedelta(hours=hours)
+
+    # EXISTS subquery for has_prediction
+    has_prediction_subq = (
+        exists()
+        .where(Prediction.match_id == Match.id)
+        .correlate(Match)
+    )
+
+    # Team aliases
+    home_team = aliased(Team, name="home_team")
+    away_team = aliased(Team, name="away_team")
+
+    # Base query
+    base_query = (
+        select(
+            Match.id,
+            Match.date,
+            Match.league_id,
+            Match.status,
+            Match.home_goals,
+            Match.away_goals,
+            Match.elapsed,
+            Match.elapsed_extra,
+            home_team.name.label("home_name"),
+            away_team.name.label("away_name"),
+            has_prediction_subq.label("has_prediction"),
+        )
+        .join(home_team, Match.home_team_id == home_team.id)
+        .join(away_team, Match.away_team_id == away_team.id)
+        .where(Match.date >= start_dt)
+        .where(Match.date <= end_dt)
+    )
+
+    # Status filter
+    if status == "LIVE":
+        # LIVE includes: 1H, HT, 2H, ET, BT, P, SUSP, INT, LIVE
+        live_statuses = ["1H", "HT", "2H", "ET", "BT", "P", "SUSP", "INT", "LIVE"]
+        base_query = base_query.where(Match.status.in_(live_statuses))
+    elif status == "NS":
+        base_query = base_query.where(Match.status == "NS")
+    elif status == "FT":
+        # FT includes: FT, AET, PEN
+        ft_statuses = ["FT", "AET", "PEN"]
+        base_query = base_query.where(Match.status.in_(ft_statuses))
+    # ALL: no status filter
+
+    # League filter
+    if league_id is not None:
+        base_query = base_query.where(Match.league_id == league_id)
+
+    # Count total for pagination
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total_result = await session.execute(count_query)
+    total = total_result.scalar() or 0
+
+    # Order and paginate
+    offset = (page - 1) * limit
+    query = base_query.order_by(Match.date.desc() if status == "FT" else Match.date).offset(offset).limit(limit)
+
+    result = await session.execute(query)
+    rows = result.all()
+
+    # League names from COMPETITIONS
+    from app.etl.competitions import COMPETITIONS
+    league_name_by_id: dict[int, str] = {
+        lid: comp.name for lid, comp in COMPETITIONS.items() if comp.name
+    }
+
+    # Format response
+    matches = []
+    for row in rows:
+        match_data = {
+            "id": row.id,
+            "kickoff_iso": row.date.isoformat() + "Z" if row.date else None,
+            "league_id": row.league_id,
+            "league_name": league_name_by_id.get(row.league_id, f"League {row.league_id}"),
+            "home": row.home_name,
+            "away": row.away_name,
+            "status": row.status,
+            "has_prediction": bool(row.has_prediction),
+        }
+
+        # Score (only if played/playing)
+        if row.home_goals is not None and row.away_goals is not None:
+            match_data["score"] = {"home": row.home_goals, "away": row.away_goals}
+
+        # Elapsed (only if live)
+        if row.elapsed is not None:
+            match_data["elapsed"] = row.elapsed
+            if row.elapsed_extra is not None:
+                match_data["elapsed_extra"] = row.elapsed_extra
+
+        matches.append(match_data)
+
+    generated_at = datetime.utcnow().isoformat() + "Z"
+    pages = (total + limit - 1) // limit if limit > 0 else 1
+
+    response_data = {
+        "matches": matches,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": pages,
+    }
+
+    # Update cache
+    _matches_table_cache[cache_key] = {
+        "generated_at": generated_at,
+        "timestamp": now,
+        "data": response_data,
+    }
+
+    # Clean old cache entries (simple LRU: keep last 50)
+    if len(_matches_table_cache) > 50:
+        oldest_key = min(_matches_table_cache.keys(), key=lambda k: _matches_table_cache[k]["timestamp"])
+        del _matches_table_cache[oldest_key]
+
+    return {
+        "generated_at": generated_at,
+        "cached": False,
+        "cache_age_seconds": 0,
+        "data": response_data,
+    }
+
+
 @app.get("/dashboard/ops/logs.json")
 async def ops_dashboard_logs_json(
     request: Request,
