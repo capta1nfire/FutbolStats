@@ -4,7 +4,7 @@ import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMatchesApi, useMatch, useColumnVisibility, usePageSize } from "@/lib/hooks";
 import { MatchSummary, MatchStatus, MatchFilters, MATCH_STATUSES } from "@/lib/types";
-import { getLeaguesMock, getMatchesMock } from "@/lib/mocks";
+import { getLeaguesMock, getMatchesMockSync } from "@/lib/mocks";
 import {
   MatchesTable,
   MatchesFilterPanel,
@@ -102,7 +102,7 @@ function MatchesPageContent() {
   });
 
   // Use API data if available, fallback to mocks
-  const mockMatches = useMemo(() => getMatchesMock(filters), [filters]);
+  const mockMatches = useMemo(() => getMatchesMockSync(filters), [filters]);
   const matches = apiMatches ?? mockMatches;
 
   const { data: selectedMatch } = useMatch(selectedMatchId);

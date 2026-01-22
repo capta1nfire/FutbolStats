@@ -2,8 +2,9 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useJobRuns, useJobRun, useColumnVisibility, usePageSize } from "@/lib/hooks";
+import { useJobRunsApi, useJobRun, useColumnVisibility, usePageSize } from "@/lib/hooks";
 import { JobRun, JobStatus, JobFilters, JOB_STATUSES, JOB_NAMES } from "@/lib/types";
+import { getJobRunsMock } from "@/lib/mocks";
 import {
   JobsTable,
   JobsFilterPanel,
@@ -83,13 +84,24 @@ function JobsPageContent() {
     search: searchValue || undefined,
   }), [selectedStatuses, selectedJobs, searchValue]);
 
-  // Fetch data
+  // Fetch data from API with mock fallback
   const {
-    data: jobRuns = [],
+    runs: apiRuns,
+    pagination,
+    isDegraded,
     isLoading,
     error,
     refetch,
-  } = useJobRuns(filters);
+  } = useJobRunsApi({
+    status: selectedStatuses.length > 0 ? selectedStatuses : undefined,
+    jobName: selectedJobs.length > 0 ? selectedJobs[0] : undefined, // API only supports single job_name
+    page: currentPage,
+    limit: pageSize,
+  });
+
+  // Use API data if available, fallback to mocks
+  const mockRuns = useMemo(() => getJobRunsMock(filters), [filters]);
+  const jobRuns = apiRuns ?? mockRuns;
 
   const { data: selectedJob } = useJobRun(selectedJobId);
 
@@ -129,10 +141,11 @@ function JobsPageContent() {
     router.replace(buildUrl({ id: null }), { scroll: false });
   }, [router, buildUrl]);
 
-  // Handle filter changes
+  // Handle filter changes - reset page to 1 when filters change (P1 auditor check)
   const handleStatusChange = useCallback(
     (status: JobStatus, checked: boolean) => {
       const newStatuses = toggleArrayValue(selectedStatuses, status, checked);
+      setCurrentPage(1); // Reset pagination on filter change
       router.replace(buildUrl({ status: newStatuses }), { scroll: false });
     },
     [selectedStatuses, router, buildUrl]
@@ -141,6 +154,7 @@ function JobsPageContent() {
   const handleJobChange = useCallback(
     (job: string, checked: boolean) => {
       const newJobs = toggleArrayValue(selectedJobs, job, checked);
+      setCurrentPage(1); // Reset pagination on filter change
       router.replace(buildUrl({ job: newJobs }), { scroll: false });
     },
     [selectedJobs, router, buildUrl]
@@ -148,6 +162,7 @@ function JobsPageContent() {
 
   const handleSearchChange = useCallback(
     (value: string) => {
+      setCurrentPage(1); // Reset pagination on search change
       router.replace(buildUrl({ q: value }), { scroll: false });
     },
     [router, buildUrl]
@@ -218,11 +233,18 @@ function JobsPageContent() {
         {/* Pagination */}
         <Pagination
           currentPage={currentPage}
-          totalItems={jobRuns.length}
+          totalItems={isDegraded ? jobRuns.length : pagination.total}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
           onPageSizeChange={setPageSize}
         />
+
+        {/* Degraded indicator */}
+        {isDegraded && (
+          <div className="absolute bottom-12 left-1/2 -translate-x-1/2 text-xs text-muted-foreground/70 bg-surface px-2 py-1 rounded border border-border">
+            Showing mock data
+          </div>
+        )}
       </div>
 
       {/* Detail Drawer (inline on desktop, sheet on mobile) */}

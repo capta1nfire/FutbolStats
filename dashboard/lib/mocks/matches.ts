@@ -175,6 +175,46 @@ export async function getMatchesMock(
 }
 
 /**
+ * Get matches synchronously (for fallback when API fails)
+ * Used by components for immediate fallback without async
+ */
+export function getMatchesMockSync(filters?: MatchFilters): MatchSummary[] {
+  let data: MatchSummary[];
+
+  switch (mockConfig.scenario) {
+    case "empty":
+      data = [];
+      break;
+    case "large":
+      data = [...largeDataset];
+      break;
+    default:
+      data = [...normalDataset];
+  }
+
+  // Apply filters
+  if (filters) {
+    if (filters.status && filters.status.length > 0) {
+      data = data.filter((m) => filters.status!.includes(m.status));
+    }
+    if (filters.leagues && filters.leagues.length > 0) {
+      data = data.filter((m) => filters.leagues!.includes(m.leagueName));
+    }
+    if (filters.search) {
+      const search = filters.search.toLowerCase();
+      data = data.filter(
+        (m) =>
+          m.home.toLowerCase().includes(search) ||
+          m.away.toLowerCase().includes(search) ||
+          m.leagueName.toLowerCase().includes(search)
+      );
+    }
+  }
+
+  return data;
+}
+
+/**
  * Get a single match by ID
  */
 export async function getMatchByIdMock(
