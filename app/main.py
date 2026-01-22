@@ -7640,6 +7640,8 @@ async def _fetch_sentry_health() -> dict:
         "counts": {
             "new_issues_1h": 0,
             "new_issues_24h": 0,
+            "active_issues_1h": 0,
+            "active_issues_24h": 0,
             "open_issues": 0,
         },
         "last_event_at": None,
@@ -7666,78 +7668,109 @@ async def _fetch_sentry_health() -> dict:
 
     try:
         async with httpx.AsyncClient(headers=headers, timeout=10.0) as client:
-            # 1) Fetch issues from last 1h (new issues)
-            issues_1h_url = f"https://sentry.io/api/0/projects/{org_slug}/{project_slug}/issues/"
-            params_1h = {
-                "statsPeriod": "1h",
-                "query": f"is:unresolved environment:{env_filter}",
-                "limit": 100,
-            }
-            resp_1h = await client.get(issues_1h_url, params=params_1h)
+            issues_url = f"https://sentry.io/api/0/projects/{org_slug}/{project_slug}/issues/"
 
-            # 2) Fetch issues from last 24h
-            params_24h = {
-                "statsPeriod": "24h",
-                "query": f"is:unresolved environment:{env_filter}",
-                "limit": 100,
-            }
-            resp_24h = await client.get(issues_1h_url, params=params_24h)
+            # Calculate time boundaries for filtering by lastSeen/firstSeen
+            from datetime import timedelta
+            now_dt = datetime.utcnow()
+            one_hour_ago = (now_dt - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S")
+            one_day_ago = (now_dt - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S")
 
-            # 3) Fetch all unresolved (open) issues
+            # Build query - try with env filter first, fallback without if empty
+            env_query = f"environment:{env_filter}" if env_filter else ""
+
+            # 1) Fetch ALL unresolved issues (open_issues - no time filter)
+            #    Sort by lastSeen desc to get most recent activity first
             params_open = {
-                "query": f"is:unresolved environment:{env_filter}",
+                "query": f"is:unresolved {env_query}".strip(),
+                "sort": "date",  # sort by lastSeen descending
                 "limit": 100,
             }
-            resp_open = await client.get(issues_1h_url, params=params_open)
+            resp_open = await client.get(issues_url, params=params_open)
 
-            # Parse responses
+            # Parse open issues response
+            all_issues = []
+            env_filter_excluded = False
+
+            if resp_open.status_code == 200:
+                all_issues = resp_open.json() if isinstance(resp_open.json(), list) else []
+
+                # If env filter returned 0, try without env to check if filter excluded results
+                if len(all_issues) == 0 and env_query:
+                    params_no_env = {
+                        "query": "is:unresolved",
+                        "sort": "date",
+                        "limit": 100,
+                    }
+                    resp_no_env = await client.get(issues_url, params=params_no_env)
+                    if resp_no_env.status_code == 200:
+                        issues_no_env = resp_no_env.json() if isinstance(resp_no_env.json(), list) else []
+                        if len(issues_no_env) > 0:
+                            env_filter_excluded = True
+                            all_issues = issues_no_env  # Use unfiltered results
+
+            # Calculate counts from the fetched issues
+            open_issues = len(all_issues)
             new_issues_1h = 0
             new_issues_24h = 0
-            open_issues = 0
+            active_issues_1h = 0
+            active_issues_24h = 0
             last_event_at = None
             top_issues = []
 
-            if resp_1h.status_code == 200:
-                issues_1h = resp_1h.json()
-                new_issues_1h = len(issues_1h) if isinstance(issues_1h, list) else 0
+            for issue in all_issues:
+                first_seen = issue.get("firstSeen", "")
+                last_seen = issue.get("lastSeen", "")
 
-            if resp_24h.status_code == 200:
-                issues_24h = resp_24h.json()
-                new_issues_24h = len(issues_24h) if isinstance(issues_24h, list) else 0
+                # New issues (by firstSeen - when issue was created)
+                if first_seen and first_seen >= one_hour_ago:
+                    new_issues_1h += 1
+                if first_seen and first_seen >= one_day_ago:
+                    new_issues_24h += 1
 
-                # Extract top issues (top 3 by event count, sanitized)
-                if isinstance(issues_24h, list) and len(issues_24h) > 0:
-                    # Sort by count descending
-                    sorted_issues = sorted(
-                        issues_24h,
-                        key=lambda x: int(x.get("count", 0)),
-                        reverse=True
-                    )[:3]
+                # Active issues (by lastSeen - recent activity)
+                if last_seen and last_seen >= one_hour_ago:
+                    active_issues_1h += 1
+                if last_seen and last_seen >= one_day_ago:
+                    active_issues_24h += 1
 
-                    for issue in sorted_issues:
-                        title = issue.get("title", "Unknown")[:80]  # Truncate to 80 chars
-                        # Sanitize: remove any potential PII patterns
-                        title = title.replace("@", "[at]")  # Basic email sanitization
-                        top_issues.append({
-                            "title": title,
-                            "count_24h": int(issue.get("count", 0)),
-                            "level": issue.get("level", "error"),
-                        })
+            # Get last_event_at from most recent issue (already sorted by lastSeen desc)
+            if all_issues:
+                last_event_at = all_issues[0].get("lastSeen")
 
-                    # Get last event timestamp from most recent issue
-                    if sorted_issues:
-                        last_event_at = sorted_issues[0].get("lastSeen")
+                # Extract top issues (top 3 by recent activity, from active_24h)
+                active_24h_issues = [
+                    i for i in all_issues
+                    if i.get("lastSeen", "") >= one_day_ago
+                ]
+                # Sort by count descending for top issues
+                sorted_active = sorted(
+                    active_24h_issues,
+                    key=lambda x: int(x.get("count", 0)),
+                    reverse=True
+                )[:3]
 
-            if resp_open.status_code == 200:
-                issues_open = resp_open.json()
-                open_issues = len(issues_open) if isinstance(issues_open, list) else 0
+                for issue in sorted_active:
+                    title = issue.get("title", "Unknown")[:80]
+                    title = title.replace("@", "[at]")  # Basic sanitization
+                    top_issues.append({
+                        "title": title,
+                        "count": int(issue.get("count", 0)),
+                        "level": issue.get("level", "error"),
+                        "last_seen": issue.get("lastSeen"),
+                    })
 
-            # Determine status based on thresholds
+            # Determine status based on activity thresholds (use active, not new)
             status = "ok"
-            if new_issues_1h >= _SENTRY_CRITICAL_THRESHOLD_1H:
+            if active_issues_1h >= _SENTRY_CRITICAL_THRESHOLD_1H:
                 status = "critical"
-            elif new_issues_24h >= _SENTRY_WARNING_THRESHOLD_24H:
+            elif active_issues_24h >= _SENTRY_WARNING_THRESHOLD_24H:
                 status = "warning"
+
+            # Build note
+            note = "best-effort, aggregated server-side"
+            if env_filter_excluded:
+                note += f"; env filter '{env_filter}' excluded results, showing all"
 
             result = {
                 "status": status,
@@ -7747,16 +7780,18 @@ async def _fetch_sentry_health() -> dict:
                 "project": {
                     "org_slug": org_slug,
                     "project_slug": project_slug,
-                    "env": env_filter,
+                    "env": env_filter if not env_filter_excluded else "(all)",
                 },
                 "counts": {
                     "new_issues_1h": new_issues_1h,
                     "new_issues_24h": new_issues_24h,
+                    "active_issues_1h": active_issues_1h,
+                    "active_issues_24h": active_issues_24h,
                     "open_issues": open_issues,
                 },
                 "last_event_at": last_event_at,
                 "top_issues": top_issues,
-                "note": "best-effort, aggregated server-side",
+                "note": note,
             }
 
             # Update cache
