@@ -4935,6 +4935,83 @@ async def sota_venue_geo_expand() -> dict:
         return {"status": "error", "error": str(e), "duration_ms": duration_ms}
 
 
+async def sota_sofascore_refs_sync() -> dict:
+    """
+    Sync Sofascore refs (match_external_refs) for upcoming matches.
+
+    Links internal matches to Sofascore event IDs using deterministic matching
+    based on team names and kickoff time. This enables XI capture.
+
+    Frequency: Every 6 hours
+    Guardrail: SOTA_SOFASCORE_REFS_ENABLED env var
+    """
+    import time as _time
+    from datetime import datetime
+
+    start_time = _time.time()
+    started_at = datetime.utcnow()
+    job_name = "sota_sofascore_refs_sync"
+
+    # Check if enabled (default off)
+    if os.environ.get("SOTA_SOFASCORE_REFS_ENABLED", "false").lower() in ("false", "0", "no"):
+        logger.debug(f"[{job_name}] Disabled via env var (set SOTA_SOFASCORE_REFS_ENABLED=true to enable)")
+        return {"status": "disabled"}
+
+    metrics = {
+        "scanned": 0,
+        "already_linked": 0,
+        "linked_auto": 0,
+        "linked_review": 0,
+        "skipped_no_candidates": 0,
+        "skipped_low_score": 0,
+        "errors": 0,
+        "started_at": started_at.isoformat(),
+    }
+
+    try:
+        from app.etl.sota_jobs import sync_sofascore_refs
+        from app.jobs.tracking import record_job_run as record_job_run_db
+
+        async with AsyncSessionLocal() as session:
+            # Run with 72h lookahead, 2 days back, max 200 matches
+            stats = await sync_sofascore_refs(
+                session,
+                hours=72,
+                days_back=2,
+                limit=200,
+            )
+            metrics.update(stats)
+
+            # Record in DB for ops dashboard fallback
+            duration_ms = (_time.time() - start_time) * 1000
+            status = "ok" if metrics.get("errors", 0) == 0 else "partial"
+            await record_job_run_db(session, job_name, status, started_at, metrics=metrics)
+
+        # Record in Prometheus
+        record_job_run(job=job_name, status=status, duration_ms=duration_ms)
+
+        total_linked = metrics["linked_auto"] + metrics["linked_review"]
+        logger.info(
+            f"[{job_name}] Complete: scanned={metrics['scanned']}, "
+            f"linked={total_linked}, already={metrics['already_linked']}"
+        )
+        return {**metrics, "status": status, "duration_ms": duration_ms}
+
+    except Exception as e:
+        duration_ms = (_time.time() - start_time) * 1000
+        logger.error(f"[{job_name}] Failed: {e}", exc_info=True)
+        sentry_capture_exception(e, job_id=job_name)
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        # Try to record error in DB too
+        try:
+            from app.jobs.tracking import record_job_run as record_job_run_db
+            async with AsyncSessionLocal() as session:
+                await record_job_run_db(session, job_name, "error", started_at, error=str(e))
+        except Exception:
+            pass  # Best-effort DB recording
+        return {"status": "error", "error": str(e), "duration_ms": duration_ms}
+
+
 async def sota_sofascore_xi_capture() -> dict:
     """
     Capture Sofascore XI (lineup/formation/ratings) for upcoming matches.
@@ -5395,6 +5472,16 @@ def start_scheduler(ml_engine):
         trigger=CronTrigger(hour=3, minute=0),
         id="sota_venue_geo_expand",
         name="SOTA Venue Geo Expand (daily 03:00 UTC)",
+        replace_existing=True,
+    )
+
+    # SOTA: Sofascore refs sync - every 6 hours
+    # Links matches to Sofascore event IDs (disabled by default)
+    scheduler.add_job(
+        sota_sofascore_refs_sync,
+        trigger=IntervalTrigger(hours=6),
+        id="sota_sofascore_refs_sync",
+        name="SOTA Sofascore Refs Sync (every 6h)",
         replace_existing=True,
     )
 

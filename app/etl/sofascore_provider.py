@@ -440,30 +440,96 @@ class SofascoreProvider:
 
         return round(score, 2)
 
-    async def search_event(
+    async def get_scheduled_events(
         self,
-        home_team: str,
-        away_team: str,
-        kickoff_utc: datetime,
-    ) -> Optional[str]:
+        date: datetime,
+    ) -> list[dict]:
         """
-        Search for Sofascore event ID by teams and date.
+        Get all scheduled football events for a specific date.
 
-        This is a simplified search. In production, might need more sophisticated
-        matching using the /search or team-specific endpoints.
+        Uses Sofascore's scheduled-events endpoint.
+
+        Args:
+            date: Date to fetch events for (UTC).
 
         Returns:
-            Sofascore event ID if found, None otherwise.
+            List of event dicts with keys: event_id, home_team, away_team,
+            kickoff_utc, league_name.
         """
-        # Sofascore doesn't have a simple search endpoint
-        # This would typically require:
-        # 1. Team ID lookup
-        # 2. Team's next matches endpoint
-        # 3. Match by date
+        if self.use_mock:
+            return self._get_mock_scheduled_events(date)
 
-        # For now, return None - refs should be populated via separate sync
-        logger.debug(f"[SOFASCORE] search_event not implemented for {home_team} vs {away_team}")
-        return None
+        date_str = date.strftime("%Y-%m-%d")
+        url = f"{SOFASCORE_API_BASE}/sport/football/scheduled-events/{date_str}"
+
+        data, error = await self._fetch_json(url, f"scheduled_{date_str}")
+
+        if error:
+            logger.warning(f"[SOFASCORE] Failed to fetch scheduled events for {date_str}: {error}")
+            return []
+
+        events = []
+        try:
+            # Response structure: {"events": [...]}
+            for event in data.get("events", []):
+                event_id = event.get("id")
+                if not event_id:
+                    continue
+
+                home_team_data = event.get("homeTeam", {})
+                away_team_data = event.get("awayTeam", {})
+                tournament = event.get("tournament", {})
+
+                # Parse kickoff timestamp
+                start_timestamp = event.get("startTimestamp")
+                kickoff_utc = None
+                if start_timestamp:
+                    try:
+                        kickoff_utc = datetime.utcfromtimestamp(start_timestamp)
+                    except (ValueError, TypeError):
+                        pass
+
+                events.append({
+                    "event_id": str(event_id),
+                    "home_team": home_team_data.get("name", ""),
+                    "away_team": away_team_data.get("name", ""),
+                    "kickoff_utc": kickoff_utc,
+                    "league_name": tournament.get("name", ""),
+                    "league_slug": tournament.get("slug", ""),
+                    "home_team_slug": home_team_data.get("slug", ""),
+                    "away_team_slug": away_team_data.get("slug", ""),
+                })
+
+        except Exception as e:
+            logger.error(f"[SOFASCORE] Error parsing scheduled events for {date_str}: {e}")
+
+        logger.debug(f"[SOFASCORE] Found {len(events)} events for {date_str}")
+        return events
+
+    def _get_mock_scheduled_events(self, date: datetime) -> list[dict]:
+        """Return mock scheduled events for testing."""
+        return [
+            {
+                "event_id": "12345678",
+                "home_team": "Manchester United",
+                "away_team": "Liverpool",
+                "kickoff_utc": date.replace(hour=15, minute=0, second=0),
+                "league_name": "Premier League",
+                "league_slug": "premier-league",
+                "home_team_slug": "manchester-united",
+                "away_team_slug": "liverpool",
+            },
+            {
+                "event_id": "12345679",
+                "home_team": "Real Madrid",
+                "away_team": "Barcelona",
+                "kickoff_utc": date.replace(hour=20, minute=0, second=0),
+                "league_name": "LaLiga",
+                "league_slug": "laliga",
+                "home_team_slug": "real-madrid",
+                "away_team_slug": "barcelona",
+            },
+        ]
 
     def _get_mock_lineup(
         self,
@@ -525,3 +591,151 @@ class SofascoreProvider:
             await self._client.aclose()
             self._client = None
         logger.debug("SofascoreProvider closed")
+
+
+# =============================================================================
+# TEAM NAME NORMALIZATION & MATCHING
+# =============================================================================
+
+import re
+import unicodedata
+
+
+def normalize_team_name(name: str) -> str:
+    """
+    Normalize team name for fuzzy matching.
+
+    Steps:
+    1. Lowercase
+    2. Remove accents/diacritics
+    3. Remove common suffixes (FC, CF, SC, etc.)
+    4. Remove punctuation
+    5. Collapse whitespace
+
+    Examples:
+        "Manchester United FC" -> "manchester united"
+        "Atlético Madrid" -> "atletico madrid"
+        "FC Barcelona" -> "barcelona"
+    """
+    if not name:
+        return ""
+
+    # Lowercase
+    name = name.lower().strip()
+
+    # Remove accents
+    name = unicodedata.normalize("NFKD", name)
+    name = "".join(c for c in name if not unicodedata.combining(c))
+
+    # Remove common prefixes/suffixes
+    suffixes = [
+        r"\bfc\b", r"\bcf\b", r"\bsc\b", r"\bafc\b", r"\bssc\b",
+        r"\bac\b", r"\bas\b", r"\bcd\b", r"\bud\b", r"\brc\b",
+        r"\bsv\b", r"\bvfb\b", r"\btsv\b", r"\bfk\b", r"\bsk\b",
+        r"\breal\b", r"\bunited\b", r"\bcity\b", r"\bclub\b",
+    ]
+    for suffix in suffixes:
+        name = re.sub(suffix, "", name)
+
+    # Remove punctuation
+    name = re.sub(r"[^\w\s]", "", name)
+
+    # Collapse whitespace
+    name = " ".join(name.split())
+
+    return name
+
+
+def calculate_team_similarity(name1: str, name2: str) -> float:
+    """
+    Calculate similarity score between two team names.
+
+    Uses normalized Levenshtein-like approach:
+    - Exact match after normalization: 1.0
+    - One contains the other: 0.85
+    - Token overlap (Jaccard): 0.0-0.8
+
+    Returns:
+        Score from 0.0 to 1.0.
+    """
+    n1 = normalize_team_name(name1)
+    n2 = normalize_team_name(name2)
+
+    if not n1 or not n2:
+        return 0.0
+
+    # Exact match
+    if n1 == n2:
+        return 1.0
+
+    # One contains the other
+    if n1 in n2 or n2 in n1:
+        return 0.85
+
+    # Token-based Jaccard similarity
+    tokens1 = set(n1.split())
+    tokens2 = set(n2.split())
+
+    if not tokens1 or not tokens2:
+        return 0.0
+
+    intersection = tokens1 & tokens2
+    union = tokens1 | tokens2
+
+    jaccard = len(intersection) / len(union)
+    return jaccard * 0.8  # Max 0.8 for token overlap
+
+
+def calculate_match_score(
+    our_home: str,
+    our_away: str,
+    our_kickoff: datetime,
+    sf_home: str,
+    sf_away: str,
+    sf_kickoff: Optional[datetime],
+    kickoff_tolerance_hours: float = 2.0,
+) -> tuple[float, str]:
+    """
+    Calculate matching score between our match and Sofascore event.
+
+    Scoring:
+    - Kickoff time (within tolerance): 0.3 weight
+    - Home team name match: 0.35 weight
+    - Away team name match: 0.35 weight
+
+    Args:
+        our_*: Our match data.
+        sf_*: Sofascore event data.
+        kickoff_tolerance_hours: Max hours difference for kickoff match.
+
+    Returns:
+        Tuple of (score, matched_by_description).
+    """
+    score = 0.0
+    matched_by_parts = []
+
+    # Kickoff time matching (0.3 weight)
+    if sf_kickoff:
+        time_diff_hours = abs((our_kickoff - sf_kickoff).total_seconds()) / 3600
+        if time_diff_hours <= kickoff_tolerance_hours:
+            # Linear decay: full score at 0h, zero at tolerance
+            kickoff_score = 1.0 - (time_diff_hours / kickoff_tolerance_hours)
+            score += 0.3 * kickoff_score
+            if kickoff_score >= 0.5:
+                matched_by_parts.append(f"kickoff(±{time_diff_hours:.1f}h)")
+
+    # Home team matching (0.35 weight)
+    home_sim = calculate_team_similarity(our_home, sf_home)
+    score += 0.35 * home_sim
+    if home_sim >= 0.7:
+        matched_by_parts.append(f"home({home_sim:.2f})")
+
+    # Away team matching (0.35 weight)
+    away_sim = calculate_team_similarity(our_away, sf_away)
+    score += 0.35 * away_sim
+    if away_sim >= 0.7:
+        matched_by_parts.append(f"away({away_sim:.2f})")
+
+    matched_by = "+".join(matched_by_parts) if matched_by_parts else "low_confidence"
+
+    return round(score, 3), matched_by

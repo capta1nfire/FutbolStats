@@ -670,31 +670,53 @@ SOFASCORE_SUPPORTED_LEAGUES = {
 async def sync_sofascore_refs(
     session: AsyncSession,
     hours: int = 72,
+    days_back: int = 2,
     limit: int = 200,
+    use_mock: bool = False,
 ) -> dict:
     """
     Sync Sofascore external refs for upcoming matches.
 
-    Links internal matches to Sofascore event IDs for XI capture.
-    NOTE: Sofascore doesn't have a public search API, so this function
-    assumes refs are populated manually or via separate tooling.
+    Links internal matches to Sofascore event IDs using deterministic matching
+    based on team names and kickoff time.
 
-    For now, this is a placeholder that checks for matches needing refs.
+    Matching algorithm:
+    - Score S per candidate based on:
+      - Kickoff UTC (tolerance ±2h): 0.3 weight
+      - Home team name (normalized): 0.35 weight
+      - Away team name (normalized): 0.35 weight
+    - Decision:
+      - S >= 0.90: upsert with confidence=S
+      - 0.75 <= S < 0.90: upsert with ";needs_review" flag
+      - S < 0.75: skip (no link)
 
     Args:
         session: Database session.
         hours: Hours ahead to scan for NS matches.
+        days_back: Days back to also scan (for recently scheduled matches).
         limit: Max matches to process per run.
+        use_mock: Use mock data for testing.
 
     Returns:
-        Dict with metrics: scanned, linked, skipped_*, errors.
+        Dict with metrics: scanned, already_linked, linked_auto, linked_review,
+        skipped_no_candidates, skipped_low_score, errors.
     """
+    from app.etl.sofascore_provider import (
+        SofascoreProvider,
+        calculate_match_score,
+    )
+
     metrics = {
         "scanned": 0,
-        "with_ref": 0,
-        "missing_ref": 0,
+        "already_linked": 0,
+        "linked_auto": 0,
+        "linked_review": 0,
+        "skipped_no_candidates": 0,
+        "skipped_low_score": 0,
         "errors": 0,
     }
+
+    provider = SofascoreProvider(use_mock=use_mock)
 
     try:
         # Find NS matches in supported leagues without sofascore ref
@@ -709,14 +731,14 @@ async def sync_sofascore_refs(
                 m.league_id,
                 t_home.name AS home_team,
                 t_away.name AS away_team,
-                mer.source_match_id AS sofascore_id
+                mer.source_match_id AS existing_sofascore_id
             FROM matches m
             JOIN teams t_home ON m.home_team_id = t_home.id
             JOIN teams t_away ON m.away_team_id = t_away.id
             LEFT JOIN match_external_refs mer
                 ON m.id = mer.match_id AND mer.source = 'sofascore'
             WHERE m.status = 'NS'
-              AND m.date >= NOW()
+              AND m.date >= NOW() - INTERVAL '{days_back} days'
               AND m.date < NOW() + INTERVAL '{hours} hours'
               AND m.league_id IN ({league_ids_str})
             ORDER BY m.date ASC
@@ -726,23 +748,127 @@ async def sync_sofascore_refs(
         matches = result.fetchall()
         metrics["scanned"] = len(matches)
 
-        for match in matches:
-            if match.sofascore_id:
-                metrics["with_ref"] += 1
-            else:
-                metrics["missing_ref"] += 1
+        if not matches:
+            logger.debug("[SOFASCORE_REFS] No matches to process")
+            return metrics
 
-        if metrics["missing_ref"] > 0:
-            logger.info(
-                f"[SOFASCORE_REFS] {metrics['missing_ref']} matches missing sofascore refs "
-                f"(next {hours}h)"
-            )
-        else:
-            logger.debug(f"[SOFASCORE_REFS] All {metrics['scanned']} matches have refs")
+        # Group matches by date for efficient API calls
+        matches_by_date: dict[str, list] = {}
+        for match in matches:
+            date_key = match.kickoff_utc.strftime("%Y-%m-%d")
+            if date_key not in matches_by_date:
+                matches_by_date[date_key] = []
+            matches_by_date[date_key].append(match)
+
+        # Fetch Sofascore events for each date
+        sofascore_events_by_date: dict[str, list] = {}
+        for date_str in matches_by_date.keys():
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+            events = await provider.get_scheduled_events(date_obj)
+            sofascore_events_by_date[date_str] = events
+            logger.debug(f"[SOFASCORE_REFS] Fetched {len(events)} Sofascore events for {date_str}")
+
+        # Process each match
+        for match in matches:
+            match_id = match.match_id
+            kickoff_utc = match.kickoff_utc
+            home_team = match.home_team
+            away_team = match.away_team
+            existing_ref = match.existing_sofascore_id
+
+            try:
+                # Skip if already linked
+                if existing_ref:
+                    metrics["already_linked"] += 1
+                    continue
+
+                # Get candidates from same date
+                date_key = kickoff_utc.strftime("%Y-%m-%d")
+                candidates = sofascore_events_by_date.get(date_key, [])
+
+                if not candidates:
+                    metrics["skipped_no_candidates"] += 1
+                    continue
+
+                # Find best match
+                best_score = 0.0
+                best_event = None
+                best_matched_by = ""
+
+                for event in candidates:
+                    score, matched_by = calculate_match_score(
+                        our_home=home_team,
+                        our_away=away_team,
+                        our_kickoff=kickoff_utc,
+                        sf_home=event["home_team"],
+                        sf_away=event["away_team"],
+                        sf_kickoff=event["kickoff_utc"],
+                    )
+
+                    if score > best_score:
+                        best_score = score
+                        best_event = event
+                        best_matched_by = matched_by
+
+                # Decision based on score
+                if best_score < 0.75:
+                    metrics["skipped_low_score"] += 1
+                    logger.debug(
+                        f"[SOFASCORE_REFS] No match for {home_team} vs {away_team} "
+                        f"(best_score={best_score:.2f})"
+                    )
+                    continue
+
+                # Add needs_review flag if score is borderline
+                if best_score < 0.90:
+                    best_matched_by += ";needs_review"
+                    metrics["linked_review"] += 1
+                else:
+                    metrics["linked_auto"] += 1
+
+                # Upsert to match_external_refs
+                await session.execute(text("""
+                    INSERT INTO match_external_refs
+                        (match_id, source, source_match_id, confidence, matched_by, created_at)
+                    VALUES
+                        (:match_id, 'sofascore', :source_match_id, :confidence, :matched_by, NOW())
+                    ON CONFLICT (match_id, source) DO UPDATE SET
+                        source_match_id = EXCLUDED.source_match_id,
+                        confidence = EXCLUDED.confidence,
+                        matched_by = EXCLUDED.matched_by
+                """), {
+                    "match_id": match_id,
+                    "source_match_id": best_event["event_id"],
+                    "confidence": best_score,
+                    "matched_by": best_matched_by,
+                })
+
+                logger.debug(
+                    f"[SOFASCORE_REFS] Linked match {match_id} ({home_team} vs {away_team}) "
+                    f"-> sofascore:{best_event['event_id']} (score={best_score:.2f}, {best_matched_by})"
+                )
+
+            except Exception as e:
+                metrics["errors"] += 1
+                logger.error(f"[SOFASCORE_REFS] Error processing match {match_id}: {e}")
+
+        await session.commit()
+
+        # Log summary
+        total_linked = metrics["linked_auto"] + metrics["linked_review"]
+        logger.info(
+            f"[SOFASCORE_REFS] Complete: scanned={metrics['scanned']}, "
+            f"linked_auto={metrics['linked_auto']}, linked_review={metrics['linked_review']}, "
+            f"skipped_low={metrics['skipped_low_score']}, skipped_no_cand={metrics['skipped_no_candidates']}, "
+            f"already={metrics['already_linked']}, errors={metrics['errors']}"
+        )
 
     except Exception as e:
         metrics["errors"] += 1
         logger.error(f"[SOFASCORE_REFS] Job failed: {e}")
+
+    finally:
+        await provider.close()
 
     return metrics
 
