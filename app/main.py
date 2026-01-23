@@ -6234,6 +6234,245 @@ async def _calculate_jobs_health_summary(session) -> dict:
     }
 
 
+async def _calculate_sota_enrichment_summary(session) -> dict:
+    """
+    Calculate SOTA enrichment coverage metrics for OPS dashboard.
+
+    Reports coverage and staleness for:
+    - Understat xG data (match_understat_team)
+    - Weather forecasts (match_weather)
+    - Venue geo coordinates (venue_geo)
+    - Team home city profiles (team_home_city_profile)
+
+    All metrics are best-effort: query failures return "unavailable" status.
+    """
+    now = datetime.utcnow()
+    result = {"status": "ok", "generated_at": now.isoformat()}
+
+    # 1) Understat coverage: FT matches in last 14 days with xG data
+    try:
+        res = await session.execute(
+            text("""
+                SELECT
+                    COUNT(*) FILTER (WHERE mut.match_id IS NOT NULL) AS with_xg,
+                    COUNT(*) AS total_ft
+                FROM matches m
+                LEFT JOIN match_understat_team mut ON m.id = mut.match_id
+                WHERE m.status IN ('FT', 'AET', 'PEN')
+                  AND m.date >= NOW() - INTERVAL '14 days'
+                  AND m.league_id IN (39, 140, 135, 78, 61)
+            """)
+        )
+        row = res.first()
+        with_xg = int(row[0] or 0) if row else 0
+        total_ft = int(row[1] or 0) if row else 0
+        coverage_pct = round(with_xg / total_ft * 100, 1) if total_ft > 0 else 0.0
+
+        # Get staleness (latest captured_at)
+        res_stale = await session.execute(
+            text("""
+                SELECT MAX(captured_at) FROM match_understat_team
+                WHERE captured_at > NOW() - INTERVAL '7 days'
+            """)
+        )
+        latest_capture = res_stale.scalar()
+        staleness_hours = None
+        if latest_capture:
+            staleness_hours = round((now - latest_capture).total_seconds() / 3600, 1)
+
+        result["understat"] = {
+            "ft_14d_with_xg": with_xg,
+            "ft_14d_total": total_ft,
+            "coverage_pct": coverage_pct,
+            "latest_capture_at": latest_capture.isoformat() if latest_capture else None,
+            "staleness_hours": staleness_hours,
+            "status": "ok" if coverage_pct >= 50 else ("warn" if coverage_pct >= 20 else "red"),
+        }
+    except Exception as e:
+        logger.debug(f"[SOTA] Understat metrics unavailable: {e}")
+        result["understat"] = {"status": "unavailable", "error": str(e)[:100]}
+
+    # 2) Weather coverage: NS matches in next 48h with weather forecasts
+    try:
+        res = await session.execute(
+            text("""
+                SELECT
+                    COUNT(*) FILTER (WHERE mw.match_id IS NOT NULL) AS with_weather,
+                    COUNT(*) AS total_ns
+                FROM matches m
+                LEFT JOIN match_weather mw ON m.id = mw.match_id
+                WHERE m.status = 'NS'
+                  AND m.date >= NOW()
+                  AND m.date < NOW() + INTERVAL '48 hours'
+            """)
+        )
+        row = res.first()
+        with_weather = int(row[0] or 0) if row else 0
+        total_ns = int(row[1] or 0) if row else 0
+        coverage_pct = round(with_weather / total_ns * 100, 1) if total_ns > 0 else 0.0
+
+        result["weather"] = {
+            "ns_48h_with_forecast": with_weather,
+            "ns_48h_total": total_ns,
+            "coverage_pct": coverage_pct,
+            "status": "ok" if coverage_pct >= 50 else ("warn" if coverage_pct >= 10 else "red"),
+        }
+    except Exception as e:
+        logger.debug(f"[SOTA] Weather metrics unavailable: {e}")
+        result["weather"] = {"status": "unavailable", "error": str(e)[:100]}
+
+    # 3) Venue geo coverage: venues from recent matches with coordinates
+    # Note: venue_geo uses venue_city as key, join via venue_city
+    try:
+        res = await session.execute(
+            text("""
+                SELECT
+                    COUNT(DISTINCT vg.venue_city) AS with_geo,
+                    COUNT(DISTINCT m.venue_city) AS total_venues
+                FROM matches m
+                LEFT JOIN venue_geo vg ON m.venue_city = vg.venue_city
+                WHERE m.venue_city IS NOT NULL
+                  AND m.date >= NOW() - INTERVAL '30 days'
+            """)
+        )
+        row = res.first()
+        with_geo = int(row[0] or 0) if row else 0
+        total_venues = int(row[1] or 0) if row else 0
+        coverage_pct = round(with_geo / total_venues * 100, 1) if total_venues > 0 else 0.0
+
+        # Total rows in venue_geo
+        res_count = await session.execute(text("SELECT COUNT(*) FROM venue_geo"))
+        total_rows = int(res_count.scalar() or 0)
+
+        result["venue_geo"] = {
+            "venues_30d_with_geo": with_geo,
+            "venues_30d_total": total_venues,
+            "coverage_pct": coverage_pct,
+            "total_rows": total_rows,
+            "status": "ok" if coverage_pct >= 50 else ("warn" if coverage_pct >= 20 else "red"),
+        }
+    except Exception as e:
+        logger.debug(f"[SOTA] Venue geo metrics unavailable: {e}")
+        result["venue_geo"] = {"status": "unavailable", "error": str(e)[:100]}
+
+    # 4) Team profiles coverage: teams with home city profiles
+    try:
+        res = await session.execute(
+            text("""
+                SELECT
+                    COUNT(*) FILTER (WHERE thcp.team_id IS NOT NULL) AS with_profile,
+                    COUNT(*) AS total_teams
+                FROM teams t
+                LEFT JOIN team_home_city_profile thcp ON t.id = thcp.team_id
+            """)
+        )
+        row = res.first()
+        with_profile = int(row[0] or 0) if row else 0
+        total_teams = int(row[1] or 0) if row else 0
+        coverage_pct = round(with_profile / total_teams * 100, 1) if total_teams > 0 else 0.0
+
+        result["team_profiles"] = {
+            "teams_with_profile": with_profile,
+            "teams_total": total_teams,
+            "coverage_pct": coverage_pct,
+            "status": "ok" if coverage_pct >= 30 else ("warn" if coverage_pct >= 10 else "red"),
+        }
+    except Exception as e:
+        logger.debug(f"[SOTA] Team profiles metrics unavailable: {e}")
+        result["team_profiles"] = {"status": "unavailable", "error": str(e)[:100]}
+
+    # 5) Sofascore XI coverage: NS matches in next 48h with XI data
+    try:
+        # Check if tables exist first (they may not be deployed yet)
+        table_check = await session.execute(
+            text("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'match_sofascore_lineup'
+                )
+            """)
+        )
+        tables_exist = table_check.scalar()
+
+        if tables_exist:
+            res = await session.execute(
+                text("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE msl.match_id IS NOT NULL) AS with_xi,
+                        COUNT(*) AS total_ns
+                    FROM matches m
+                    LEFT JOIN match_sofascore_lineup msl ON m.id = msl.match_id
+                    WHERE m.status = 'NS'
+                      AND m.date >= NOW()
+                      AND m.date < NOW() + INTERVAL '48 hours'
+                      AND m.league_id IN (39, 140, 135, 78, 61, 239, 253)
+                """)
+            )
+            row = res.first()
+            with_xi = int(row[0] or 0) if row else 0
+            total_ns = int(row[1] or 0) if row else 0
+            coverage_pct = round(with_xi / total_ns * 100, 1) if total_ns > 0 else 0.0
+
+            # Get staleness (latest captured_at)
+            res_stale = await session.execute(
+                text("""
+                    SELECT MAX(captured_at) FROM match_sofascore_lineup
+                    WHERE captured_at > NOW() - INTERVAL '7 days'
+                """)
+            )
+            latest_capture = res_stale.scalar()
+            staleness_hours = None
+            if latest_capture:
+                staleness_hours = round((now - latest_capture).total_seconds() / 3600, 1)
+
+            # Count total lineups and players captured
+            res_totals = await session.execute(
+                text("""
+                    SELECT
+                        (SELECT COUNT(*) FROM match_sofascore_lineup) AS total_lineups,
+                        (SELECT COUNT(*) FROM match_sofascore_player) AS total_players
+                """)
+            )
+            totals_row = res_totals.first()
+
+            result["sofascore_xi"] = {
+                "ns_48h_with_xi": with_xi,
+                "ns_48h_total": total_ns,
+                "coverage_pct": coverage_pct,
+                "latest_capture_at": latest_capture.isoformat() if latest_capture else None,
+                "staleness_hours": staleness_hours,
+                "total_lineups": int(totals_row[0] or 0) if totals_row else 0,
+                "total_players": int(totals_row[1] or 0) if totals_row else 0,
+                "status": "ok" if coverage_pct >= 30 else ("warn" if coverage_pct >= 10 else "red"),
+            }
+        else:
+            # Tables don't exist yet - waiting for migration
+            result["sofascore_xi"] = {
+                "status": "pending",
+                "note": "Tables not deployed yet (migration 030)",
+            }
+    except Exception as e:
+        logger.debug(f"[SOTA] Sofascore XI metrics unavailable: {e}")
+        result["sofascore_xi"] = {"status": "unavailable", "error": str(e)[:100]}
+
+    # Overall status: worst of components (excluding unavailable)
+    component_statuses = []
+    for key in ["understat", "weather", "venue_geo", "team_profiles", "sofascore_xi"]:
+        if result.get(key, {}).get("status") in ("ok", "warn", "red"):
+            component_statuses.append(result[key]["status"])
+
+    if "red" in component_statuses:
+        result["status"] = "red"
+    elif "warn" in component_statuses:
+        result["status"] = "warn"
+    elif component_statuses:
+        result["status"] = "ok"
+    else:
+        result["status"] = "unavailable"
+
+    return result
+
+
 async def _calculate_rerun_serving_summary(session) -> dict:
     """
     Calculate rerun serving metrics for OPS dashboard.
@@ -8178,6 +8417,11 @@ async def _load_ops_data() -> dict:
         jobs_health_data = await _calculate_jobs_health_summary(session)
 
         # =============================================================
+        # SOTA ENRICHMENT (Understat xG, Weather, Venue Geo coverage)
+        # =============================================================
+        sota_enrichment_data = await _calculate_sota_enrichment_summary(session)
+
+        # =============================================================
         # LLM COST (Gemini token usage from PostMatchAudit)
         # =============================================================
         llm_cost_data = {"provider": "gemini", "status": "unavailable"}
@@ -8454,6 +8698,7 @@ async def _load_ops_data() -> dict:
         "sensor_b": sensor_b_data,
         "rerun_serving": rerun_serving_data,
         "jobs_health": jobs_health_data,
+        "sota_enrichment": sota_enrichment_data,
         "coverage_by_league": coverage_by_league,
         "ml_model": ml_model_info,
         "live_summary": live_summary_stats,
@@ -10651,6 +10896,282 @@ async def _build_data_quality_checks(session: AsyncSession) -> list[dict]:
             threshold=0,
             affected_count=0,
             description=f"Degraded: could not query odds_snapshots/matches odds fields ({str(e)[:80]}).",
+        )
+
+    # =========================================================================
+    # SOTA ENRICHMENT CHECKS (Understat, Weather, Venue Geo, Team Profiles)
+    # =========================================================================
+
+    # 6) Understat coverage: FT matches in last 14d (Top-5 leagues) with xG
+    try:
+        res = await session.execute(
+            text(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE mut.match_id IS NOT NULL) AS with_xg,
+                    COUNT(*) AS total_ft
+                FROM matches m
+                LEFT JOIN match_understat_team mut ON m.id = mut.match_id
+                WHERE m.status IN ('FT', 'AET', 'PEN')
+                  AND m.date >= NOW() - INTERVAL '14 days'
+                  AND m.league_id IN (39, 140, 135, 78, 61)
+                """
+            )
+        )
+        row = res.first()
+        with_xg = int(row[0] or 0) if row else 0
+        total_ft = int(row[1] or 0) if row else 0
+        missing_xg = total_ft - with_xg
+        coverage_pct = round(with_xg / total_ft * 100, 1) if total_ft > 0 else 0.0
+        # Status: warn if coverage < 60%, fail if < 30%
+        if coverage_pct < 30:
+            status = "failing"
+        elif coverage_pct < 60:
+            status = "warning"
+        else:
+            status = "passing"
+        add_check(
+            check_id="dq_understat_coverage_ft_14d",
+            name="Understat xG coverage (14d)",
+            category="coverage",
+            status=status,
+            current_value=f"{coverage_pct}%",
+            threshold="≥60%",
+            affected_count=missing_xg,
+            description=f"FT matches (Top-5 leagues, 14d) with xG data: {with_xg}/{total_ft}.",
+        )
+    except Exception as e:
+        add_check(
+            check_id="dq_understat_coverage_ft_14d",
+            name="Understat xG coverage (14d)",
+            category="coverage",
+            status="warning",
+            current_value=None,
+            threshold="≥60%",
+            affected_count=0,
+            description=f"Degraded: could not query match_understat_team ({str(e)[:80]}).",
+        )
+
+    # 7) Weather coverage: NS matches in next 48h with forecasts
+    try:
+        res = await session.execute(
+            text(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE mw.match_id IS NOT NULL) AS with_weather,
+                    COUNT(*) AS total_ns
+                FROM matches m
+                LEFT JOIN match_weather mw ON m.id = mw.match_id
+                WHERE m.status = 'NS'
+                  AND m.date >= NOW()
+                  AND m.date < NOW() + INTERVAL '48 hours'
+                """
+            )
+        )
+        row = res.first()
+        with_weather = int(row[0] or 0) if row else 0
+        total_ns = int(row[1] or 0) if row else 0
+        missing_weather = total_ns - with_weather
+        coverage_pct = round(with_weather / total_ns * 100, 1) if total_ns > 0 else 0.0
+        # Status: warn if coverage < 30%, fail if < 10% (weather is optional SOTA feature)
+        if coverage_pct < 10:
+            status = "failing"
+        elif coverage_pct < 30:
+            status = "warning"
+        else:
+            status = "passing"
+        add_check(
+            check_id="dq_weather_coverage_ns_48h",
+            name="Weather coverage (NS 48h)",
+            category="coverage",
+            status=status,
+            current_value=f"{coverage_pct}%",
+            threshold="≥30%",
+            affected_count=missing_weather,
+            description=f"NS matches (48h) with weather forecast: {with_weather}/{total_ns}.",
+        )
+    except Exception as e:
+        add_check(
+            check_id="dq_weather_coverage_ns_48h",
+            name="Weather coverage (NS 48h)",
+            category="coverage",
+            status="warning",
+            current_value=None,
+            threshold="≥30%",
+            affected_count=0,
+            description=f"Degraded: could not query match_weather ({str(e)[:80]}).",
+        )
+
+    # 8) Venue geo coverage: venues from last 30d matches with coordinates
+    # Note: venue_geo uses venue_city as key
+    try:
+        res = await session.execute(
+            text(
+                """
+                SELECT
+                    COUNT(DISTINCT vg.venue_city) AS with_geo,
+                    COUNT(DISTINCT m.venue_city) AS total_venues
+                FROM matches m
+                LEFT JOIN venue_geo vg ON m.venue_city = vg.venue_city
+                WHERE m.venue_city IS NOT NULL
+                  AND m.date >= NOW() - INTERVAL '30 days'
+                """
+            )
+        )
+        row = res.first()
+        with_geo = int(row[0] or 0) if row else 0
+        total_venues = int(row[1] or 0) if row else 0
+        missing_geo = total_venues - with_geo
+        coverage_pct = round(with_geo / total_venues * 100, 1) if total_venues > 0 else 0.0
+        # Status: warn if coverage < 30%, fail if < 10%
+        if coverage_pct < 10:
+            status = "failing"
+        elif coverage_pct < 30:
+            status = "warning"
+        else:
+            status = "passing"
+        add_check(
+            check_id="dq_venue_geo_coverage",
+            name="Venue geo coverage (30d)",
+            category="coverage",
+            status=status,
+            current_value=f"{coverage_pct}%",
+            threshold="≥30%",
+            affected_count=missing_geo,
+            description=f"Venues from recent matches with coordinates: {with_geo}/{total_venues}.",
+        )
+    except Exception as e:
+        add_check(
+            check_id="dq_venue_geo_coverage",
+            name="Venue geo coverage (30d)",
+            category="coverage",
+            status="warning",
+            current_value=None,
+            threshold="≥30%",
+            affected_count=0,
+            description=f"Degraded: could not query venue_geo ({str(e)[:80]}).",
+        )
+
+    # 9) Team home city profile coverage
+    try:
+        res = await session.execute(
+            text(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE thcp.team_id IS NOT NULL) AS with_profile,
+                    COUNT(*) AS total_teams
+                FROM teams t
+                LEFT JOIN team_home_city_profile thcp ON t.id = thcp.team_id
+                """
+            )
+        )
+        row = res.first()
+        with_profile = int(row[0] or 0) if row else 0
+        total_teams = int(row[1] or 0) if row else 0
+        missing_profile = total_teams - with_profile
+        coverage_pct = round(with_profile / total_teams * 100, 1) if total_teams > 0 else 0.0
+        # Status: warn if coverage < 20%, fail if < 5%
+        if coverage_pct < 5:
+            status = "failing"
+        elif coverage_pct < 20:
+            status = "warning"
+        else:
+            status = "passing"
+        add_check(
+            check_id="dq_team_profile_coverage",
+            name="Team profile coverage",
+            category="coverage",
+            status=status,
+            current_value=f"{coverage_pct}%",
+            threshold="≥20%",
+            affected_count=missing_profile,
+            description=f"Teams with home city profile: {with_profile}/{total_teams}.",
+        )
+    except Exception as e:
+        add_check(
+            check_id="dq_team_profile_coverage",
+            name="Team profile coverage",
+            category="coverage",
+            status="warning",
+            current_value=None,
+            threshold="≥20%",
+            affected_count=0,
+            description=f"Degraded: could not query team_home_city_profile ({str(e)[:80]}).",
+        )
+
+    # 10) Sofascore XI coverage: NS matches in next 48h (supported leagues) with XI data
+    try:
+        # Check if table exists first
+        table_check = await session.execute(
+            text("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'match_sofascore_lineup'
+                )
+            """)
+        )
+        tables_exist = table_check.scalar()
+
+        if tables_exist:
+            res = await session.execute(
+                text(
+                    """
+                    SELECT
+                        COUNT(*) FILTER (WHERE msl.match_id IS NOT NULL) AS with_xi,
+                        COUNT(*) AS total_ns
+                    FROM matches m
+                    LEFT JOIN match_sofascore_lineup msl ON m.id = msl.match_id
+                    WHERE m.status = 'NS'
+                      AND m.date >= NOW()
+                      AND m.date < NOW() + INTERVAL '48 hours'
+                      AND m.league_id IN (39, 140, 135, 78, 61, 239, 253)
+                    """
+                )
+            )
+            row = res.first()
+            with_xi = int(row[0] or 0) if row else 0
+            total_ns = int(row[1] or 0) if row else 0
+            missing_xi = total_ns - with_xi
+            coverage_pct = round(with_xi / total_ns * 100, 1) if total_ns > 0 else 0.0
+            # Status: warn if coverage < 20%, fail if < 5% (XI is optional SOTA feature)
+            if coverage_pct < 5:
+                status = "failing"
+            elif coverage_pct < 20:
+                status = "warning"
+            else:
+                status = "passing"
+            add_check(
+                check_id="dq_sofascore_xi_coverage_ns_48h",
+                name="Sofascore XI coverage (NS 48h)",
+                category="coverage",
+                status=status,
+                current_value=f"{coverage_pct}%",
+                threshold="≥20%",
+                affected_count=missing_xi,
+                description=f"NS matches (48h, supported leagues) with XI data: {with_xi}/{total_ns}.",
+            )
+        else:
+            # Tables not deployed yet
+            add_check(
+                check_id="dq_sofascore_xi_coverage_ns_48h",
+                name="Sofascore XI coverage (NS 48h)",
+                category="coverage",
+                status="warning",
+                current_value="pending",
+                threshold="≥20%",
+                affected_count=0,
+                description="Tables not deployed yet (migration 030 pending).",
+            )
+    except Exception as e:
+        add_check(
+            check_id="dq_sofascore_xi_coverage_ns_48h",
+            name="Sofascore XI coverage (NS 48h)",
+            category="coverage",
+            status="warning",
+            current_value=None,
+            threshold="≥20%",
+            affected_count=0,
+            description=f"Degraded: could not query match_sofascore_lineup ({str(e)[:80]}).",
         )
 
     return checks
