@@ -2,7 +2,15 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { usePredictions, usePrediction, usePredictionCoverage, useColumnVisibility, usePageSize } from "@/lib/hooks";
+import {
+  usePredictions,
+  usePredictionsApi,
+  usePrediction,
+  usePredictionCoverage,
+  usePredictionCoverageFromData,
+  useColumnVisibility,
+  usePageSize,
+} from "@/lib/hooks";
 import { getPredictionLeaguesMock } from "@/lib/mocks";
 import {
   PredictionRow,
@@ -124,23 +132,39 @@ function PredictionsPageContent() {
     search: searchValue || undefined,
   }), [selectedStatuses, selectedModels, selectedLeagues, selectedTimeRange, searchValue]);
 
-  // Fetch data
+  // Fetch data from API with mock fallback
   const {
-    data: predictions = [],
-    isLoading,
-    error,
+    data: apiData,
+    isLoading: isLoadingApi,
+    error: apiError,
     refetch,
+  } = usePredictionsApi(filters);
+
+  // Fallback to mock if API fails
+  const {
+    data: mockData,
+    isLoading: isLoadingMock,
   } = usePredictions(filters);
+
+  // Use API data if available, otherwise mock
+  const predictions = apiData ?? mockData ?? [];
+  const isLoading = isLoadingApi || (apiError ? isLoadingMock : false);
+  const error = apiError && !mockData ? apiError : null;
 
   const {
     data: selectedPrediction,
     isLoading: isLoadingDetail,
   } = usePrediction(selectedPredictionId);
 
-  const {
-    data: coverage,
-    isLoading: isLoadingCoverage,
-  } = usePredictionCoverage("24h");
+  // Calculate coverage from current predictions
+  const periodLabel = selectedTimeRange
+    ? selectedTimeRange === "24h" ? "Next 24 hours"
+      : selectedTimeRange === "48h" ? "Next 48 hours"
+      : selectedTimeRange === "7d" ? "Next 7 days"
+      : "Next 30 days"
+    : "Next 7 days";
+  const coverage = usePredictionCoverageFromData(predictions, periodLabel);
+  const isLoadingCoverage = isLoading;
 
   // Drawer is open when there's a selected prediction
   const drawerOpen = selectedPredictionId !== null;
