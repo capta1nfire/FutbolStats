@@ -53,16 +53,19 @@ export function extractBudget(ops: OpsResponse): unknown | null {
 }
 
 /**
- * Validate ApiBudgetStatus
+ * Normalize backend status to ApiBudgetStatus
+ *
+ * Backend uses "warn" but frontend expects "warning".
+ * Also handles "red" -> "critical" mapping.
  */
-function isValidStatus(status: unknown): status is ApiBudgetStatus {
-  return (
-    status === "ok" ||
-    status === "warning" ||
-    status === "critical" ||
-    status === "degraded"
-  );
+function normalizeStatus(status: unknown): ApiBudgetStatus | null {
+  if (status === "ok") return "ok";
+  if (status === "warning" || status === "warn") return "warning";
+  if (status === "critical" || status === "red") return "critical";
+  if (status === "degraded") return "degraded";
+  return null;
 }
+
 
 /**
  * Adapt raw budget object to ApiBudget type
@@ -78,9 +81,9 @@ function isValidStatus(status: unknown): status is ApiBudgetStatus {
 export function adaptApiBudget(raw: unknown): ApiBudget | null {
   if (!isObject(raw)) return null;
 
-  // Required fields with type validation
-  const status = raw.status;
-  if (!isValidStatus(status)) return null;
+  // Required fields with type validation (normalize "warn" -> "warning")
+  const status = normalizeStatus(raw.status);
+  if (status === null) return null;
 
   const plan = raw.plan;
   if (typeof plan !== "string") return null;
@@ -430,9 +433,9 @@ export function extractSentry(ops: OpsResponse): unknown | null {
 export function adaptOpsSentry(raw: unknown): OpsSentrySummary | null {
   if (!isObject(raw)) return null;
 
-  // Required: status
-  const status = raw.status;
-  if (!isValidStatus(status)) return null;
+  // Required: status (normalize "warn" -> "warning")
+  const status = normalizeStatus(raw.status);
+  if (status === null) return null;
 
   // Required: project
   const project = raw.project;
@@ -552,8 +555,9 @@ export interface OpsJobsHealth {
 function parseJobItem(raw: unknown): OpsJobItem | null {
   if (!isObject(raw)) return null;
 
-  const status = raw.status;
-  if (!isValidStatus(status)) return null;
+  // Normalize status (backend may use "warn" instead of "warning")
+  const status = normalizeStatus(raw.status);
+  if (status === null) return null;
 
   return {
     status,
@@ -573,8 +577,9 @@ export function parseOpsJobsHealth(ops: OpsResponse): OpsJobsHealth | null {
   const jobsHealth = getNestedValue(ops, "data", "jobs_health");
   if (!isObject(jobsHealth)) return null;
 
-  const status = jobsHealth.status;
-  if (!isValidStatus(status)) return null;
+  // Normalize status (backend may use "warn" instead of "warning")
+  const status = normalizeStatus(jobsHealth.status);
+  if (status === null) return null;
 
   return {
     status,
@@ -643,8 +648,9 @@ export function parseOpsFastpathHealth(ops: OpsResponse): OpsFastpathHealth | nu
   const fastpath = getNestedValue(ops, "data", "fastpath_health");
   if (!isObject(fastpath)) return null;
 
-  const status = fastpath.status;
-  if (!isValidStatus(status)) return null;
+  // Normalize status (backend may use "warn" instead of "warning")
+  const status = normalizeStatus(fastpath.status);
+  if (status === null) return null;
 
   const enabled = typeof fastpath.enabled === "boolean" ? fastpath.enabled : false;
   const pending_ready = typeof fastpath.pending_ready === "number" ? fastpath.pending_ready : 0;
@@ -743,8 +749,9 @@ export function parseOpsPredictionsHealth(ops: OpsResponse): OpsPredictionsHealt
   const pred = getNestedValue(ops, "data", "predictions_health");
   if (!isObject(pred)) return null;
 
-  const status = pred.status;
-  if (!isValidStatus(status)) return null;
+  // Backend uses "warn" but frontend expects "warning"
+  const status = normalizeStatus(pred.status);
+  if (status === null) return null;
 
   return {
     status,
@@ -960,8 +967,9 @@ export function parseOpsLlmCost(ops: OpsResponse): OpsLlmCost | null {
   const llm = getNestedValue(ops, "data", "llm_cost");
   if (!isObject(llm)) return null;
 
-  const status = llm.status;
-  if (!isValidStatus(status)) return null;
+  // Normalize status (backend may use "warn" instead of "warning")
+  const status = normalizeStatus(llm.status);
+  if (status === null) return null;
 
   const provider = llm.provider;
   if (typeof provider !== "string") return null;

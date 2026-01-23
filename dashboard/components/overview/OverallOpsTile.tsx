@@ -27,11 +27,18 @@ const statusPriority: Record<ApiBudgetStatus, number> = {
   ok: 0,
 };
 
+/**
+ * Status colors for domain cards
+ *
+ * Note: We use higher opacity backgrounds (25-30%) because the parent container
+ * has a dark surface background (#1c1e21). Lower opacities result in nearly
+ * invisible colors that blend with the background.
+ */
 const statusColors: Record<ApiBudgetStatus | "unknown", { bg: string; text: string; border: string }> = {
-  ok: { bg: "bg-green-500/20", text: "text-green-400", border: "border-green-500/30" },
-  warning: { bg: "bg-yellow-500/20", text: "text-yellow-400", border: "border-yellow-500/30" },
-  critical: { bg: "bg-red-500/20", text: "text-red-400", border: "border-red-500/30" },
-  degraded: { bg: "bg-orange-500/20", text: "text-orange-400", border: "border-orange-500/30" },
+  ok: { bg: "bg-green-900/50", text: "text-green-400", border: "border-green-500/60" },
+  warning: { bg: "bg-yellow-900/50", text: "text-yellow-300", border: "border-yellow-500/60" },
+  critical: { bg: "bg-red-900/50", text: "text-red-400", border: "border-red-500/60" },
+  degraded: { bg: "bg-orange-900/50", text: "text-orange-300", border: "border-orange-500/60" },
   unknown: { bg: "bg-muted", text: "text-muted-foreground", border: "border-border" },
 };
 
@@ -199,7 +206,7 @@ export function OverallOpsTile({
                 {freshness.cache_age_seconds.toFixed(1)}s
               </span>
               {freshness.is_stale && (
-                <span className="px-1 py-0.5 text-[9px] font-medium rounded bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
+                <span className="px-1 py-0.5 text-[9px] font-medium rounded bg-yellow-900/50 text-yellow-300 border border-yellow-500/60">
                   stale
                 </span>
               )}
