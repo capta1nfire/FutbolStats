@@ -13893,15 +13893,17 @@ async def _aggregate_incidents(session) -> list[dict]:
     try:
         pred_health = await _calculate_predictions_health(session)
         status_val = pred_health.get("status", "ok")
-        if status_val in ("warning", "critical"):
+        # Backend may use "warn" - normalize to "warning"
+        if status_val in ("warn", "warning", "critical"):
             reason = pred_health.get("status_reason", "Predictions health degraded")
             ns_missing = pred_health.get("ns_matches_next_48h_missing_prediction", 0)
             ns_total = pred_health.get("ns_matches_next_48h", 0)
             coverage = pred_health.get("ns_coverage_pct", 100)
+            severity = "warning" if status_val == "warn" else status_val
 
             incidents.append({
                 "id": make_id("predictions", "health"),
-                "severity": status_val,
+                "severity": severity,
                 "status": "active",
                 "type": "predictions",
                 "title": f"Predictions coverage at {coverage}%"[:80],
@@ -13924,11 +13926,13 @@ async def _aggregate_incidents(session) -> list[dict]:
         for job_name in ["stats_backfill", "odds_sync", "fastpath"]:
             job_data = jobs_health.get(job_name, {})
             job_status = job_data.get("status", "ok")
-            if job_status in ("warning", "critical"):
+            # Backend uses "warn" but we normalize to "warning" for dashboard
+            if job_status in ("warn", "warning", "critical"):
                 mins_since = job_data.get("minutes_since_success")
                 help_url = job_data.get("help_url")
 
-                severity = job_status
+                # Normalize "warn" to "warning"
+                severity = "warning" if job_status == "warn" else job_status
                 time_str = f"{int(mins_since)}m" if mins_since and mins_since < 60 else (
                     f"{int(mins_since/60)}h" if mins_since else "unknown"
                 )
@@ -13953,14 +13957,16 @@ async def _aggregate_incidents(session) -> list[dict]:
     try:
         fp_health = await _calculate_fastpath_health(session)
         fp_status = fp_health.get("status", "ok")
-        if fp_status in ("warning", "critical"):
+        # Backend may use "warn" - normalize to "warning"
+        if fp_status in ("warn", "warning", "critical"):
             error_rate = fp_health.get("last_60m", {}).get("error_rate_pct", 0)
             in_queue = fp_health.get("last_60m", {}).get("in_queue", 0)
             reason = fp_health.get("status_reason", "Fastpath degraded")
+            severity = "warning" if fp_status == "warn" else fp_status
 
             incidents.append({
                 "id": make_id("fastpath", "health"),
-                "severity": fp_status,
+                "severity": severity,
                 "status": "active",
                 "type": "llm",
                 "title": f"Fastpath error rate {error_rate}%"[:80],
@@ -13978,13 +13984,15 @@ async def _aggregate_incidents(session) -> list[dict]:
     try:
         budget_data = await _fetch_api_football_budget()
         budget_status = budget_data.get("status", "ok")
-        if budget_status in ("warning", "critical"):
+        # Backend may use "warn" - normalize to "warning"
+        if budget_status in ("warn", "warning", "critical"):
             pct_used = budget_data.get("pct_used", 0)
             remaining = budget_data.get("requests_remaining", 0)
+            severity = "warning" if budget_status == "warn" else budget_status
 
             incidents.append({
                 "id": make_id("budget", "api-football"),
-                "severity": budget_status,
+                "severity": severity,
                 "status": "active",
                 "type": "api_budget",
                 "title": f"API-Football budget at {pct_used}%"[:80],
