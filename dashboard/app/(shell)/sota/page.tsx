@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useDataQualityChecksApi, useDataQualityCheckApi } from "@/lib/hooks";
+import { useDataQualityChecksApi, useDataQualityCheckApi, useOpsOverview } from "@/lib/hooks";
 import {
   DataQualityCheck,
   DataQualityFilters,
@@ -11,19 +11,21 @@ import {
   DataQualityTable,
   DataQualityDetailDrawer,
 } from "@/components/data-quality";
+import { SotaEnrichmentSection } from "@/components/overview";
 import { Pagination } from "@/components/tables";
 import {
   parseStringId,
   buildSearchParams,
 } from "@/lib/url-state";
 import { Loader } from "@/components/ui/loader";
-import { Database, Sparkles } from "lucide-react";
+import { Database, Sparkles, ClipboardCheck } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 const BASE_PATH = "/sota";
 
@@ -55,10 +57,11 @@ const SOTA_COLUMN_VISIBILITY: Record<string, boolean> = {
 };
 
 /**
- * SOTA Data Quality Page Content
+ * SOTA Hub Page Content
  *
- * Displays only SOTA-related data quality checks (5 specific IDs).
- * Always filters by category=coverage server-side.
+ * Two sections:
+ * 1. SOTA Enrichment cards (from ops.json) - same as Overview
+ * 2. SOTA Data Quality table (5 specific checks)
  */
 function SotaPageContent() {
   const router = useRouter();
@@ -74,20 +77,26 @@ function SotaPageContent() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
 
+  // Fetch SOTA enrichment data from ops.json (same source as Overview)
+  const {
+    sotaEnrichment,
+    isSotaEnrichmentDegraded,
+    isLoading: isOpsLoading,
+  } = useOpsOverview();
+
   // Construct filters - always category=coverage
   const filters: DataQualityFilters = useMemo(() => ({
     category: ["coverage"],
-    // Note: We don't use search here - we'll filter client-side by ID allowlist
   }), []);
 
   // Fetch data quality checks from API with mock fallback
   const {
     data: allChecks = [],
-    isLoading,
+    isLoading: isDqLoading,
     error,
-    isApiDegraded,
+    isApiDegraded: isDqDegraded,
     refetch,
-  } = useDataQualityChecksApi(filters, 1, 100); // Fetch up to 100, filter client-side
+  } = useDataQualityChecksApi(filters, 1, 100);
 
   // Filter to only SOTA checks (allowlist)
   const checks = useMemo(() => {
@@ -102,6 +111,12 @@ function SotaPageContent() {
 
   // Drawer is open when there's a selected check
   const drawerOpen = selectedCheckId !== null;
+
+  // Combined loading state
+  const isLoading = isOpsLoading || isDqLoading;
+
+  // Any degradation (ops or data quality)
+  const isAnyDegraded = isSotaEnrichmentDegraded || isDqDegraded;
 
   // Build URL with current filters
   const buildUrl = useCallback(
@@ -136,15 +151,15 @@ function SotaPageContent() {
 
   return (
     <div className="h-full flex overflow-hidden relative">
-      {/* Main content: Table */}
+      {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
-        {/* Header with mock indicator */}
-        <div className="h-12 flex items-center justify-between px-6 border-b border-border">
+        {/* Header */}
+        <div className="h-12 flex items-center justify-between px-6 border-b border-border shrink-0">
           <div className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-primary" />
-            <h1 className="text-lg font-semibold text-foreground">SOTA Data Quality</h1>
+            <h1 className="text-lg font-semibold text-foreground">SOTA</h1>
           </div>
-          {isApiDegraded && !isLoading && (
+          {isAnyDegraded && !isLoading && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -163,38 +178,52 @@ function SotaPageContent() {
           )}
         </div>
 
-        {/* Summary bar */}
-        <div className="px-6 py-3 border-b border-border bg-surface">
-          <div className="flex items-center gap-4 text-sm">
-            <span className="text-muted-foreground">
-              Showing <span className="text-foreground font-medium">{checks.length}</span> SOTA enrichment checks
-            </span>
-            <span className="text-muted-foreground">|</span>
-            <span className="text-muted-foreground">
-              Category: <span className="text-foreground font-medium">coverage</span>
-            </span>
+        {/* Scrollable content area */}
+        <ScrollArea className="flex-1">
+          <div className="p-6 space-y-6">
+            {/* SOTA Enrichment Section (cards) */}
+            <SotaEnrichmentSection
+              data={sotaEnrichment}
+              isMockFallback={isSotaEnrichmentDegraded}
+            />
+
+            {/* Data Quality Section */}
+            <div className="space-y-3">
+              {/* Section header */}
+              <div className="flex items-center gap-2">
+                <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
+                <h2 className="text-sm font-semibold text-foreground">Data Quality Checks</h2>
+                <span className="text-xs text-muted-foreground">
+                  ({checks.length} checks)
+                </span>
+              </div>
+
+              {/* Table container */}
+              <div className="border border-border rounded-lg overflow-hidden">
+                <DataQualityTable
+                  data={paginatedChecks}
+                  isLoading={isDqLoading}
+                  error={error}
+                  onRetry={() => refetch()}
+                  selectedCheckId={selectedCheckId}
+                  onRowClick={handleRowClick}
+                  columnVisibility={SOTA_COLUMN_VISIBILITY}
+                />
+              </div>
+
+              {/* Pagination */}
+              {checks.length > 0 && (
+                <Pagination
+                  currentPage={currentPage}
+                  totalItems={checks.length}
+                  pageSize={pageSize}
+                  onPageChange={setCurrentPage}
+                  onPageSizeChange={setPageSize}
+                />
+              )}
+            </div>
           </div>
-        </div>
-
-        {/* Table */}
-        <DataQualityTable
-          data={paginatedChecks}
-          isLoading={isLoading}
-          error={error}
-          onRetry={() => refetch()}
-          selectedCheckId={selectedCheckId}
-          onRowClick={handleRowClick}
-          columnVisibility={SOTA_COLUMN_VISIBILITY}
-        />
-
-        {/* Pagination */}
-        <Pagination
-          currentPage={currentPage}
-          totalItems={checks.length}
-          pageSize={pageSize}
-          onPageChange={setCurrentPage}
-          onPageSizeChange={setPageSize}
-        />
+        </ScrollArea>
       </div>
 
       {/* Detail Drawer (inline on desktop, sheet on mobile) */}
@@ -220,13 +249,14 @@ function SotaLoading() {
 }
 
 /**
- * SOTA Data Quality Page
+ * SOTA Hub Page
  *
- * Dedicated view for SOTA enrichment data quality checks.
- * Shows only the 5 SOTA-related checks (Understat, Weather, Venue Geo, Team Profiles, Sofascore XI).
+ * Dedicated hub for SOTA enrichment:
+ * 1. SOTA Enrichment cards (Understat, Weather, Venue Geo, Team Profiles, Sofascore XI)
+ * 2. SOTA Data Quality checks table
  *
  * URL patterns:
- * - /sota - table view
+ * - /sota - hub view
  * - /sota?id=dq_understat_coverage_ft_14d - with drawer open
  */
 export default function SotaPage() {
