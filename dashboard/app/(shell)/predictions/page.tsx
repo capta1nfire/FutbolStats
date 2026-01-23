@@ -2,7 +2,14 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { usePredictions, usePrediction, usePredictionCoverage, useColumnVisibility, usePageSize } from "@/lib/hooks";
+import {
+  usePredictions,
+  usePredictionsApi,
+  usePrediction,
+  usePredictionCoverageFromData,
+  useColumnVisibility,
+  usePageSize,
+} from "@/lib/hooks";
 import { getPredictionLeaguesMock } from "@/lib/mocks";
 import {
   PredictionRow,
@@ -43,10 +50,7 @@ function PredictionsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Available leagues for filter
-  const availableLeagues = useMemo(() => getPredictionLeaguesMock(), []);
-
-  // Parse URL state
+  // Parse URL state (non-league filters first)
   const selectedPredictionId = useMemo(
     () => parseNumericId(searchParams.get("id")),
     [searchParams]
@@ -59,16 +63,18 @@ function PredictionsPageContent() {
     () => parseArrayParam<ModelType>(searchParams, "model", MODEL_TYPES),
     [searchParams]
   );
-  const selectedLeagues = useMemo(
-    () => parseArrayParam<string>(searchParams, "league", availableLeagues),
-    [searchParams, availableLeagues]
-  );
   const selectedTimeRange = useMemo(
     () => parseSingleParam<PredictionTimeRange>(searchParams.get("range"), PREDICTION_TIME_RANGES),
     [searchParams]
   );
   const searchValue = useMemo(
     () => searchParams.get("q") ?? "",
+    [searchParams]
+  );
+
+  // Raw league param from URL (validated later against available leagues)
+  const leagueParamRaw = useMemo(
+    () => searchParams.getAll("league"),
     [searchParams]
   );
 
@@ -115,32 +121,70 @@ function PredictionsPageContent() {
     }
   }, [leftRailCollapsed]);
 
-  // Construct filters for query
-  const filters: PredictionFilters = useMemo(() => ({
+  // Construct filters for query (WITHOUT league - applied client-side after deriving available leagues)
+  const baseFilters: PredictionFilters = useMemo(() => ({
     status: selectedStatuses.length > 0 ? selectedStatuses : undefined,
     model: selectedModels.length > 0 ? selectedModels : undefined,
-    league: selectedLeagues.length > 0 ? selectedLeagues : undefined,
+    // league filter applied client-side below
     timeRange: selectedTimeRange || undefined,
     search: searchValue || undefined,
-  }), [selectedStatuses, selectedModels, selectedLeagues, selectedTimeRange, searchValue]);
+  }), [selectedStatuses, selectedModels, selectedTimeRange, searchValue]);
 
-  // Fetch data
+  // Fetch data from API with mock fallback
   const {
-    data: predictions = [],
-    isLoading,
-    error,
+    data: apiData,
+    isLoading: isLoadingApi,
+    error: apiError,
     refetch,
-  } = usePredictions(filters);
+  } = usePredictionsApi(baseFilters);
+
+  // Fallback to mock if API fails
+  const {
+    data: mockData,
+    isLoading: isLoadingMock,
+  } = usePredictions(baseFilters);
+
+  // Base predictions (before league filter) - memoized to avoid reference changes
+  const basePredictions = useMemo(
+    () => apiData ?? mockData ?? [],
+    [apiData, mockData]
+  );
+  const isLoading = isLoadingApi || (apiError ? isLoadingMock : false);
+  const error = apiError && !mockData ? apiError : null;
+
+  // Derive available leagues from real data, fallback to mock if empty
+  const availableLeagues = useMemo(() => {
+    const leagues = [...new Set(basePredictions.map((p) => p.leagueName))].sort();
+    return leagues.length > 0 ? leagues : getPredictionLeaguesMock();
+  }, [basePredictions]);
+
+  // Validate league params against available leagues
+  const selectedLeagues = useMemo(() => {
+    return leagueParamRaw.filter((l) => availableLeagues.includes(l));
+  }, [leagueParamRaw, availableLeagues]);
+
+  // Apply league filter client-side
+  const predictions = useMemo(() => {
+    if (selectedLeagues.length === 0) return basePredictions;
+    return basePredictions.filter((p) =>
+      selectedLeagues.some((l) => p.leagueName.toLowerCase().includes(l.toLowerCase()))
+    );
+  }, [basePredictions, selectedLeagues]);
 
   const {
     data: selectedPrediction,
     isLoading: isLoadingDetail,
   } = usePrediction(selectedPredictionId);
 
-  const {
-    data: coverage,
-    isLoading: isLoadingCoverage,
-  } = usePredictionCoverage("24h");
+  // Calculate coverage from current predictions
+  const periodLabel = selectedTimeRange
+    ? selectedTimeRange === "24h" ? "Next 24 hours"
+      : selectedTimeRange === "48h" ? "Next 48 hours"
+      : selectedTimeRange === "7d" ? "Next 7 days"
+      : "Next 30 days"
+    : "Next 7 days";
+  const coverage = usePredictionCoverageFromData(predictions, periodLabel);
+  const isLoadingCoverage = isLoading;
 
   // Drawer is open when there's a selected prediction
   const drawerOpen = selectedPredictionId !== null;
