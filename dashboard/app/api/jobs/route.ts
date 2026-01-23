@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 
 /**
  * Proxy route handler for /dashboard/jobs.json
@@ -21,7 +22,12 @@ const TIMEOUT_MS = parseInt(process.env.OPS_TIMEOUT_MS || "8000", 10);
  * Generate a cryptographically secure request ID for tracing
  */
 function generateRequestId(): string {
-  return `jobs-${crypto.randomUUID()}`;
+  try {
+    return `jobs-${randomUUID()}`;
+  } catch {
+    // Fallback without Math.random() - use timestamp + process.pid for entropy
+    return `jobs-${Date.now()}-${process.pid}`;
+  }
 }
 
 /**
