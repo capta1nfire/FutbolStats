@@ -1015,3 +1015,57 @@ export function parseOpsFreshness(ops: OpsResponse): OpsFreshness | null {
     is_stale: cacheAge > 120, // stale if > 2 minutes
   };
 }
+
+// ============================================================================
+// Telemetry (Data Quality) Extraction
+// ============================================================================
+
+/**
+ * Telemetry summary from ops.json (data quality metrics)
+ */
+export interface OpsTelemetry {
+  status: ApiBudgetStatus;
+  updated_at?: string;
+  summary: {
+    quarantined_odds_24h: number;
+    tainted_matches_24h: number;
+    unmapped_entities_24h: number;
+    odds_desync_6h: number;
+    odds_desync_90m: number;
+  };
+  links?: Array<{ title: string; url: string }>;
+}
+
+/**
+ * Parse telemetry (data quality) from ops response
+ *
+ * Expected structure: { data: { telemetry: {...} } }
+ */
+export function parseOpsTelemetry(ops: OpsResponse): OpsTelemetry | null {
+  const telemetry = getNestedValue(ops, "data", "telemetry");
+  if (!isObject(telemetry)) return null;
+
+  const status = telemetry.status;
+  if (!isValidStatus(status)) return null;
+
+  const summary = telemetry.summary;
+  if (!isObject(summary)) return null;
+
+  return {
+    status,
+    updated_at: typeof telemetry.updated_at === "string" ? telemetry.updated_at : undefined,
+    summary: {
+      quarantined_odds_24h: typeof summary.quarantined_odds_24h === "number" ? summary.quarantined_odds_24h : 0,
+      tainted_matches_24h: typeof summary.tainted_matches_24h === "number" ? summary.tainted_matches_24h : 0,
+      unmapped_entities_24h: typeof summary.unmapped_entities_24h === "number" ? summary.unmapped_entities_24h : 0,
+      odds_desync_6h: typeof summary.odds_desync_6h === "number" ? summary.odds_desync_6h : 0,
+      odds_desync_90m: typeof summary.odds_desync_90m === "number" ? summary.odds_desync_90m : 0,
+    },
+    links: Array.isArray(telemetry.links)
+      ? telemetry.links
+          .filter((l): l is { title: string; url: string } =>
+            isObject(l) && typeof l.title === "string" && typeof l.url === "string"
+          )
+      : undefined,
+  };
+}

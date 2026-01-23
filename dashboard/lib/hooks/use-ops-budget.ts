@@ -13,6 +13,7 @@ import {
   parseOpsSensorB,
   parseOpsLlmCost,
   parseOpsFreshness,
+  parseOpsTelemetry,
   OpsSentrySummary,
   OpsJobsHealth,
   OpsFastpathHealth,
@@ -21,6 +22,7 @@ import {
   OpsSensorB,
   OpsLlmCost,
   OpsFreshness,
+  OpsTelemetry,
 } from "@/lib/api/ops";
 
 /**
@@ -55,6 +57,7 @@ interface OpsData {
   sensorB: OpsSensorB | null;
   llmCost: OpsLlmCost | null;
   freshness: OpsFreshness | null;
+  telemetry: OpsTelemetry | null;
   requestId?: string;
 }
 
@@ -88,6 +91,7 @@ async function fetchOpsData(): Promise<OpsData> {
       sensorB: null,
       llmCost: null,
       freshness: null,
+      telemetry: null,
       requestId,
     };
   }
@@ -103,6 +107,7 @@ async function fetchOpsData(): Promise<OpsData> {
   const sensorB = parseOpsSensorB(data);
   const llmCost = parseOpsLlmCost(data);
   const freshness = parseOpsFreshness(data);
+  const telemetry = parseOpsTelemetry(data);
 
   return {
     budget,
@@ -115,6 +120,7 @@ async function fetchOpsData(): Promise<OpsData> {
     sensorB,
     llmCost,
     freshness,
+    telemetry,
     requestId,
   };
 }
@@ -195,6 +201,8 @@ export interface UseOpsOverviewResult {
   llmCost: OpsLlmCost | null;
   /** Parsed freshness metadata, null if unavailable */
   freshness: OpsFreshness | null;
+  /** Parsed telemetry (data quality), null if unavailable */
+  telemetry: OpsTelemetry | null;
   /** True if data fetch failed or all parsing failed */
   isDegraded: boolean;
   /** True if budget specifically is degraded */
@@ -215,6 +223,8 @@ export interface UseOpsOverviewResult {
   isSensorBDegraded: boolean;
   /** True if LLM cost specifically is degraded */
   isLlmCostDegraded: boolean;
+  /** True if telemetry specifically is degraded */
+  isTelemetryDegraded: boolean;
   /** Request ID for debugging (from response header) */
   requestId?: string;
   /** Loading state */
@@ -259,6 +269,7 @@ export function useOpsOverview(): UseOpsOverviewResult {
   const sensorB = data?.sensorB ?? null;
   const llmCost = data?.llmCost ?? null;
   const freshness = data?.freshness ?? null;
+  const telemetry = data?.telemetry ?? null;
   const requestId = data?.requestId;
 
   const isBudgetDegraded = !!error || budget === null;
@@ -270,6 +281,7 @@ export function useOpsOverview(): UseOpsOverviewResult {
   const isShadowModeDegraded = !!error || shadowMode === null;
   const isSensorBDegraded = !!error || sensorB === null;
   const isLlmCostDegraded = !!error || llmCost === null;
+  const isTelemetryDegraded = !!error || telemetry === null;
   // isDegraded = ALL core blocks failed (not diagnostics)
   const isDegraded = isBudgetDegraded && isHealthDegraded && isJobsDegraded && isPredictionsDegraded;
 
@@ -284,6 +296,7 @@ export function useOpsOverview(): UseOpsOverviewResult {
     sensorB,
     llmCost,
     freshness,
+    telemetry,
     isDegraded,
     isBudgetDegraded,
     isHealthDegraded,
@@ -294,6 +307,7 @@ export function useOpsOverview(): UseOpsOverviewResult {
     isShadowModeDegraded,
     isSensorBDegraded,
     isLlmCostDegraded,
+    isTelemetryDegraded,
     requestId,
     isLoading,
     error: error as Error | null,

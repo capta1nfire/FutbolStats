@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useDataQualityChecks, useDataQualityCheck, useColumnVisibility, usePageSize } from "@/lib/hooks";
+import { useDataQualityChecks, useDataQualityCheck, useColumnVisibility, usePageSize, useOpsOverview } from "@/lib/hooks";
 import {
   DataQualityCheck,
   DataQualityStatus,
@@ -15,6 +15,7 @@ import {
   DataQualityTable,
   DataQualityFilterPanel,
   DataQualityDetailDrawer,
+  TelemetrySummaryCard,
   DATA_QUALITY_COLUMN_OPTIONS,
   DATA_QUALITY_DEFAULT_VISIBILITY,
 } from "@/components/data-quality";
@@ -106,7 +107,14 @@ function DataQualityPageContent() {
     search: searchValue || undefined,
   }), [selectedStatuses, selectedCategories, searchValue]);
 
-  // Fetch data
+  // Fetch real telemetry data from ops.json
+  const {
+    telemetry,
+    isTelemetryDegraded,
+    isLoading: isLoadingTelemetry,
+  } = useOpsOverview();
+
+  // Fetch mock data quality checks
   const {
     data: checks = [],
     isLoading,
@@ -207,8 +215,24 @@ function DataQualityPageContent() {
         onCollapse={handleLeftRailToggle}
       />
 
-      {/* Main content: Table */}
+      {/* Main content: Telemetry + Table */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
+        {/* Telemetry Summary (real data from ops.json) */}
+        <div className="p-4 border-b border-border">
+          <TelemetrySummaryCard
+            telemetry={telemetry}
+            isLoading={isLoadingTelemetry}
+            isDegraded={isTelemetryDegraded}
+          />
+        </div>
+
+        {/* Mock indicator */}
+        <div className="px-4 py-2 bg-muted/30 border-b border-border">
+          <span className="text-xs text-muted-foreground">
+            Quality Checks (mock data - endpoint not available)
+          </span>
+        </div>
+
         {/* Table */}
         <DataQualityTable
           data={checks}
