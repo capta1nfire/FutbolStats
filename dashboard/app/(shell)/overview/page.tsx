@@ -1,7 +1,7 @@
 "use client";
 
-import { useOpsOverview } from "@/lib/hooks";
-import { mockApiBudget } from "@/lib/mocks";
+import { useOpsOverview, useUpcomingMatches } from "@/lib/hooks";
+import { mockApiBudget, mockUpcomingMatches } from "@/lib/mocks";
 import {
   ApiBudgetCard,
   SentryHealthCard,
@@ -11,8 +11,9 @@ import {
   JobsHealthTile,
   FastpathHealthTile,
   DiagnosticsTile,
+  UpcomingMatchesList,
 } from "@/components/overview";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Calendar } from "lucide-react";
 import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -50,6 +51,13 @@ export default function OverviewPage() {
     refetch,
   } = useOpsOverview();
 
+  // Fetch upcoming matches from real backend
+  const {
+    matches: upcomingMatches,
+    isDegraded: isUpcomingDegraded,
+    isLoading: isUpcomingLoading,
+  } = useUpcomingMatches();
+
   // Loading state
   if (isLoading) {
     return (
@@ -84,6 +92,9 @@ export default function OverviewPage() {
   // Use real data with mock fallback for budget only
   const displayBudget = budget ?? mockApiBudget;
 
+  // Use real upcoming matches with mock fallback
+  const displayUpcomingMatches = upcomingMatches ?? mockUpcomingMatches;
+
   // Build statuses for overall rollup
   const overallStatuses = {
     jobs: jobs?.status ?? null,
@@ -96,7 +107,7 @@ export default function OverviewPage() {
 
   return (
     <div className="h-full flex overflow-hidden">
-      {/* Left Rail: Budget + Sentry + LLM Cost */}
+      {/* Left Rail: Budget + Sentry + LLM Cost + Upcoming Matches */}
       <aside className="w-[277px] shrink-0 border-r border-border bg-sidebar flex flex-col">
         {/* Header */}
         <div className="h-12 flex items-center px-3 border-b border-border">
@@ -118,6 +129,30 @@ export default function OverviewPage() {
               llmCost={llmCost}
               isMockFallback={isLlmCostDegraded}
             />
+
+            {/* Upcoming Matches */}
+            <div className="pt-3 border-t border-border">
+              <div className="flex items-center gap-2 mb-2">
+                <Calendar className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium text-foreground">
+                  Upcoming Matches
+                </span>
+                {isUpcomingDegraded && (
+                  <span className="text-[10px] text-yellow-400 bg-yellow-500/10 px-1.5 py-0.5 rounded">
+                    mock
+                  </span>
+                )}
+              </div>
+              {isUpcomingLoading ? (
+                <div className="flex items-center justify-center py-4">
+                  <Loader size="sm" />
+                </div>
+              ) : (
+                <UpcomingMatchesList
+                  matches={displayUpcomingMatches.slice(0, 5)}
+                />
+              )}
+            </div>
           </div>
         </ScrollArea>
       </aside>

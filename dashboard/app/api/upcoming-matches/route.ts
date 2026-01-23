@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 
 /**
  * Proxy route handler for /dashboard/upcoming_matches.json
@@ -20,7 +21,11 @@ const TIMEOUT_MS = parseInt(process.env.OPS_TIMEOUT_MS || "8000", 10);
  * Generate a cryptographically secure request ID for tracing
  */
 function generateRequestId(): string {
-  return `upcoming-${crypto.randomUUID()}`;
+  try {
+    return `upcoming-${randomUUID()}`;
+  } catch {
+    return `upcoming-${Date.now()}-${process.pid}`;
+  }
 }
 
 /**
