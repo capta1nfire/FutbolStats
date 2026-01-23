@@ -11927,6 +11927,17 @@ async def dashboard_predictions_json(
 
         where_clause = " AND ".join(filters)
 
+        # League names fallback (no competitions table)
+        league_names = {
+            1: "World Cup", 2: "Champions League", 3: "Europa League",
+            39: "Premier League", 40: "Championship", 61: "Ligue 1",
+            78: "Bundesliga", 135: "Serie A", 140: "La Liga",
+            94: "Primeira Liga", 88: "Eredivisie", 203: "Süper Lig",
+            239: "Liga BetPlay", 253: "MLS", 262: "Liga MX",
+            128: "Argentina Primera", 71: "Brasileirão",
+            848: "Conference League", 45: "FA Cup", 143: "Copa del Rey",
+        }
+
         # Count total
         count_query = f"""
             SELECT COUNT(DISTINCT p.id)
@@ -11934,7 +11945,6 @@ async def dashboard_predictions_json(
             JOIN matches m ON p.match_id = m.id
             JOIN teams t_home ON m.home_team_id = t_home.id
             JOIN teams t_away ON m.away_team_id = t_away.id
-            JOIN competitions c ON m.league_id = c.id
             WHERE {where_clause} {model_filter_sql}
         """
         count_result = await session.execute(text(count_query), params)
@@ -11950,7 +11960,6 @@ async def dashboard_predictions_json(
                 p.id,
                 p.match_id,
                 m.league_id,
-                c.name AS league_name,
                 m.date AS kickoff_utc,
                 t_home.name AS home_team,
                 t_away.name AS away_team,
@@ -11969,7 +11978,6 @@ async def dashboard_predictions_json(
             JOIN matches m ON p.match_id = m.id
             JOIN teams t_home ON m.home_team_id = t_home.id
             JOIN teams t_away ON m.away_team_id = t_away.id
-            JOIN competitions c ON m.league_id = c.id
             WHERE {where_clause} {model_filter_sql}
             ORDER BY m.date ASC, p.created_at DESC
             LIMIT :limit OFFSET :offset
@@ -12011,7 +12019,7 @@ async def dashboard_predictions_json(
                 "id": row.id,
                 "match_id": row.match_id,
                 "league_id": row.league_id,
-                "league_name": row.league_name,
+                "league_name": league_names.get(row.league_id, f"League {row.league_id}"),
                 "kickoff_utc": row.kickoff_utc.isoformat() + "Z" if row.kickoff_utc else None,
                 "home_team": row.home_team,
                 "away_team": row.away_team,
