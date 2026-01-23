@@ -4638,6 +4638,303 @@ async def fast_postmatch_narratives() -> dict:
         return {"status": "error", "error": str(e)}
 
 
+# =============================================================================
+# SOTA ENRICHMENT JOBS
+# =============================================================================
+# Jobs for SOTA feature pipeline: Understat xG, Weather, Venue Geo
+# All jobs are best-effort: errors logged, no crash-loops
+# Reference: docs/ARCHITECTURE_SOTA.md
+
+async def sota_understat_refs_sync() -> dict:
+    """
+    Sync Understat external refs for recent matches (Top-5 leagues).
+
+    Links internal matches to Understat match IDs for xG data retrieval.
+    Conservative scope: --days 7 --limit 200
+
+    Frequency: Every 12 hours
+    Guardrail: SOTA_UNDERSTAT_REFS_ENABLED env var
+    """
+    import time as _time
+    from datetime import datetime
+
+    start_time = _time.time()
+    started_at = datetime.utcnow()
+    job_name = "sota_understat_refs_sync"
+
+    # Check if enabled
+    if os.environ.get("SOTA_UNDERSTAT_REFS_ENABLED", "true").lower() in ("false", "0", "no"):
+        logger.info(f"[{job_name}] Disabled via env var")
+        return {"status": "disabled"}
+
+    metrics = {
+        "scanned": 0,
+        "linked_auto": 0,
+        "linked_review": 0,
+        "skipped_no_candidates": 0,
+        "skipped_low_score": 0,
+        "errors": 0,
+        "started_at": started_at.isoformat(),
+    }
+
+    try:
+        # Use centralized sota_jobs module (not scripts/)
+        from app.etl.sota_jobs import sync_understat_refs
+        from app.jobs.tracking import record_job_run as record_job_run_db
+
+        async with AsyncSessionLocal() as session:
+            # Run with conservative settings: 7 days, max 200 matches
+            stats = await sync_understat_refs(session, days=7, limit=200)
+            metrics.update(stats)
+
+            # Record in DB for ops dashboard fallback
+            duration_ms = (_time.time() - start_time) * 1000
+            status = "ok" if metrics.get("errors", 0) == 0 else "partial"
+            await record_job_run_db(session, job_name, status, started_at, metrics=metrics)
+
+        # Record in Prometheus
+        record_job_run(job=job_name, status=status, duration_ms=duration_ms)
+
+        logger.info(
+            f"[{job_name}] Complete: scanned={metrics['scanned']}, "
+            f"linked_auto={metrics['linked_auto']}, linked_review={metrics['linked_review']}, "
+            f"errors={metrics['errors']}"
+        )
+        return {**metrics, "status": status, "duration_ms": duration_ms}
+
+    except Exception as e:
+        duration_ms = (_time.time() - start_time) * 1000
+        logger.error(f"[{job_name}] Failed: {e}", exc_info=True)
+        sentry_capture_exception(e, job_id=job_name)
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        # Try to record error in DB too
+        try:
+            from app.jobs.tracking import record_job_run as record_job_run_db
+            async with AsyncSessionLocal() as session:
+                await record_job_run_db(session, job_name, "error", started_at, error=str(e))
+        except Exception:
+            pass  # Best-effort DB recording
+        return {"status": "error", "error": str(e), "duration_ms": duration_ms}
+
+
+async def sota_understat_ft_backfill() -> dict:
+    """
+    Backfill Understat xG data for finished matches.
+
+    Fetches xG/xPTS from Understat for matches that have refs but no xG data.
+    Conservative scope: --days 14 --limit 100 --with-ref-only
+
+    Frequency: Every 6 hours
+    Guardrail: SOTA_UNDERSTAT_BACKFILL_ENABLED env var
+    Rate limit: 1 req/s (enforced in UnderstatProvider)
+    """
+    import time as _time
+    from datetime import datetime
+
+    start_time = _time.time()
+    started_at = datetime.utcnow()
+    job_name = "sota_understat_ft_backfill"
+
+    # Check if enabled
+    if os.environ.get("SOTA_UNDERSTAT_BACKFILL_ENABLED", "true").lower() in ("false", "0", "no"):
+        logger.info(f"[{job_name}] Disabled via env var")
+        return {"status": "disabled"}
+
+    metrics = {
+        "scanned": 0,
+        "inserted": 0,
+        "updated": 0,
+        "skipped_no_ref": 0,
+        "skipped_no_data": 0,
+        "errors": 0,
+        "started_at": started_at.isoformat(),
+    }
+
+    try:
+        # Use centralized sota_jobs module (not scripts/)
+        from app.etl.sota_jobs import backfill_understat_ft
+        from app.jobs.tracking import record_job_run as record_job_run_db
+
+        async with AsyncSessionLocal() as session:
+            # Run with conservative settings: 14 days, max 100, only matches with refs
+            stats = await backfill_understat_ft(session, days=14, limit=100, with_ref_only=True)
+            metrics.update(stats)
+
+            # Record in DB for ops dashboard fallback
+            duration_ms = (_time.time() - start_time) * 1000
+            status = "ok" if metrics.get("errors", 0) == 0 else "partial"
+            await record_job_run_db(session, job_name, status, started_at, metrics=metrics)
+
+        # Record in Prometheus
+        record_job_run(job=job_name, status=status, duration_ms=duration_ms)
+
+        logger.info(
+            f"[{job_name}] Complete: scanned={metrics['scanned']}, "
+            f"inserted={metrics['inserted']}, updated={metrics['updated']}, "
+            f"errors={metrics['errors']}"
+        )
+        return {**metrics, "status": status, "duration_ms": duration_ms}
+
+    except Exception as e:
+        duration_ms = (_time.time() - start_time) * 1000
+        logger.error(f"[{job_name}] Failed: {e}", exc_info=True)
+        sentry_capture_exception(e, job_id=job_name)
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        # Try to record error in DB too
+        try:
+            from app.jobs.tracking import record_job_run as record_job_run_db
+            async with AsyncSessionLocal() as session:
+                await record_job_run_db(session, job_name, "error", started_at, error=str(e))
+        except Exception:
+            pass  # Best-effort DB recording
+        return {"status": "error", "error": str(e), "duration_ms": duration_ms}
+
+
+async def sota_weather_capture_prekickoff() -> dict:
+    """
+    Capture weather forecasts for matches kicking off in next 48h.
+
+    Uses Open-Meteo API (free, no key required) to fetch weather data.
+    Best-effort: skips matches without venue geo data (no crash).
+
+    Frequency: Every 60 minutes
+    Guardrail: SOTA_WEATHER_ENABLED env var
+    """
+    import time as _time
+    from datetime import datetime
+
+    start_time = _time.time()
+    started_at = datetime.utcnow()
+    job_name = "sota_weather_capture"
+
+    # Check if enabled
+    if os.environ.get("SOTA_WEATHER_ENABLED", "false").lower() in ("false", "0", "no"):
+        logger.debug(f"[{job_name}] Disabled via env var (set SOTA_WEATHER_ENABLED=true to enable)")
+        return {"status": "disabled"}
+
+    metrics = {
+        "matches_checked": 0,
+        "matches_with_geo": 0,
+        "forecasts_captured": 0,
+        "skipped_no_geo": 0,
+        "skipped_already_captured": 0,
+        "errors": 0,
+        "started_at": started_at.isoformat(),
+    }
+
+    try:
+        # Use centralized sota_jobs module with real OpenMeteo implementation
+        from app.etl.sota_jobs import capture_weather_prekickoff
+        from app.jobs.tracking import record_job_run as record_job_run_db
+
+        async with AsyncSessionLocal() as session:
+            # Run with 48h lookahead, max 100 matches, 24h horizon
+            stats = await capture_weather_prekickoff(
+                session,
+                hours=48,
+                limit=100,
+                horizon=24,
+            )
+            metrics.update(stats)
+
+            # Record in DB for ops dashboard fallback
+            duration_ms = (_time.time() - start_time) * 1000
+            status = "ok" if metrics.get("errors", 0) == 0 else "partial"
+            await record_job_run_db(session, job_name, status, started_at, metrics=metrics)
+
+        # Record in Prometheus
+        record_job_run(job=job_name, status=status, duration_ms=duration_ms)
+
+        logger.info(
+            f"[{job_name}] Complete: checked={metrics['matches_checked']}, "
+            f"with_geo={metrics['matches_with_geo']}, captured={metrics['forecasts_captured']}"
+        )
+        return {**metrics, "status": status, "duration_ms": duration_ms}
+
+    except Exception as e:
+        duration_ms = (_time.time() - start_time) * 1000
+        logger.error(f"[{job_name}] Failed: {e}", exc_info=True)
+        sentry_capture_exception(e, job_id=job_name)
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        # Try to record error in DB too
+        try:
+            from app.jobs.tracking import record_job_run as record_job_run_db
+            async with AsyncSessionLocal() as session:
+                await record_job_run_db(session, job_name, "error", started_at, error=str(e))
+        except Exception:
+            pass  # Best-effort DB recording
+        return {"status": "error", "error": str(e), "duration_ms": duration_ms}
+
+
+async def sota_venue_geo_expand() -> dict:
+    """
+    Expand venue_geo table with coordinates for new venues.
+
+    Finds venues from recent matches that don't have geo data yet.
+    Uses geocoding API to get lat/lon/timezone.
+
+    Frequency: Daily (or weekly)
+    Guardrail: SOTA_VENUE_GEO_ENABLED env var
+    """
+    import time as _time
+    from datetime import datetime
+
+    start_time = _time.time()
+    started_at = datetime.utcnow()
+    job_name = "sota_venue_geo_expand"
+
+    # Check if enabled (default off - requires geocoding API)
+    if os.environ.get("SOTA_VENUE_GEO_ENABLED", "false").lower() in ("false", "0", "no"):
+        logger.debug(f"[{job_name}] Disabled via env var (default off until geocoding API configured)")
+        return {"status": "disabled"}
+
+    metrics = {
+        "venues_missing": 0,
+        "venues_geocoded": 0,
+        "skipped_no_city": 0,
+        "errors": 0,
+        "started_at": started_at.isoformat(),
+    }
+
+    try:
+        # Use centralized sota_jobs module (placeholder - geocoding not yet implemented)
+        from app.etl.sota_jobs import expand_venue_geo
+        from app.jobs.tracking import record_job_run as record_job_run_db
+
+        async with AsyncSessionLocal() as session:
+            # Run venue geocoding (placeholder for now)
+            stats = await expand_venue_geo(session, limit=50)
+            metrics.update(stats)
+
+            # Record in DB for ops dashboard fallback
+            duration_ms = (_time.time() - start_time) * 1000
+            status = "ok" if metrics.get("errors", 0) == 0 else "partial"
+            await record_job_run_db(session, job_name, status, started_at, metrics=metrics)
+
+        # Record in Prometheus
+        record_job_run(job=job_name, status=status, duration_ms=duration_ms)
+
+        logger.info(
+            f"[{job_name}] Complete: missing={metrics['venues_missing']}, "
+            f"geocoded={metrics['venues_geocoded']}"
+        )
+        return {**metrics, "status": status, "duration_ms": duration_ms}
+
+    except Exception as e:
+        duration_ms = (_time.time() - start_time) * 1000
+        logger.error(f"[{job_name}] Failed: {e}", exc_info=True)
+        sentry_capture_exception(e, job_id=job_name)
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        # Try to record error in DB too
+        try:
+            from app.jobs.tracking import record_job_run as record_job_run_db
+            async with AsyncSessionLocal() as session:
+                await record_job_run_db(session, job_name, "error", started_at, error=str(e))
+        except Exception:
+            pass  # Best-effort DB recording
+        return {"status": "error", "error": str(e), "duration_ms": duration_ms}
+
+
 def start_scheduler(ml_engine):
     """
     Start the background scheduler.
@@ -4980,6 +5277,51 @@ def start_scheduler(ml_engine):
         replace_existing=True,
     )
 
+    # =========================================================================
+    # SOTA ENRICHMENT JOBS (Understat xG, Weather, Venue Geo)
+    # All disabled by default except Understat jobs (core SOTA pipeline)
+    # =========================================================================
+
+    # SOTA: Understat refs sync - every 12 hours
+    # Links matches to Understat IDs for xG retrieval
+    scheduler.add_job(
+        sota_understat_refs_sync,
+        trigger=IntervalTrigger(hours=12),
+        id="sota_understat_refs_sync",
+        name="SOTA Understat Refs Sync (every 12h)",
+        replace_existing=True,
+    )
+
+    # SOTA: Understat xG backfill - every 6 hours
+    # Fetches actual xG data for matches with refs
+    scheduler.add_job(
+        sota_understat_ft_backfill,
+        trigger=IntervalTrigger(hours=6),
+        id="sota_understat_ft_backfill",
+        name="SOTA Understat xG Backfill (every 6h)",
+        replace_existing=True,
+    )
+
+    # SOTA: Weather capture - every 60 minutes
+    # Captures weather forecasts for upcoming matches (disabled by default)
+    scheduler.add_job(
+        sota_weather_capture_prekickoff,
+        trigger=IntervalTrigger(minutes=60),
+        id="sota_weather_capture",
+        name="SOTA Weather Capture (every 60 min)",
+        replace_existing=True,
+    )
+
+    # SOTA: Venue geo expand - daily at 03:00 UTC
+    # Geocodes new venues (disabled by default)
+    scheduler.add_job(
+        sota_venue_geo_expand,
+        trigger=CronTrigger(hour=3, minute=0),
+        id="sota_venue_geo_expand",
+        name="SOTA Venue Geo Expand (daily 03:00 UTC)",
+        replace_existing=True,
+    )
+
     scheduler.start()
     _scheduler_started = True
 
@@ -5005,7 +5347,11 @@ def start_scheduler(ml_engine):
         f"  - Weekly recalibration: Mondays 5:00 AM UTC\n"
         f"  - Weekly PIT report: Tuesdays 10:00 AM UTC\n"
         f"  - Monthly PIT retention: 1st of month 04:00 UTC\n"
-        f"  - Scheduler heartbeat: Every 30 min (logs job status)"
+        f"  - Scheduler heartbeat: Every 30 min (logs job status)\n"
+        f"  - SOTA Understat refs sync: Every 12h\n"
+        f"  - SOTA Understat xG backfill: Every 6h\n"
+        f"  - SOTA Weather capture: Every 60 min (disabled by default)\n"
+        f"  - SOTA Venue geo expand: Daily 03:00 UTC (disabled by default)"
     )
 
 
