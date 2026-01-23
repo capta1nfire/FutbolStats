@@ -14,6 +14,9 @@ import {
   parseOpsLlmCost,
   parseOpsFreshness,
   parseOpsTelemetry,
+  parseOpsProgress,
+  parseOpsPitActivity,
+  parseOpsMovement,
   OpsSentrySummary,
   OpsJobsHealth,
   OpsFastpathHealth,
@@ -23,6 +26,9 @@ import {
   OpsLlmCost,
   OpsFreshness,
   OpsTelemetry,
+  OpsProgress,
+  OpsPitActivity,
+  OpsMovement,
 } from "@/lib/api/ops";
 
 /**
@@ -58,6 +64,9 @@ interface OpsData {
   llmCost: OpsLlmCost | null;
   freshness: OpsFreshness | null;
   telemetry: OpsTelemetry | null;
+  progress: OpsProgress | null;
+  pitActivity: OpsPitActivity | null;
+  movement: OpsMovement | null;
   requestId?: string;
 }
 
@@ -92,6 +101,9 @@ async function fetchOpsData(): Promise<OpsData> {
       llmCost: null,
       freshness: null,
       telemetry: null,
+      progress: null,
+      pitActivity: null,
+      movement: null,
       requestId,
     };
   }
@@ -108,6 +120,9 @@ async function fetchOpsData(): Promise<OpsData> {
   const llmCost = parseOpsLlmCost(data);
   const freshness = parseOpsFreshness(data);
   const telemetry = parseOpsTelemetry(data);
+  const progress = parseOpsProgress(data);
+  const pitActivity = parseOpsPitActivity(data);
+  const movement = parseOpsMovement(data);
 
   return {
     budget,
@@ -121,6 +136,9 @@ async function fetchOpsData(): Promise<OpsData> {
     llmCost,
     freshness,
     telemetry,
+    progress,
+    pitActivity,
+    movement,
     requestId,
   };
 }
@@ -203,6 +221,12 @@ export interface UseOpsOverviewResult {
   freshness: OpsFreshness | null;
   /** Parsed telemetry (data quality), null if unavailable */
   telemetry: OpsTelemetry | null;
+  /** Parsed progress (PIT evaluation), null if unavailable */
+  progress: OpsProgress | null;
+  /** Parsed PIT activity, null if unavailable */
+  pitActivity: OpsPitActivity | null;
+  /** Parsed movement data, null if unavailable */
+  movement: OpsMovement | null;
   /** True if data fetch failed or all parsing failed */
   isDegraded: boolean;
   /** True if budget specifically is degraded */
@@ -225,6 +249,12 @@ export interface UseOpsOverviewResult {
   isLlmCostDegraded: boolean;
   /** True if telemetry specifically is degraded */
   isTelemetryDegraded: boolean;
+  /** True if progress specifically is degraded */
+  isProgressDegraded: boolean;
+  /** True if PIT activity specifically is degraded */
+  isPitActivityDegraded: boolean;
+  /** True if movement specifically is degraded */
+  isMovementDegraded: boolean;
   /** Request ID for debugging (from response header) */
   requestId?: string;
   /** Loading state */
@@ -270,6 +300,9 @@ export function useOpsOverview(): UseOpsOverviewResult {
   const llmCost = data?.llmCost ?? null;
   const freshness = data?.freshness ?? null;
   const telemetry = data?.telemetry ?? null;
+  const progress = data?.progress ?? null;
+  const pitActivity = data?.pitActivity ?? null;
+  const movement = data?.movement ?? null;
   const requestId = data?.requestId;
 
   const isBudgetDegraded = !!error || budget === null;
@@ -282,6 +315,9 @@ export function useOpsOverview(): UseOpsOverviewResult {
   const isSensorBDegraded = !!error || sensorB === null;
   const isLlmCostDegraded = !!error || llmCost === null;
   const isTelemetryDegraded = !!error || telemetry === null;
+  const isProgressDegraded = !!error || progress === null;
+  const isPitActivityDegraded = !!error || pitActivity === null;
+  const isMovementDegraded = !!error || movement === null;
   // isDegraded = ALL core blocks failed (not diagnostics)
   const isDegraded = isBudgetDegraded && isHealthDegraded && isJobsDegraded && isPredictionsDegraded;
 
@@ -297,6 +333,9 @@ export function useOpsOverview(): UseOpsOverviewResult {
     llmCost,
     freshness,
     telemetry,
+    progress,
+    pitActivity,
+    movement,
     isDegraded,
     isBudgetDegraded,
     isHealthDegraded,
@@ -308,6 +347,9 @@ export function useOpsOverview(): UseOpsOverviewResult {
     isSensorBDegraded,
     isLlmCostDegraded,
     isTelemetryDegraded,
+    isProgressDegraded,
+    isPitActivityDegraded,
+    isMovementDegraded,
     requestId,
     isLoading,
     error: error as Error | null,

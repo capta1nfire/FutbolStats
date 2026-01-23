@@ -1017,6 +1017,101 @@ export function parseOpsFreshness(ops: OpsResponse): OpsFreshness | null {
 }
 
 // ============================================================================
+// Progress Extraction (PIT evaluation progress)
+// ============================================================================
+
+/**
+ * Progress summary from ops.json (PIT evaluation progress)
+ */
+export interface OpsProgress {
+  pit_snapshots_30d: number;
+  target_pit_snapshots_30d: number;
+  pit_bets_30d: number;
+  target_pit_bets_30d: number;
+  baseline_coverage_pct: number;
+  pit_with_baseline: number;
+  pit_total_for_baseline: number;
+  target_baseline_coverage_pct: number;
+  ready_for_retest: boolean;
+}
+
+/**
+ * Parse progress from ops response
+ *
+ * Expected structure: { data: { progress: {...} } }
+ */
+export function parseOpsProgress(ops: OpsResponse): OpsProgress | null {
+  const progress = getNestedValue(ops, "data", "progress");
+  if (!isObject(progress)) return null;
+
+  return {
+    pit_snapshots_30d: typeof progress.pit_snapshots_30d === "number" ? progress.pit_snapshots_30d : 0,
+    target_pit_snapshots_30d: typeof progress.target_pit_snapshots_30d === "number" ? progress.target_pit_snapshots_30d : 0,
+    pit_bets_30d: typeof progress.pit_bets_30d === "number" ? progress.pit_bets_30d : 0,
+    target_pit_bets_30d: typeof progress.target_pit_bets_30d === "number" ? progress.target_pit_bets_30d : 0,
+    baseline_coverage_pct: typeof progress.baseline_coverage_pct === "number" ? progress.baseline_coverage_pct : 0,
+    pit_with_baseline: typeof progress.pit_with_baseline === "number" ? progress.pit_with_baseline : 0,
+    pit_total_for_baseline: typeof progress.pit_total_for_baseline === "number" ? progress.pit_total_for_baseline : 0,
+    target_baseline_coverage_pct: typeof progress.target_baseline_coverage_pct === "number" ? progress.target_baseline_coverage_pct : 0,
+    ready_for_retest: typeof progress.ready_for_retest === "boolean" ? progress.ready_for_retest : false,
+  };
+}
+
+// ============================================================================
+// PIT Activity Extraction (live odds snapshots)
+// ============================================================================
+
+/**
+ * PIT activity summary from ops.json
+ */
+export interface OpsPitActivity {
+  live_60m: number;
+  live_24h: number;
+}
+
+/**
+ * Parse PIT activity from ops response
+ *
+ * Expected structure: { data: { pit: { live_60m, live_24h, ... } } }
+ */
+export function parseOpsPitActivity(ops: OpsResponse): OpsPitActivity | null {
+  const pit = getNestedValue(ops, "data", "pit");
+  if (!isObject(pit)) return null;
+
+  return {
+    live_60m: typeof pit.live_60m === "number" ? pit.live_60m : 0,
+    live_24h: typeof pit.live_24h === "number" ? pit.live_24h : 0,
+  };
+}
+
+// ============================================================================
+// Movement Extraction (lineup & market movement)
+// ============================================================================
+
+/**
+ * Movement summary from ops.json
+ */
+export interface OpsMovement {
+  lineup_movement_24h: number;
+  market_movement_24h: number;
+}
+
+/**
+ * Parse movement from ops response
+ *
+ * Expected structure: { data: { movement: {...} } }
+ */
+export function parseOpsMovement(ops: OpsResponse): OpsMovement | null {
+  const movement = getNestedValue(ops, "data", "movement");
+  if (!isObject(movement)) return null;
+
+  return {
+    lineup_movement_24h: typeof movement.lineup_movement_24h === "number" ? movement.lineup_movement_24h : 0,
+    market_movement_24h: typeof movement.market_movement_24h === "number" ? movement.market_movement_24h : 0,
+  };
+}
+
+// ============================================================================
 // Telemetry (Data Quality) Extraction
 // ============================================================================
 

@@ -21,6 +21,7 @@ import {
   DiagnosticsTile,
   UpcomingMatchesList,
   ActiveIncidentsList,
+  ProgressCard,
 } from "@/components/overview";
 import { AlertCircle, AlertTriangle, Calendar } from "lucide-react";
 import { Loader } from "@/components/ui/loader";
@@ -47,12 +48,18 @@ export default function OverviewPage() {
     shadowMode,
     sensorB,
     freshness,
+    progress,
+    pitActivity,
+    movement,
     isBudgetDegraded,
     isSentryDegraded,
     isLlmCostDegraded,
     isJobsDegraded,
     isFastpathDegraded,
     isPredictionsDegraded,
+    isProgressDegraded,
+    isPitActivityDegraded,
+    isMovementDegraded,
     isDegraded,
     isLoading,
     error,
@@ -236,6 +243,16 @@ export default function OverviewPage() {
               sensorB={sensorB}
             />
           </div>
+
+          {/* PIT Progress Card */}
+          <ProgressCard
+            progress={progress}
+            pitActivity={pitActivity}
+            movement={movement}
+            isProgressDegraded={isProgressDegraded}
+            isPitActivityDegraded={isPitActivityDegraded}
+            isMovementDegraded={isMovementDegraded}
+          />
         </div>
       </ScrollArea>
     </div>
