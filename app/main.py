@@ -24,7 +24,7 @@ from app.etl.competitions import ALL_LEAGUE_IDS, COMPETITIONS
 from app.features import FeatureEngineer
 from app.ml import XGBoostEngine
 from app.ml.persistence import load_active_model, persist_model_snapshot
-from app.models import Match, OddsHistory, PITReport, PostMatchAudit, Prediction, PredictionOutcome, SensorPrediction, ShadowPrediction, Team, TeamAdjustment, TeamOverride
+from app.models import JobRun, Match, OddsHistory, PITReport, PostMatchAudit, Prediction, PredictionOutcome, SensorPrediction, ShadowPrediction, Team, TeamAdjustment, TeamOverride
 from app.teams.overrides import preload_team_overrides, resolve_team_display
 from app.scheduler import start_scheduler, stop_scheduler, get_last_sync_time, get_sync_leagues, SYNC_LEAGUES, global_sync_window
 from app.security import limiter, verify_api_key, verify_api_key_or_ops_session
