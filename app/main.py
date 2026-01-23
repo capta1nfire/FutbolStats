@@ -1682,6 +1682,7 @@ async def get_predictions(
     save: bool = False,  # Save predictions to database
     with_context: bool = True,  # Apply contextual intelligence
     session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
 ):
     """
     Get predictions for upcoming matches with contextual intelligence.
@@ -2409,6 +2410,7 @@ async def _apply_team_overrides(
 async def get_match_prediction(
     match_id: int,
     session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
 ):
     """Get prediction for a specific match."""
     if not ml_engine.is_loaded:
@@ -2613,6 +2615,7 @@ async def list_teams(
     team_type: Optional[str] = None,
     limit: int = 100,
     session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
 ):
     """List teams in the database."""
     query = select(Team)
@@ -2642,6 +2645,7 @@ async def list_matches(
     status: Optional[str] = None,
     limit: int = 50,
     session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
 ):
     """List matches in the database with eager loading to avoid N+1 queries."""
     from sqlalchemy.orm import selectinload
@@ -2684,7 +2688,9 @@ async def list_matches(
 
 
 @app.get("/competitions")
-async def list_competitions():
+async def list_competitions(
+    _: bool = Depends(verify_api_key),
+):
     """List available competitions."""
     return [
         {
@@ -2822,6 +2828,7 @@ async def get_team_history(
     team_id: int,
     limit: int = 5,
     session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
 ):
     """
     Get recent match history for a team.
@@ -2904,6 +2911,7 @@ async def get_team_history(
 async def get_match_details(
     match_id: int,
     session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
 ):
     """
     Get full match details including both teams' recent history and standings.
@@ -3102,6 +3110,7 @@ async def get_match_details(
 async def get_match_insights(
     match_id: int,
     session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
 ):
     """
     Get narrative insights for a finished match.
@@ -3281,6 +3290,7 @@ async def get_match_insights(
 async def get_match_timeline(
     match_id: int,
     session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
 ):
     """
     Get timeline data for a finished match.
@@ -3567,6 +3577,7 @@ def _calculate_segment_status(home_score: int, away_score: int, predicted: str) 
 async def get_match_odds_history(
     match_id: int,
     session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
 ):
     """
     Get odds history for a match showing how odds changed over time.
@@ -3647,6 +3658,7 @@ async def get_league_standings(
     league_id: int,
     season: int = None,
     session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
 ):
     """
     Get full league standings/table for a given league.
@@ -4107,6 +4119,7 @@ async def check_match_lineup(
 async def get_match_lineup(
     match_id: int,
     session: AsyncSession = Depends(get_async_session),
+    _: bool = Depends(verify_api_key),
 ):
     """
     Get full lineup information for a match.

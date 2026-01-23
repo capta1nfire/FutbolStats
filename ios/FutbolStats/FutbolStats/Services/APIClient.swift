@@ -137,6 +137,10 @@ actor APIClient {
         if let token = AppConfiguration.dashboardToken {
             request.setValue(token, forHTTPHeaderField: "X-Dashboard-Token")
         }
+        // API key for protected endpoints (backend expects X-API-Key)
+        if let apiKey = AppConfiguration.apiKey {
+            request.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
     }
 
@@ -224,6 +228,9 @@ actor APIClient {
         // Apply auth headers (static context, read from AppConfiguration)
         if let token = AppConfiguration.dashboardToken {
             request.setValue(token, forHTTPHeaderField: "X-Dashboard-Token")
+        }
+        if let apiKey = AppConfiguration.apiKey {
+            request.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
         }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
