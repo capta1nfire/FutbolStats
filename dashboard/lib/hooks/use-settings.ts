@@ -196,6 +196,10 @@ export function useSettingsSummary(): UseSettingsSummaryResult {
 
 /**
  * Fetch feature flags - tries API first, falls back to mock
+ *
+ * TODO: When backend implements server-side filtering for q/enabled params,
+ * move filtering to server-side to avoid fetching full list for large datasets.
+ * Current client-side filtering is acceptable for <100 flags.
  */
 export function useFeatureFlags(filters?: FeatureFlagsFilters): UseFeatureFlagsResult {
   const query = useQuery({
@@ -205,7 +209,7 @@ export function useFeatureFlags(filters?: FeatureFlagsFilters): UseFeatureFlagsR
       if (apiFlags) {
         let flags = mapApiFeatureFlags(apiFlags);
 
-        // Apply client-side filtering
+        // Apply client-side filtering (see TODO above)
         if (filters?.search) {
           const search = filters.search.toLowerCase();
           flags = flags.filter(
