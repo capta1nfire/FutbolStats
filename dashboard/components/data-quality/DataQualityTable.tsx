@@ -14,7 +14,7 @@ interface DataQualityTableProps {
   isLoading?: boolean;
   error?: Error | null;
   onRetry?: () => void;
-  selectedCheckId?: number | null;
+  selectedCheckId?: string | null; // String ID for backend compatibility
   onRowClick?: (check: DataQualityCheck) => void;
   columnVisibility?: VisibilityState;
   onColumnVisibilityChange?: (visibility: VisibilityState) => void;

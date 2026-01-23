@@ -26,6 +26,18 @@ export function parseNumericId(param: string | null): number | null {
 }
 
 /**
+ * Parse a string ID from URL parameter
+ * Returns null if empty or whitespace-only
+ * Used for IDs like "dq_quarantined_odds_24h"
+ */
+export function parseStringId(param: string | null): string | null {
+  if (!param) return null;
+  const trimmed = param.trim();
+  if (trimmed === "") return null;
+  return trimmed;
+}
+
+/**
  * Parse an array of strings from repeated URL parameters
  * e.g., ?status=live&status=ft → ["live", "ft"]
  */

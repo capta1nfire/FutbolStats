@@ -1,8 +1,8 @@
 "use client";
 
-import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
+import { Suspense, useState, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useDataQualityChecks, useDataQualityCheck, useColumnVisibility, usePageSize, useOpsOverview } from "@/lib/hooks";
+import { useDataQualityChecksApi, useDataQualityCheckApi, useColumnVisibility, usePageSize, useOpsOverview } from "@/lib/hooks";
 import {
   DataQualityCheck,
   DataQualityStatus,
@@ -21,7 +21,7 @@ import {
 } from "@/components/data-quality";
 import { CustomizeColumnsPanel, Pagination } from "@/components/tables";
 import {
-  parseNumericId,
+  parseStringId,
   parseArrayParam,
   buildSearchParams,
   toggleArrayValue,
@@ -39,9 +39,9 @@ function DataQualityPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Parse URL state
+  // Parse URL state - ID is string for backend compatibility (e.g., "dq_quarantined_odds_24h")
   const selectedCheckId = useMemo(
-    () => parseNumericId(searchParams.get("id")),
+    () => parseStringId(searchParams.get("id")),
     [searchParams]
   );
   const selectedStatuses = useMemo(
@@ -57,16 +57,7 @@ function DataQualityPageContent() {
     [searchParams]
   );
 
-  // Normalize URL if id param is invalid
-  const selectedIdParam = searchParams.get("id");
-  useEffect(() => {
-    if (selectedIdParam && selectedCheckId === null) {
-      const params = new URLSearchParams(searchParams.toString());
-      params.delete("id");
-      const search = params.toString();
-      router.replace(`${BASE_PATH}${search ? `?${search}` : ""}`, { scroll: false });
-    }
-  }, [selectedIdParam, selectedCheckId, router, searchParams]);
+  // Note: No URL normalization needed for string IDs - parseStringId accepts any non-empty string
 
   // UI state (non-URL)
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
@@ -114,26 +105,30 @@ function DataQualityPageContent() {
     isLoading: isLoadingTelemetry,
   } = useOpsOverview();
 
-  // Fetch mock data quality checks
+  // Fetch data quality checks from API with mock fallback
   const {
     data: checks = [],
+    pagination,
     isLoading,
     error,
+    isApiDegraded: isChecksDegraded,
     refetch,
-  } = useDataQualityChecks(filters);
+  } = useDataQualityChecksApi(filters, currentPage, pageSize);
 
+  // Fetch check detail from API with mock fallback
   const {
     data: selectedCheck,
     isLoading: isLoadingDetail,
-  } = useDataQualityCheck(selectedCheckId);
+  } = useDataQualityCheckApi(selectedCheckId);
 
   // Drawer is open when there's a selected check
   const drawerOpen = selectedCheckId !== null;
 
   // Build URL with current filters
+  // Note: id is now string for backend compatibility
   const buildUrl = useCallback(
     (overrides: {
-      id?: number | null;
+      id?: string | null;
       status?: DataQualityStatus[];
       category?: DataQualityCategory[];
       q?: string;
@@ -226,12 +221,14 @@ function DataQualityPageContent() {
           />
         </div>
 
-        {/* Mock indicator */}
-        <div className="px-4 py-2 bg-muted/30 border-b border-border">
-          <span className="text-xs text-muted-foreground">
-            Quality Checks (mock data - endpoint not available)
-          </span>
-        </div>
+        {/* API status indicator - only show when degraded */}
+        {isChecksDegraded && (
+          <div className="px-4 py-2 bg-yellow-500/10 border-b border-yellow-500/30">
+            <span className="text-xs text-yellow-400">
+              Quality Checks (degraded - using cached data)
+            </span>
+          </div>
+        )}
 
         {/* Table */}
         <DataQualityTable
@@ -248,7 +245,7 @@ function DataQualityPageContent() {
         {/* Pagination */}
         <Pagination
           currentPage={currentPage}
-          totalItems={checks.length}
+          totalItems={pagination?.total ?? checks.length}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
           onPageSizeChange={setPageSize}

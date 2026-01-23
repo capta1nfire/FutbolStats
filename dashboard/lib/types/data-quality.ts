@@ -14,7 +14,7 @@ export type DataQualityCategory =
   | "odds";
 
 export interface DataQualityCheck {
-  id: number;
+  id: string; // Backend uses string IDs like "dq_quarantined_odds_24h"
   name: string;
   category: DataQualityCategory;
   status: DataQualityStatus;

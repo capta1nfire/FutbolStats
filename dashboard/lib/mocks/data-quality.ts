@@ -135,9 +135,10 @@ const checkDefinitions: Omit<DataQualityCheck, "id" | "lastRunAt">[] = [
 
 /**
  * Create affected items for a check
+ * Note: checkId is now string for backend compatibility
  */
 function createAffectedItems(
-  checkId: number,
+  checkId: string,
   count: number
 ): DataQualityAffectedItem[] {
   const kinds: DataQualityAffectedItem["kind"][] = ["match", "team", "league", "job"];
@@ -181,13 +182,14 @@ function createHistoryEntries(
 
 /**
  * Create deterministic checks
+ * Note: IDs are now strings for backend compatibility
  */
 function createChecks(count: number): DataQualityCheck[] {
   return Array.from({ length: count }, (_, i) => {
     const def = checkDefinitions[i % checkDefinitions.length];
     return {
       ...def,
-      id: 1000 + i,
+      id: `dq_mock_${1000 + i}`,
       lastRunAt: new Date(BASE_TIMESTAMP - (i * 5) * 60000).toISOString(),
     };
   });
@@ -243,9 +245,10 @@ export async function getDataQualityChecksMock(
 
 /**
  * Get a single check by ID with full details
+ * Note: id is now string for backend compatibility
  */
 export async function getDataQualityCheckMock(
-  id: number
+  id: string
 ): Promise<DataQualityCheckDetail | null> {
   await simulateDelay(300);
   checkMockError();
@@ -264,9 +267,10 @@ export async function getDataQualityCheckMock(
 
 /**
  * Get affected items for a check
+ * Note: checkId is now string for backend compatibility
  */
 export async function getDataQualityAffectedItemsMock(
-  checkId: number
+  checkId: string
 ): Promise<DataQualityAffectedItem[]> {
   await simulateDelay(200);
   checkMockError();
