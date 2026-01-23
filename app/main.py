@@ -13807,3 +13807,323 @@ async def get_debug_logs(request: Request, tail: int = 50):
                 lines.append({"raw": line.strip()})
 
     return {"logs": lines, "count": len(lines), "total": len(all_lines)}
+
+
+# -----------------------------------------------------------------------------
+# Dashboard Incidents Endpoint
+# -----------------------------------------------------------------------------
+_incidents_cache = {
+    "data": None,
+    "timestamp": 0,
+    "ttl": 30,  # 30 seconds cache (balance freshness vs load)
+}
+
+
+async def _aggregate_incidents(session) -> list[dict]:
+    """
+    Aggregate incidents from multiple sources into a unified list.
+
+    Sources:
+    1. Sentry issues (from cached ops data)
+    2. Health alerts (predictions, jobs, fastpath, budget)
+    3. System-level incidents (from ops health checks)
+
+    Returns list of incidents sorted by created_at DESC.
+    """
+    incidents = []
+    now = datetime.utcnow()
+    now_iso = now.isoformat() + "Z"
+
+    # Helper to generate stable incident ID from source + key
+    def make_id(source: str, key: str) -> int:
+        import hashlib
+        h = hashlib.md5(f"{source}:{key}".encode()).hexdigest()
+        return int(h[:8], 16)  # First 8 hex chars → int
+
+    # =========================================================================
+    # SOURCE 1: Sentry Issues (from health API)
+    # =========================================================================
+    try:
+        sentry_data = await _fetch_sentry_health()
+        if sentry_data.get("status") != "degraded":
+            top_issues = sentry_data.get("top_issues", [])
+            for issue in top_issues[:10]:  # Limit to top 10
+                title = issue.get("title", "Unknown Sentry Issue")
+                level = issue.get("level", "error")
+                count = issue.get("count", 0)
+                last_seen = issue.get("last_seen")
+
+                # Map Sentry level to severity
+                severity = "warning"
+                if level in ("error", "fatal"):
+                    severity = "critical"
+                elif level == "warning":
+                    severity = "warning"
+                else:
+                    severity = "info"
+
+                # Determine status based on recency
+                status = "active"
+                if last_seen:
+                    try:
+                        from datetime import timedelta
+                        last_dt = datetime.fromisoformat(last_seen.replace("Z", ""))
+                        if now - last_dt > timedelta(hours=24):
+                            status = "resolved"
+                    except Exception:
+                        pass
+
+                incidents.append({
+                    "id": make_id("sentry", title[:50]),
+                    "severity": severity,
+                    "status": status,
+                    "type": "sentry",
+                    "title": title[:80],
+                    "description": f"Sentry: {count} events. Level: {level}."[:200],
+                    "created_at": last_seen or now_iso,
+                    "updated_at": last_seen or now_iso,
+                    "runbook_url": None,
+                })
+    except Exception as e:
+        logger.warning(f"Could not fetch Sentry incidents: {e}")
+
+    # =========================================================================
+    # SOURCE 2: Predictions Health
+    # =========================================================================
+    try:
+        pred_health = await _calculate_predictions_health(session)
+        status_val = pred_health.get("status", "ok")
+        if status_val in ("warning", "critical"):
+            reason = pred_health.get("status_reason", "Predictions health degraded")
+            ns_missing = pred_health.get("ns_matches_next_48h_missing_prediction", 0)
+            ns_total = pred_health.get("ns_matches_next_48h", 0)
+            coverage = pred_health.get("ns_coverage_pct", 100)
+
+            incidents.append({
+                "id": make_id("predictions", "health"),
+                "severity": status_val,
+                "status": "active",
+                "type": "predictions",
+                "title": f"Predictions coverage at {coverage}%"[:80],
+                "description": f"{reason}. {ns_missing}/{ns_total} NS matches missing predictions."[:200],
+                "created_at": now_iso,
+                "updated_at": now_iso,
+                "runbook_url": "docs/OPS_RUNBOOK.md#predictions-health",
+            })
+    except Exception as e:
+        logger.warning(f"Could not check predictions health: {e}")
+
+    # =========================================================================
+    # SOURCE 3: Jobs Health
+    # =========================================================================
+    try:
+        jobs_health = await _calculate_jobs_health_summary(session)
+        overall_status = jobs_health.get("status", "ok")
+
+        # Check individual jobs
+        for job_name in ["stats_backfill", "odds_sync", "fastpath"]:
+            job_data = jobs_health.get(job_name, {})
+            job_status = job_data.get("status", "ok")
+            if job_status in ("warning", "critical"):
+                mins_since = job_data.get("minutes_since_success")
+                help_url = job_data.get("help_url")
+
+                severity = job_status
+                time_str = f"{int(mins_since)}m" if mins_since and mins_since < 60 else (
+                    f"{int(mins_since/60)}h" if mins_since else "unknown"
+                )
+
+                incidents.append({
+                    "id": make_id("jobs", job_name),
+                    "severity": severity,
+                    "status": "active",
+                    "type": "scheduler",
+                    "title": f"Job '{job_name}' unhealthy"[:80],
+                    "description": f"Last success: {time_str} ago. Status: {job_status}."[:200],
+                    "created_at": now_iso,
+                    "updated_at": now_iso,
+                    "runbook_url": help_url,
+                })
+    except Exception as e:
+        logger.warning(f"Could not check jobs health: {e}")
+
+    # =========================================================================
+    # SOURCE 4: FastPath Health (LLM narratives)
+    # =========================================================================
+    try:
+        fp_health = await _calculate_fastpath_health(session)
+        fp_status = fp_health.get("status", "ok")
+        if fp_status in ("warning", "critical"):
+            error_rate = fp_health.get("last_60m", {}).get("error_rate_pct", 0)
+            in_queue = fp_health.get("last_60m", {}).get("in_queue", 0)
+            reason = fp_health.get("status_reason", "Fastpath degraded")
+
+            incidents.append({
+                "id": make_id("fastpath", "health"),
+                "severity": fp_status,
+                "status": "active",
+                "type": "llm",
+                "title": f"Fastpath error rate {error_rate}%"[:80],
+                "description": f"{reason}. Queue: {in_queue}."[:200],
+                "created_at": now_iso,
+                "updated_at": now_iso,
+                "runbook_url": "docs/OPS_RUNBOOK.md#fastpath-health",
+            })
+    except Exception as e:
+        logger.warning(f"Could not check fastpath health: {e}")
+
+    # =========================================================================
+    # SOURCE 5: API Budget
+    # =========================================================================
+    try:
+        budget_data = await _fetch_api_football_budget()
+        budget_status = budget_data.get("status", "ok")
+        if budget_status in ("warning", "critical"):
+            pct_used = budget_data.get("pct_used", 0)
+            remaining = budget_data.get("requests_remaining", 0)
+
+            incidents.append({
+                "id": make_id("budget", "api-football"),
+                "severity": budget_status,
+                "status": "active",
+                "type": "api_budget",
+                "title": f"API-Football budget at {pct_used}%"[:80],
+                "description": f"Remaining requests: {remaining}."[:200],
+                "created_at": now_iso,
+                "updated_at": now_iso,
+                "runbook_url": "docs/OPS_RUNBOOK.md#api-budget",
+            })
+    except Exception as e:
+        logger.warning(f"Could not check API budget: {e}")
+
+    # Sort by severity (critical first) then by created_at DESC
+    severity_order = {"critical": 0, "warning": 1, "info": 2}
+    incidents.sort(key=lambda x: (severity_order.get(x["severity"], 2), x["created_at"]), reverse=False)
+    # Reverse to get DESC order for created_at within same severity
+    incidents.sort(key=lambda x: severity_order.get(x["severity"], 2))
+
+    return incidents
+
+
+@app.get("/dashboard/incidents.json")
+async def get_incidents_dashboard(
+    request: Request,
+    status: list[str] = Query(default=[]),
+    severity: list[str] = Query(default=[]),
+    type: str = Query(default=None, alias="type"),
+    q: str = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=50, ge=1, le=100),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Unified incidents endpoint for Dashboard.
+
+    Aggregates incidents from multiple sources:
+    - Sentry issues (errors/exceptions)
+    - Predictions health alerts
+    - Scheduler jobs health
+    - FastPath/LLM health
+    - API budget warnings
+
+    Query params:
+    - status: active|acknowledged|resolved (multi-select)
+    - severity: info|warning|critical (multi-select)
+    - type: sentry|predictions|scheduler|llm|api_budget
+    - q: search substring in title/description
+    - page: pagination (default 1)
+    - limit: page size (default 50, max 100)
+
+    Response:
+    {
+        "generated_at": "2026-01-23T...",
+        "cached": true,
+        "cache_age_seconds": 12,
+        "data": {
+            "incidents": [...],
+            "total": 15,
+            "page": 1,
+            "limit": 50,
+            "pages": 1
+        }
+    }
+
+    Auth: X-Dashboard-Token header required.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    now = time.time()
+    now_iso = datetime.utcnow().isoformat() + "Z"
+
+    # Check cache
+    if (
+        _incidents_cache["data"] is not None
+        and (now - _incidents_cache["timestamp"]) < _incidents_cache["ttl"]
+    ):
+        all_incidents = _incidents_cache["data"]
+        cached = True
+        cache_age = round(now - _incidents_cache["timestamp"], 1)
+    else:
+        # Fetch fresh data
+        try:
+            all_incidents = await _aggregate_incidents(session)
+            _incidents_cache["data"] = all_incidents
+            _incidents_cache["timestamp"] = now
+            cached = False
+            cache_age = 0
+        except Exception as e:
+            logger.error(f"Failed to aggregate incidents: {e}")
+            all_incidents = []
+            cached = False
+            cache_age = 0
+
+    # Apply filters
+    filtered = all_incidents
+
+    # Filter by status (multi-select)
+    if status:
+        valid_statuses = {"active", "acknowledged", "resolved"}
+        status_filter = set(s.lower() for s in status if s.lower() in valid_statuses)
+        if status_filter:
+            filtered = [i for i in filtered if i["status"] in status_filter]
+
+    # Filter by severity (multi-select)
+    if severity:
+        valid_severities = {"info", "warning", "critical"}
+        severity_filter = set(s.lower() for s in severity if s.lower() in valid_severities)
+        if severity_filter:
+            filtered = [i for i in filtered if i["severity"] in severity_filter]
+
+    # Filter by type
+    if type:
+        filtered = [i for i in filtered if i["type"] == type]
+
+    # Filter by search query (substring in title or description)
+    if q:
+        q_lower = q.lower()
+        filtered = [
+            i for i in filtered
+            if q_lower in i["title"].lower() or q_lower in i["description"].lower()
+        ]
+
+    # Pagination
+    total = len(filtered)
+    pages = max(1, (total + limit - 1) // limit)
+    page = min(page, pages)  # Clamp to valid range
+    start = (page - 1) * limit
+    end = start + limit
+    paginated = filtered[start:end]
+
+    return {
+        "generated_at": now_iso,
+        "cached": cached,
+        "cache_age_seconds": cache_age,
+        "data": {
+            "incidents": paginated,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": pages,
+        },
+    }
