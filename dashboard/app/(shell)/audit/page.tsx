@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useAuditEvents, useAuditEvent, useColumnVisibility, usePageSize } from "@/lib/hooks";
+import { useOpsLogsApi, useOpsLogDetail, useColumnVisibility, usePageSize } from "@/lib/hooks";
 import {
   AuditEventRow,
   AuditEventType,
@@ -121,18 +121,27 @@ function AuditPageContent() {
     search: searchValue || undefined,
   }), [selectedTypes, selectedSeverities, selectedActorKinds, selectedTimeRange, searchValue]);
 
-  // Fetch data
+  // Fetch data from real API with mock fallback
   const {
     data: events = [],
+    metadata,
     isLoading,
     error,
+    isApiDegraded,
     refetch,
-  } = useAuditEvents(filters);
+  } = useOpsLogsApi(filters, 200);
 
+  // Find selected event from the events list
+  const selectedEventRow = useMemo(
+    () => events.find((e) => e.id === selectedEventId) ?? null,
+    [events, selectedEventId]
+  );
+
+  // Get detail from row (ops logs don't have separate detail endpoint)
   const {
     data: selectedEvent,
     isLoading: isLoadingDetail,
-  } = useAuditEvent(selectedEventId);
+  } = useOpsLogDetail(selectedEventRow);
 
   // Drawer is open when there's a selected event
   const drawerOpen = selectedEventId !== null;
@@ -247,6 +256,23 @@ function AuditPageContent() {
 
       {/* Main content: Table */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
+        {/* Ops Logs Header */}
+        <div className="px-4 py-2 border-b border-border flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            Ops Logs (from backend)
+          </span>
+          {isApiDegraded && (
+            <span className="text-xs text-yellow-400 bg-yellow-500/10 px-2 py-0.5 rounded">
+              degraded - using mock data
+            </span>
+          )}
+          {metadata && !isApiDegraded && (
+            <span className="text-xs text-muted-foreground">
+              • Last {metadata.sinceMinutes} min • Limit {metadata.limit}
+            </span>
+          )}
+        </div>
+
         {/* Table */}
         <AuditTable
           data={events}
