@@ -10179,9 +10179,16 @@ _MATCHES_CACHE_TTL_LIVE = 15  # seconds
 _MATCHES_CACHE_TTL_DEFAULT = 60  # seconds
 
 
-def _get_matches_cache_key(status: str, hours: int, league_id: int | None, page: int, limit: int) -> str:
+def _get_matches_cache_key(
+    status: str,
+    hours: int,
+    league_id: int | None,
+    page: int,
+    limit: int,
+    match_id: int | None = None,
+) -> str:
     """Generate cache key including all query params (P1 guardrail)."""
-    return f"matches:{status}:{hours}:{league_id}:{page}:{limit}"
+    return f"matches:{status}:{hours}:{league_id}:{page}:{limit}:{match_id}"
 
 
 @app.get("/dashboard/matches.json")
@@ -10190,6 +10197,7 @@ async def get_matches_dashboard(
     status: str = "NS",  # NS, LIVE, FT, or ALL
     hours: int = 168,  # 7 days default for table view
     league_id: int | None = None,
+    match_id: int | None = None,  # optional exact match lookup (deep-link support)
     page: int = 1,
     limit: int = 50,
     session: AsyncSession = Depends(get_async_session),
@@ -10238,7 +10246,7 @@ async def get_matches_dashboard(
 
     # Cache TTL based on status
     cache_ttl = _MATCHES_CACHE_TTL_LIVE if status == "LIVE" else _MATCHES_CACHE_TTL_DEFAULT
-    cache_key = _get_matches_cache_key(status, hours, league_id, page, limit)
+    cache_key = _get_matches_cache_key(status, hours, league_id, page, limit, match_id=match_id)
 
     now = time.time()
 
@@ -10314,8 +10322,6 @@ async def get_matches_dashboard(
         .outerjoin(Prediction, Prediction.match_id == Match.id)
         .outerjoin(ShadowPrediction, ShadowPrediction.match_id == Match.id)
         .outerjoin(SensorPrediction, SensorPrediction.match_id == Match.id)
-        .where(Match.date >= start_dt)
-        .where(Match.date <= end_dt)
         .group_by(
             Match.id,
             Match.date,
@@ -10330,46 +10336,63 @@ async def get_matches_dashboard(
         )
     )
 
+    # Optional exact match lookup (deep-link support).
+    # When match_id is provided we ignore time window/status/league filters to avoid false negatives.
+    if match_id is not None:
+        base_query = base_query.where(Match.id == match_id)
+    else:
+        base_query = base_query.where(Match.date >= start_dt).where(Match.date <= end_dt)
+
     # Status filter
-    if status == "LIVE":
+    if match_id is None and status == "LIVE":
         # LIVE includes: 1H, HT, 2H, ET, BT, P, SUSP, INT, LIVE
         live_statuses = ["1H", "HT", "2H", "ET", "BT", "P", "SUSP", "INT", "LIVE"]
         base_query = base_query.where(Match.status.in_(live_statuses))
-    elif status == "NS":
+    elif match_id is None and status == "NS":
         base_query = base_query.where(Match.status == "NS")
-    elif status == "FT":
+    elif match_id is None and status == "FT":
         # FT includes: FT, AET, PEN
         ft_statuses = ["FT", "AET", "PEN"]
         base_query = base_query.where(Match.status.in_(ft_statuses))
     # ALL: no status filter
 
     # League filter
-    if league_id is not None:
+    if match_id is None and league_id is not None:
         base_query = base_query.where(Match.league_id == league_id)
 
     # Count total for pagination (count distinct match IDs)
     # Note: We just count Match rows, no need to join Team tables for count
     count_query = (
         select(func.count(Match.id))
-        .where(Match.date >= start_dt)
-        .where(Match.date <= end_dt)
     )
 
-    if status == "LIVE":
+    if match_id is not None:
+        count_query = count_query.where(Match.id == match_id)
+    else:
+        count_query = count_query.where(Match.date >= start_dt).where(Match.date <= end_dt)
+
+    if match_id is None and status == "LIVE":
         count_query = count_query.where(Match.status.in_(["1H", "HT", "2H", "ET", "BT", "P", "SUSP", "INT", "LIVE"]))
-    elif status == "NS":
+    elif match_id is None and status == "NS":
         count_query = count_query.where(Match.status == "NS")
-    elif status == "FT":
+    elif match_id is None and status == "FT":
         count_query = count_query.where(Match.status.in_(["FT", "AET", "PEN"]))
-    if league_id is not None:
+    if match_id is None and league_id is not None:
         count_query = count_query.where(Match.league_id == league_id)
 
     total_result = await session.execute(count_query)
     total = total_result.scalar() or 0
 
     # Order and paginate
-    offset = (page - 1) * limit
-    query = base_query.order_by(Match.date.desc() if status == "FT" else Match.date).offset(offset).limit(limit)
+    # For match_id we always return a single match (if found).
+    if match_id is not None:
+        page = 1
+        limit = 1
+        offset = 0
+        query = base_query.limit(1)
+    else:
+        offset = (page - 1) * limit
+        query = base_query.order_by(Match.date.desc() if status == "FT" else Match.date).offset(offset).limit(limit)
 
     result = await session.execute(query)
     rows = result.all()
@@ -11436,6 +11459,384 @@ async def dashboard_data_quality_check_json(
         "cache_age_seconds": 0,
         "data": response_data,
     }
+
+
+# =============================================================================
+# DASHBOARD SETTINGS (read-only operational settings, no secrets)
+# =============================================================================
+
+# Cache for settings endpoints
+_settings_summary_cache: dict = {"data": None, "timestamp": 0, "ttl": 300}
+_settings_flags_cache: dict = {"data": None, "timestamp": 0, "ttl": 60}
+_settings_models_cache: dict = {"data": None, "timestamp": 0, "ttl": 300}
+
+# SECURITY: Secrets that MUST NEVER appear in settings responses
+_SETTINGS_SECRET_KEYS = frozenset({
+    "DATABASE_URL", "RAPIDAPI_KEY", "API_KEY", "DASHBOARD_TOKEN",
+    "RUNPOD_API_KEY", "GEMINI_API_KEY", "METRICS_BEARER_TOKEN",
+    "SMTP_PASSWORD", "OPS_ADMIN_PASSWORD", "OPS_SESSION_SECRET",
+    "SENTRY_AUTH_TOKEN", "FUTBOLSTATS_API_KEY", "X_API_KEY",
+})
+
+
+def _is_env_configured(key: str) -> bool:
+    """Check if an environment variable is configured (non-empty)."""
+    import os
+    val = os.environ.get(key, "")
+    return bool(val and val.strip())
+
+
+def _get_known_feature_flags() -> list[dict]:
+    """
+    Return list of known feature flags with metadata.
+
+    NOTE: Values are bool or None, never secret strings.
+    """
+    import os
+
+    flags = [
+        # LLM/Narratives
+        {"key": "FASTPATH_ENABLED", "scope": "llm", "description": "Enable FastPath LLM narrative generation"},
+        {"key": "FASTPATH_DRY_RUN", "scope": "llm", "description": "FastPath dry-run mode (no writes)"},
+        {"key": "GEMINI_ENABLED", "scope": "llm", "description": "Use Gemini as LLM provider"},
+        {"key": "RUNPOD_ENABLED", "scope": "llm", "description": "Use RunPod as LLM provider"},
+        # SOTA
+        {"key": "SOTA_SOFASCORE_ENABLED", "scope": "sota", "description": "Enable Sofascore XI capture"},
+        {"key": "SOTA_SOFASCORE_REFS_ENABLED", "scope": "sota", "description": "Enable Sofascore refs discovery"},
+        {"key": "SOTA_WEATHER_ENABLED", "scope": "sota", "description": "Enable weather capture"},
+        {"key": "SOTA_VENUE_GEO_ENABLED", "scope": "sota", "description": "Enable venue geocoding"},
+        {"key": "SOTA_UNDERSTAT_ENABLED", "scope": "sota", "description": "Enable Understat xG capture"},
+        # Sensor/Shadow
+        {"key": "SENSOR_B_ENABLED", "scope": "sensor", "description": "Enable Sensor B calibration"},
+        {"key": "SHADOW_MODE_ENABLED", "scope": "sensor", "description": "Enable shadow mode predictions"},
+        {"key": "SHADOW_TWO_STAGE_ENABLED", "scope": "sensor", "description": "Enable two-stage shadow architecture"},
+        # Jobs
+        {"key": "SCHEDULER_ENABLED", "scope": "jobs", "description": "Enable background scheduler"},
+        {"key": "ODDS_SYNC_ENABLED", "scope": "jobs", "description": "Enable odds sync job"},
+        {"key": "STATS_BACKFILL_ENABLED", "scope": "jobs", "description": "Enable stats backfill job"},
+        # Predictions
+        {"key": "PREDICTIONS_ENABLED", "scope": "predictions", "description": "Enable prediction generation"},
+        {"key": "PREDICTIONS_TWO_STAGE", "scope": "predictions", "description": "Use two-stage prediction model"},
+        # Other
+        {"key": "DEBUG", "scope": "other", "description": "Debug mode enabled"},
+        {"key": "SENTRY_ENABLED", "scope": "other", "description": "Enable Sentry error tracking"},
+    ]
+
+    result = []
+    for flag in flags:
+        key = flag["key"]
+        raw_val = os.environ.get(key, "").lower().strip()
+
+        # Determine enabled state
+        if raw_val in ("true", "1", "yes", "on"):
+            enabled = True
+        elif raw_val in ("false", "0", "no", "off"):
+            enabled = False
+        elif raw_val == "":
+            enabled = None  # Not set
+        else:
+            enabled = None  # Unknown value
+
+        result.append({
+            "key": key,
+            "enabled": enabled,
+            "scope": flag["scope"],
+            "description": flag["description"],
+            "source": "env" if raw_val else "default",
+        })
+
+    return result
+
+
+@app.get("/dashboard/settings/summary.json")
+async def dashboard_settings_summary(request: Request):
+    """
+    Read-only summary of operational settings.
+
+    Auth: X-Dashboard-Token required.
+    TTL: 300s cache.
+
+    SECURITY: No secrets or PII in response. Only configured: true/false.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    now = time.time()
+    cache = _settings_summary_cache
+
+    # Check cache
+    if cache["data"] and (now - cache["timestamp"]) < cache["ttl"]:
+        return {
+            "generated_at": cache["data"]["generated_at"],
+            "cached": True,
+            "cache_age_seconds": round(now - cache["timestamp"], 1),
+            "data": cache["data"]["payload"],
+        }
+
+    # Build fresh data
+    generated_at = datetime.utcnow().isoformat() + "Z"
+
+    try:
+        integrations = {
+            "rapidapi": {
+                "configured": _is_env_configured("RAPIDAPI_KEY") or _is_env_configured("API_FOOTBALL_KEY"),
+                "source": "env",
+            },
+            "sentry": {
+                "configured": _is_env_configured("SENTRY_DSN"),
+                "source": "env",
+            },
+            "metrics": {
+                "configured": _is_env_configured("METRICS_BEARER_TOKEN"),
+                "source": "env",
+            },
+            "gemini": {
+                "configured": _is_env_configured("GEMINI_API_KEY"),
+                "source": "env",
+            },
+            "runpod": {
+                "configured": _is_env_configured("RUNPOD_API_KEY"),
+                "source": "env",
+            },
+            "database": {
+                "configured": _is_env_configured("DATABASE_URL"),
+                "source": "env",
+            },
+        }
+
+        payload = {
+            "readonly": True,
+            "sections": ["general", "feature_flags", "model_versions", "integrations"],
+            "notes": "Read-only operational settings. No secrets returned.",
+            "links": [
+                {"title": "Ops Dashboard", "url": "/dashboard/ops"},
+                {"title": "Data Quality", "url": "/dashboard/data_quality.json"},
+                {"title": "Feature Flags", "url": "/dashboard/settings/feature_flags.json"},
+                {"title": "Model Versions", "url": "/dashboard/settings/model_versions.json"},
+            ],
+            "integrations": integrations,
+        }
+
+        # Update cache
+        cache["data"] = {"generated_at": generated_at, "payload": payload}
+        cache["timestamp"] = now
+
+        return {
+            "generated_at": generated_at,
+            "cached": False,
+            "cache_age_seconds": 0,
+            "data": payload,
+        }
+
+    except Exception as e:
+        logger.error(f"[SETTINGS] summary.json error: {e}")
+        return {
+            "generated_at": generated_at,
+            "cached": False,
+            "cache_age_seconds": 0,
+            "data": {
+                "readonly": True,
+                "sections": [],
+                "notes": "Read-only operational settings. No secrets returned.",
+                "status": "degraded",
+                "error": str(e)[:100],
+            },
+        }
+
+
+@app.get("/dashboard/settings/feature_flags.json")
+async def dashboard_settings_feature_flags(
+    request: Request,
+    q: str | None = None,
+    enabled: bool | None = None,
+    scope: str | None = None,
+    page: int = 1,
+    limit: int = 50,
+):
+    """
+    Read-only list of feature flags.
+
+    Auth: X-Dashboard-Token required.
+    TTL: 60s cache (flags can change with deploy).
+
+    Query params:
+    - q: Search by key or description
+    - enabled: Filter by true/false
+    - scope: Filter by scope (llm, sota, jobs, sensor, predictions, other)
+    - page: Page number (default 1)
+    - limit: Items per page (default 50, max 100)
+
+    SECURITY: No secrets. Only boolean enabled state.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    # Clamp limit
+    limit = min(max(1, limit), 100)
+    page = max(1, page)
+
+    now = time.time()
+    cache = _settings_flags_cache
+    generated_at = datetime.utcnow().isoformat() + "Z"
+
+    try:
+        # Get all flags (always fresh since they depend on env)
+        all_flags = _get_known_feature_flags()
+
+        # Apply filters
+        filtered = all_flags
+
+        if q:
+            q_lower = q.lower()
+            filtered = [
+                f for f in filtered
+                if q_lower in f["key"].lower() or q_lower in f["description"].lower()
+            ]
+
+        if enabled is not None:
+            filtered = [f for f in filtered if f["enabled"] == enabled]
+
+        if scope:
+            filtered = [f for f in filtered if f["scope"] == scope]
+
+        # Pagination
+        total = len(filtered)
+        pages = (total + limit - 1) // limit if limit > 0 else 1
+        start = (page - 1) * limit
+        end = start + limit
+        paginated = filtered[start:end]
+
+        return {
+            "generated_at": generated_at,
+            "cached": False,  # Always fresh for flags
+            "cache_age_seconds": 0,
+            "data": {
+                "flags": paginated,
+                "total": total,
+                "page": page,
+                "limit": limit,
+                "pages": pages,
+            },
+        }
+
+    except Exception as e:
+        logger.error(f"[SETTINGS] feature_flags.json error: {e}")
+        return {
+            "generated_at": generated_at,
+            "cached": False,
+            "cache_age_seconds": 0,
+            "data": {
+                "flags": [],
+                "total": 0,
+                "page": page,
+                "limit": limit,
+                "pages": 0,
+                "status": "degraded",
+                "error": str(e)[:100],
+            },
+        }
+
+
+@app.get("/dashboard/settings/model_versions.json")
+async def dashboard_settings_model_versions(request: Request):
+    """
+    Read-only list of ML model versions.
+
+    Auth: X-Dashboard-Token required.
+    TTL: 300s cache.
+
+    SECURITY: No secrets. Only version strings.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    now = time.time()
+    cache = _settings_models_cache
+    generated_at = datetime.utcnow().isoformat() + "Z"
+
+    # Check cache
+    if cache["data"] and (now - cache["timestamp"]) < cache["ttl"]:
+        return {
+            "generated_at": cache["data"]["generated_at"],
+            "cached": True,
+            "cache_age_seconds": round(now - cache["timestamp"], 1),
+            "data": cache["data"]["payload"],
+        }
+
+    try:
+        import os
+
+        # Get model versions from settings/env
+        baseline_version = getattr(settings, "MODEL_VERSION", None) or os.environ.get("MODEL_VERSION", "v1.0.0")
+        architecture = os.environ.get("MODEL_ARCHITECTURE", "baseline")
+        shadow_version = os.environ.get("SHADOW_MODEL_VERSION", "disabled")
+        shadow_architecture = os.environ.get("SHADOW_ARCHITECTURE", "disabled")
+
+        # Try to get updated_at from model files if available
+        model_updated_at = None
+        try:
+            import glob
+            model_files = glob.glob("models/xgb_*.json")
+            if model_files:
+                import os.path
+                latest_file = max(model_files, key=os.path.getmtime)
+                mtime = os.path.getmtime(latest_file)
+                model_updated_at = datetime.utcfromtimestamp(mtime).isoformat() + "Z"
+        except Exception:
+            pass
+
+        models = [
+            {
+                "name": "baseline",
+                "version": baseline_version,
+                "source": "settings",
+                "updated_at": model_updated_at,
+            },
+            {
+                "name": "architecture",
+                "version": architecture,
+                "source": "env",
+                "updated_at": None,
+            },
+            {
+                "name": "shadow_version",
+                "version": shadow_version,
+                "source": "env",
+                "updated_at": None,
+            },
+            {
+                "name": "shadow_architecture",
+                "version": shadow_architecture,
+                "source": "env",
+                "updated_at": None,
+            },
+        ]
+
+        payload = {"models": models}
+
+        # Update cache
+        cache["data"] = {"generated_at": generated_at, "payload": payload}
+        cache["timestamp"] = now
+
+        return {
+            "generated_at": generated_at,
+            "cached": False,
+            "cache_age_seconds": 0,
+            "data": payload,
+        }
+
+    except Exception as e:
+        logger.error(f"[SETTINGS] model_versions.json error: {e}")
+        return {
+            "generated_at": generated_at,
+            "cached": False,
+            "cache_age_seconds": 0,
+            "data": {
+                "models": [],
+                "status": "degraded",
+                "error": str(e)[:100],
+            },
+        }
 
 
 @app.get("/dashboard/ops/logs.json")
