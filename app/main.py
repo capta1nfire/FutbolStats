@@ -11839,6 +11839,233 @@ async def dashboard_settings_model_versions(request: Request):
         }
 
 
+# =============================================================================
+# DASHBOARD PREDICTIONS (read-only, for ops dashboard)
+# =============================================================================
+
+_dashboard_predictions_cache: dict = {"data": None, "timestamp": 0, "ttl": 45}
+
+
+@app.get("/dashboard/predictions.json")
+async def dashboard_predictions_json(
+    request: Request,
+    league_ids: str | None = Query(default=None, description="Comma-separated league IDs"),
+    status: str | None = Query(default=None, description="Match status filter (NS,LIVE,FT,etc)"),
+    model: str | None = Query(default=None, description="Model filter (baseline,shadow)"),
+    q: str | None = Query(default=None, description="Search by team name"),
+    days_back: int = Query(default=0, ge=0, le=30, description="Days back from today"),
+    days_ahead: int = Query(default=3, ge=0, le=14, description="Days ahead from today"),
+    page: int = Query(default=1, ge=1, description="Page number"),
+    limit: int = Query(default=50, ge=1, le=100, description="Items per page"),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Read-only predictions list for Dashboard.
+
+    Auth: X-Dashboard-Token required.
+    TTL: 45s cache.
+
+    Query params:
+    - league_ids: Comma-separated league IDs (e.g., "39,140,135")
+    - status: Match status filter (NS, LIVE, FT, etc.)
+    - model: Model filter (baseline, shadow)
+    - q: Search by team name
+    - days_back: Days back from today (default 0)
+    - days_ahead: Days ahead from today (default 3)
+    - page: Page number (default 1)
+    - limit: Items per page (default 50, max 100)
+
+    SECURITY: No secrets/PII. Public match data only.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    now = time.time()
+    generated_at = datetime.utcnow().isoformat() + "Z"
+
+    try:
+        from sqlalchemy import text
+
+        # Build date range
+        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        from_date = today - timedelta(days=days_back)
+        to_date = today + timedelta(days=days_ahead + 1)  # +1 to include full day
+
+        # Build query with filters
+        filters = ["m.date >= :from_date", "m.date < :to_date"]
+        params: dict = {"from_date": from_date, "to_date": to_date}
+
+        # League filter
+        if league_ids:
+            try:
+                league_list = [int(lid.strip()) for lid in league_ids.split(",") if lid.strip()]
+                if league_list:
+                    filters.append(f"m.league_id IN ({','.join(str(l) for l in league_list)})")
+            except ValueError:
+                pass  # Invalid league_ids, ignore filter
+
+        # Status filter
+        if status:
+            status_list = [s.strip().upper() for s in status.split(",") if s.strip()]
+            if status_list:
+                status_placeholders = ",".join(f"'{s}'" for s in status_list)
+                filters.append(f"m.status IN ({status_placeholders})")
+
+        # Model filter (baseline vs shadow via model_version)
+        model_filter_sql = ""
+        if model:
+            model_lower = model.lower()
+            if model_lower == "baseline":
+                model_filter_sql = "AND p.model_version NOT LIKE '%shadow%' AND p.model_version NOT LIKE '%two_stage%'"
+            elif model_lower == "shadow":
+                model_filter_sql = "AND (p.model_version LIKE '%shadow%' OR p.model_version LIKE '%two_stage%')"
+
+        # Search filter
+        if q:
+            filters.append("(t_home.name ILIKE :q OR t_away.name ILIKE :q)")
+            params["q"] = f"%{q}%"
+
+        where_clause = " AND ".join(filters)
+
+        # Count total
+        count_query = f"""
+            SELECT COUNT(DISTINCT p.id)
+            FROM predictions p
+            JOIN matches m ON p.match_id = m.id
+            JOIN teams t_home ON m.home_team_id = t_home.id
+            JOIN teams t_away ON m.away_team_id = t_away.id
+            JOIN competitions c ON m.league_id = c.id
+            WHERE {where_clause} {model_filter_sql}
+        """
+        count_result = await session.execute(text(count_query), params)
+        total = int(count_result.scalar() or 0)
+
+        # Calculate pagination
+        pages = (total + limit - 1) // limit if limit > 0 else 1
+        offset = (page - 1) * limit
+
+        # Fetch predictions with pagination
+        data_query = f"""
+            SELECT
+                p.id,
+                p.match_id,
+                m.league_id,
+                c.name AS league_name,
+                m.date AS kickoff_utc,
+                t_home.name AS home_team,
+                t_away.name AS away_team,
+                m.status,
+                m.home_goals,
+                m.away_goals,
+                p.model_version,
+                p.home_prob,
+                p.draw_prob,
+                p.away_prob,
+                p.is_frozen,
+                p.frozen_at,
+                p.frozen_confidence_tier,
+                p.created_at
+            FROM predictions p
+            JOIN matches m ON p.match_id = m.id
+            JOIN teams t_home ON m.home_team_id = t_home.id
+            JOIN teams t_away ON m.away_team_id = t_away.id
+            JOIN competitions c ON m.league_id = c.id
+            WHERE {where_clause} {model_filter_sql}
+            ORDER BY m.date ASC, p.created_at DESC
+            LIMIT :limit OFFSET :offset
+        """
+        params["limit"] = limit
+        params["offset"] = offset
+
+        result = await session.execute(text(data_query), params)
+        rows = result.fetchall()
+
+        # Format predictions
+        predictions = []
+        for row in rows:
+            # Determine pick based on highest probability
+            probs = {
+                "home": round(row.home_prob, 3) if row.home_prob else None,
+                "draw": round(row.draw_prob, 3) if row.draw_prob else None,
+                "away": round(row.away_prob, 3) if row.away_prob else None,
+            }
+
+            pick = None
+            if probs["home"] and probs["draw"] and probs["away"]:
+                max_prob = max(probs["home"], probs["draw"], probs["away"])
+                if probs["home"] == max_prob:
+                    pick = "home"
+                elif probs["draw"] == max_prob:
+                    pick = "draw"
+                else:
+                    pick = "away"
+
+            # Determine model type
+            model_version = row.model_version or ""
+            if "shadow" in model_version.lower() or "two_stage" in model_version.lower():
+                model_type = "shadow"
+            else:
+                model_type = "baseline"
+
+            predictions.append({
+                "id": row.id,
+                "match_id": row.match_id,
+                "league_id": row.league_id,
+                "league_name": row.league_name,
+                "kickoff_utc": row.kickoff_utc.isoformat() + "Z" if row.kickoff_utc else None,
+                "home_team": row.home_team,
+                "away_team": row.away_team,
+                "status": row.status,
+                "score": f"{row.home_goals}-{row.away_goals}" if row.home_goals is not None else None,
+                "model": model_type,
+                "model_version": model_version,
+                "pick": pick,
+                "probs": probs,
+                "is_frozen": row.is_frozen,
+                "frozen_at": row.frozen_at.isoformat() + "Z" if row.frozen_at else None,
+                "confidence_tier": row.frozen_confidence_tier,
+                "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
+            })
+
+        return {
+            "generated_at": generated_at,
+            "cached": False,
+            "cache_age_seconds": 0,
+            "data": {
+                "predictions": predictions,
+                "total": total,
+                "page": page,
+                "limit": limit,
+                "pages": pages,
+                "filters_applied": {
+                    "league_ids": league_ids,
+                    "status": status,
+                    "model": model,
+                    "q": q,
+                    "days_back": days_back,
+                    "days_ahead": days_ahead,
+                },
+            },
+        }
+
+    except Exception as e:
+        logger.error(f"[DASHBOARD] predictions.json error: {e}", exc_info=True)
+        return {
+            "generated_at": generated_at,
+            "cached": False,
+            "cache_age_seconds": 0,
+            "data": {
+                "predictions": [],
+                "total": 0,
+                "page": page,
+                "limit": limit,
+                "pages": 0,
+                "status": "degraded",
+                "error": str(e)[:100],
+            },
+        }
+
+
 @app.get("/dashboard/ops/logs.json")
 async def ops_dashboard_logs_json(
     request: Request,
