@@ -12074,6 +12074,368 @@ async def dashboard_predictions_json(
         }
 
 
+# =============================================================================
+# DASHBOARD ANALYTICS REPORTS (catalog for analytics table)
+# =============================================================================
+
+_analytics_reports_cache: dict = {"data": None, "timestamp": 0, "ttl": 120}
+
+
+async def _build_analytics_reports(session: AsyncSession) -> list[dict]:
+    """
+    Build the list of analytics reports from various sources.
+
+    Sources:
+    - prediction_performance_reports (model_performance)
+    - pit_reports (prediction_accuracy)
+    - ops_daily_rollups (system_metrics)
+    - job_runs / api usage metrics (api_usage)
+
+    Returns list of report dicts with stable IDs.
+    """
+    from sqlalchemy import text
+
+    reports = []
+
+    # 1) Model Performance Reports (from prediction_performance_reports)
+    try:
+        result = await session.execute(text("""
+            SELECT id, generated_at, window_days, report_date, payload, source
+            FROM prediction_performance_reports
+            ORDER BY generated_at DESC
+            LIMIT 10
+        """))
+        rows = result.fetchall()
+
+        for row in rows:
+            payload = row.payload or {}
+            overall = payload.get("overall", {})
+            accuracy = overall.get("accuracy")
+            total_matches = overall.get("total_matches", 0)
+
+            # Determine status
+            status = "ok"
+            if accuracy is not None and accuracy < 0.35:
+                status = "warning"
+            elif row.generated_at and (datetime.utcnow() - row.generated_at).days > 2:
+                status = "stale"
+
+            reports.append({
+                "id": f"model_perf_{row.window_days}d_{row.id}",
+                "type": "model_performance",
+                "title": f"Model Performance ({row.window_days}d)",
+                "subtitle": f"Report date: {row.report_date}" if row.report_date else None,
+                "status": status,
+                "updated_at": row.generated_at.isoformat() + "Z" if row.generated_at else None,
+                "tags": ["xgb", f"{row.window_days}d", row.source or "auto"],
+                "summary": {
+                    "primary_label": "Accuracy",
+                    "primary_value": f"{accuracy:.1%}" if accuracy else "N/A",
+                    "secondary_label": "Matches",
+                    "secondary_value": total_matches,
+                },
+                "links": [
+                    {"title": "Performance API", "url": f"/dashboard/ops/predictions_performance.json?window_days={row.window_days}"},
+                ],
+            })
+    except Exception as e:
+        logger.warning(f"[ANALYTICS] Failed to load model_performance reports: {e}")
+        reports.append({
+            "id": "model_perf_error",
+            "type": "model_performance",
+            "title": "Model Performance",
+            "subtitle": "Error loading reports",
+            "status": "warning",
+            "updated_at": None,
+            "tags": ["error"],
+            "summary": {"primary_label": "Status", "primary_value": "unavailable"},
+            "links": [],
+        })
+
+    # 2) Prediction Accuracy Reports (from pit_reports)
+    try:
+        result = await session.execute(text("""
+            SELECT id, report_type, report_date, payload, source, created_at, updated_at
+            FROM pit_reports
+            WHERE report_type IN ('daily', 'weekly')
+            ORDER BY created_at DESC
+            LIMIT 10
+        """))
+        rows = result.fetchall()
+
+        for row in rows:
+            payload = row.payload or {}
+            summary_data = payload.get("summary", {})
+            accuracy = summary_data.get("accuracy")
+            total = summary_data.get("total_predictions", 0)
+
+            # Determine status
+            status = "ok"
+            if row.created_at and (datetime.utcnow() - row.created_at).days > 3:
+                status = "stale"
+            elif accuracy is not None and accuracy < 0.30:
+                status = "warning"
+
+            reports.append({
+                "id": f"pit_{row.report_type}_{row.id}",
+                "type": "prediction_accuracy",
+                "title": f"PIT Report ({row.report_type.capitalize()})",
+                "subtitle": f"Date: {row.report_date.strftime('%Y-%m-%d')}" if row.report_date else None,
+                "status": status,
+                "updated_at": (row.updated_at or row.created_at).isoformat() + "Z" if (row.updated_at or row.created_at) else None,
+                "tags": ["pit", row.report_type, row.source or "auto"],
+                "summary": {
+                    "primary_label": "Accuracy",
+                    "primary_value": f"{accuracy:.1%}" if accuracy else "N/A",
+                    "secondary_label": "Predictions",
+                    "secondary_value": total,
+                },
+                "links": [
+                    {"title": "PIT Protocol", "url": "docs/PIT_EVALUATION_PROTOCOL.md"},
+                ],
+            })
+    except Exception as e:
+        logger.warning(f"[ANALYTICS] Failed to load pit_reports: {e}")
+
+    # 3) System Metrics (from ops_daily_rollups)
+    try:
+        result = await session.execute(text("""
+            SELECT day, payload, created_at, updated_at
+            FROM ops_daily_rollups
+            ORDER BY day DESC
+            LIMIT 7
+        """))
+        rows = result.fetchall()
+
+        for row in rows:
+            payload = row.payload or {}
+            api_calls = payload.get("api_calls_total", 0)
+            predictions_generated = payload.get("predictions_generated", 0)
+            job_status = payload.get("jobs_status", "unknown")
+
+            # Determine status
+            status = "ok"
+            if job_status == "error":
+                status = "warning"
+            elif row.day and (datetime.utcnow().date() - row.day).days > 2:
+                status = "stale"
+
+            reports.append({
+                "id": f"ops_rollup_{row.day.isoformat()}",
+                "type": "system_metrics",
+                "title": f"Daily Ops Rollup",
+                "subtitle": f"Date: {row.day.isoformat()}",
+                "status": status,
+                "updated_at": (row.updated_at or row.created_at).isoformat() + "Z" if (row.updated_at or row.created_at) else None,
+                "tags": ["ops", "daily", "system"],
+                "summary": {
+                    "primary_label": "API Calls",
+                    "primary_value": api_calls,
+                    "secondary_label": "Predictions",
+                    "secondary_value": predictions_generated,
+                },
+                "links": [
+                    {"title": "History API", "url": "/dashboard/ops/history.json?days=30"},
+                ],
+            })
+    except Exception as e:
+        logger.warning(f"[ANALYTICS] Failed to load ops_daily_rollups: {e}")
+
+    # 4) API Usage / Job Health (synthetic from job_runs)
+    try:
+        result = await session.execute(text("""
+            SELECT
+                job_name,
+                COUNT(*) as runs_24h,
+                COUNT(*) FILTER (WHERE status = 'ok') as success_count,
+                MAX(started_at) as last_run
+            FROM job_runs
+            WHERE started_at > NOW() - INTERVAL '24 hours'
+            GROUP BY job_name
+            ORDER BY runs_24h DESC
+            LIMIT 5
+        """))
+        rows = result.fetchall()
+
+        if rows:
+            total_runs = sum(r.runs_24h for r in rows)
+            total_success = sum(r.success_count for r in rows)
+            success_rate = total_success / total_runs if total_runs > 0 else 0
+
+            status = "ok" if success_rate >= 0.95 else ("warning" if success_rate >= 0.80 else "stale")
+
+            reports.append({
+                "id": "api_usage_24h",
+                "type": "api_usage",
+                "title": "Job Executions (24h)",
+                "subtitle": f"Top jobs: {', '.join(r.job_name[:20] for r in rows[:3])}",
+                "status": status,
+                "updated_at": datetime.utcnow().isoformat() + "Z",
+                "tags": ["jobs", "api", "24h"],
+                "summary": {
+                    "primary_label": "Success Rate",
+                    "primary_value": f"{success_rate:.1%}",
+                    "secondary_label": "Total Runs",
+                    "secondary_value": total_runs,
+                },
+                "links": [
+                    {"title": "Job Runs API", "url": "/dashboard/ops/job_runs.json"},
+                ],
+            })
+    except Exception as e:
+        logger.warning(f"[ANALYTICS] Failed to load job_runs metrics: {e}")
+
+    # 5) SOTA Enrichment Summary (synthetic)
+    try:
+        result = await session.execute(text("""
+            SELECT
+                (SELECT COUNT(*) FROM match_sofascore_lineup) as sofascore_lineups,
+                (SELECT COUNT(*) FROM match_weather) as weather_forecasts,
+                (SELECT COUNT(*) FROM venue_geo) as venue_geos,
+                (SELECT COUNT(*) FROM match_understat_team) as understat_xg
+        """))
+        row = result.fetchone()
+
+        if row:
+            total_enrichments = (row.sofascore_lineups or 0) + (row.weather_forecasts or 0) + (row.venue_geos or 0) + (row.understat_xg or 0)
+
+            reports.append({
+                "id": "sota_enrichment_summary",
+                "type": "system_metrics",
+                "title": "SOTA Enrichment Summary",
+                "subtitle": f"XI: {row.sofascore_lineups}, Weather: {row.weather_forecasts}, Geo: {row.venue_geos}",
+                "status": "ok" if total_enrichments > 100 else "warning",
+                "updated_at": datetime.utcnow().isoformat() + "Z",
+                "tags": ["sota", "enrichment", "coverage"],
+                "summary": {
+                    "primary_label": "Total Enrichments",
+                    "primary_value": total_enrichments,
+                    "secondary_label": "Understat xG",
+                    "secondary_value": row.understat_xg or 0,
+                },
+                "links": [
+                    {"title": "Ops Dashboard", "url": "/dashboard/ops.json"},
+                ],
+            })
+    except Exception as e:
+        logger.warning(f"[ANALYTICS] Failed to load SOTA enrichment summary: {e}")
+
+    return reports
+
+
+@app.get("/dashboard/analytics/reports.json")
+async def dashboard_analytics_reports(
+    request: Request,
+    type: str | None = Query(default=None, description="Report type filter"),
+    q: str | None = Query(default=None, description="Search by title/subtitle"),
+    status: str | None = Query(default=None, description="Status filter (ok|warning|stale)"),
+    page: int = Query(default=1, ge=1, description="Page number"),
+    limit: int = Query(default=50, ge=1, le=100, description="Items per page"),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Analytics reports catalog for Dashboard table.
+
+    Auth: X-Dashboard-Token required.
+    TTL: 120s cache.
+
+    Query params:
+    - type: Filter by report type (model_performance, prediction_accuracy, system_metrics, api_usage)
+    - q: Search by title or subtitle
+    - status: Filter by status (ok, warning, stale)
+    - page: Page number (default 1)
+    - limit: Items per page (default 50, max 100)
+
+    SECURITY: No secrets/PII. Aggregated metrics only.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    now = time.time()
+    cache = _analytics_reports_cache
+    generated_at = datetime.utcnow().isoformat() + "Z"
+
+    try:
+        # Check cache (only for unfiltered requests)
+        cache_key = f"{type}:{q}:{status}:{page}:{limit}"
+        use_cache = (type is None and q is None and status is None and page == 1 and limit == 50)
+
+        if use_cache and cache["data"] and (now - cache["timestamp"]) < cache["ttl"]:
+            return {
+                "generated_at": cache["data"]["generated_at"],
+                "cached": True,
+                "cache_age_seconds": round(now - cache["timestamp"], 1),
+                "data": cache["data"]["payload"],
+            }
+
+        # Build reports list
+        all_reports = await _build_analytics_reports(session)
+
+        # Apply filters
+        filtered = all_reports
+
+        if type:
+            filtered = [r for r in filtered if r["type"] == type]
+
+        if status:
+            filtered = [r for r in filtered if r["status"] == status]
+
+        if q:
+            q_lower = q.lower()
+            filtered = [
+                r for r in filtered
+                if q_lower in (r["title"] or "").lower()
+                or q_lower in (r["subtitle"] or "").lower()
+                or any(q_lower in tag.lower() for tag in r.get("tags", []))
+            ]
+
+        # Pagination
+        total = len(filtered)
+        pages = (total + limit - 1) // limit if limit > 0 else 1
+        start = (page - 1) * limit
+        end = start + limit
+        paginated = filtered[start:end]
+
+        payload = {
+            "reports": paginated,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": pages,
+            "note": "best-effort, aggregated server-side",
+        }
+
+        # Update cache for default requests
+        if use_cache:
+            cache["data"] = {"generated_at": generated_at, "payload": payload}
+            cache["timestamp"] = now
+
+        return {
+            "generated_at": generated_at,
+            "cached": False,
+            "cache_age_seconds": 0,
+            "data": payload,
+        }
+
+    except Exception as e:
+        logger.error(f"[ANALYTICS] reports.json error: {e}", exc_info=True)
+        return {
+            "generated_at": generated_at,
+            "cached": False,
+            "cache_age_seconds": 0,
+            "data": {
+                "reports": [],
+                "total": 0,
+                "page": page,
+                "limit": limit,
+                "pages": 0,
+                "status": "degraded",
+                "error": str(e)[:100],
+                "note": "best-effort, aggregated server-side",
+            },
+        }
+
+
 @app.get("/dashboard/ops/logs.json")
 async def ops_dashboard_logs_json(
     request: Request,
