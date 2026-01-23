@@ -40,12 +40,42 @@ scripts/                 # Scripts de evaluación y utilidades
 
 ## Herramientas Disponibles
 
-### MCP Server: PostgreSQL
-Queries directas a la base de datos con lenguaje natural.
-Ejemplo: "Busca los últimos partidos de América de Cali"
+### MCP Servers
+
+| Server | Descripción | Uso |
+|--------|-------------|-----|
+| `railway-postgres` | Queries read-only a PostgreSQL | `mcp__railway-postgres__query` con SQL |
+
+### Commands (`.cursor/commands/`)
+Invocables con `/nombre` en chat.
+
+| Command | Descripción |
+|---------|-------------|
+| `/ops` | Estado operacional del sistema (jobs, shadow, sentry, budget) |
+| `/logs [filtro]` | Logs de Railway con filtro opcional |
+| `/match <equipo>` | Buscar partido por nombre de equipo |
+| `/verify` | Smoke test post-deploy |
+| `/model-sanity` | Verificar que el modelo ML carga y predice |
+| `/db-report` | Reportes ad-hoc de base de datos |
+| `/deploy` | Guía de deploy (manual only) |
+
+### Skills (`.cursor/skills/`)
+Capacidades especializadas que el agente puede invocar.
+
+| Skill | Descripción | Modo |
+|-------|-------------|------|
+| `secrets-scan` | Escanear repo por secretos expuestos | Manual only |
+| `api-contract` | Validar contrato iOS vs backend | Read-only |
+
+### Subagents (`.cursor/skills/`)
+Agentes especializados para tareas delegadas.
+
+| Subagent | Descripción | Restricciones |
+|----------|-------------|---------------|
+| `ops-triage` | Diagnóstico operacional read-only | Sin edición, sin deploy |
+| `db-analyst-ro` | Consultas DB solo SELECT | Sin INSERT/UPDATE/DELETE |
 
 ### Railway CLI
-Acceso a logs, deployments y estado del backend.
 ```bash
 railway logs -n 50                    # Logs recientes
 railway logs --filter "error"         # Solo errores
