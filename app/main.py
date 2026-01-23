@@ -6243,11 +6243,33 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
     - Weather forecasts (match_weather)
     - Venue geo coordinates (venue_geo)
     - Team home city profiles (team_home_city_profile)
+    - Sofascore XI lineups (match_sofascore_lineup)
 
     All metrics are best-effort: query failures return "unavailable" status.
+
+    STANDARDIZED SHAPE (per component):
+    {
+        "status": "ok" | "warn" | "red" | "unavailable",
+        "coverage_pct": float,
+        "total": int,
+        "with_data": int,
+        "staleness_hours": float | null,
+        "note": string | null
+    }
     """
     now = datetime.utcnow()
     result = {"status": "ok", "generated_at": now.isoformat()}
+
+    # Helper to build unavailable response
+    def _unavailable(note: str) -> dict:
+        return {
+            "status": "unavailable",
+            "coverage_pct": 0.0,
+            "total": 0,
+            "with_data": 0,
+            "staleness_hours": None,
+            "note": note,
+        }
 
     # 1) Understat coverage: FT matches in last 14 days with xG data
     try:
@@ -6264,9 +6286,9 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
             """)
         )
         row = res.first()
-        with_xg = int(row[0] or 0) if row else 0
-        total_ft = int(row[1] or 0) if row else 0
-        coverage_pct = round(with_xg / total_ft * 100, 1) if total_ft > 0 else 0.0
+        with_data = int(row[0] or 0) if row else 0
+        total = int(row[1] or 0) if row else 0
+        coverage_pct = round(with_data / total * 100, 1) if total > 0 else 0.0
 
         # Get staleness (latest captured_at)
         res_stale = await session.execute(
@@ -6281,16 +6303,16 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
             staleness_hours = round((now - latest_capture).total_seconds() / 3600, 1)
 
         result["understat"] = {
-            "ft_14d_with_xg": with_xg,
-            "ft_14d_total": total_ft,
-            "coverage_pct": coverage_pct,
-            "latest_capture_at": latest_capture.isoformat() if latest_capture else None,
-            "staleness_hours": staleness_hours,
             "status": "ok" if coverage_pct >= 50 else ("warn" if coverage_pct >= 20 else "red"),
+            "coverage_pct": coverage_pct,
+            "total": total,
+            "with_data": with_data,
+            "staleness_hours": staleness_hours,
+            "note": "FT matches last 14d (top 5 leagues)",
         }
     except Exception as e:
         logger.debug(f"[SOTA] Understat metrics unavailable: {e}")
-        result["understat"] = {"status": "unavailable", "error": str(e)[:100]}
+        result["understat"] = _unavailable(f"Query failed: {str(e)[:50]}")
 
     # 2) Weather coverage: NS matches in next 48h with weather forecasts
     try:
@@ -6307,22 +6329,23 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
             """)
         )
         row = res.first()
-        with_weather = int(row[0] or 0) if row else 0
-        total_ns = int(row[1] or 0) if row else 0
-        coverage_pct = round(with_weather / total_ns * 100, 1) if total_ns > 0 else 0.0
+        with_data = int(row[0] or 0) if row else 0
+        total = int(row[1] or 0) if row else 0
+        coverage_pct = round(with_data / total * 100, 1) if total > 0 else 0.0
 
         result["weather"] = {
-            "ns_48h_with_forecast": with_weather,
-            "ns_48h_total": total_ns,
-            "coverage_pct": coverage_pct,
             "status": "ok" if coverage_pct >= 50 else ("warn" if coverage_pct >= 10 else "red"),
+            "coverage_pct": coverage_pct,
+            "total": total,
+            "with_data": with_data,
+            "staleness_hours": None,  # weather is forward-looking, no staleness
+            "note": "NS matches next 48h",
         }
     except Exception as e:
         logger.debug(f"[SOTA] Weather metrics unavailable: {e}")
-        result["weather"] = {"status": "unavailable", "error": str(e)[:100]}
+        result["weather"] = _unavailable(f"Query failed: {str(e)[:50]}")
 
     # 3) Venue geo coverage: venues from recent matches with coordinates
-    # Note: venue_geo uses venue_city as key, join via venue_city
     try:
         res = await session.execute(
             text("""
@@ -6336,24 +6359,21 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
             """)
         )
         row = res.first()
-        with_geo = int(row[0] or 0) if row else 0
-        total_venues = int(row[1] or 0) if row else 0
-        coverage_pct = round(with_geo / total_venues * 100, 1) if total_venues > 0 else 0.0
-
-        # Total rows in venue_geo
-        res_count = await session.execute(text("SELECT COUNT(*) FROM venue_geo"))
-        total_rows = int(res_count.scalar() or 0)
+        with_data = int(row[0] or 0) if row else 0
+        total = int(row[1] or 0) if row else 0
+        coverage_pct = round(with_data / total * 100, 1) if total > 0 else 0.0
 
         result["venue_geo"] = {
-            "venues_30d_with_geo": with_geo,
-            "venues_30d_total": total_venues,
-            "coverage_pct": coverage_pct,
-            "total_rows": total_rows,
             "status": "ok" if coverage_pct >= 50 else ("warn" if coverage_pct >= 20 else "red"),
+            "coverage_pct": coverage_pct,
+            "total": total,
+            "with_data": with_data,
+            "staleness_hours": None,  # static data, no staleness
+            "note": "Venues from matches last 30d",
         }
     except Exception as e:
         logger.debug(f"[SOTA] Venue geo metrics unavailable: {e}")
-        result["venue_geo"] = {"status": "unavailable", "error": str(e)[:100]}
+        result["venue_geo"] = _unavailable(f"Query failed: {str(e)[:50]}")
 
     # 4) Team profiles coverage: teams with home city profiles
     try:
@@ -6367,19 +6387,21 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
             """)
         )
         row = res.first()
-        with_profile = int(row[0] or 0) if row else 0
-        total_teams = int(row[1] or 0) if row else 0
-        coverage_pct = round(with_profile / total_teams * 100, 1) if total_teams > 0 else 0.0
+        with_data = int(row[0] or 0) if row else 0
+        total = int(row[1] or 0) if row else 0
+        coverage_pct = round(with_data / total * 100, 1) if total > 0 else 0.0
 
         result["team_profiles"] = {
-            "teams_with_profile": with_profile,
-            "teams_total": total_teams,
-            "coverage_pct": coverage_pct,
             "status": "ok" if coverage_pct >= 30 else ("warn" if coverage_pct >= 10 else "red"),
+            "coverage_pct": coverage_pct,
+            "total": total,
+            "with_data": with_data,
+            "staleness_hours": None,  # static data, no staleness
+            "note": "All teams in DB",
         }
     except Exception as e:
         logger.debug(f"[SOTA] Team profiles metrics unavailable: {e}")
-        result["team_profiles"] = {"status": "unavailable", "error": str(e)[:100]}
+        result["team_profiles"] = _unavailable(f"Query failed: {str(e)[:50]}")
 
     # 5) Sofascore XI coverage: NS matches in next 48h with XI data
     try:
@@ -6409,9 +6431,9 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
                 """)
             )
             row = res.first()
-            with_xi = int(row[0] or 0) if row else 0
-            total_ns = int(row[1] or 0) if row else 0
-            coverage_pct = round(with_xi / total_ns * 100, 1) if total_ns > 0 else 0.0
+            with_data = int(row[0] or 0) if row else 0
+            total = int(row[1] or 0) if row else 0
+            coverage_pct = round(with_data / total * 100, 1) if total > 0 else 0.0
 
             # Get staleness (latest captured_at)
             res_stale = await session.execute(
@@ -6425,35 +6447,20 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
             if latest_capture:
                 staleness_hours = round((now - latest_capture).total_seconds() / 3600, 1)
 
-            # Count total lineups and players captured
-            res_totals = await session.execute(
-                text("""
-                    SELECT
-                        (SELECT COUNT(*) FROM match_sofascore_lineup) AS total_lineups,
-                        (SELECT COUNT(*) FROM match_sofascore_player) AS total_players
-                """)
-            )
-            totals_row = res_totals.first()
-
             result["sofascore_xi"] = {
-                "ns_48h_with_xi": with_xi,
-                "ns_48h_total": total_ns,
-                "coverage_pct": coverage_pct,
-                "latest_capture_at": latest_capture.isoformat() if latest_capture else None,
-                "staleness_hours": staleness_hours,
-                "total_lineups": int(totals_row[0] or 0) if totals_row else 0,
-                "total_players": int(totals_row[1] or 0) if totals_row else 0,
                 "status": "ok" if coverage_pct >= 30 else ("warn" if coverage_pct >= 10 else "red"),
+                "coverage_pct": coverage_pct,
+                "total": total,
+                "with_data": with_data,
+                "staleness_hours": staleness_hours,
+                "note": "NS matches next 48h (SOTA leagues)",
             }
         else:
             # Tables don't exist yet - waiting for migration
-            result["sofascore_xi"] = {
-                "status": "pending",
-                "note": "Tables not deployed yet (migration 030)",
-            }
+            result["sofascore_xi"] = _unavailable("Tables not deployed yet (migration 030)")
     except Exception as e:
         logger.debug(f"[SOTA] Sofascore XI metrics unavailable: {e}")
-        result["sofascore_xi"] = {"status": "unavailable", "error": str(e)[:100]}
+        result["sofascore_xi"] = _unavailable(f"Query failed: {str(e)[:50]}")
 
     # Overall status: worst of components (excluding unavailable)
     component_statuses = []
