@@ -12,6 +12,7 @@ import {
   Database,
   FileText,
   Settings,
+  Sparkles,
   LucideIcon,
 } from "lucide-react";
 import {
@@ -35,6 +36,7 @@ const navItems: NavItem[] = [
   { icon: Cog, label: "Jobs", href: "/jobs" },
   { icon: AlertTriangle, label: "Incidents", href: "/incidents" },
   { icon: BarChart3, label: "Analytics", href: "/analytics" },
+  { icon: Sparkles, label: "SOTA", href: "/sota" },
   { icon: Database, label: "Data Quality", href: "/data-quality" },
   { icon: FileText, label: "Audit", href: "/audit" },
   { icon: Settings, label: "Settings", href: "/settings" },
