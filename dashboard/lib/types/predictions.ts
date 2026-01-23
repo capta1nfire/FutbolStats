@@ -33,6 +33,8 @@ export interface PredictionRow {
   id: number;
   matchId: number;
   matchLabel: string; // e.g., "Real Madrid vs Barcelona"
+  home: string; // Home team name for logo lookup
+  away: string; // Away team name for logo lookup
   leagueName: string;
   kickoffISO: string;
   model: ModelType;

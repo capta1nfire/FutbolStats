@@ -183,6 +183,8 @@ function parsePrediction(item: BackendPrediction): PredictionRow {
     id: item.id,
     matchId: item.match_id,
     matchLabel: `${item.home_team} vs ${item.away_team}`,
+    home: item.home_team,
+    away: item.away_team,
     leagueName: item.league_name || `League ${item.league_id}`,
     kickoffISO: item.kickoff_utc,
     model: mapModel(item.model),

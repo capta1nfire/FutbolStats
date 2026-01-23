@@ -36,25 +36,25 @@ const leagues = [
 ];
 
 /**
- * Mock match labels
+ * Mock match pairs [home, away]
  */
-const matchLabels = [
-  "Real Madrid vs Barcelona",
-  "Liverpool vs Man United",
-  "Juventus vs Inter Milan",
-  "Bayern Munich vs Dortmund",
-  "PSG vs Lyon",
-  "América vs Guadalajara",
-  "LA Galaxy vs LAFC",
-  "Boca Juniors vs River Plate",
-  "Atlético Madrid vs Sevilla",
-  "Arsenal vs Chelsea",
-  "AC Milan vs Napoli",
-  "RB Leipzig vs Leverkusen",
-  "Marseille vs Monaco",
-  "Cruz Azul vs Monterrey",
-  "Inter Miami vs Atlanta United",
-  "Flamengo vs Palmeiras",
+const matchPairs: [string, string][] = [
+  ["Real Madrid", "Barcelona"],
+  ["Liverpool", "Man United"],
+  ["Juventus", "Inter Milan"],
+  ["Bayern Munich", "Dortmund"],
+  ["PSG", "Lyon"],
+  ["América", "Guadalajara"],
+  ["LA Galaxy", "LAFC"],
+  ["Boca Juniors", "River Plate"],
+  ["Atlético Madrid", "Sevilla"],
+  ["Arsenal", "Chelsea"],
+  ["AC Milan", "Napoli"],
+  ["RB Leipzig", "Leverkusen"],
+  ["Marseille", "Monaco"],
+  ["Cruz Azul", "Monterrey"],
+  ["Inter Miami", "Atlanta United"],
+  ["Flamengo", "Palmeiras"],
 ];
 
 /**
@@ -70,7 +70,8 @@ function createPredictions(count: number): PredictionRow[] {
     else status = "evaluated";
 
     const model: ModelType = i % 3 === 0 ? "Shadow" : "A";
-    const matchLabel = matchLabels[i % matchLabels.length];
+    const [home, away] = matchPairs[i % matchPairs.length];
+    const matchLabel = `${home} vs ${away}`;
     const league = leagues[i % leagues.length];
     const kickoffOffset = (i % 20) * 3 * 60 * 60 * 1000; // 0-60 hours ahead
 
@@ -92,6 +93,8 @@ function createPredictions(count: number): PredictionRow[] {
       id: 2000 + i,
       matchId: 70000 + i,
       matchLabel,
+      home,
+      away,
       leagueName: league,
       kickoffISO: new Date(BASE_TIMESTAMP + kickoffOffset).toISOString(),
       model,

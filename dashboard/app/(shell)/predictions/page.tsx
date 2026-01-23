@@ -8,6 +8,7 @@ import {
   usePredictionCoverageFromData,
   useColumnVisibility,
   usePageSize,
+  useTeamLogos,
 } from "@/lib/hooks";
 import { getPredictionLeaguesMock } from "@/lib/mocks";
 import {
@@ -101,6 +102,9 @@ function PredictionsPageContent() {
   // Pagination state with localStorage persistence
   const [currentPage, setCurrentPage] = useState(1);
   const { pageSize, setPageSize } = usePageSize("predictions");
+
+  // Team logos for shields
+  const { getLogoUrl } = useTeamLogos();
 
   // Column visibility with localStorage persistence
   const { columnVisibility, setColumnVisibility, setColumnVisible, resetToDefault } = useColumnVisibility(
@@ -347,6 +351,7 @@ function PredictionsPageContent() {
           onRowClick={handleRowClick}
           columnVisibility={columnVisibility}
           onColumnVisibilityChange={setColumnVisibility}
+          getLogoUrl={getLogoUrl}
         />
 
         {/* Pagination - using real total from backend */}

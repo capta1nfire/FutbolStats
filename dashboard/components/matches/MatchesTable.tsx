@@ -6,6 +6,7 @@ import { MatchSummary, MatchScore, ProbabilitySet } from "@/lib/types";
 import { DataTable } from "@/components/tables";
 import { ColumnOption } from "@/components/tables";
 import { StatusDot } from "./StatusDot";
+import { TeamLogo } from "@/components/ui/team-logo";
 
 /**
  * Determine actual match outcome from score
@@ -83,6 +84,8 @@ interface MatchesTableProps {
   columnVisibility?: VisibilityState;
   /** Called when column visibility changes */
   onColumnVisibilityChange?: (visibility: VisibilityState) => void;
+  /** Function to get team logo URL by team name */
+  getLogoUrl?: (teamName: string) => string | null;
 }
 
 /**
@@ -118,6 +121,7 @@ export function MatchesTable({
   onRowClick,
   columnVisibility,
   onColumnVisibilityChange,
+  getLogoUrl,
 }: MatchesTableProps) {
   const columns: ColumnDef<MatchSummary>[] = useMemo(
     () => [
@@ -131,11 +135,25 @@ export function MatchesTable({
       {
         id: "match",
         header: "Match",
-        size: 200,
+        size: 220,
         cell: ({ row }) => (
-          <div className="flex flex-col leading-tight">
-            <span className="font-medium text-foreground truncate">{row.original.home}</span>
-            <span className="text-muted-foreground text-sm truncate">{row.original.away}</span>
+          <div className="flex flex-col gap-0.5 leading-tight">
+            <div className="flex items-center gap-1.5">
+              <TeamLogo
+                src={getLogoUrl?.(row.original.home) ?? null}
+                teamName={row.original.home}
+                size={16}
+              />
+              <span className="font-medium text-foreground truncate">{row.original.home}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <TeamLogo
+                src={getLogoUrl?.(row.original.away) ?? null}
+                teamName={row.original.away}
+                size={16}
+              />
+              <span className="text-muted-foreground text-sm truncate">{row.original.away}</span>
+            </div>
           </div>
         ),
         enableSorting: false,
@@ -259,7 +277,7 @@ export function MatchesTable({
         enableSorting: false,
       },
     ],
-    []
+    [getLogoUrl]
   );
 
   return (

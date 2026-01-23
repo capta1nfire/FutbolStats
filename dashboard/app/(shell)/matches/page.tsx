@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMatchesApi, useMatchApi, useMatch, useColumnVisibility, usePageSize } from "@/lib/hooks";
+import { useMatchesApi, useMatchApi, useMatch, useColumnVisibility, usePageSize, useTeamLogos } from "@/lib/hooks";
 import { MatchSummary, MatchFilters, MatchStatus, MATCH_STATUSES } from "@/lib/types";
 import { getMatchesMockSync } from "@/lib/mocks";
 import {
@@ -147,6 +147,9 @@ function MatchesPageContent() {
   // Pagination state with localStorage persistence
   const [currentPage, setCurrentPage] = useState(1);
   const { pageSize, setPageSize } = usePageSize("matches");
+
+  // Team logos for shields
+  const { getLogoUrl } = useTeamLogos();
 
   // Column visibility with localStorage persistence
   const {
@@ -420,6 +423,7 @@ function MatchesPageContent() {
           onRowClick={handleRowClick}
           columnVisibility={columnVisibility}
           onColumnVisibilityChange={setColumnVisibility}
+          getLogoUrl={getLogoUrl}
         />
 
         {/* Pagination */}

@@ -13,3 +13,4 @@ export * from "./use-column-visibility";
 export * from "./use-page-size";
 export * from "./use-ops-budget";
 export * from "./use-upcoming-matches";
+export * from "./use-team-logos";

@@ -7,6 +7,7 @@ import { DataTable, ColumnOption } from "@/components/tables";
 import { PredictionStatusBadge } from "./PredictionStatusBadge";
 import { ModelBadge } from "./ModelBadge";
 import { PickBadge } from "./PickBadge";
+import { TeamLogo } from "@/components/ui/team-logo";
 import { formatDistanceToNow } from "@/lib/utils";
 
 interface PredictionsTableProps {
@@ -18,6 +19,8 @@ interface PredictionsTableProps {
   onRowClick?: (prediction: PredictionRow) => void;
   columnVisibility?: VisibilityState;
   onColumnVisibilityChange?: (visibility: VisibilityState) => void;
+  /** Function to get team logo URL by team name */
+  getLogoUrl?: (teamName: string) => string | null;
 }
 
 /**
@@ -47,6 +50,7 @@ export function PredictionsTable({
   onRowClick,
   columnVisibility,
   onColumnVisibilityChange,
+  getLogoUrl,
 }: PredictionsTableProps) {
   const columns = useMemo<ColumnDef<PredictionRow>[]>(
     () => [
@@ -62,9 +66,25 @@ export function PredictionsTable({
         accessorKey: "matchLabel",
         header: "Match",
         cell: ({ row }) => (
-          <div>
-            <div className="text-sm font-medium text-foreground">
-              {row.original.matchLabel}
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-1.5">
+              <TeamLogo
+                src={getLogoUrl?.(row.original.home) ?? null}
+                teamName={row.original.home}
+                size={14}
+              />
+              <span className="text-sm font-medium text-foreground truncate">
+                {row.original.home}
+              </span>
+              <span className="text-muted-foreground text-xs">vs</span>
+              <TeamLogo
+                src={getLogoUrl?.(row.original.away) ?? null}
+                teamName={row.original.away}
+                size={14}
+              />
+              <span className="text-sm text-muted-foreground truncate">
+                {row.original.away}
+              </span>
             </div>
             <div className="text-xs text-muted-foreground">
               {row.original.leagueName}
@@ -139,7 +159,7 @@ export function PredictionsTable({
         enableSorting: true,
       },
     ],
-    []
+    [getLogoUrl]
   );
 
   return (
