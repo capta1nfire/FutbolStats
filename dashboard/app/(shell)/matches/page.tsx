@@ -198,7 +198,17 @@ function MatchesPageContent() {
   const mockMatches = useMemo(() => getMatchesMockSync(filters), [filters]);
   const matches = apiMatches ?? mockMatches;
 
-  const { data: selectedMatch } = useMatch(selectedMatchId);
+  // Find selected match from current list first (no extra fetch needed for basic info)
+  // Falls back to mock data if not in current page
+  const { data: mockSelectedMatch } = useMatch(selectedMatchId);
+  const selectedMatch = useMemo(() => {
+    if (!selectedMatchId) return null;
+    // First try to find in current list
+    const fromList = matches.find((m) => m.id === selectedMatchId);
+    if (fromList) return fromList;
+    // Fallback to mock data
+    return mockSelectedMatch ?? null;
+  }, [selectedMatchId, matches, mockSelectedMatch]);
 
   // Drawer is open when there's a selected match
   const drawerOpen = selectedMatchId !== null;

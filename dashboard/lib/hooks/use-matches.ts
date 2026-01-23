@@ -216,7 +216,7 @@ export function useMatches(filters?: MatchFilters) {
 }
 
 /**
- * Hook to fetch a single match by ID
+ * Hook to fetch a single match by ID (mock only, used as fallback)
  */
 export function useMatch(id: number | null) {
   return useQuery<MatchSummary | null, Error>({
