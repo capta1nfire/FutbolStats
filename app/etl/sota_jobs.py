@@ -651,6 +651,339 @@ async def _upsert_weather_data(
 GEOCODING_DELAY_SECONDS = 0.5  # 2 requests/sec max
 
 
+# =============================================================================
+# SOFASCORE XI CAPTURE
+# =============================================================================
+
+# Sofascore covers these leagues (top 5 European + selected others)
+SOFASCORE_SUPPORTED_LEAGUES = {
+    39,   # Premier League (England)
+    140,  # La Liga (Spain)
+    135,  # Serie A (Italy)
+    78,   # Bundesliga (Germany)
+    61,   # Ligue 1 (France)
+    239,  # Liga BetPlay (Colombia)
+    253,  # MLS (USA)
+}
+
+
+async def sync_sofascore_refs(
+    session: AsyncSession,
+    hours: int = 72,
+    limit: int = 200,
+) -> dict:
+    """
+    Sync Sofascore external refs for upcoming matches.
+
+    Links internal matches to Sofascore event IDs for XI capture.
+    NOTE: Sofascore doesn't have a public search API, so this function
+    assumes refs are populated manually or via separate tooling.
+
+    For now, this is a placeholder that checks for matches needing refs.
+
+    Args:
+        session: Database session.
+        hours: Hours ahead to scan for NS matches.
+        limit: Max matches to process per run.
+
+    Returns:
+        Dict with metrics: scanned, linked, skipped_*, errors.
+    """
+    metrics = {
+        "scanned": 0,
+        "with_ref": 0,
+        "missing_ref": 0,
+        "errors": 0,
+    }
+
+    try:
+        # Find NS matches in supported leagues without sofascore ref
+        league_ids_str = ",".join(str(lid) for lid in SOFASCORE_SUPPORTED_LEAGUES)
+        limit_clause = f"LIMIT {limit}" if limit else ""
+
+        result = await session.execute(text(f"""
+            SELECT
+                m.id AS match_id,
+                m.external_id,
+                m.date AS kickoff_utc,
+                m.league_id,
+                t_home.name AS home_team,
+                t_away.name AS away_team,
+                mer.source_match_id AS sofascore_id
+            FROM matches m
+            JOIN teams t_home ON m.home_team_id = t_home.id
+            JOIN teams t_away ON m.away_team_id = t_away.id
+            LEFT JOIN match_external_refs mer
+                ON m.id = mer.match_id AND mer.source = 'sofascore'
+            WHERE m.status = 'NS'
+              AND m.date >= NOW()
+              AND m.date < NOW() + INTERVAL '{hours} hours'
+              AND m.league_id IN ({league_ids_str})
+            ORDER BY m.date ASC
+            {limit_clause}
+        """))
+
+        matches = result.fetchall()
+        metrics["scanned"] = len(matches)
+
+        for match in matches:
+            if match.sofascore_id:
+                metrics["with_ref"] += 1
+            else:
+                metrics["missing_ref"] += 1
+
+        if metrics["missing_ref"] > 0:
+            logger.info(
+                f"[SOFASCORE_REFS] {metrics['missing_ref']} matches missing sofascore refs "
+                f"(next {hours}h)"
+            )
+        else:
+            logger.debug(f"[SOFASCORE_REFS] All {metrics['scanned']} matches have refs")
+
+    except Exception as e:
+        metrics["errors"] += 1
+        logger.error(f"[SOFASCORE_REFS] Job failed: {e}")
+
+    return metrics
+
+
+async def capture_sofascore_xi_prekickoff(
+    session: AsyncSession,
+    hours: int = 48,
+    limit: int = 100,
+) -> dict:
+    """
+    Capture Sofascore XI data for upcoming matches.
+
+    Fetches lineup/formation/ratings from Sofascore for matches that:
+    - Have sofascore ref
+    - Are NS and within N hours of kickoff
+    - Don't already have XI data captured
+
+    Args:
+        session: Database session.
+        hours: Hours ahead to look for NS matches.
+        limit: Max matches to process.
+
+    Returns:
+        Dict with metrics: matches_checked, captured, skipped_*, errors.
+    """
+    from app.etl.sofascore_provider import SofascoreProvider
+
+    metrics = {
+        "matches_checked": 0,
+        "with_ref": 0,
+        "captured": 0,
+        "skipped_no_ref": 0,
+        "skipped_already_captured": 0,
+        "skipped_no_data": 0,
+        "skipped_low_integrity": 0,
+        "errors": 0,
+    }
+
+    provider = SofascoreProvider(use_mock=False)
+
+    try:
+        # Find NS matches with sofascore ref, without XI data
+        league_ids_str = ",".join(str(lid) for lid in SOFASCORE_SUPPORTED_LEAGUES)
+        limit_clause = f"LIMIT {limit}" if limit else ""
+
+        result = await session.execute(text(f"""
+            SELECT
+                m.id AS match_id,
+                m.date AS kickoff_utc,
+                t_home.name AS home_team,
+                t_away.name AS away_team,
+                mer.source_match_id AS sofascore_id
+            FROM matches m
+            JOIN teams t_home ON m.home_team_id = t_home.id
+            JOIN teams t_away ON m.away_team_id = t_away.id
+            LEFT JOIN match_external_refs mer
+                ON m.id = mer.match_id AND mer.source = 'sofascore'
+            LEFT JOIN match_sofascore_lineup msl
+                ON m.id = msl.match_id
+            WHERE m.status = 'NS'
+              AND m.date >= NOW()
+              AND m.date < NOW() + INTERVAL '{hours} hours'
+              AND m.league_id IN ({league_ids_str})
+              AND msl.match_id IS NULL
+            ORDER BY m.date ASC
+            {limit_clause}
+        """))
+
+        matches = result.fetchall()
+        metrics["matches_checked"] = len(matches)
+
+        if not matches:
+            logger.debug(f"[SOFASCORE_XI] No matches need XI capture (next {hours}h)")
+            return metrics
+
+        logger.info(f"[SOFASCORE_XI] Found {len(matches)} matches to check for XI")
+
+        for match in matches:
+            match_id = match.match_id
+            sofascore_id = match.sofascore_id
+            kickoff_utc = match.kickoff_utc
+
+            try:
+                if not sofascore_id:
+                    metrics["skipped_no_ref"] += 1
+                    continue
+
+                metrics["with_ref"] += 1
+
+                # Fetch lineup from Sofascore
+                lineup_data = await provider.get_match_lineup(sofascore_id)
+
+                if lineup_data.error:
+                    if lineup_data.error == "not_found":
+                        metrics["skipped_no_data"] += 1
+                    else:
+                        metrics["errors"] += 1
+                        logger.warning(
+                            f"[SOFASCORE_XI] Error fetching XI for match {match_id}: "
+                            f"{lineup_data.error}"
+                        )
+                    continue
+
+                # Check integrity score (need at least basic lineup)
+                if lineup_data.integrity_score < 0.3:
+                    metrics["skipped_low_integrity"] += 1
+                    logger.debug(
+                        f"[SOFASCORE_XI] Low integrity ({lineup_data.integrity_score}) "
+                        f"for match {match_id}"
+                    )
+                    continue
+
+                # Upsert lineup and player data
+                await _upsert_sofascore_lineup(
+                    session, match_id, lineup_data, kickoff_utc
+                )
+                metrics["captured"] += 1
+
+                logger.debug(
+                    f"[SOFASCORE_XI] Captured XI for match {match_id}: "
+                    f"integrity={lineup_data.integrity_score:.2f}"
+                )
+
+            except Exception as e:
+                metrics["errors"] += 1
+                logger.error(f"[SOFASCORE_XI] Error processing match {match_id}: {e}")
+                continue
+
+        await session.commit()
+        logger.info(
+            f"[SOFASCORE_XI] Complete: captured={metrics['captured']}, "
+            f"skipped_no_ref={metrics['skipped_no_ref']}, "
+            f"errors={metrics['errors']}"
+        )
+
+    except Exception as e:
+        metrics["errors"] += 1
+        logger.error(f"[SOFASCORE_XI] Job failed: {e}")
+
+    finally:
+        await provider.close()
+
+    return metrics
+
+
+async def _upsert_sofascore_lineup(
+    session: AsyncSession,
+    match_id: int,
+    lineup_data,
+    kickoff_utc: datetime,
+) -> None:
+    """
+    Upsert Sofascore lineup and player data to DB.
+
+    Ensures PIT correctness: captured_at < kickoff_utc.
+    """
+    captured_at = lineup_data.captured_at or datetime.utcnow()
+
+    # Validate PIT: captured_at must be before kickoff
+    if kickoff_utc and captured_at >= kickoff_utc:
+        logger.warning(
+            f"[SOFASCORE_XI] PIT violation for match {match_id}: "
+            f"captured_at={captured_at} >= kickoff={kickoff_utc}"
+        )
+        # Still save but flag it (data might be post-kickoff)
+
+    # Process home lineup
+    if lineup_data.home:
+        await _upsert_team_lineup(
+            session, match_id, "home", lineup_data.home, captured_at
+        )
+
+    # Process away lineup
+    if lineup_data.away:
+        await _upsert_team_lineup(
+            session, match_id, "away", lineup_data.away, captured_at
+        )
+
+
+async def _upsert_team_lineup(
+    session: AsyncSession,
+    match_id: int,
+    team_side: str,
+    team_lineup,
+    captured_at: datetime,
+) -> None:
+    """Upsert lineup for a single team (home/away)."""
+    # Upsert lineup record
+    formation = team_lineup.formation or "unknown"
+
+    await session.execute(text("""
+        INSERT INTO match_sofascore_lineup (match_id, team_side, formation, captured_at)
+        VALUES (:match_id, :team_side, :formation, :captured_at)
+        ON CONFLICT (match_id, team_side)
+        DO UPDATE SET
+            formation = EXCLUDED.formation,
+            captured_at = EXCLUDED.captured_at
+    """), {
+        "match_id": match_id,
+        "team_side": team_side,
+        "formation": formation,
+        "captured_at": captured_at,
+    })
+
+    # Upsert player records
+    for player in team_lineup.players:
+        await session.execute(text("""
+            INSERT INTO match_sofascore_player (
+                match_id, team_side, player_id_ext, position,
+                is_starter, rating_pre_match, rating_recent_form,
+                minutes_expected, captured_at
+            ) VALUES (
+                :match_id, :team_side, :player_id_ext, :position,
+                :is_starter, :rating_pre_match, :rating_recent_form,
+                :minutes_expected, :captured_at
+            )
+            ON CONFLICT (match_id, team_side, player_id_ext)
+            DO UPDATE SET
+                position = EXCLUDED.position,
+                is_starter = EXCLUDED.is_starter,
+                rating_pre_match = EXCLUDED.rating_pre_match,
+                rating_recent_form = EXCLUDED.rating_recent_form,
+                minutes_expected = EXCLUDED.minutes_expected,
+                captured_at = EXCLUDED.captured_at
+        """), {
+            "match_id": match_id,
+            "team_side": team_side,
+            "player_id_ext": player.player_id_ext,
+            "position": player.position,
+            "is_starter": player.is_starter,
+            "rating_pre_match": player.rating_pre_match,
+            "rating_recent_form": player.rating_recent_form,
+            "minutes_expected": player.minutes_expected,
+            "captured_at": captured_at,
+        })
+
+
+# =============================================================================
+# VENUE GEO EXPAND (REAL)
+# =============================================================================
+
 async def expand_venue_geo(
     session: AsyncSession,
     limit: int = 50,

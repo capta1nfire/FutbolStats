@@ -1263,3 +1263,61 @@ class OpsAuditLog(SQLModel, table=True):
         default=None,
         description="Action duration in milliseconds"
     )
+
+
+# =============================================================================
+# SOTA SOFASCORE MODELS
+# =============================================================================
+
+
+class MatchSofascorePlayer(SQLModel, table=True):
+    """
+    Sofascore XI player snapshot per match (ARCHITECTURE_SOTA.md 1.3).
+
+    Stores pre-kickoff XI data including player ratings and positions.
+    Used for xi_* feature engineering with PIT (captured_at < kickoff).
+    """
+
+    __tablename__ = "match_sofascore_player"
+    __table_args__ = (
+        UniqueConstraint("match_id", "team_side", "player_id_ext", name="pk_sofascore_player"),
+    )
+
+    # Composite primary key fields
+    match_id: int = Field(foreign_key="matches.id", primary_key=True)
+    team_side: str = Field(max_length=10, primary_key=True, description="'home' or 'away'")
+    player_id_ext: str = Field(max_length=100, primary_key=True, description="Sofascore player ID")
+
+    # Player data
+    position: str = Field(max_length=20, description="GK/DEF/MID/FWD or sub-role")
+    is_starter: bool = Field(description="True if in starting XI")
+    rating_pre_match: Optional[float] = Field(default=None, description="Pre-match rating if available")
+    rating_recent_form: Optional[float] = Field(default=None, description="Recent form rating (rolling avg)")
+    minutes_expected: Optional[int] = Field(default=None, description="Expected minutes if available")
+
+    # Point-in-time tracking
+    captured_at: datetime = Field(default_factory=datetime.utcnow, description="When snapshot was captured (UTC)")
+
+
+class MatchSofascoreLineup(SQLModel, table=True):
+    """
+    Sofascore formation snapshot per match (ARCHITECTURE_SOTA.md 1.3).
+
+    Stores pre-kickoff team formation (e.g., 4-3-3, 4-2-3-1).
+    Used for formation_* features with PIT (captured_at < kickoff).
+    """
+
+    __tablename__ = "match_sofascore_lineup"
+    __table_args__ = (
+        UniqueConstraint("match_id", "team_side", name="pk_sofascore_lineup"),
+    )
+
+    # Composite primary key fields
+    match_id: int = Field(foreign_key="matches.id", primary_key=True)
+    team_side: str = Field(max_length=10, primary_key=True, description="'home' or 'away'")
+
+    # Formation data
+    formation: str = Field(max_length=20, description="Formation string, e.g., '4-3-3', '4-2-3-1'")
+
+    # Point-in-time tracking
+    captured_at: datetime = Field(default_factory=datetime.utcnow, description="When snapshot was captured (UTC)")

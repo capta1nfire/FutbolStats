@@ -1,12 +1,30 @@
-"""Feature engineering for match prediction."""
+"""Feature engineering for match prediction.
+
+This module implements the baseline features and SOTA extensions:
+- Baseline: rolling goals/shots/corners averages (API-Football)
+- SOTA Understat: xG rolling, justice regression
+- SOTA Weather/Bio: temperature, humidity, thermal shock, circadian disruption
+
+Point-in-time enforcement:
+- All features use only data with Match.date < t0 (kickoff)
+- Snapshot features (weather, understat) require captured_at < t0
+
+Imputations and flags:
+- When data is missing, impute with reasonable defaults and set *_missing=1
+- understat_missing: set if insufficient xG history
+- weather_missing: set if no valid weather snapshot
+- thermal_shock defaults to 0 if away team profile missing
+- circadian_disruption defaults to 0 if insufficient history
+"""
 
 import logging
-from datetime import datetime
+import math
+from datetime import datetime, timedelta
 from typing import Optional
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -15,6 +33,488 @@ from app.models import Match, Team
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+# ============================================================================
+# SOTA Constants
+# ============================================================================
+
+# Justice shrinkage constant (k in rho = n/(n+k))
+JUSTICE_SHRINKAGE_K = 10
+
+# Epsilon for sqrt in justice calculation
+JUSTICE_EPSILON = 0.01
+
+# Bio disruption weights
+BIO_CIRCADIAN_WEIGHT = 0.6
+BIO_TZ_WEIGHT = 0.4
+
+# Number of historical kickoffs to use for circadian baseline
+CIRCADIAN_HISTORY_MATCHES = 20
+
+# Sofascore XI position weights (per ARCHITECTURE_SOTA.md)
+# GK=1.0, DEF=0.9, MID=1.0, FWD=1.1
+XI_POSITION_WEIGHTS = {
+    "GK": 1.0,
+    "DEF": 0.9,
+    "MID": 1.0,
+    "FWD": 1.1,
+}
+
+
+# ============================================================================
+# SOTA Data Loading Helpers (point-in-time safe)
+# ============================================================================
+
+async def load_match_understat(
+    session: AsyncSession,
+    match_id: int,
+    t0: datetime,
+) -> Optional[dict]:
+    """
+    Load Understat xG data for a match, validating point-in-time.
+
+    Args:
+        session: Database session.
+        match_id: Match ID.
+        t0: Kickoff time (only use data with captured_at < t0).
+
+    Returns:
+        Dict with xg_home, xg_away, xpts_home, xpts_away or None if not available.
+    """
+    result = await session.execute(
+        text("""
+            SELECT xg_home, xg_away, xpts_home, xpts_away, captured_at
+            FROM match_understat_team
+            WHERE match_id = :match_id AND captured_at < :t0
+            ORDER BY captured_at DESC
+            LIMIT 1
+        """),
+        {"match_id": match_id, "t0": t0}
+    )
+    row = result.fetchone()
+    if row:
+        return {
+            "xg_home": row.xg_home,
+            "xg_away": row.xg_away,
+            "xpts_home": row.xpts_home,
+            "xpts_away": row.xpts_away,
+        }
+    return None
+
+
+async def load_match_weather(
+    session: AsyncSession,
+    match_id: int,
+    t0: datetime,
+    preferred_horizon: int = 24,
+) -> Optional[dict]:
+    """
+    Load weather data for a match, validating point-in-time.
+
+    Prefers the snapshot with forecast_horizon closest to preferred_horizon,
+    but only if captured_at < t0.
+
+    Args:
+        session: Database session.
+        match_id: Match ID.
+        t0: Kickoff time.
+        preferred_horizon: Preferred forecast horizon (default 24h).
+
+    Returns:
+        Dict with weather fields or None if not available.
+    """
+    # Get the snapshot with captured_at < t0, prefer horizon=24, then closest to t0
+    result = await session.execute(
+        text("""
+            SELECT temp_c, humidity, wind_ms, precip_mm, is_daylight,
+                   forecast_horizon_hours, captured_at
+            FROM match_weather
+            WHERE match_id = :match_id AND captured_at < :t0
+            ORDER BY
+                CASE WHEN forecast_horizon_hours = :horizon THEN 0 ELSE 1 END,
+                captured_at DESC
+            LIMIT 1
+        """),
+        {"match_id": match_id, "t0": t0, "horizon": preferred_horizon}
+    )
+    row = result.fetchone()
+    if row:
+        return {
+            "weather_temp_c": row.temp_c,
+            "weather_humidity": row.humidity,
+            "weather_wind_ms": row.wind_ms,
+            "weather_precip_mm": row.precip_mm,
+            "is_daylight": row.is_daylight,
+            "weather_forecast_horizon_hours": row.forecast_horizon_hours,
+        }
+    return None
+
+
+async def load_team_profile(
+    session: AsyncSession,
+    team_id: int,
+) -> Optional[dict]:
+    """
+    Load team home city profile (timezone, climate normals).
+
+    Args:
+        session: Database session.
+        team_id: Team ID.
+
+    Returns:
+        Dict with timezone and climate_normals_by_month or None.
+    """
+    result = await session.execute(
+        text("""
+            SELECT home_city, timezone, climate_normals_by_month
+            FROM team_home_city_profile
+            WHERE team_id = :team_id
+        """),
+        {"team_id": team_id}
+    )
+    row = result.fetchone()
+    if row:
+        return {
+            "home_city": row.home_city,
+            "timezone": row.timezone,
+            "climate_normals_by_month": row.climate_normals_by_month or {},
+        }
+    return None
+
+
+async def load_team_understat_history(
+    session: AsyncSession,
+    team_id: int,
+    before_date: datetime,
+    limit: int = 20,
+) -> list[dict]:
+    """
+    Load Understat xG history for a team's recent matches.
+
+    Only loads matches where:
+    - Team played (home or away)
+    - Match finished before before_date (the target match kickoff)
+    - Understat data captured before before_date (point-in-time safe for target match)
+
+    Note: Understat xG is post-match data, so captured_at will always be AFTER
+    the historical match ended. The PIT constraint is that the snapshot must
+    exist before the TARGET match kickoff (before_date), not before the
+    historical match kickoff.
+
+    Args:
+        session: Database session.
+        team_id: Team ID.
+        before_date: Target match kickoff (only use data captured before this).
+        limit: Max matches to return.
+
+    Returns:
+        List of dicts with match info + xG data.
+    """
+    result = await session.execute(
+        text("""
+            SELECT
+                m.id AS match_id,
+                m.date AS match_date,
+                m.home_team_id,
+                m.away_team_id,
+                m.home_goals,
+                m.away_goals,
+                m.match_weight,
+                mut.xg_home,
+                mut.xg_away,
+                mut.xpts_home,
+                mut.xpts_away
+            FROM matches m
+            JOIN match_understat_team mut ON mut.match_id = m.id
+            WHERE (m.home_team_id = :team_id OR m.away_team_id = :team_id)
+              AND m.status IN ('FT', 'AET', 'PEN')
+              AND m.date < :before_date
+              AND m.home_goals IS NOT NULL
+              AND m.tainted = FALSE
+              AND mut.captured_at < :before_date
+            ORDER BY m.date DESC
+            LIMIT :limit
+        """),
+        {"team_id": team_id, "before_date": before_date, "limit": limit}
+    )
+    rows = result.fetchall()
+    return [
+        {
+            "match_id": row.match_id,
+            "match_date": row.match_date,
+            "is_home": row.home_team_id == team_id,
+            "home_goals": row.home_goals,
+            "away_goals": row.away_goals,
+            "match_weight": row.match_weight or 1.0,
+            "xg_home": row.xg_home,
+            "xg_away": row.xg_away,
+            "xpts_home": row.xpts_home,
+            "xpts_away": row.xpts_away,
+        }
+        for row in rows
+    ]
+
+
+async def load_match_sofascore_xi(
+    session: AsyncSession,
+    match_id: int,
+    t0: datetime,
+) -> Optional[dict]:
+    """
+    Load Sofascore XI data for a match, validating point-in-time.
+
+    Returns lineup and player data for both teams if available.
+
+    Args:
+        session: Database session.
+        match_id: Match ID.
+        t0: Kickoff time (only use data with captured_at < t0).
+
+    Returns:
+        Dict with home/away lineup data or None if not available.
+    """
+    # Load lineups
+    lineup_result = await session.execute(
+        text("""
+            SELECT team_side, formation, captured_at
+            FROM match_sofascore_lineup
+            WHERE match_id = :match_id AND captured_at < :t0
+        """),
+        {"match_id": match_id, "t0": t0}
+    )
+    lineup_rows = lineup_result.fetchall()
+
+    if not lineup_rows:
+        return None
+
+    # Load players
+    player_result = await session.execute(
+        text("""
+            SELECT team_side, player_id_ext, position, is_starter,
+                   rating_pre_match, rating_recent_form, captured_at
+            FROM match_sofascore_player
+            WHERE match_id = :match_id AND captured_at < :t0
+        """),
+        {"match_id": match_id, "t0": t0}
+    )
+    player_rows = player_result.fetchall()
+
+    # Organize by team side
+    data = {
+        "home": {"formation": None, "captured_at": None, "players": []},
+        "away": {"formation": None, "captured_at": None, "players": []},
+    }
+
+    for row in lineup_rows:
+        side = row.team_side
+        if side in data:
+            data[side]["formation"] = row.formation
+            data[side]["captured_at"] = row.captured_at
+
+    for row in player_rows:
+        side = row.team_side
+        if side in data:
+            data[side]["players"].append({
+                "player_id_ext": row.player_id_ext,
+                "position": row.position,
+                "is_starter": row.is_starter,
+                "rating_pre_match": row.rating_pre_match,
+                "rating_recent_form": row.rating_recent_form,
+            })
+
+    # Validate we have at least some data
+    has_home = data["home"]["formation"] or data["home"]["players"]
+    has_away = data["away"]["formation"] or data["away"]["players"]
+
+    if not has_home and not has_away:
+        return None
+
+    return data
+
+
+def calculate_xi_features(
+    players: list[dict],
+    suffix: str,
+) -> dict:
+    """
+    Calculate XI features from player lineup data.
+
+    Features per FEATURE_DICTIONARY_SOTA.md (suffix convention):
+    - xi_weighted_{suffix}: Position-weighted average rating
+    - xi_p10_{suffix}, xi_p50_{suffix}, xi_p90_{suffix}: Percentiles
+    - xi_weaklink_{suffix}: Minimum rating (weakest starter)
+    - xi_std_{suffix}: Standard deviation of ratings
+
+    Args:
+        players: List of player dicts with position, is_starter, rating_*.
+        suffix: Feature suffix (home/away).
+
+    Returns:
+        Dict of XI features.
+    """
+    features = {}
+
+    # Filter to starters only
+    starters = [p for p in players if p.get("is_starter")]
+
+    # Get ratings (prefer pre_match, fallback to recent_form)
+    ratings = []
+    weighted_sum = 0.0
+    weight_sum = 0.0
+
+    for player in starters:
+        rating = player.get("rating_pre_match") or player.get("rating_recent_form")
+        if rating is not None and rating > 0:
+            ratings.append(rating)
+
+            # Get position weight
+            position = player.get("position", "MID")
+            pos_weight = XI_POSITION_WEIGHTS.get(position, 1.0)
+
+            weighted_sum += rating * pos_weight
+            weight_sum += pos_weight
+
+    # Calculate features (suffix convention per FEATURE_DICTIONARY_SOTA.md)
+    if ratings:
+        ratings_arr = np.array(ratings)
+
+        # Weighted average
+        if weight_sum > 0:
+            features[f"xi_weighted_{suffix}"] = round(weighted_sum / weight_sum, 3)
+        else:
+            features[f"xi_weighted_{suffix}"] = round(np.mean(ratings_arr), 3)
+
+        # Percentiles
+        features[f"xi_p10_{suffix}"] = round(np.percentile(ratings_arr, 10), 3)
+        features[f"xi_p50_{suffix}"] = round(np.percentile(ratings_arr, 50), 3)
+        features[f"xi_p90_{suffix}"] = round(np.percentile(ratings_arr, 90), 3)
+
+        # Weaklink (minimum)
+        features[f"xi_weaklink_{suffix}"] = round(np.min(ratings_arr), 3)
+
+        # Standard deviation
+        features[f"xi_std_{suffix}"] = round(np.std(ratings_arr), 3) if len(ratings_arr) > 1 else 0.0
+    else:
+        # No valid ratings - use defaults
+        features[f"xi_weighted_{suffix}"] = 6.5  # League average approximation
+        features[f"xi_p10_{suffix}"] = 6.0
+        features[f"xi_p50_{suffix}"] = 6.5
+        features[f"xi_p90_{suffix}"] = 7.0
+        features[f"xi_weaklink_{suffix}"] = 6.0
+        features[f"xi_std_{suffix}"] = 0.0
+
+    return features
+
+
+async def load_team_kickoff_history(
+    session: AsyncSession,
+    team_id: int,
+    before_date: datetime,
+    limit: int = CIRCADIAN_HISTORY_MATCHES,
+) -> list[datetime]:
+    """
+    Load historical kickoff times for a team (for circadian baseline).
+
+    Args:
+        session: Database session.
+        team_id: Team ID.
+        before_date: Only include matches before this date.
+        limit: Max matches.
+
+    Returns:
+        List of kickoff datetimes.
+    """
+    result = await session.execute(
+        text("""
+            SELECT m.date
+            FROM matches m
+            WHERE (m.home_team_id = :team_id OR m.away_team_id = :team_id)
+              AND m.status IN ('FT', 'AET', 'PEN')
+              AND m.date < :before_date
+            ORDER BY m.date DESC
+            LIMIT :limit
+        """),
+        {"team_id": team_id, "before_date": before_date, "limit": limit}
+    )
+    return [row.date for row in result.fetchall()]
+
+
+def calculate_circular_mean_hour(kickoffs: list[datetime]) -> Optional[float]:
+    """
+    Calculate circular mean of kickoff hours.
+
+    Uses circular statistics to handle wraparound (23:00 -> 01:00).
+
+    Args:
+        kickoffs: List of kickoff datetimes.
+
+    Returns:
+        Mean hour (0-24) or None if no kickoffs.
+    """
+    if not kickoffs:
+        return None
+
+    # Convert hours to radians (24h = 2π)
+    angles = [2 * math.pi * dt.hour / 24 for dt in kickoffs]
+
+    # Circular mean using unit vectors
+    x = sum(math.cos(a) for a in angles) / len(angles)
+    y = sum(math.sin(a) for a in angles) / len(angles)
+
+    # Convert back to hours
+    mean_angle = math.atan2(y, x)
+    if mean_angle < 0:
+        mean_angle += 2 * math.pi
+
+    return mean_angle * 24 / (2 * math.pi)
+
+
+def get_local_hour(dt: datetime, tz_name: Optional[str]) -> float:
+    """
+    Get local hour from UTC datetime and timezone name.
+
+    Args:
+        dt: Datetime in UTC.
+        tz_name: IANA timezone name (e.g., 'Europe/London').
+
+    Returns:
+        Local hour (0-24). Falls back to UTC hour if timezone unavailable.
+    """
+    if not tz_name:
+        return dt.hour
+
+    try:
+        import pytz
+        tz = pytz.timezone(tz_name)
+        local_dt = dt.astimezone(tz)
+        return local_dt.hour + local_dt.minute / 60
+    except Exception:
+        return dt.hour
+
+
+def get_tz_offset_hours(tz_name: Optional[str], reference_dt: datetime) -> float:
+    """
+    Get timezone offset in hours from UTC.
+
+    Args:
+        tz_name: IANA timezone name.
+        reference_dt: Reference datetime for DST calculation.
+
+    Returns:
+        Offset in hours (e.g., 1.0 for Europe/Paris in winter).
+    """
+    if not tz_name:
+        return 0.0
+
+    try:
+        import pytz
+        tz = pytz.timezone(tz_name)
+        offset = tz.utcoffset(reference_dt)
+        if offset:
+            return offset.total_seconds() / 3600
+        return 0.0
+    except Exception:
+        return 0.0
 
 
 class TeamMatchCache:
@@ -276,6 +776,354 @@ class FeatureEngineer:
             f"{prefix}_matches_played": len(matches),
         }
 
+    # ========================================================================
+    # SOTA Feature Methods: Understat (xG, Justice)
+    # ========================================================================
+
+    async def get_understat_features(
+        self,
+        match: Match,
+    ) -> dict:
+        """
+        Calculate Understat-based features for a match.
+
+        Features:
+        - home_xg_for_avg, home_xg_against_avg: Rolling xG averages for home team
+        - away_xg_for_avg, away_xg_against_avg: Rolling xG averages for away team
+        - xg_diff_avg: home_xg_for_avg - away_xg_for_avg
+        - xpts_diff_avg: Rolling xPTS difference (if available)
+        - home_justice_shrunk, away_justice_shrunk: Regression to mean indicator
+        - justice_diff: Difference in justice
+
+        Point-in-time: Only uses understat data with captured_at < match.date.
+        """
+        t0 = match.date
+        features = {}
+
+        # Load history for both teams
+        home_history = await load_team_understat_history(
+            self.session, match.home_team_id, t0, limit=self.rolling_window
+        )
+        away_history = await load_team_understat_history(
+            self.session, match.away_team_id, t0, limit=self.rolling_window
+        )
+
+        # Process home team
+        home_xg_for, home_xg_against, home_xpts = [], [], []
+        home_goals_total, home_xg_total = 0.0, 0.0
+        home_weights = []
+
+        for h in home_history:
+            days_since = (t0 - h["match_date"]).days
+            decay = self.calculate_time_decay(days_since, self.time_decay_lambda)
+            weight = h["match_weight"] * decay
+            home_weights.append(weight)
+
+            if h["is_home"]:
+                xg_for = h["xg_home"] or 0
+                xg_against = h["xg_away"] or 0
+                goals = h["home_goals"]
+                xpts = h["xpts_home"]
+            else:
+                xg_for = h["xg_away"] or 0
+                xg_against = h["xg_home"] or 0
+                goals = h["away_goals"]
+                xpts = h["xpts_away"]
+
+            home_xg_for.append(xg_for)
+            home_xg_against.append(xg_against)
+            home_goals_total += goals
+            home_xg_total += xg_for
+            if xpts is not None:
+                home_xpts.append(xpts)
+
+        # Process away team
+        away_xg_for, away_xg_against, away_xpts = [], [], []
+        away_goals_total, away_xg_total = 0.0, 0.0
+        away_weights = []
+
+        for h in away_history:
+            days_since = (t0 - h["match_date"]).days
+            decay = self.calculate_time_decay(days_since, self.time_decay_lambda)
+            weight = h["match_weight"] * decay
+            away_weights.append(weight)
+
+            if h["is_home"]:
+                xg_for = h["xg_home"] or 0
+                xg_against = h["xg_away"] or 0
+                goals = h["home_goals"]
+                xpts = h["xpts_home"]
+            else:
+                xg_for = h["xg_away"] or 0
+                xg_against = h["xg_home"] or 0
+                goals = h["away_goals"]
+                xpts = h["xpts_away"]
+
+            away_xg_for.append(xg_for)
+            away_xg_against.append(xg_against)
+            away_goals_total += goals
+            away_xg_total += xg_for
+            if xpts is not None:
+                away_xpts.append(xpts)
+
+        # Calculate weighted averages
+        features["home_xg_for_avg"] = round(
+            self._calculate_weighted_average(home_xg_for, home_weights), 3
+        )
+        features["home_xg_against_avg"] = round(
+            self._calculate_weighted_average(home_xg_against, home_weights), 3
+        )
+        features["away_xg_for_avg"] = round(
+            self._calculate_weighted_average(away_xg_for, away_weights), 3
+        )
+        features["away_xg_against_avg"] = round(
+            self._calculate_weighted_average(away_xg_against, away_weights), 3
+        )
+
+        # Derived: xg_diff_avg
+        features["xg_diff_avg"] = round(
+            features["home_xg_for_avg"] - features["away_xg_for_avg"], 3
+        )
+
+        # xPTS diff (if available)
+        home_xpts_avg = self._calculate_weighted_average(home_xpts, home_weights[:len(home_xpts)]) if home_xpts else 0
+        away_xpts_avg = self._calculate_weighted_average(away_xpts, away_weights[:len(away_xpts)]) if away_xpts else 0
+        features["xpts_diff_avg"] = round(home_xpts_avg - away_xpts_avg, 3)
+
+        # Justice calculation: (G - XG) / sqrt(XG + eps)
+        # Then shrinkage: rho = n / (n + k), justice_shrunk = rho * justice
+        n_home = len(home_history)
+        n_away = len(away_history)
+
+        if n_home > 0 and home_xg_total > 0:
+            justice_home = (home_goals_total - home_xg_total) / math.sqrt(home_xg_total + JUSTICE_EPSILON)
+            rho_home = n_home / (n_home + JUSTICE_SHRINKAGE_K)
+            features["home_justice_shrunk"] = round(rho_home * justice_home, 3)
+        else:
+            features["home_justice_shrunk"] = 0.0
+
+        if n_away > 0 and away_xg_total > 0:
+            justice_away = (away_goals_total - away_xg_total) / math.sqrt(away_xg_total + JUSTICE_EPSILON)
+            rho_away = n_away / (n_away + JUSTICE_SHRINKAGE_K)
+            features["away_justice_shrunk"] = round(rho_away * justice_away, 3)
+        else:
+            features["away_justice_shrunk"] = 0.0
+
+        features["justice_diff"] = round(
+            features["home_justice_shrunk"] - features["away_justice_shrunk"], 3
+        )
+
+        # Flags
+        features["understat_missing"] = 1 if (n_home == 0 or n_away == 0) else 0
+        features["understat_samples_home"] = n_home
+        features["understat_samples_away"] = n_away
+
+        return features
+
+    # ========================================================================
+    # SOTA Feature Methods: Weather + Bio-adaptability
+    # ========================================================================
+
+    async def get_weather_bio_features(
+        self,
+        match: Match,
+    ) -> dict:
+        """
+        Calculate weather and bio-adaptability features for a match.
+
+        Weather features:
+        - weather_temp_c, weather_humidity, weather_wind_ms, weather_precip_mm
+        - is_daylight, weather_forecast_horizon_hours, weather_missing
+
+        Bio features:
+        - thermal_shock: T_stadium - T_away_home_month_mean
+        - thermal_shock_abs: abs(thermal_shock)
+        - tz_shift: |tz_match - tz_away_base|
+        - circadian_disruption: distance to typical kickoff hour
+        - bio_disruption: weighted combination
+
+        Point-in-time: Only uses weather data with captured_at < match.date.
+        """
+        t0 = match.date
+        features = {}
+
+        # Load weather data
+        weather = await load_match_weather(self.session, match.id, t0)
+
+        if weather:
+            features["weather_temp_c"] = weather["weather_temp_c"]
+            features["weather_humidity"] = weather["weather_humidity"]
+            features["weather_wind_ms"] = weather["weather_wind_ms"]
+            features["weather_precip_mm"] = weather["weather_precip_mm"]
+            features["is_daylight"] = 1 if weather["is_daylight"] else 0
+            features["weather_forecast_horizon_hours"] = weather["weather_forecast_horizon_hours"]
+            features["weather_missing"] = 0
+        else:
+            # Impute defaults
+            features["weather_temp_c"] = 15.0  # Mild default
+            features["weather_humidity"] = 60.0
+            features["weather_wind_ms"] = 3.0
+            features["weather_precip_mm"] = 0.0
+            features["is_daylight"] = 1 if 6 <= t0.hour < 20 else 0
+            features["weather_forecast_horizon_hours"] = 24
+            features["weather_missing"] = 1
+
+        # Bio features: need away team profile
+        away_profile = await load_team_profile(self.session, match.away_team_id)
+
+        # Thermal shock: T_stadium - T_away_home_month_mean
+        if away_profile and away_profile["climate_normals_by_month"]:
+            month_key = f"{t0.month:02d}"
+            climate = away_profile["climate_normals_by_month"].get(month_key, {})
+            away_temp_mean = climate.get("temp_c_mean")
+            if away_temp_mean is not None:
+                features["thermal_shock"] = round(
+                    features["weather_temp_c"] - away_temp_mean, 2
+                )
+            else:
+                features["thermal_shock"] = 0.0
+        else:
+            features["thermal_shock"] = 0.0
+
+        features["thermal_shock_abs"] = abs(features["thermal_shock"])
+
+        # Timezone shift
+        match_profile = await load_team_profile(self.session, match.home_team_id)
+        match_tz = match_profile["timezone"] if match_profile else None
+        away_tz = away_profile["timezone"] if away_profile else None
+
+        if match_tz and away_tz:
+            match_offset = get_tz_offset_hours(match_tz, t0)
+            away_offset = get_tz_offset_hours(away_tz, t0)
+            features["tz_shift"] = abs(match_offset - away_offset)
+        else:
+            features["tz_shift"] = 0.0
+
+        # Circadian disruption
+        # Get away team's typical kickoff hour from history
+        kickoff_history = await load_team_kickoff_history(
+            self.session, match.away_team_id, t0
+        )
+        typical_hour = calculate_circular_mean_hour(kickoff_history)
+
+        if typical_hour is not None and away_tz:
+            # Get local hour of this match for away team
+            local_hour = get_local_hour(t0, away_tz)
+
+            # Circular distance (0-12 hours)
+            diff = abs(local_hour - typical_hour)
+            if diff > 12:
+                diff = 24 - diff
+
+            # Normalize to [0, 1]: 12h difference = 1.0
+            features["circadian_disruption"] = round(diff / 12, 3)
+        else:
+            features["circadian_disruption"] = 0.0
+
+        # Combined bio disruption
+        # bio_disruption = a*circadian + b*min(tz_shift,6)/6
+        features["bio_disruption"] = round(
+            BIO_CIRCADIAN_WEIGHT * features["circadian_disruption"]
+            + BIO_TZ_WEIGHT * min(features["tz_shift"], 6) / 6,
+            3
+        )
+
+        return features
+
+    # ========================================================================
+    # SOTA Feature Methods: Sofascore XI (lineup/ratings)
+    # ========================================================================
+
+    async def get_sofascore_xi_features(
+        self,
+        match: Match,
+    ) -> dict:
+        """
+        Calculate Sofascore XI features for a match.
+
+        Features (per FEATURE_DICTIONARY_SOTA.md):
+        - home_xi_weighted, away_xi_weighted: Position-weighted average rating
+        - xi_weighted_diff: home - away difference
+        - home_xi_p10, home_xi_p50, home_xi_p90: Percentiles (same for away)
+        - home_xi_weaklink, away_xi_weaklink: Minimum rating
+        - home_xi_std, away_xi_std: Standard deviation
+        - formation_home, formation_away: Formation strings
+        - xi_missing: Flag (0/1) if data unavailable
+        - xi_captured_horizon_minutes: Minutes before kickoff when captured
+
+        Point-in-time: Only uses data with captured_at < match.date.
+        """
+        t0 = match.date
+        features = {}
+
+        # Load XI data
+        xi_data = await load_match_sofascore_xi(self.session, match.id, t0)
+
+        if xi_data is None:
+            # No XI data - return defaults with missing flag
+            return self._get_xi_defaults()
+
+        # Calculate features for home team
+        home_players = xi_data["home"]["players"]
+        home_features = calculate_xi_features(home_players, "home")
+        features.update(home_features)
+
+        # Calculate features for away team
+        away_players = xi_data["away"]["players"]
+        away_features = calculate_xi_features(away_players, "away")
+        features.update(away_features)
+
+        # Derived: weighted diff (per FEATURE_DICTIONARY_SOTA.md)
+        features["xi_weighted_diff"] = round(
+            features["xi_weighted_home"] - features["xi_weighted_away"], 3
+        )
+
+        # Formations
+        features["formation_home"] = xi_data["home"]["formation"] or "unknown"
+        features["formation_away"] = xi_data["away"]["formation"] or "unknown"
+
+        # Calculate capture horizon (minutes before kickoff)
+        captured_at = xi_data["home"].get("captured_at") or xi_data["away"].get("captured_at")
+        if captured_at and t0:
+            horizon_seconds = (t0 - captured_at).total_seconds()
+            features["xi_captured_horizon_minutes"] = max(0, int(horizon_seconds / 60))
+        else:
+            features["xi_captured_horizon_minutes"] = 0
+
+        # Check data completeness
+        home_starters = [p for p in home_players if p.get("is_starter")]
+        away_starters = [p for p in away_players if p.get("is_starter")]
+
+        # Missing flag: set if we have <11 starters per side (incomplete XI)
+        if len(home_starters) < 11 or len(away_starters) < 11:
+            features["xi_missing"] = 1
+        else:
+            features["xi_missing"] = 0
+
+        return features
+
+    def _get_xi_defaults(self) -> dict:
+        """Return default XI features when data is missing."""
+        return {
+            "xi_weighted_home": 6.5,
+            "xi_p10_home": 6.0,
+            "xi_p50_home": 6.5,
+            "xi_p90_home": 7.0,
+            "xi_weaklink_home": 6.0,
+            "xi_std_home": 0.0,
+            "xi_weighted_away": 6.5,
+            "xi_p10_away": 6.0,
+            "xi_p50_away": 6.5,
+            "xi_p90_away": 7.0,
+            "xi_weaklink_away": 6.0,
+            "xi_std_away": 0.0,
+            "xi_weighted_diff": 0.0,
+            "formation_home": "unknown",
+            "formation_away": "unknown",
+            "xi_missing": 1,
+            "xi_captured_horizon_minutes": 0,
+        }
+
     async def get_match_features(self, match: Match) -> dict:
         """
         Calculate all features for a match.
@@ -330,6 +1178,59 @@ class FeatureEngineer:
         home_net = features["home_goals_scored_avg"] - features["home_goals_conceded_avg"]
         away_net = features["away_goals_scored_avg"] - features["away_goals_conceded_avg"]
         features["abs_strength_gap"] = abs(home_net - away_net)
+
+        # === SOTA Features: Understat (xG, Justice) ===
+        try:
+            understat_features = await self.get_understat_features(match)
+            features.update(understat_features)
+        except Exception as e:
+            logger.warning(f"Understat features failed for match {match.id}: {e}")
+            # Set defaults with missing flag
+            features.update({
+                "home_xg_for_avg": 0.0,
+                "home_xg_against_avg": 0.0,
+                "away_xg_for_avg": 0.0,
+                "away_xg_against_avg": 0.0,
+                "xg_diff_avg": 0.0,
+                "xpts_diff_avg": 0.0,
+                "home_justice_shrunk": 0.0,
+                "away_justice_shrunk": 0.0,
+                "justice_diff": 0.0,
+                "understat_missing": 1,
+                "understat_samples_home": 0,
+                "understat_samples_away": 0,
+            })
+
+        # === SOTA Features: Weather + Bio-adaptability ===
+        try:
+            weather_bio_features = await self.get_weather_bio_features(match)
+            features.update(weather_bio_features)
+        except Exception as e:
+            logger.warning(f"Weather/Bio features failed for match {match.id}: {e}")
+            # Set defaults with missing flag
+            features.update({
+                "weather_temp_c": 15.0,
+                "weather_humidity": 60.0,
+                "weather_wind_ms": 3.0,
+                "weather_precip_mm": 0.0,
+                "is_daylight": 1,
+                "weather_forecast_horizon_hours": 24,
+                "weather_missing": 1,
+                "thermal_shock": 0.0,
+                "thermal_shock_abs": 0.0,
+                "tz_shift": 0.0,
+                "circadian_disruption": 0.0,
+                "bio_disruption": 0.0,
+            })
+
+        # === SOTA Features: Sofascore XI (lineup/ratings) ===
+        try:
+            xi_features = await self.get_sofascore_xi_features(match)
+            features.update(xi_features)
+        except Exception as e:
+            logger.warning(f"Sofascore XI features failed for match {match.id}: {e}")
+            # Set defaults with missing flag
+            features.update(self._get_xi_defaults())
 
         return features
 
