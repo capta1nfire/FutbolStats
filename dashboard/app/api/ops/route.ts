@@ -65,6 +65,46 @@ function isRetryableError(error: unknown, response?: Response): boolean {
   return false;
 }
 
+/**
+ * Remove PII fields from ops response before sending to client.
+ * This ensures sensitive data from backend never reaches the browser.
+ *
+ * Response structure: { data: { budget: { account_email: "..." } } }
+ */
+function scrubPii(response: unknown): unknown {
+  if (typeof response !== "object" || response === null) {
+    return response;
+  }
+
+  const result = { ...response } as Record<string, unknown>;
+
+  // Handle nested data.budget.account_email
+  if (typeof result.data === "object" && result.data !== null) {
+    const data = { ...result.data } as Record<string, unknown>;
+
+    if (typeof data.budget === "object" && data.budget !== null) {
+      const budget = { ...data.budget } as Record<string, unknown>;
+      delete budget.account_email;
+      data.budget = budget;
+    }
+
+    result.data = data;
+  }
+
+  // Also handle root-level budget (in case structure changes)
+  if (
+    typeof result.budget === "object" &&
+    result.budget !== null &&
+    "account_email" in result.budget
+  ) {
+    const budget = { ...result.budget } as Record<string, unknown>;
+    delete budget.account_email;
+    result.budget = budget;
+  }
+
+  return result;
+}
+
 export async function GET() {
   const requestId = generateRequestId();
 
@@ -107,10 +147,11 @@ export async function GET() {
     try {
       const response = await fetchWithTimeout(url, fetchOptions, TIMEOUT_MS);
 
-      // Success - passthrough the response
+      // Success - scrub PII before responding
       if (response.ok) {
         const data = await response.json();
-        return NextResponse.json(data, {
+        const safeData = scrubPii(data);
+        return NextResponse.json(safeData, {
           status: 200,
           headers: {
             "Cache-Control": "no-store",
