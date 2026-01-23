@@ -1,7 +1,15 @@
 "use client";
 
-import { useOpsOverview, useUpcomingMatches } from "@/lib/hooks";
-import { mockApiBudget, mockUpcomingMatches } from "@/lib/mocks";
+import {
+  useOpsOverview,
+  useUpcomingMatches,
+  useActiveIncidentsApi,
+} from "@/lib/hooks";
+import {
+  mockApiBudget,
+  mockUpcomingMatches,
+  mockActiveIncidents,
+} from "@/lib/mocks";
 import {
   ApiBudgetCard,
   SentryHealthCard,
@@ -12,8 +20,9 @@ import {
   FastpathHealthTile,
   DiagnosticsTile,
   UpcomingMatchesList,
+  ActiveIncidentsList,
 } from "@/components/overview";
-import { AlertCircle, Calendar } from "lucide-react";
+import { AlertCircle, AlertTriangle, Calendar } from "lucide-react";
 import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -58,6 +67,13 @@ export default function OverviewPage() {
     isLoading: isUpcomingLoading,
   } = useUpcomingMatches();
 
+  // Fetch active incidents from real backend
+  const {
+    incidents: activeIncidents,
+    isDegraded: isIncidentsDegraded,
+    isLoading: isIncidentsLoading,
+  } = useActiveIncidentsApi();
+
   // Loading state
   if (isLoading) {
     return (
@@ -94,6 +110,9 @@ export default function OverviewPage() {
 
   // Use real upcoming matches with mock fallback
   const displayUpcomingMatches = upcomingMatches ?? mockUpcomingMatches;
+
+  // Use real active incidents with mock fallback
+  const displayActiveIncidents = activeIncidents ?? mockActiveIncidents;
 
   // Build statuses for overall rollup
   const overallStatuses = {
@@ -150,6 +169,30 @@ export default function OverviewPage() {
               ) : (
                 <UpcomingMatchesList
                   matches={displayUpcomingMatches.slice(0, 5)}
+                />
+              )}
+            </div>
+
+            {/* Active Incidents */}
+            <div className="pt-3 border-t border-border">
+              <div className="flex items-center gap-2 mb-2">
+                <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium text-foreground">
+                  Active Incidents
+                </span>
+                {isIncidentsDegraded && (
+                  <span className="text-[10px] text-yellow-400 bg-yellow-500/10 px-1.5 py-0.5 rounded">
+                    mock
+                  </span>
+                )}
+              </div>
+              {isIncidentsLoading ? (
+                <div className="flex items-center justify-center py-4">
+                  <Loader size="sm" />
+                </div>
+              ) : (
+                <ActiveIncidentsList
+                  incidents={displayActiveIncidents.slice(0, 5)}
                 />
               )}
             </div>

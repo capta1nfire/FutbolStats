@@ -257,6 +257,11 @@ export const mockHealthSummary = createHealthSummary("normal");
 export const mockUpcomingMatches = normalUpcoming;
 
 /**
+ * Exported mock active incidents for fallback usage
+ */
+export const mockActiveIncidents = normalIncidents;
+
+/**
  * Get overview data based on scenario
  */
 export async function getOverviewDataMock(): Promise<OverviewData> {
