@@ -1195,3 +1195,198 @@ export function parseOpsTelemetry(ops: OpsResponse): OpsTelemetry | null {
       : undefined,
   };
 }
+
+// ============================================================================
+// SOTA Enrichment Extraction (best-effort)
+// ============================================================================
+
+/**
+ * SOTA enrichment component status
+ */
+export type SotaEnrichmentStatus = "ok" | "warn" | "red" | "unavailable" | "pending";
+
+/**
+ * SOTA enrichment component keys
+ */
+export type SotaEnrichmentKey = "understat" | "weather" | "venue_geo" | "team_profiles" | "sofascore_xi";
+
+/**
+ * Normalized SOTA enrichment item (per component)
+ */
+export interface SotaEnrichmentNormalizedItem {
+  key: SotaEnrichmentKey;
+  status: SotaEnrichmentStatus;
+  coverage_pct: number;
+  with_data: number;
+  total: number;
+  staleness_hours: number | null;
+  latest_capture_at: string | null;
+  note: string | null;
+  error: string | null;
+  // Optional secondary KPIs for sofascore_xi
+  total_lineups?: number;
+  total_players?: number;
+}
+
+/**
+ * Normalized SOTA enrichment summary
+ */
+export interface SotaEnrichmentNormalized {
+  status: "ok" | "warn" | "red" | "unavailable";
+  generated_at: string | null;
+  items: SotaEnrichmentNormalizedItem[];
+}
+
+/**
+ * Normalize SOTA status from backend
+ */
+function normalizeSotaStatus(status: unknown): SotaEnrichmentStatus {
+  if (typeof status !== "string") return "unavailable";
+
+  const normalized = status.toLowerCase();
+  if (normalized === "ok" || normalized === "green") return "ok";
+  if (normalized === "warn" || normalized === "warning" || normalized === "yellow") return "warn";
+  if (normalized === "red" || normalized === "critical" || normalized === "error") return "red";
+  if (normalized === "pending") return "pending";
+
+  return "unavailable";
+}
+
+/**
+ * Normalize overall SOTA status
+ */
+function normalizeSotaOverallStatus(status: unknown): "ok" | "warn" | "red" | "unavailable" {
+  if (typeof status !== "string") return "unavailable";
+
+  const normalized = status.toLowerCase();
+  if (normalized === "ok" || normalized === "green") return "ok";
+  if (normalized === "warn" || normalized === "warning" || normalized === "yellow") return "warn";
+  if (normalized === "red" || normalized === "critical" || normalized === "error") return "red";
+
+  return "unavailable";
+}
+
+/**
+ * Extract sota_enrichment object from ops response
+ *
+ * Expected structure: { data: { sota_enrichment: {...} } }
+ */
+export function extractSotaEnrichment(ops: OpsResponse): unknown | null {
+  if (!isObject(ops)) return null;
+
+  const sota = getNestedValue(ops, "data", "sota_enrichment");
+  if (!isObject(sota)) return null;
+
+  return sota;
+}
+
+/**
+ * Normalize a single SOTA component
+ *
+ * Best-effort parsing with safe defaults
+ */
+function normalizeSotaComponent(
+  key: SotaEnrichmentKey,
+  raw: unknown
+): SotaEnrichmentNormalizedItem {
+  // Default safe item
+  const defaultItem: SotaEnrichmentNormalizedItem = {
+    key,
+    status: "unavailable",
+    coverage_pct: 0,
+    with_data: 0,
+    total: 0,
+    staleness_hours: null,
+    latest_capture_at: null,
+    note: null,
+    error: null,
+  };
+
+  if (!isObject(raw)) {
+    return { ...defaultItem, note: "No data available" };
+  }
+
+  // Check for pending status (e.g., tables not deployed yet)
+  const status = normalizeSotaStatus(raw.status);
+
+  // Extract common fields
+  const coverage_pct = typeof raw.coverage_pct === "number" ? raw.coverage_pct : 0;
+  const total = typeof raw.total === "number" ? raw.total : 0;
+  const with_data = typeof raw.with_data === "number" ? raw.with_data : 0;
+  const staleness_hours = typeof raw.staleness_hours === "number" ? raw.staleness_hours : null;
+  const latest_capture_at = typeof raw.latest_capture_at === "string" ? raw.latest_capture_at : null;
+  const note = typeof raw.note === "string" ? raw.note : null;
+  const error = typeof raw.error === "string" ? raw.error : null;
+
+  const item: SotaEnrichmentNormalizedItem = {
+    key,
+    status,
+    coverage_pct,
+    with_data,
+    total,
+    staleness_hours,
+    latest_capture_at,
+    note,
+    error,
+  };
+
+  // Handle sofascore_xi specific fields
+  if (key === "sofascore_xi") {
+    if (typeof raw.total_lineups === "number") {
+      item.total_lineups = raw.total_lineups;
+    }
+    if (typeof raw.total_players === "number") {
+      item.total_players = raw.total_players;
+    }
+  }
+
+  return item;
+}
+
+/**
+ * Normalize SOTA enrichment from raw backend data
+ *
+ * Handles:
+ * - Missing components (status = unavailable)
+ * - Pending components (tables not deployed)
+ * - All expected fields with safe defaults
+ */
+export function normalizeSotaEnrichment(raw: unknown): SotaEnrichmentNormalized | null {
+  if (!isObject(raw)) return null;
+
+  // Extract overall status and generated_at
+  const status = normalizeSotaOverallStatus(raw.status);
+  const generated_at = typeof raw.generated_at === "string" ? raw.generated_at : null;
+
+  // All component keys we expect
+  const componentKeys: SotaEnrichmentKey[] = [
+    "understat",
+    "weather",
+    "venue_geo",
+    "team_profiles",
+    "sofascore_xi",
+  ];
+
+  // Normalize each component
+  const items: SotaEnrichmentNormalizedItem[] = componentKeys.map((key) => {
+    const component = raw[key];
+    return normalizeSotaComponent(key, component);
+  });
+
+  return {
+    status,
+    generated_at,
+    items,
+  };
+}
+
+/**
+ * Combined extraction and normalization for SOTA enrichment
+ *
+ * Returns SotaEnrichmentNormalized if successful, null otherwise
+ */
+export function parseOpsSotaEnrichment(ops: OpsResponse): SotaEnrichmentNormalized | null {
+  const rawSota = extractSotaEnrichment(ops);
+  if (!rawSota) return null;
+  return normalizeSotaEnrichment(rawSota);
+}

@@ -11,3 +11,4 @@ export { PredictionsHealthTile } from "./PredictionsHealthTile";
 export { DiagnosticsTile } from "./DiagnosticsTile";
 export { OverallOpsTile } from "./OverallOpsTile";
 export { ProgressCard } from "./ProgressCard";
+export { SotaEnrichmentSection } from "./SotaEnrichmentSection";

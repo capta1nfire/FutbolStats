@@ -22,6 +22,7 @@ import {
   UpcomingMatchesList,
   ActiveIncidentsList,
   ProgressCard,
+  SotaEnrichmentSection,
 } from "@/components/overview";
 import { AlertCircle, AlertTriangle, Calendar } from "lucide-react";
 import { Loader } from "@/components/ui/loader";
@@ -51,6 +52,7 @@ export default function OverviewPage() {
     progress,
     pitActivity,
     movement,
+    sotaEnrichment,
     isBudgetDegraded,
     isSentryDegraded,
     isLlmCostDegraded,
@@ -60,6 +62,7 @@ export default function OverviewPage() {
     isProgressDegraded,
     isPitActivityDegraded,
     isMovementDegraded,
+    isSotaEnrichmentDegraded,
     isDegraded,
     isLoading,
     error,
@@ -252,6 +255,12 @@ export default function OverviewPage() {
             isProgressDegraded={isProgressDegraded}
             isPitActivityDegraded={isPitActivityDegraded}
             isMovementDegraded={isMovementDegraded}
+          />
+
+          {/* SOTA Enrichment Section */}
+          <SotaEnrichmentSection
+            data={sotaEnrichment}
+            isMockFallback={isSotaEnrichmentDegraded}
           />
         </div>
       </ScrollArea>
