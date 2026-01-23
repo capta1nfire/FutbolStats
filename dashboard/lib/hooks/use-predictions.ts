@@ -101,16 +101,7 @@ async function fetchPredictionsApi(
 }
 
 /**
- * Sync mock getter for fallback (avoids async in queryFn when already have data)
- */
-function getPredictionsMockSync(filters?: PredictionFilters): PredictionRow[] {
-  // getPredictionsMock returns a Promise, but we can call it and it resolves synchronously
-  // For true sync, we'd need to refactor mocks. For now, return empty and let query retry.
-  return [];
-}
-
-/**
- * Fetch predictions with optional filters - uses real API with mock fallback
+ * Fetch predictions with optional filters - uses mock data
  */
 export function usePredictions(filters?: PredictionFilters) {
   return useQuery<PredictionRow[], Error>({

@@ -119,7 +119,7 @@ function mapProbs(
 /**
  * Parse a single backend prediction to PredictionRow
  */
-function parsePrediction(item: BackendPrediction, index: number): PredictionRow {
+function parsePrediction(item: BackendPrediction): PredictionRow {
   return {
     id: item.match_id, // Use match_id as the row ID
     matchId: item.match_id,
@@ -137,19 +137,37 @@ function parsePrediction(item: BackendPrediction, index: number): PredictionRow 
 
 /**
  * Parse backend predictions response to PredictionRow[]
+ *
+ * Supports both response shapes:
+ * 1) { predictions: [...] }
+ * 2) { data: { predictions: [...] } }
  */
 export function parsePredictions(data: unknown): PredictionRow[] {
   if (!data || typeof data !== "object") {
     return [];
   }
 
-  const response = data as BackendPredictionsResponse;
+  const obj = data as Record<string, unknown>;
 
-  if (!Array.isArray(response.predictions)) {
-    return [];
+  // Try shape 1: { predictions: [...] }
+  if (Array.isArray(obj.predictions)) {
+    return obj.predictions.map((item) =>
+      parsePrediction(item as BackendPrediction)
+    );
   }
 
-  return response.predictions.map((item, index) => parsePrediction(item, index));
+  // Try shape 2: { data: { predictions: [...] } }
+  if (obj.data && typeof obj.data === "object") {
+    const nested = obj.data as Record<string, unknown>;
+    if (Array.isArray(nested.predictions)) {
+      return nested.predictions.map((item) =>
+        parsePrediction(item as BackendPrediction)
+      );
+    }
+  }
+
+  // Best-effort: no crash, return empty
+  return [];
 }
 
 /**

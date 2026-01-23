@@ -6,7 +6,6 @@ import {
   usePredictions,
   usePredictionsApi,
   usePrediction,
-  usePredictionCoverage,
   usePredictionCoverageFromData,
   useColumnVisibility,
   usePageSize,
@@ -51,10 +50,7 @@ function PredictionsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Available leagues for filter
-  const availableLeagues = useMemo(() => getPredictionLeaguesMock(), []);
-
-  // Parse URL state
+  // Parse URL state (non-league filters first)
   const selectedPredictionId = useMemo(
     () => parseNumericId(searchParams.get("id")),
     [searchParams]
@@ -67,16 +63,18 @@ function PredictionsPageContent() {
     () => parseArrayParam<ModelType>(searchParams, "model", MODEL_TYPES),
     [searchParams]
   );
-  const selectedLeagues = useMemo(
-    () => parseArrayParam<string>(searchParams, "league", availableLeagues),
-    [searchParams, availableLeagues]
-  );
   const selectedTimeRange = useMemo(
     () => parseSingleParam<PredictionTimeRange>(searchParams.get("range"), PREDICTION_TIME_RANGES),
     [searchParams]
   );
   const searchValue = useMemo(
     () => searchParams.get("q") ?? "",
+    [searchParams]
+  );
+
+  // Raw league param from URL (validated later against available leagues)
+  const leagueParamRaw = useMemo(
+    () => searchParams.getAll("league"),
     [searchParams]
   );
 
@@ -123,14 +121,14 @@ function PredictionsPageContent() {
     }
   }, [leftRailCollapsed]);
 
-  // Construct filters for query
-  const filters: PredictionFilters = useMemo(() => ({
+  // Construct filters for query (WITHOUT league - applied client-side after deriving available leagues)
+  const baseFilters: PredictionFilters = useMemo(() => ({
     status: selectedStatuses.length > 0 ? selectedStatuses : undefined,
     model: selectedModels.length > 0 ? selectedModels : undefined,
-    league: selectedLeagues.length > 0 ? selectedLeagues : undefined,
+    // league filter applied client-side below
     timeRange: selectedTimeRange || undefined,
     search: searchValue || undefined,
-  }), [selectedStatuses, selectedModels, selectedLeagues, selectedTimeRange, searchValue]);
+  }), [selectedStatuses, selectedModels, selectedTimeRange, searchValue]);
 
   // Fetch data from API with mock fallback
   const {
@@ -138,18 +136,40 @@ function PredictionsPageContent() {
     isLoading: isLoadingApi,
     error: apiError,
     refetch,
-  } = usePredictionsApi(filters);
+  } = usePredictionsApi(baseFilters);
 
   // Fallback to mock if API fails
   const {
     data: mockData,
     isLoading: isLoadingMock,
-  } = usePredictions(filters);
+  } = usePredictions(baseFilters);
 
-  // Use API data if available, otherwise mock
-  const predictions = apiData ?? mockData ?? [];
+  // Base predictions (before league filter) - memoized to avoid reference changes
+  const basePredictions = useMemo(
+    () => apiData ?? mockData ?? [],
+    [apiData, mockData]
+  );
   const isLoading = isLoadingApi || (apiError ? isLoadingMock : false);
   const error = apiError && !mockData ? apiError : null;
+
+  // Derive available leagues from real data, fallback to mock if empty
+  const availableLeagues = useMemo(() => {
+    const leagues = [...new Set(basePredictions.map((p) => p.leagueName))].sort();
+    return leagues.length > 0 ? leagues : getPredictionLeaguesMock();
+  }, [basePredictions]);
+
+  // Validate league params against available leagues
+  const selectedLeagues = useMemo(() => {
+    return leagueParamRaw.filter((l) => availableLeagues.includes(l));
+  }, [leagueParamRaw, availableLeagues]);
+
+  // Apply league filter client-side
+  const predictions = useMemo(() => {
+    if (selectedLeagues.length === 0) return basePredictions;
+    return basePredictions.filter((p) =>
+      selectedLeagues.some((l) => p.leagueName.toLowerCase().includes(l.toLowerCase()))
+    );
+  }, [basePredictions, selectedLeagues]);
 
   const {
     data: selectedPrediction,
