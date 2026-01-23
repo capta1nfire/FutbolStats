@@ -103,11 +103,6 @@ function IncidentsPageContent() {
     search: searchValue || undefined,
   }), [selectedStatuses, selectedSeverities, selectedTypes, searchValue]);
 
-  // Reset to page 1 when filters change
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [selectedStatuses, selectedSeverities, selectedTypes, searchValue]);
-
   // Fetch data from backend API
   const {
     incidents: apiIncidents,
@@ -182,6 +177,7 @@ function IncidentsPageContent() {
   const handleStatusChange = useCallback(
     (status: IncidentStatus, checked: boolean) => {
       const newStatuses = toggleArrayValue(selectedStatuses, status, checked);
+      setCurrentPage(1);
       router.replace(buildUrl({ status: newStatuses }), { scroll: false });
     },
     [selectedStatuses, router, buildUrl]
@@ -190,6 +186,7 @@ function IncidentsPageContent() {
   const handleSeverityChange = useCallback(
     (severity: IncidentSeverity, checked: boolean) => {
       const newSeverities = toggleArrayValue(selectedSeverities, severity, checked);
+      setCurrentPage(1);
       router.replace(buildUrl({ severity: newSeverities }), { scroll: false });
     },
     [selectedSeverities, router, buildUrl]
@@ -198,6 +195,7 @@ function IncidentsPageContent() {
   const handleTypeChange = useCallback(
     (type: IncidentType, checked: boolean) => {
       const newTypes = toggleArrayValue(selectedTypes, type, checked);
+      setCurrentPage(1);
       router.replace(buildUrl({ type: newTypes }), { scroll: false });
     },
     [selectedTypes, router, buildUrl]
@@ -205,6 +203,7 @@ function IncidentsPageContent() {
 
   const handleSearchChange = useCallback(
     (value: string) => {
+      setCurrentPage(1);
       router.replace(buildUrl({ q: value }), { scroll: false });
     },
     [router, buildUrl]

@@ -234,12 +234,7 @@ export function useIncidents(filters?: IncidentFilters) {
  * Synchronous mock getter for fallback (no delay)
  */
 export function getIncidentsMockSync(filters?: IncidentFilters): Incident[] {
-  // Import the mock data synchronously for fallback
-  // This mirrors the pattern from matches
-  const { getIncidentsMock } = require("@/lib/mocks");
-
   // Since we need sync data, we'll use the underlying data directly
-  // The mock function is async, so we need to access the raw data
   const normalDataset: Incident[] = [];
 
   // Generate deterministic incidents (same as mocks but sync)
