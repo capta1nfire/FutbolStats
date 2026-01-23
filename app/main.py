@@ -10388,6 +10388,535 @@ async def get_jobs_dashboard(
     }
 
 
+# -----------------------------------------------------------------------------
+# Dashboard Data Quality Endpoint (tabular checks for /data-quality page)
+# -----------------------------------------------------------------------------
+_data_quality_cache: dict[str, dict] = {}
+_DATA_QUALITY_CACHE_TTL = 45  # seconds (auditor: 30–60s)
+_data_quality_detail_cache: dict[str, dict] = {}
+_DATA_QUALITY_DETAIL_CACHE_TTL = 45  # seconds
+
+
+def _normalize_multi_param(values: list[str] | None) -> list[str]:
+    """
+    Normalize multi-select query params.
+    Supports repeated params (?status=a&status=b) and comma-separated (?status=a,b).
+    """
+    if not values:
+        return []
+    out: list[str] = []
+    for v in values:
+        if not v:
+            continue
+        parts = [p.strip() for p in v.split(",")] if "," in v else [v.strip()]
+        out.extend([p for p in parts if p])
+    # Deduplicate, preserve order
+    seen = set()
+    deduped = []
+    for v in out:
+        k = v.lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        deduped.append(v)
+    return deduped
+
+
+def _dq_status_from_count(
+    count: int | None,
+    *,
+    fail_if_gt: int = 0,
+    warn_if_gt: int = 0,
+) -> str:
+    """Map numeric check value to passing|warning|failing."""
+    if count is None:
+        return "warning"
+    if count > fail_if_gt:
+        return "failing"
+    if count > warn_if_gt:
+        return "warning"
+    return "passing"
+
+
+async def _build_data_quality_checks(session: AsyncSession) -> list[dict]:
+    """
+    Build a stable list of Data Quality checks.
+    Best-effort: if a single source fails, degrade that check (do not fail whole endpoint).
+    """
+    now_iso = datetime.utcnow().isoformat() + "Z"
+    checks: list[dict] = []
+
+    # Helper to append checks with consistent shape
+    def add_check(
+        *,
+        check_id: str,
+        name: str,
+        category: str,
+        status: str,
+        current_value,
+        threshold,
+        affected_count: int,
+        description: str | None,
+    ) -> None:
+        checks.append(
+            {
+                "id": check_id,
+                "name": name,
+                "category": category,
+                "status": status,
+                "last_run_at": now_iso,
+                "current_value": current_value,
+                "threshold": threshold,
+                "affected_count": affected_count,
+                "description": description,
+            }
+        )
+
+    # 1) Quarantined odds (24h) - should be 0
+    try:
+        res = await session.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM odds_history
+                WHERE quarantined = true
+                  AND recorded_at > NOW() - INTERVAL '24 hours'
+                """
+            )
+        )
+        quarantined_odds_24h = int(res.scalar() or 0)
+        add_check(
+            check_id="dq_quarantined_odds_24h",
+            name="Quarantined odds (24h)",
+            category="odds",
+            status=_dq_status_from_count(quarantined_odds_24h, fail_if_gt=0, warn_if_gt=0),
+            current_value=quarantined_odds_24h,
+            threshold=0,
+            affected_count=quarantined_odds_24h,
+            description="Odds snapshots flagged as quarantined in the last 24h (should be 0).",
+        )
+    except Exception as e:
+        add_check(
+            check_id="dq_quarantined_odds_24h",
+            name="Quarantined odds (24h)",
+            category="odds",
+            status="warning",
+            current_value=None,
+            threshold=0,
+            affected_count=0,
+            description=f"Degraded: could not query odds_history ({str(e)[:80]}).",
+        )
+
+    # 2) Tainted matches (7d) - should be 0
+    try:
+        res = await session.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM matches
+                WHERE tainted = true
+                  AND date > NOW() - INTERVAL '7 days'
+                """
+            )
+        )
+        tainted_matches_7d = int(res.scalar() or 0)
+        add_check(
+            check_id="dq_tainted_matches_7d",
+            name="Tainted matches (7d)",
+            category="consistency",
+            status=_dq_status_from_count(tainted_matches_7d, fail_if_gt=0, warn_if_gt=0),
+            current_value=tainted_matches_7d,
+            threshold=0,
+            affected_count=tainted_matches_7d,
+            description="Matches flagged as tainted in the last 7 days (should be 0).",
+        )
+    except Exception as e:
+        add_check(
+            check_id="dq_tainted_matches_7d",
+            name="Tainted matches (7d)",
+            category="consistency",
+            status="warning",
+            current_value=None,
+            threshold=0,
+            affected_count=0,
+            description=f"Degraded: could not query matches.tainted ({str(e)[:80]}).",
+        )
+
+    # 3) Unmapped teams (missing logo_url) - warning if > 0
+    try:
+        res = await session.execute(
+            text(
+                """
+                SELECT COUNT(DISTINCT t.id) FROM teams t
+                WHERE t.logo_url IS NULL
+                """
+            )
+        )
+        unmapped_teams = int(res.scalar() or 0)
+        add_check(
+            check_id="dq_unmapped_teams",
+            name="Unmapped teams (missing logo)",
+            category="completeness",
+            status=_dq_status_from_count(unmapped_teams, fail_if_gt=999999999, warn_if_gt=0),
+            current_value=unmapped_teams,
+            threshold=0,
+            affected_count=unmapped_teams,
+            description="Teams missing logo_url (proxy for incomplete mapping).",
+        )
+    except Exception as e:
+        add_check(
+            check_id="dq_unmapped_teams",
+            name="Unmapped teams (missing logo)",
+            category="completeness",
+            status="warning",
+            current_value=None,
+            threshold=0,
+            affected_count=0,
+            description=f"Degraded: could not query teams.logo_url ({str(e)[:80]}).",
+        )
+
+    # 4) Odds desync near-term (6h) - warning if > 0
+    try:
+        res = await session.execute(
+            text(
+                """
+                SELECT COUNT(DISTINCT m.id)
+                FROM matches m
+                JOIN odds_snapshots os ON os.match_id = m.id
+                WHERE m.status = 'NS'
+                  AND m.date BETWEEN NOW() AND NOW() + INTERVAL '6 hours'
+                  AND os.odds_freshness = 'live'
+                  AND os.snapshot_type = 'lineup_confirmed'
+                  AND os.snapshot_at >= NOW() - INTERVAL '120 minutes'
+                  AND (m.odds_home IS NULL OR m.odds_draw IS NULL OR m.odds_away IS NULL)
+                """
+            )
+        )
+        odds_desync_6h = int(res.scalar() or 0)
+        add_check(
+            check_id="dq_odds_desync_6h",
+            name="Odds desync (next 6h)",
+            category="freshness",
+            status=_dq_status_from_count(odds_desync_6h, fail_if_gt=999999999, warn_if_gt=0),
+            current_value=odds_desync_6h,
+            threshold=0,
+            affected_count=odds_desync_6h,
+            description="NS matches in next 6h with live lineup_confirmed snapshot but NULL odds in matches.",
+        )
+    except Exception as e:
+        add_check(
+            check_id="dq_odds_desync_6h",
+            name="Odds desync (next 6h)",
+            category="freshness",
+            status="warning",
+            current_value=None,
+            threshold=0,
+            affected_count=0,
+            description=f"Degraded: could not query odds_snapshots/matches odds fields ({str(e)[:80]}).",
+        )
+
+    # 5) Odds desync critical (90m) - failing if > 0
+    try:
+        res = await session.execute(
+            text(
+                """
+                SELECT COUNT(DISTINCT m.id)
+                FROM matches m
+                JOIN odds_snapshots os ON os.match_id = m.id
+                WHERE m.status = 'NS'
+                  AND m.date BETWEEN NOW() AND NOW() + INTERVAL '90 minutes'
+                  AND os.odds_freshness = 'live'
+                  AND os.snapshot_type = 'lineup_confirmed'
+                  AND os.snapshot_at >= NOW() - INTERVAL '120 minutes'
+                  AND (m.odds_home IS NULL OR m.odds_draw IS NULL OR m.odds_away IS NULL)
+                """
+            )
+        )
+        odds_desync_90m = int(res.scalar() or 0)
+        add_check(
+            check_id="dq_odds_desync_90m",
+            name="Odds desync (next 90m)",
+            category="odds",
+            status=_dq_status_from_count(odds_desync_90m, fail_if_gt=0, warn_if_gt=0),
+            current_value=odds_desync_90m,
+            threshold=0,
+            affected_count=odds_desync_90m,
+            description="CRITICAL: NS matches in next 90m missing odds despite recent live lineup_confirmed snapshot.",
+        )
+    except Exception as e:
+        add_check(
+            check_id="dq_odds_desync_90m",
+            name="Odds desync (next 90m)",
+            category="odds",
+            status="warning",
+            current_value=None,
+            threshold=0,
+            affected_count=0,
+            description=f"Degraded: could not query odds_snapshots/matches odds fields ({str(e)[:80]}).",
+        )
+
+    return checks
+
+
+@app.get("/dashboard/data_quality.json")
+async def dashboard_data_quality_json(
+    request: Request,
+    status: list[str] | None = Query(default=None),  # passing|warning|failing (multi)
+    category: list[str] | None = Query(default=None),  # coverage|consistency|completeness|freshness|odds (multi)
+    q: str | None = None,
+    page: int = 1,
+    limit: int = 50,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Data Quality checks (tabular) for dashboard /data-quality page.
+    Auth: X-Dashboard-Token header required.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    page = max(page, 1)
+    limit = min(max(limit, 1), 100)
+
+    status_filters = [s.lower() for s in _normalize_multi_param(status)]
+    category_filters = [c.lower() for c in _normalize_multi_param(category)]
+    q_norm = (q or "").strip().lower()
+
+    cache_key = f"dq:{','.join(status_filters) or '-'}:{','.join(category_filters) or '-'}:{q_norm or '-'}:{page}:{limit}"
+    now = time.time()
+
+    if cache_key in _data_quality_cache:
+        cached_entry = _data_quality_cache[cache_key]
+        age = now - cached_entry["timestamp"]
+        if age < _DATA_QUALITY_CACHE_TTL:
+            return {
+                "generated_at": cached_entry["generated_at"],
+                "cached": True,
+                "cache_age_seconds": round(age, 1),
+                "data": cached_entry["data"],
+            }
+
+    checks = await _build_data_quality_checks(session)
+
+    # Filter
+    filtered = []
+    for c in checks:
+        c_status = str(c.get("status") or "").lower()
+        c_cat = str(c.get("category") or "").lower()
+        if status_filters and c_status not in status_filters:
+            continue
+        if category_filters and c_cat not in category_filters:
+            continue
+        if q_norm:
+            hay = " ".join(
+                [
+                    str(c.get("id") or ""),
+                    str(c.get("name") or ""),
+                    str(c.get("description") or ""),
+                    str(c.get("category") or ""),
+                    str(c.get("status") or ""),
+                ]
+            ).lower()
+            if q_norm not in hay:
+                continue
+        filtered.append(c)
+
+    total = len(filtered)
+    pages = (total + limit - 1) // limit if limit > 0 else 1
+    start = (page - 1) * limit
+    end = start + limit
+    page_checks = filtered[start:end]
+
+    generated_at = datetime.utcnow().isoformat() + "Z"
+    response_data = {
+        "checks": page_checks,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": pages,
+    }
+
+    _data_quality_cache[cache_key] = {
+        "generated_at": generated_at,
+        "timestamp": now,
+        "data": response_data,
+    }
+    # Simple cache pruning
+    if len(_data_quality_cache) > 50:
+        oldest_key = min(_data_quality_cache.keys(), key=lambda k: _data_quality_cache[k]["timestamp"])
+        del _data_quality_cache[oldest_key]
+
+    return {
+        "generated_at": generated_at,
+        "cached": False,
+        "cache_age_seconds": 0,
+        "data": response_data,
+    }
+
+
+@app.get("/dashboard/data_quality/{check_id}.json")
+async def dashboard_data_quality_check_json(
+    check_id: str,
+    request: Request,
+    limit: int = 50,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Data Quality check detail endpoint.
+    Best-effort and no PII. Returns affected_items (limited) and empty history for now.
+    Auth: X-Dashboard-Token header required.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    limit = min(max(limit, 1), 100)
+    cache_key = f"dq_detail:{check_id}:{limit}"
+    now = time.time()
+
+    if cache_key in _data_quality_detail_cache:
+        cached_entry = _data_quality_detail_cache[cache_key]
+        age = now - cached_entry["timestamp"]
+        if age < _DATA_QUALITY_DETAIL_CACHE_TTL:
+            return {
+                "generated_at": cached_entry["generated_at"],
+                "cached": True,
+                "cache_age_seconds": round(age, 1),
+                "data": cached_entry["data"],
+            }
+
+    # Build current check list and locate the check
+    checks = await _build_data_quality_checks(session)
+    check = next((c for c in checks if str(c.get("id")) == check_id), None)
+    if not check:
+        raise HTTPException(status_code=404, detail="Unknown check_id")
+
+    affected_items: list[dict] = []
+
+    try:
+        if check_id == "dq_quarantined_odds_24h":
+            res = await session.execute(
+                text(
+                    """
+                    SELECT id, match_id, recorded_at, source
+                    FROM odds_history
+                    WHERE quarantined = true
+                      AND recorded_at > NOW() - INTERVAL '24 hours'
+                    ORDER BY recorded_at DESC
+                    LIMIT :limit
+                    """
+                ),
+                {"limit": limit},
+            )
+            affected_items = [
+                {
+                    "odds_history_id": int(r[0]),
+                    "match_id": int(r[1]) if r[1] is not None else None,
+                    "recorded_at": r[2].isoformat() + "Z" if r[2] else None,
+                    "source": r[3],
+                }
+                for r in res.fetchall()
+            ]
+
+        elif check_id == "dq_tainted_matches_7d":
+            res = await session.execute(
+                text(
+                    """
+                    SELECT id, date, league_id, status
+                    FROM matches
+                    WHERE tainted = true
+                      AND date > NOW() - INTERVAL '7 days'
+                    ORDER BY date DESC
+                    LIMIT :limit
+                    """
+                ),
+                {"limit": limit},
+            )
+            affected_items = [
+                {
+                    "match_id": int(r[0]),
+                    "date": r[1].isoformat() + "Z" if r[1] else None,
+                    "league_id": int(r[2]) if r[2] is not None else None,
+                    "status": r[3],
+                }
+                for r in res.fetchall()
+            ]
+
+        elif check_id == "dq_unmapped_teams":
+            res = await session.execute(
+                text(
+                    """
+                    SELECT id, name, country
+                    FROM teams
+                    WHERE logo_url IS NULL
+                    ORDER BY id ASC
+                    LIMIT :limit
+                    """
+                ),
+                {"limit": limit},
+            )
+            affected_items = [
+                {
+                    "team_id": int(r[0]),
+                    "name": r[1],
+                    "country": r[2],
+                }
+                for r in res.fetchall()
+            ]
+
+        elif check_id in ("dq_odds_desync_6h", "dq_odds_desync_90m"):
+            window = "6 hours" if check_id == "dq_odds_desync_6h" else "90 minutes"
+            res = await session.execute(
+                text(
+                    f"""
+                    SELECT DISTINCT m.id, m.date, m.league_id
+                    FROM matches m
+                    JOIN odds_snapshots os ON os.match_id = m.id
+                    WHERE m.status = 'NS'
+                      AND m.date BETWEEN NOW() AND NOW() + INTERVAL '{window}'
+                      AND os.odds_freshness = 'live'
+                      AND os.snapshot_type = 'lineup_confirmed'
+                      AND os.snapshot_at >= NOW() - INTERVAL '120 minutes'
+                      AND (m.odds_home IS NULL OR m.odds_draw IS NULL OR m.odds_away IS NULL)
+                    ORDER BY m.date ASC
+                    LIMIT :limit
+                    """
+                ),
+                {"limit": limit},
+            )
+            affected_items = [
+                {
+                    "match_id": int(r[0]),
+                    "kickoff_utc": r[1].isoformat() + "Z" if r[1] else None,
+                    "league_id": int(r[2]) if r[2] is not None else None,
+                }
+                for r in res.fetchall()
+            ]
+    except Exception as e:
+        # Best-effort: don't fail endpoint if affected_items query fails
+        affected_items = [{"error": f"degraded: {str(e)[:120]}"}]
+
+    generated_at = datetime.utcnow().isoformat() + "Z"
+    response_data = {
+        "check": check,
+        "affected_items": affected_items,
+        "history": [],  # Placeholder for future: time-series snapshots per check
+    }
+
+    _data_quality_detail_cache[cache_key] = {
+        "generated_at": generated_at,
+        "timestamp": now,
+        "data": response_data,
+    }
+    if len(_data_quality_detail_cache) > 50:
+        oldest_key = min(_data_quality_detail_cache.keys(), key=lambda k: _data_quality_detail_cache[k]["timestamp"])
+        del _data_quality_detail_cache[oldest_key]
+
+    return {
+        "generated_at": generated_at,
+        "cached": False,
+        "cache_age_seconds": 0,
+        "data": response_data,
+    }
+
+
 @app.get("/dashboard/ops/logs.json")
 async def ops_dashboard_logs_json(
     request: Request,
