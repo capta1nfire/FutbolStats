@@ -12725,6 +12725,86 @@ async def dashboard_audit_logs(
         }
 
 
+# =============================================================================
+# TEAM LOGOS ENDPOINT
+# =============================================================================
+_team_logos_cache: dict = {"data": None, "timestamp": 0}
+_TEAM_LOGOS_TTL = 3600  # 1 hour cache (logos rarely change)
+
+
+@app.get("/dashboard/team_logos.json")
+async def dashboard_team_logos(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Team logos map for Dashboard.
+
+    Auth: X-Dashboard-Token required.
+    TTL: 3600s (1 hour) cache - logos rarely change.
+
+    Returns a map of team_name -> logo_url for efficient frontend lookup.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    generated_at = datetime.utcnow().isoformat() + "Z"
+    now = time.time()
+    cache = _team_logos_cache
+
+    # Check cache
+    if cache["data"] and (now - cache["timestamp"]) < _TEAM_LOGOS_TTL:
+        return {
+            "generated_at": cache["data"]["generated_at"],
+            "cached": True,
+            "cache_age_seconds": int(now - cache["timestamp"]),
+            "teams": cache["data"]["teams"],
+            "count": cache["data"]["count"],
+        }
+
+    try:
+        # Fetch all teams with logos
+        result = await session.execute(
+            text("SELECT name, logo_url FROM teams WHERE logo_url IS NOT NULL ORDER BY name")
+        )
+        rows = result.fetchall()
+
+        # Build name -> logo_url map
+        teams_map = {}
+        for row in rows:
+            name, logo_url = row
+            if name and logo_url:
+                teams_map[name] = logo_url
+
+        # Update cache
+        cache["data"] = {
+            "generated_at": generated_at,
+            "teams": teams_map,
+            "count": len(teams_map),
+        }
+        cache["timestamp"] = now
+
+        return {
+            "generated_at": generated_at,
+            "cached": False,
+            "cache_age_seconds": 0,
+            "teams": teams_map,
+            "count": len(teams_map),
+        }
+
+    except Exception as e:
+        logger.error(f"[TEAM_LOGOS] Error fetching team logos: {e}", exc_info=True)
+        return {
+            "generated_at": generated_at,
+            "cached": False,
+            "cache_age_seconds": 0,
+            "teams": {},
+            "count": 0,
+            "status": "degraded",
+            "error": str(e)[:100],
+        }
+
+
 @app.get("/dashboard/ops/logs.json")
 async def ops_dashboard_logs_json(
     request: Request,
