@@ -14,9 +14,15 @@ import {
   UsersSection,
 } from "@/components/settings";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import { AlertTriangle, RefreshCw, Database } from "lucide-react";
 import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 /**
  * Settings Content Renderer
@@ -110,6 +116,7 @@ export default function SettingsPage() {
   const {
     isLoading,
     error,
+    isApiDegraded,
     refetch,
   } = useSettingsSummary();
 
@@ -124,8 +131,25 @@ export default function SettingsPage() {
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
         {/* Header */}
-        <div className="h-12 flex items-center px-6 border-b border-border">
+        <div className="h-12 flex items-center justify-between px-6 border-b border-border">
           <h1 className="text-lg font-semibold text-foreground">Settings</h1>
+          {isApiDegraded && !isLoading && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-yellow-500/10 border border-yellow-500/20">
+                    <Database className="h-3.5 w-3.5 text-yellow-400" />
+                    <span className="text-[10px] text-yellow-400 font-medium">
+                      mock
+                    </span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  <p>Using mock data - backend unavailable</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
         </div>
 
         {/* Content */}

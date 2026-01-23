@@ -7,6 +7,7 @@ export * from "./use-data-quality";
 export * from "./use-analytics";
 export * from "./use-audit";
 export * from "./use-settings";
+// Note: use-settings-api exports are available via use-settings (hybrid hooks)
 export * from "./use-predictions";
 export * from "./use-column-visibility";
 export * from "./use-page-size";
