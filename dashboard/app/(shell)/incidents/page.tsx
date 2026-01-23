@@ -2,7 +2,13 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useIncidents, useIncident, useColumnVisibility, usePageSize } from "@/lib/hooks";
+import {
+  useIncidentsApi,
+  useIncident,
+  useColumnVisibility,
+  usePageSize,
+  getIncidentsMockSync,
+} from "@/lib/hooks";
 import {
   Incident,
   IncidentStatus,
@@ -89,7 +95,7 @@ function IncidentsPageContent() {
     resetToDefault,
   } = useColumnVisibility("incidents", INCIDENTS_DEFAULT_VISIBILITY);
 
-  // Construct filters for query
+  // Construct filters for mock fallback
   const filters: IncidentFilters = useMemo(() => ({
     status: selectedStatuses.length > 0 ? selectedStatuses : undefined,
     severity: selectedSeverities.length > 0 ? selectedSeverities : undefined,
@@ -97,15 +103,42 @@ function IncidentsPageContent() {
     search: searchValue || undefined,
   }), [selectedStatuses, selectedSeverities, selectedTypes, searchValue]);
 
-  // Fetch data
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedStatuses, selectedSeverities, selectedTypes, searchValue]);
+
+  // Fetch data from backend API
   const {
-    data: incidents = [],
+    incidents: apiIncidents,
+    pagination,
     isLoading,
     error,
     refetch,
-  } = useIncidents(filters);
+  } = useIncidentsApi({
+    status: selectedStatuses.length > 0 ? selectedStatuses : undefined,
+    severity: selectedSeverities.length > 0 ? selectedSeverities : undefined,
+    // Backend uses different type values, so we don't pass frontend types directly
+    // The backend will return all types and we filter client-side if needed
+    q: searchValue || undefined,
+    page: currentPage,
+    limit: pageSize,
+  });
 
-  const { data: selectedIncident } = useIncident(selectedIncidentId);
+  // Use API data if available, fallback to mocks
+  const mockIncidents = useMemo(() => getIncidentsMockSync(filters), [filters]);
+  const incidents = apiIncidents ?? mockIncidents;
+
+  // Find selected incident from current list first
+  const { data: mockSelectedIncident } = useIncident(selectedIncidentId);
+  const selectedIncident = useMemo(() => {
+    if (!selectedIncidentId) return null;
+    // First try to find in current list
+    const fromList = incidents.find((i) => i.id === selectedIncidentId);
+    if (fromList) return fromList;
+    // Fallback to mock data
+    return mockSelectedIncident ?? null;
+  }, [selectedIncidentId, incidents, mockSelectedIncident]);
 
   // Drawer is open when there's a selected incident
   const drawerOpen = selectedIncidentId !== null;
@@ -244,7 +277,7 @@ function IncidentsPageContent() {
         {/* Pagination */}
         <Pagination
           currentPage={currentPage}
-          totalItems={incidents.length}
+          totalItems={pagination.total}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
           onPageSizeChange={setPageSize}
@@ -253,7 +286,7 @@ function IncidentsPageContent() {
 
       {/* Detail Drawer (inline on desktop, sheet on mobile) */}
       <IncidentDetailDrawer
-        incident={selectedIncident ?? null}
+        incident={selectedIncident}
         open={drawerOpen}
         onClose={handleCloseDrawer}
       />
