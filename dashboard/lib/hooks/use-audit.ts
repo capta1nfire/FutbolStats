@@ -1,7 +1,7 @@
 /**
  * Audit hooks using TanStack Query
  *
- * Supports both mock data and real API with fallback.
+ * Supports real API data from /dashboard/audit_logs.json with mock fallback.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -12,6 +12,7 @@ import {
   AuditEventType,
   AuditSeverity,
   AuditTimeRange,
+  AuditActorKind,
 } from "@/lib/types";
 import {
   getAuditEventsMock,
@@ -20,16 +21,19 @@ import {
   getAuditSeverityCountsMock,
 } from "@/lib/mocks";
 import {
-  parseOpsLogs,
-  extractLogsMetadata,
-  timeRangeToMinutes,
-  severityToLevel,
+  parseAuditEventsResponse,
   createEventDetail,
-  OpsLogsMetadata,
+  AuditEventsPagination,
+  AuditEventsMetadata,
 } from "@/lib/api/audit-logs";
 
+// ============================================================================
+// Legacy Mock Hooks (kept for backwards compatibility)
+// ============================================================================
+
 /**
- * Fetch all audit events with optional filters
+ * Fetch all audit events with optional filters (mock only)
+ * @deprecated Use useAuditEventsApi instead
  */
 export function useAuditEvents(filters?: AuditFilters) {
   return useQuery<AuditEventRow[]>({
@@ -39,7 +43,8 @@ export function useAuditEvents(filters?: AuditFilters) {
 }
 
 /**
- * Fetch a single audit event with full details
+ * Fetch a single audit event with full details (mock only)
+ * @deprecated Use useAuditEventDetail instead
  */
 export function useAuditEvent(id: number | null) {
   return useQuery<AuditEventDetail | null>({
@@ -64,152 +69,267 @@ export function useAuditSeverityCounts(): Record<AuditSeverity, number> {
 }
 
 // ============================================================================
-// Real API Hooks (with mock fallback)
+// Real API Hooks
 // ============================================================================
 
 /**
- * API filter params for ops logs
+ * Query params for audit events API
  */
-interface OpsLogsApiParams {
-  timeRange?: AuditTimeRange;
-  severity?: AuditSeverity; // Single severity for backend filter
+interface AuditEventsQueryParams {
+  type?: AuditEventType[];
+  severity?: AuditSeverity[];
+  actorKind?: AuditActorKind[];
+  q?: string;
+  range?: AuditTimeRange;
+  page?: number;
   limit?: number;
 }
 
 /**
- * Fetch ops logs from API
+ * Internal response from fetch
  */
-async function fetchOpsLogsApi(
-  params: OpsLogsApiParams
-): Promise<{ events: AuditEventRow[]; metadata: OpsLogsMetadata | null }> {
-  const queryParams = new URLSearchParams();
+interface AuditEventsData {
+  events: AuditEventRow[];
+  pagination: AuditEventsPagination;
+  metadata: AuditEventsMetadata;
+}
 
-  // Map timeRange to since_minutes
-  if (params.timeRange) {
-    queryParams.set("since_minutes", String(timeRangeToMinutes(params.timeRange)));
-  } else {
-    queryParams.set("since_minutes", "1440"); // Default 24h
+/**
+ * Result from useAuditEventsApi hook
+ */
+export interface UseAuditEventsApiResult {
+  events: AuditEventRow[];
+  pagination: AuditEventsPagination;
+  metadata: AuditEventsMetadata;
+  isLoading: boolean;
+  error: Error | null;
+  isDegraded: boolean;
+  refetch: () => void;
+}
+
+/**
+ * Build query string from params
+ */
+function buildAuditQueryString(params: AuditEventsQueryParams): string {
+  const searchParams = new URLSearchParams();
+
+  // Multi-value params
+  if (params.type && params.type.length > 0) {
+    for (const t of params.type) {
+      searchParams.append("type", t);
+    }
+  }
+  if (params.severity && params.severity.length > 0) {
+    for (const s of params.severity) {
+      searchParams.append("severity", s);
+    }
+  }
+  if (params.actorKind && params.actorKind.length > 0) {
+    for (const a of params.actorKind) {
+      searchParams.append("actor_kind", a);
+    }
   }
 
-  // Set limit
-  queryParams.set("limit", String(params.limit || 100));
+  // Single value params
+  if (params.q) searchParams.set("q", params.q);
+  if (params.range) searchParams.set("range", params.range);
+  if (params.page) searchParams.set("page", params.page.toString());
+  if (params.limit) searchParams.set("limit", params.limit.toString());
 
-  // Map severity to level
-  if (params.severity) {
-    queryParams.set("level", severityToLevel(params.severity));
-  }
+  const qs = searchParams.toString();
+  return qs ? `?${qs}` : "";
+}
 
-  const response = await fetch(`/api/audit-logs?${queryParams.toString()}`);
+/**
+ * Fetch audit events from proxy endpoint
+ */
+async function fetchAuditEvents(params: AuditEventsQueryParams): Promise<AuditEventsData> {
+  const queryString = buildAuditQueryString(params);
+  const response = await fetch(`/api/audit-logs${queryString}`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+    },
+  });
 
   if (!response.ok) {
     throw new Error(`API error: ${response.status}`);
   }
 
   const data = await response.json();
-  const events = parseOpsLogs(data);
-  const metadata = extractLogsMetadata(data);
+  const parsed = parseAuditEventsResponse(data);
 
-  return { events, metadata };
+  if (!parsed) {
+    throw new Error("Failed to parse audit events response");
+  }
+
+  return {
+    events: parsed.events,
+    pagination: parsed.pagination,
+    metadata: parsed.metadata,
+  };
 }
 
 /**
- * Fetch ops logs from real API with mock fallback
+ * Fetch audit events from real API with mock fallback
  *
- * Note: This fetches "Ops Logs" from backend, not a true audit trail.
- * Filters are applied as follows:
- * - timeRange -> since_minutes
- * - severity (single) -> level param
- * - type/actorKind/search -> client-side filtering (backend doesn't support)
+ * Features:
+ * - Server-side filtering (type, severity, actor_kind, q, range)
+ * - Real pagination (page, limit, total, pages)
+ * - isDegraded indicator for fallback state
+ * - Automatic mock fallback on API error
+ *
+ * Usage:
+ * ```tsx
+ * const {
+ *   events,
+ *   pagination,
+ *   isDegraded,
+ *   isLoading,
+ *   refetch,
+ * } = useAuditEventsApi({
+ *   type: ["job_run"],
+ *   severity: ["error"],
+ *   range: "24h",
+ *   page: 1,
+ *   limit: 50,
+ * });
+ * ```
  */
-export function useOpsLogsApi(filters?: AuditFilters, limit: number = 100) {
-  // Extract API-supported params
-  const apiParams: OpsLogsApiParams = {
-    timeRange: filters?.timeRange,
-    // Only pass single severity to API if exactly one is selected
-    severity: filters?.severity?.length === 1 ? filters.severity[0] : undefined,
+export function useAuditEventsApi(options?: {
+  type?: AuditEventType[];
+  severity?: AuditSeverity[];
+  actorKind?: AuditActorKind[];
+  q?: string;
+  range?: AuditTimeRange;
+  page?: number;
+  limit?: number;
+  enabled?: boolean;
+}): UseAuditEventsApiResult {
+  const {
+    type,
+    severity,
+    actorKind,
+    q,
+    range,
+    page = 1,
+    limit = 50,
+    enabled = true,
+  } = options || {};
+
+  const queryParams: AuditEventsQueryParams = {
+    type: type && type.length > 0 ? type : undefined,
+    severity: severity && severity.length > 0 ? severity : undefined,
+    actorKind: actorKind && actorKind.length > 0 ? actorKind : undefined,
+    q: q || undefined,
+    range: range || undefined,
+    page,
     limit,
   };
 
-  const apiQuery = useQuery<
-    { events: AuditEventRow[]; metadata: OpsLogsMetadata | null },
-    Error
-  >({
-    queryKey: ["audit", "ops-logs", "api", apiParams],
-    queryFn: () => fetchOpsLogsApi(apiParams),
-    staleTime: 30 * 1000, // 30 seconds
+  // Fetch from API
+  const apiQuery = useQuery<AuditEventsData, Error>({
+    queryKey: ["audit", "events", "api", queryParams],
+    queryFn: () => fetchAuditEvents(queryParams),
+    staleTime: 90_000, // 90 seconds (aligned with backend TTL)
     retry: 1,
+    enabled,
   });
+
+  // Build filters for mock fallback (client-side filtering)
+  const mockFilters: AuditFilters = {
+    type: type,
+    severity: severity,
+    actorKind: actorKind,
+    timeRange: range,
+    search: q,
+  };
 
   // Fallback to mock on error
-  const mockQuery = useQuery<AuditEventRow[]>({
-    queryKey: ["audit", "events", "mock", filters],
-    queryFn: () => getAuditEventsMock(filters),
-    enabled: apiQuery.isError,
+  const mockQuery = useQuery<AuditEventRow[], Error>({
+    queryKey: ["audit", "events", "mock", mockFilters],
+    queryFn: () => getAuditEventsMock(mockFilters),
+    enabled: apiQuery.isError && enabled,
   });
 
-  const isApiDegraded = apiQuery.isError;
-
-  // Get base data
-  let events = isApiDegraded
+  // Determine which data to use
+  const isDegraded = apiQuery.isError;
+  const events = isDegraded
     ? (mockQuery.data ?? [])
     : (apiQuery.data?.events ?? []);
-
-  // Apply client-side filters that backend doesn't support
-  if (!isApiDegraded && filters) {
-    // Filter by type (client-side)
-    if (filters.type && filters.type.length > 0) {
-      events = events.filter((e) => filters.type!.includes(e.type));
-    }
-
-    // Filter by severity (client-side if multiple selected)
-    if (filters.severity && filters.severity.length > 1) {
-      events = events.filter((e) => e.severity && filters.severity!.includes(e.severity));
-    }
-
-    // Filter by actorKind (client-side - all ops logs are "system")
-    if (filters.actorKind && filters.actorKind.length > 0) {
-      events = events.filter((e) => filters.actorKind!.includes(e.actor.kind));
-    }
-
-    // Search filter (client-side)
-    if (filters.search) {
-      const searchLower = filters.search.toLowerCase();
-      events = events.filter(
-        (e) =>
-          e.message.toLowerCase().includes(searchLower) ||
-          e.actor.name.toLowerCase().includes(searchLower)
-      );
-    }
-  }
-
-  const metadata = isApiDegraded ? null : (apiQuery.data?.metadata ?? null);
-  const isLoading = apiQuery.isLoading || (isApiDegraded && mockQuery.isLoading);
+  const pagination: AuditEventsPagination = isDegraded
+    ? { total: mockQuery.data?.length ?? 0, page: 1, limit: 50, pages: 1 }
+    : (apiQuery.data?.pagination ?? { total: 0, page: 1, limit: 50, pages: 1 });
+  const metadata: AuditEventsMetadata = isDegraded
+    ? { generatedAt: null, cached: false, cacheAgeSeconds: 0 }
+    : (apiQuery.data?.metadata ?? { generatedAt: null, cached: false, cacheAgeSeconds: 0 });
+  const isLoading = apiQuery.isLoading || (isDegraded && mockQuery.isLoading);
+  const error = isDegraded ? null : apiQuery.error; // Suppress if mock fallback works
 
   return {
-    data: events,
+    events,
+    pagination,
     metadata,
     isLoading,
-    error: isApiDegraded ? null : apiQuery.error,
-    isApiDegraded,
-    refetch: apiQuery.refetch,
+    error,
+    isDegraded,
+    refetch: () => apiQuery.refetch(),
   };
 }
 
 /**
  * Get event detail from row (for drawer)
- * Since ops logs don't have a detail endpoint, we create detail from row
+ * Since the list already contains all needed data, we create detail from row
  */
-export function useOpsLogDetail(event: AuditEventRow | null) {
-  // No API call needed - create detail from row data
+export function useAuditEventDetail(event: AuditEventRow | null) {
   const detail = event ? createEventDetail(event) : null;
 
   return {
     data: detail,
     isLoading: false,
     error: null,
-    isApiDegraded: false,
+    isDegraded: false,
   };
 }
 
+// ============================================================================
+// Legacy Exports (for backwards compatibility)
+// ============================================================================
+
+/**
+ * @deprecated Use useAuditEventsApi instead
+ */
+export function useOpsLogsApi(filters?: AuditFilters, limit: number = 100) {
+  const result = useAuditEventsApi({
+    type: filters?.type,
+    severity: filters?.severity,
+    actorKind: filters?.actorKind,
+    q: filters?.search,
+    range: filters?.timeRange,
+    limit,
+  });
+
+  return {
+    data: result.events,
+    metadata: result.metadata ? {
+      generatedAt: result.metadata.generatedAt || new Date().toISOString(),
+      limit: result.pagination.limit,
+      sinceMinutes: 0,
+      levelFilter: null,
+    } : null,
+    isLoading: result.isLoading,
+    error: result.error,
+    isApiDegraded: result.isDegraded,
+    refetch: result.refetch,
+  };
+}
+
+/**
+ * @deprecated Use useAuditEventDetail instead
+ */
+export function useOpsLogDetail(event: AuditEventRow | null) {
+  return useAuditEventDetail(event);
+}
+
 // Re-export types for convenience
-export type { OpsLogsMetadata };
+export type { AuditEventsPagination, AuditEventsMetadata };

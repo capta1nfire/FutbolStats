@@ -27,6 +27,13 @@ import {
   toggleArrayValue,
 } from "@/lib/url-state";
 import { Loader } from "@/components/ui/loader";
+import { Database } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 const BASE_PATH = "/data-quality";
 
@@ -212,6 +219,28 @@ function DataQualityPageContent() {
 
       {/* Main content: Telemetry + Table */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
+        {/* Header with mock indicator */}
+        <div className="h-12 flex items-center justify-between px-6 border-b border-border">
+          <h1 className="text-lg font-semibold text-foreground">Data Quality</h1>
+          {isChecksDegraded && !isLoading && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-yellow-500/10 border border-yellow-500/20">
+                    <Database className="h-3.5 w-3.5 text-yellow-400" />
+                    <span className="text-[10px] text-yellow-400 font-medium">
+                      mock
+                    </span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  <p>Using mock data - backend unavailable</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+        </div>
+
         {/* Telemetry Summary (real data from ops.json) */}
         <div className="p-4 border-b border-border">
           <TelemetrySummaryCard
@@ -220,15 +249,6 @@ function DataQualityPageContent() {
             isDegraded={isTelemetryDegraded}
           />
         </div>
-
-        {/* API status indicator - only show when degraded */}
-        {isChecksDegraded && (
-          <div className="px-4 py-2 bg-yellow-500/10 border-b border-yellow-500/30">
-            <span className="text-xs text-yellow-400">
-              Quality Checks (degraded - using cached data)
-            </span>
-          </div>
-        )}
 
         {/* Table */}
         <DataQualityTable

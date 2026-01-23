@@ -13,7 +13,7 @@ interface AnalyticsTableProps {
   isLoading?: boolean;
   error?: Error | null;
   onRetry?: () => void;
-  selectedReportId?: number | null;
+  selectedReportId?: number | string | null;
   onRowClick?: (report: AnalyticsReportRow) => void;
   columnVisibility?: VisibilityState;
   onColumnVisibilityChange?: (visibility: VisibilityState) => void;

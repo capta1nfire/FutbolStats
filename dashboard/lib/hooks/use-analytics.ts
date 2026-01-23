@@ -21,8 +21,11 @@ import {
 import {
   parseOpsHistory,
   parsePredictionsPerformance,
+  parseAnalyticsReportsResponse,
   OpsHistoryRollup,
   PredictionsPerformance,
+  AnalyticsReportsPagination,
+  AnalyticsReportsMetadata,
 } from "@/lib/api/analytics";
 
 /**
@@ -37,11 +40,14 @@ export function useAnalyticsReports(filters?: AnalyticsFilters) {
 
 /**
  * Fetch a single analytics report with full details
+ * Note: id is number | string to support both mock (number) and real backend (string)
  */
-export function useAnalyticsReport(id: number | null) {
+export function useAnalyticsReport(id: number | string | null) {
+  // For now, this still uses mock - convert string ID to number for mock compatibility
+  const numericId = typeof id === "string" ? parseInt(id, 10) || null : id;
   return useQuery<AnalyticsReportDetail | null>({
     queryKey: ["analytics", "report", id],
-    queryFn: () => (id ? getAnalyticsReportMock(id) : Promise.resolve(null)),
+    queryFn: () => (numericId ? getAnalyticsReportMock(numericId) : Promise.resolve(null)),
     enabled: id !== null,
   });
 }
@@ -180,5 +186,180 @@ export function usePredictionsPerformanceApi(windowDays: number = 7) {
   };
 }
 
+// ============================================================================
+// Analytics Reports API Hook
+// ============================================================================
+
+/**
+ * Query params for reports API
+ */
+interface AnalyticsReportsQueryParams {
+  type?: AnalyticsReportType;
+  q?: string;
+  page?: number;
+  limit?: number;
+}
+
+/**
+ * Internal response from fetch
+ */
+interface AnalyticsReportsData {
+  reports: AnalyticsReportRow[];
+  pagination: AnalyticsReportsPagination;
+  metadata: AnalyticsReportsMetadata;
+}
+
+/**
+ * Result from useAnalyticsReportsApi hook
+ */
+export interface UseAnalyticsReportsApiResult {
+  reports: AnalyticsReportRow[];
+  pagination: AnalyticsReportsPagination;
+  metadata: AnalyticsReportsMetadata;
+  isLoading: boolean;
+  error: Error | null;
+  isDegraded: boolean;
+  refetch: () => void;
+}
+
+/**
+ * Build query string from params
+ */
+function buildReportsQueryString(params: AnalyticsReportsQueryParams): string {
+  const searchParams = new URLSearchParams();
+
+  if (params.type) searchParams.set("type", params.type);
+  if (params.q) searchParams.set("q", params.q);
+  if (params.page) searchParams.set("page", params.page.toString());
+  if (params.limit) searchParams.set("limit", params.limit.toString());
+
+  const qs = searchParams.toString();
+  return qs ? `?${qs}` : "";
+}
+
+/**
+ * Fetch reports from proxy endpoint
+ */
+async function fetchAnalyticsReports(params: AnalyticsReportsQueryParams): Promise<AnalyticsReportsData> {
+  const queryString = buildReportsQueryString(params);
+  const response = await fetch(`/api/analytics/reports${queryString}`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const parsed = parseAnalyticsReportsResponse(data);
+
+  if (!parsed) {
+    throw new Error("Failed to parse analytics reports response");
+  }
+
+  return {
+    reports: parsed.reports,
+    pagination: parsed.pagination,
+    metadata: parsed.metadata,
+  };
+}
+
+/**
+ * Fetch analytics reports from real API with mock fallback
+ *
+ * Features:
+ * - Server-side filtering (type, q)
+ * - Real pagination (page, limit, total, pages)
+ * - isDegraded indicator for fallback state
+ * - Automatic mock fallback on API error
+ *
+ * Usage:
+ * ```tsx
+ * const {
+ *   reports,
+ *   pagination,
+ *   isDegraded,
+ *   isLoading,
+ *   refetch,
+ * } = useAnalyticsReportsApi({
+ *   type: "model_performance",
+ *   q: "accuracy",
+ *   page: 1,
+ *   limit: 50,
+ * });
+ * ```
+ */
+export function useAnalyticsReportsApi(options?: {
+  type?: AnalyticsReportType;
+  q?: string;
+  page?: number;
+  limit?: number;
+  enabled?: boolean;
+}): UseAnalyticsReportsApiResult {
+  const {
+    type,
+    q,
+    page = 1,
+    limit = 50,
+    enabled = true,
+  } = options || {};
+
+  const queryParams: AnalyticsReportsQueryParams = {
+    type: type || undefined,
+    q: q || undefined,
+    page,
+    limit,
+  };
+
+  // Fetch from API
+  const apiQuery = useQuery<AnalyticsReportsData, Error>({
+    queryKey: ["analytics", "reports", "api", queryParams],
+    queryFn: () => fetchAnalyticsReports(queryParams),
+    staleTime: 30_000, // 30 seconds
+    retry: 1,
+    enabled,
+  });
+
+  // Build filters for mock fallback (client-side filtering)
+  const mockFilters: AnalyticsFilters = {
+    type: type ? [type] : undefined,
+    search: q,
+  };
+
+  // Fallback to mock on error
+  const mockQuery = useQuery<AnalyticsReportRow[], Error>({
+    queryKey: ["analytics", "reports", "mock", mockFilters],
+    queryFn: () => getAnalyticsReportsMock(mockFilters),
+    enabled: apiQuery.isError && enabled,
+  });
+
+  // Determine which data to use
+  const isDegraded = apiQuery.isError;
+  const reports = isDegraded
+    ? (mockQuery.data ?? [])
+    : (apiQuery.data?.reports ?? []);
+  const pagination: AnalyticsReportsPagination = isDegraded
+    ? { total: mockQuery.data?.length ?? 0, page: 1, limit: 50, pages: 1 }
+    : (apiQuery.data?.pagination ?? { total: 0, page: 1, limit: 50, pages: 1 });
+  const metadata: AnalyticsReportsMetadata = isDegraded
+    ? { generatedAt: null, cached: false, cacheAgeSeconds: 0 }
+    : (apiQuery.data?.metadata ?? { generatedAt: null, cached: false, cacheAgeSeconds: 0 });
+  const isLoading = apiQuery.isLoading || (isDegraded && mockQuery.isLoading);
+  const error = isDegraded ? null : apiQuery.error; // Suppress if mock fallback works
+
+  return {
+    reports,
+    pagination,
+    metadata,
+    isLoading,
+    error,
+    isDegraded,
+    refetch: () => apiQuery.refetch(),
+  };
+}
+
 // Re-export types for convenience
-export type { OpsHistoryRollup, PredictionsPerformance };
+export type { OpsHistoryRollup, PredictionsPerformance, AnalyticsReportsPagination, AnalyticsReportsMetadata };

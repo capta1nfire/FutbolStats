@@ -1,9 +1,9 @@
 "use client";
 
-import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
+import { Suspense, useState, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  useAnalyticsReports,
+  useAnalyticsReportsApi,
   useAnalyticsReport,
   useColumnVisibility,
   usePageSize,
@@ -13,7 +13,6 @@ import {
 import {
   AnalyticsReportRow,
   AnalyticsReportType,
-  AnalyticsFilters,
   ANALYTICS_REPORT_TYPES,
 } from "@/lib/types";
 import {
@@ -27,12 +26,19 @@ import {
 } from "@/components/analytics";
 import { CustomizeColumnsPanel, Pagination } from "@/components/tables";
 import {
-  parseNumericId,
+  parseStringId,
   parseArrayParam,
   buildSearchParams,
   toggleArrayValue,
 } from "@/lib/url-state";
 import { Loader } from "@/components/ui/loader";
+import { Database } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 const BASE_PATH = "/analytics";
 
@@ -45,9 +51,9 @@ function AnalyticsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Parse URL state
+  // Parse URL state - ID is string for backend compatibility (e.g., "model_perf_14d_20")
   const selectedReportId = useMemo(
-    () => parseNumericId(searchParams.get("id")),
+    () => parseStringId(searchParams.get("id")),
     [searchParams]
   );
   const selectedTypes = useMemo(
@@ -59,16 +65,7 @@ function AnalyticsPageContent() {
     [searchParams]
   );
 
-  // Normalize URL if id param is invalid
-  const selectedIdParam = searchParams.get("id");
-  useEffect(() => {
-    if (selectedIdParam && selectedReportId === null) {
-      const params = new URLSearchParams(searchParams.toString());
-      params.delete("id");
-      const search = params.toString();
-      router.replace(`${BASE_PATH}${search ? `?${search}` : ""}`, { scroll: false });
-    }
-  }, [selectedIdParam, selectedReportId, router, searchParams]);
+  // Note: No URL normalization needed for string IDs - parseStringId accepts any non-empty string
 
   // UI state (non-URL)
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
@@ -102,19 +99,20 @@ function AnalyticsPageContent() {
     }
   }, [leftRailCollapsed]);
 
-  // Construct filters for query
-  const filters: AnalyticsFilters = useMemo(() => ({
-    type: selectedTypes.length > 0 ? selectedTypes : undefined,
-    search: searchValue || undefined,
-  }), [selectedTypes, searchValue]);
-
-  // Fetch data
+  // Fetch reports from API with server-side filtering and real pagination
   const {
-    data: reports = [],
+    reports,
+    pagination,
     isLoading,
     error,
+    isDegraded: isReportsDegraded,
     refetch,
-  } = useAnalyticsReports(filters);
+  } = useAnalyticsReportsApi({
+    type: selectedTypes.length > 0 ? selectedTypes[0] : undefined, // API supports single type filter
+    q: searchValue || undefined,
+    page: currentPage,
+    limit: pageSize,
+  });
 
   const {
     data: selectedReport,
@@ -138,9 +136,10 @@ function AnalyticsPageContent() {
   const drawerOpen = selectedReportId !== null;
 
   // Build URL with current filters
+  // Note: id is string for backend compatibility
   const buildUrl = useCallback(
     (overrides: {
-      id?: number | null;
+      id?: number | string | null;
       type?: AnalyticsReportType[];
       q?: string;
     }) => {
@@ -168,10 +167,11 @@ function AnalyticsPageContent() {
     router.replace(buildUrl({ id: null }), { scroll: false });
   }, [router, buildUrl]);
 
-  // Handle filter changes
+  // Handle filter changes - reset to page 1 when filters change
   const handleTypeChange = useCallback(
     (type: AnalyticsReportType, checked: boolean) => {
       const newTypes = toggleArrayValue(selectedTypes, type, checked);
+      setCurrentPage(1);
       router.replace(buildUrl({ type: newTypes }), { scroll: false });
     },
     [selectedTypes, router, buildUrl]
@@ -179,10 +179,16 @@ function AnalyticsPageContent() {
 
   const handleSearchChange = useCallback(
     (value: string) => {
+      setCurrentPage(1);
       router.replace(buildUrl({ q: value }), { scroll: false });
     },
     [router, buildUrl]
   );
+
+  // Handle page change
+  const handlePageChange = useCallback((page: number) => {
+    setCurrentPage(page);
+  }, []);
 
   return (
     <div className="h-full flex overflow-hidden relative">
@@ -212,6 +218,28 @@ function AnalyticsPageContent() {
 
       {/* Main content: Summary Cards + Table */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
+        {/* Header with mock indicator */}
+        <div className="h-12 flex items-center justify-between px-6 border-b border-border">
+          <h1 className="text-lg font-semibold text-foreground">Analytics</h1>
+          {isReportsDegraded && !isLoading && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-yellow-500/10 border border-yellow-500/20">
+                    <Database className="h-3.5 w-3.5 text-yellow-400" />
+                    <span className="text-[10px] text-yellow-400 font-medium">
+                      mock
+                    </span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  <p>Using mock data - backend unavailable</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+        </div>
+
         {/* Real Ops Data Summary Cards */}
         <div className="p-4 border-b border-border space-y-4">
           <OpsHistorySummary
@@ -238,12 +266,12 @@ function AnalyticsPageContent() {
           onColumnVisibilityChange={setColumnVisibility}
         />
 
-        {/* Pagination */}
+        {/* Pagination - using real total from backend */}
         <Pagination
           currentPage={currentPage}
-          totalItems={reports.length}
+          totalItems={pagination.total}
           pageSize={pageSize}
-          onPageChange={setCurrentPage}
+          onPageChange={handlePageChange}
           onPageSizeChange={setPageSize}
         />
       </div>

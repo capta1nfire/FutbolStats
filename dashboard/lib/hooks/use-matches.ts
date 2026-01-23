@@ -44,6 +44,7 @@ interface MatchesQueryParams {
   status?: string;
   hours?: number;
   league_id?: number;
+  match_id?: number;
   page?: number;
   limit?: number;
 }
@@ -69,6 +70,7 @@ function buildQueryString(params: MatchesQueryParams): string {
   if (params.status) searchParams.set("status", params.status);
   if (params.hours) searchParams.set("hours", params.hours.toString());
   if (params.league_id) searchParams.set("league_id", params.league_id.toString());
+  if (params.match_id) searchParams.set("match_id", params.match_id.toString());
   if (params.page) searchParams.set("page", params.page.toString());
   if (params.limit) searchParams.set("limit", params.limit.toString());
 
@@ -224,4 +226,62 @@ export function useMatch(id: number | null) {
     queryFn: () => (id ? getMatchByIdMock(id) : null),
     enabled: id !== null,
   });
+}
+
+/**
+ * Hook to fetch a single match by ID from backend via /api/matches proxy.
+ * Uses backend support for match_id query param (deep-link support).
+ */
+export function useMatchApi(id: number | null): {
+  match: MatchSummary | null;
+  isDegraded: boolean;
+  requestId?: string;
+  isLoading: boolean;
+  error: Error | null;
+  refetch: () => void;
+} {
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ["match-api", id],
+    queryFn: async () => {
+      if (id === null) {
+        return { match: null as MatchSummary | null, requestId: undefined as string | undefined };
+      }
+
+      // Fetch only by match_id. Backend ignores other filters when match_id is provided.
+      const response = await fetch(`/api/matches?match_id=${id}&limit=1`, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      });
+
+      const requestId = response.headers.get("x-request-id") || undefined;
+
+      if (!response.ok) {
+        return { match: null as MatchSummary | null, requestId };
+      }
+
+      const raw = await response.json();
+      const matches = parseMatches(raw);
+      const match = matches && matches.length > 0 ? matches[0] : null;
+      return { match, requestId };
+    },
+    retry: 1,
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: false,
+    throwOnError: false,
+    enabled: id !== null,
+  });
+
+  const match = data?.match ?? null;
+  const requestId = data?.requestId;
+  const isDegraded = !!error || (id !== null && match === null);
+
+  return {
+    match,
+    isDegraded,
+    requestId,
+    isLoading,
+    error: error as Error | null,
+    refetch: () => refetch(),
+  };
 }

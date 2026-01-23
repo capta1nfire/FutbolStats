@@ -1,7 +1,7 @@
 /**
  * Predictions API Adapter
  *
- * Transforms backend /predictions/upcoming response to dashboard types.
+ * Transforms backend /dashboard/predictions.json response to dashboard types.
  * Best-effort parsing with null-safety.
  */
 
@@ -15,78 +15,131 @@ import {
   PredictionCoverage,
 } from "@/lib/types";
 
+// ============================================================================
+// Backend Types
+// ============================================================================
+
 /**
- * Backend prediction item from /predictions/upcoming
+ * Backend prediction item from /dashboard/predictions.json
  */
 interface BackendPrediction {
+  id: number;
   match_id: number;
-  match_external_id?: number;
+  league_id: number;
+  league_name: string;
+  kickoff_utc: string; // ISO
   home_team: string;
   away_team: string;
-  date: string; // ISO
   status: string; // "NS", "FT", "1H", etc.
-  home_goals?: number | null;
-  away_goals?: number | null;
-  league_id: number;
+  score?: string | null; // "2-1" format
+  model: string; // "baseline" or "shadow"
+  model_version: string;
   pick?: string;
-  probabilities?: {
+  probs?: {
     home: number;
     draw: number;
     away: number;
   };
   is_frozen?: boolean;
-  frozen_at?: string;
-  served_from_rerun?: boolean;
+  frozen_at?: string | null;
+  confidence_tier?: string;
+  created_at?: string;
 }
 
 /**
- * Backend response from /predictions/upcoming
+ * Pagination info from backend
  */
-interface BackendPredictionsResponse {
-  predictions: BackendPrediction[];
-  model_version: string;
-  context_applied: boolean;
+export interface PredictionsPagination {
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
 }
 
 /**
- * Determine prediction status from backend data
+ * Metadata from backend response
  */
-function mapStatus(item: BackendPrediction): PredictionStatus {
-  // If match is finished (FT), check if we have a prediction
-  if (item.status === "FT") {
-    if (item.probabilities) {
-      return "evaluated";
-    }
+export interface PredictionsMetadata {
+  generatedAt: string | null;
+  cached: boolean;
+  cacheAgeSeconds: number;
+  filtersApplied?: Record<string, unknown>;
+}
+
+/**
+ * Full parsed response
+ */
+export interface PredictionsApiResponse {
+  predictions: PredictionRow[];
+  pagination: PredictionsPagination;
+  metadata: PredictionsMetadata;
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Map backend status to frontend PredictionStatus
+ */
+function mapStatus(backendStatus: string, hasPick: boolean): PredictionStatus {
+  const status = backendStatus.toUpperCase();
+
+  // Finished match
+  if (status === "FT" || status === "AET" || status === "PEN") {
+    return hasPick ? "evaluated" : "missing";
+  }
+
+  // Not started - has prediction
+  if (status === "NS" || status === "TBD") {
+    return hasPick ? "generated" : "missing";
+  }
+
+  // Live matches
+  if (["1H", "2H", "HT", "ET", "BT", "P", "LIVE"].includes(status)) {
+    return hasPick ? "frozen" : "missing";
+  }
+
+  // Postponed/cancelled
+  if (["PST", "CANC", "ABD", "AWD", "WO"].includes(status)) {
     return "missing";
   }
 
-  // If frozen, return frozen status
-  if (item.is_frozen) {
-    return "frozen";
-  }
-
-  // If we have probabilities, it's generated
-  if (item.probabilities) {
-    return "generated";
-  }
-
-  // No prediction
-  return "missing";
+  // Default: generated if has pick, missing otherwise
+  return hasPick ? "generated" : "missing";
 }
 
 /**
- * Determine match result from score
+ * Map backend model string to ModelType
  */
-function mapResult(item: BackendPrediction): MatchResult {
-  if (item.status !== "FT") {
-    return "unknown";
+function mapModel(model: string): ModelType {
+  const normalized = model.toLowerCase();
+  if (normalized === "shadow" || normalized.includes("shadow")) {
+    return "Shadow";
   }
+  return "A"; // baseline maps to A
+}
 
-  const homeGoals = item.home_goals ?? 0;
-  const awayGoals = item.away_goals ?? 0;
+/**
+ * Parse score string "2-1" to result
+ */
+function parseScoreToResult(score: string | null | undefined): MatchResult {
+  if (!score) return "unknown";
 
-  if (homeGoals > awayGoals) return "home";
-  if (awayGoals > homeGoals) return "away";
+  const parts = score.split("-");
+  if (parts.length !== 2) return "unknown";
+
+  const home = parseInt(parts[0], 10);
+  const away = parseInt(parts[1], 10);
+
+  if (isNaN(home) || isNaN(away)) return "unknown";
+
+  if (home > away) return "home";
+  if (away > home) return "away";
   return "draw";
 }
 
@@ -116,76 +169,141 @@ function mapProbs(
   };
 }
 
+// ============================================================================
+// Parsers
+// ============================================================================
+
 /**
  * Parse a single backend prediction to PredictionRow
  */
 function parsePrediction(item: BackendPrediction): PredictionRow {
+  const hasPick = !!item.pick && !!item.probs;
+
   return {
-    id: item.match_id, // Use match_id as the row ID
+    id: item.id,
     matchId: item.match_id,
     matchLabel: `${item.home_team} vs ${item.away_team}`,
-    leagueName: `League ${item.league_id}`, // Will be enriched by UI if needed
-    kickoffISO: item.date,
-    model: (item.served_from_rerun ? "Shadow" : "A") as ModelType,
-    status: mapStatus(item),
-    generatedAt: item.frozen_at,
-    probs: mapProbs(item.probabilities),
+    leagueName: item.league_name || `League ${item.league_id}`,
+    kickoffISO: item.kickoff_utc,
+    model: mapModel(item.model),
+    status: mapStatus(item.status, hasPick),
+    generatedAt: item.frozen_at || item.created_at,
+    probs: mapProbs(item.probs),
     pick: mapPick(item.pick),
-    result: mapResult(item),
+    result: parseScoreToResult(item.score),
   };
 }
 
 /**
- * Parse backend predictions response to PredictionRow[]
+ * Parse backend response to PredictionsApiResponse
  *
- * Supports both response shapes:
- * 1) { predictions: [...] }
- * 2) { data: { predictions: [...] } }
+ * Expected wrapper:
+ * {
+ *   generated_at: string,
+ *   cached: boolean,
+ *   cache_age_seconds: number,
+ *   data: {
+ *     predictions: [...],
+ *     total: number,
+ *     page: number,
+ *     limit: number,
+ *     pages: number,
+ *     filters_applied: {...}
+ *   }
+ * }
  */
-export function parsePredictions(data: unknown): PredictionRow[] {
-  if (!data || typeof data !== "object") {
-    return [];
-  }
-
-  const obj = data as Record<string, unknown>;
-
-  // Try shape 1: { predictions: [...] }
-  if (Array.isArray(obj.predictions)) {
-    return obj.predictions.map((item) =>
-      parsePrediction(item as BackendPrediction)
-    );
-  }
-
-  // Try shape 2: { data: { predictions: [...] } }
-  if (obj.data && typeof obj.data === "object") {
-    const nested = obj.data as Record<string, unknown>;
-    if (Array.isArray(nested.predictions)) {
-      return nested.predictions.map((item) =>
-        parsePrediction(item as BackendPrediction)
-      );
-    }
-  }
-
-  // Best-effort: no crash, return empty
-  return [];
-}
-
-/**
- * Extract model version from response
- */
-export function extractModelVersion(data: unknown): string | null {
-  if (!data || typeof data !== "object") {
+export function parsePredictionsResponse(response: unknown): PredictionsApiResponse | null {
+  if (!isObject(response)) {
     return null;
   }
 
-  const response = data as BackendPredictionsResponse;
-  return response.model_version || null;
+  // Extract metadata from root
+  const generatedAt = typeof response.generated_at === "string" ? response.generated_at : null;
+  const cached = typeof response.cached === "boolean" ? response.cached : false;
+  const cacheAgeSeconds = typeof response.cache_age_seconds === "number" ? response.cache_age_seconds : 0;
+
+  // Extract data object
+  const data = response.data;
+  if (!isObject(data)) {
+    return null;
+  }
+
+  // Extract predictions array
+  const rawPredictions = data.predictions;
+  if (!Array.isArray(rawPredictions)) {
+    return null;
+  }
+
+  // Parse predictions with best-effort (skip invalid items)
+  const predictions: PredictionRow[] = [];
+  for (const item of rawPredictions) {
+    if (isObject(item) && typeof item.id === "number") {
+      try {
+        predictions.push(parsePrediction(item as unknown as BackendPrediction));
+      } catch {
+        // Skip invalid items
+      }
+    }
+  }
+
+  // Extract pagination
+  const pagination: PredictionsPagination = {
+    total: typeof data.total === "number" ? data.total : predictions.length,
+    page: typeof data.page === "number" ? data.page : 1,
+    limit: typeof data.limit === "number" ? data.limit : 50,
+    pages: typeof data.pages === "number" ? data.pages : 1,
+  };
+
+  // Extract filters applied (for debugging)
+  const filtersApplied = isObject(data.filters_applied) ? data.filters_applied : undefined;
+
+  return {
+    predictions,
+    pagination,
+    metadata: {
+      generatedAt,
+      cached,
+      cacheAgeSeconds,
+      filtersApplied,
+    },
+  };
 }
 
 /**
+ * Legacy parser for backwards compatibility
+ * @deprecated Use parsePredictionsResponse instead
+ */
+export function parsePredictions(data: unknown): PredictionRow[] {
+  const response = parsePredictionsResponse(data);
+  return response?.predictions ?? [];
+}
+
+/**
+ * Extract pagination from response
+ */
+export function extractPagination(data: unknown): PredictionsPagination | null {
+  const response = parsePredictionsResponse(data);
+  return response?.pagination ?? null;
+}
+
+/**
+ * Extract metadata from response
+ */
+export function extractMetadata(data: unknown): PredictionsMetadata {
+  const response = parsePredictionsResponse(data);
+  return response?.metadata ?? {
+    generatedAt: null,
+    cached: false,
+    cacheAgeSeconds: 0,
+  };
+}
+
+// ============================================================================
+// Coverage Helpers
+// ============================================================================
+
+/**
  * Build coverage from predictions data
- * Since backend doesn't have a separate coverage endpoint,
- * we calculate it from the predictions list
  */
 export function buildCoverageFromPredictions(
   predictions: PredictionRow[],
@@ -243,4 +361,33 @@ export function extractCoverageFromOps(
     coveragePct,
     periodLabel,
   };
+}
+
+/**
+ * Extract model version from response
+ */
+export function extractModelVersion(data: unknown): string | null {
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+
+  const obj = data as Record<string, unknown>;
+
+  // Try new format: data.predictions[0].model_version
+  if (isObject(obj.data)) {
+    const dataObj = obj.data as Record<string, unknown>;
+    if (Array.isArray(dataObj.predictions) && dataObj.predictions.length > 0) {
+      const first = dataObj.predictions[0] as Record<string, unknown>;
+      if (typeof first.model_version === "string") {
+        return first.model_version;
+      }
+    }
+  }
+
+  // Try legacy format
+  if (typeof obj.model_version === "string") {
+    return obj.model_version;
+  }
+
+  return null;
 }

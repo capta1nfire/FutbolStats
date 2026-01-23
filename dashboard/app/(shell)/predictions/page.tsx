@@ -3,7 +3,6 @@
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  usePredictions,
   usePredictionsApi,
   usePrediction,
   usePredictionCoverageFromData,
@@ -16,7 +15,6 @@ import {
   PredictionStatus,
   ModelType,
   PredictionTimeRange,
-  PredictionFilters,
   PREDICTION_STATUSES,
   MODEL_TYPES,
   PREDICTION_TIME_RANGES,
@@ -38,6 +36,13 @@ import {
   toggleArrayValue,
 } from "@/lib/url-state";
 import { Loader } from "@/components/ui/loader";
+import { Database } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 const BASE_PATH = "/predictions";
 
@@ -50,7 +55,7 @@ function PredictionsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Parse URL state (non-league filters first)
+  // Parse URL state
   const selectedPredictionId = useMemo(
     () => parseNumericId(searchParams.get("id")),
     [searchParams]
@@ -121,55 +126,41 @@ function PredictionsPageContent() {
     }
   }, [leftRailCollapsed]);
 
-  // Construct filters for query (WITHOUT league - applied client-side after deriving available leagues)
-  const baseFilters: PredictionFilters = useMemo(() => ({
+  // Fetch data from API with server-side filtering and real pagination
+  const {
+    predictions: apiPredictions,
+    pagination,
+    isLoading,
+    error,
+    isDegraded,
+    refetch,
+  } = usePredictionsApi({
     status: selectedStatuses.length > 0 ? selectedStatuses : undefined,
     model: selectedModels.length > 0 ? selectedModels : undefined,
-    // league filter applied client-side below
+    q: searchValue || undefined,
     timeRange: selectedTimeRange || undefined,
-    search: searchValue || undefined,
-  }), [selectedStatuses, selectedModels, selectedTimeRange, searchValue]);
-
-  // Fetch data from API with mock fallback
-  const {
-    data: apiData,
-    isLoading: isLoadingApi,
-    error: apiError,
-    refetch,
-  } = usePredictionsApi(baseFilters);
-
-  // Fallback to mock if API fails
-  const {
-    data: mockData,
-    isLoading: isLoadingMock,
-  } = usePredictions(baseFilters);
-
-  // Base predictions (before league filter) - memoized to avoid reference changes
-  const basePredictions = useMemo(
-    () => apiData ?? mockData ?? [],
-    [apiData, mockData]
-  );
-  const isLoading = isLoadingApi || (apiError ? isLoadingMock : false);
-  const error = apiError && !mockData ? apiError : null;
+    page: currentPage,
+    limit: pageSize,
+  });
 
   // Derive available leagues from real data, fallback to mock if empty
   const availableLeagues = useMemo(() => {
-    const leagues = [...new Set(basePredictions.map((p) => p.leagueName))].sort();
+    const leagues = [...new Set(apiPredictions.map((p) => p.leagueName))].sort();
     return leagues.length > 0 ? leagues : getPredictionLeaguesMock();
-  }, [basePredictions]);
+  }, [apiPredictions]);
 
   // Validate league params against available leagues
   const selectedLeagues = useMemo(() => {
     return leagueParamRaw.filter((l) => availableLeagues.includes(l));
   }, [leagueParamRaw, availableLeagues]);
 
-  // Apply league filter client-side
+  // Apply league filter client-side (since backend filters by league_ids, not names)
   const predictions = useMemo(() => {
-    if (selectedLeagues.length === 0) return basePredictions;
-    return basePredictions.filter((p) =>
+    if (selectedLeagues.length === 0) return apiPredictions;
+    return apiPredictions.filter((p) =>
       selectedLeagues.some((l) => p.leagueName.toLowerCase().includes(l.toLowerCase()))
     );
-  }, [basePredictions, selectedLeagues]);
+  }, [apiPredictions, selectedLeagues]);
 
   const {
     data: selectedPrediction,
@@ -182,7 +173,7 @@ function PredictionsPageContent() {
       : selectedTimeRange === "48h" ? "Next 48 hours"
       : selectedTimeRange === "7d" ? "Next 7 days"
       : "Next 30 days"
-    : "Next 7 days";
+    : "Next 3 days";
   const coverage = usePredictionCoverageFromData(predictions, periodLabel);
   const isLoadingCoverage = isLoading;
 
@@ -231,10 +222,11 @@ function PredictionsPageContent() {
     router.replace(buildUrl({ status: ["missing"] }), { scroll: false });
   }, [router, buildUrl]);
 
-  // Handle filter changes
+  // Handle filter changes - reset to page 1 when filters change
   const handleStatusChange = useCallback(
     (status: PredictionStatus, checked: boolean) => {
       const newStatuses = toggleArrayValue(selectedStatuses, status, checked);
+      setCurrentPage(1);
       router.replace(buildUrl({ status: newStatuses }), { scroll: false });
     },
     [selectedStatuses, router, buildUrl]
@@ -243,6 +235,7 @@ function PredictionsPageContent() {
   const handleModelChange = useCallback(
     (model: ModelType, checked: boolean) => {
       const newModels = toggleArrayValue(selectedModels, model, checked);
+      setCurrentPage(1);
       router.replace(buildUrl({ model: newModels }), { scroll: false });
     },
     [selectedModels, router, buildUrl]
@@ -251,6 +244,7 @@ function PredictionsPageContent() {
   const handleLeagueChange = useCallback(
     (league: string, checked: boolean) => {
       const newLeagues = toggleArrayValue(selectedLeagues, league, checked);
+      setCurrentPage(1);
       router.replace(buildUrl({ league: newLeagues }), { scroll: false });
     },
     [selectedLeagues, router, buildUrl]
@@ -258,6 +252,7 @@ function PredictionsPageContent() {
 
   const handleTimeRangeChange = useCallback(
     (timeRange: PredictionTimeRange | null) => {
+      setCurrentPage(1);
       router.replace(buildUrl({ range: timeRange }), { scroll: false });
     },
     [router, buildUrl]
@@ -265,10 +260,16 @@ function PredictionsPageContent() {
 
   const handleSearchChange = useCallback(
     (value: string) => {
+      setCurrentPage(1);
       router.replace(buildUrl({ q: value }), { scroll: false });
     },
     [router, buildUrl]
   );
+
+  // Handle page change
+  const handlePageChange = useCallback((page: number) => {
+    setCurrentPage(page);
+  }, []);
 
   return (
     <div className="h-full flex overflow-hidden relative">
@@ -305,6 +306,28 @@ function PredictionsPageContent() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
+        {/* Header with mock indicator */}
+        <div className="h-12 flex items-center justify-between px-6 border-b border-border">
+          <h1 className="text-lg font-semibold text-foreground">Predictions</h1>
+          {isDegraded && !isLoading && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-yellow-500/10 border border-yellow-500/20">
+                    <Database className="h-3.5 w-3.5 text-yellow-400" />
+                    <span className="text-[10px] text-yellow-400 font-medium">
+                      mock
+                    </span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  <p>Using mock data - backend unavailable</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+        </div>
+
         {/* Coverage Card */}
         <div className="p-4 border-b border-border">
           <PredictionsCoverageCard
@@ -326,12 +349,12 @@ function PredictionsPageContent() {
           onColumnVisibilityChange={setColumnVisibility}
         />
 
-        {/* Pagination */}
+        {/* Pagination - using real total from backend */}
         <Pagination
           currentPage={currentPage}
-          totalItems={predictions.length}
+          totalItems={pagination.total}
           pageSize={pageSize}
-          onPageChange={setCurrentPage}
+          onPageChange={handlePageChange}
           onPageSizeChange={setPageSize}
         />
       </div>
@@ -364,6 +387,7 @@ function PredictionsLoading() {
  * Master-detail pattern with URL sync (full state):
  * - Canonical: /predictions?id=123&status=missing&model=A&league=Premier%20League&range=24h&q=real
  * - Uses router.replace with scroll:false
+ * - Real pagination from backend
  */
 export default function PredictionsPage() {
   return (

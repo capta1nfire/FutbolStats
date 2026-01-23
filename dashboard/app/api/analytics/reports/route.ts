@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 
 /**
- * Proxy route handler for /dashboard/predictions.json
+ * Proxy route handler for /dashboard/analytics/reports.json
  *
  * Enterprise-safe architecture:
  * - Same-origin proxy avoids CORS issues
@@ -16,16 +16,16 @@ const BACKEND_BASE_URL = process.env.BACKEND_BASE_URL;
 const AUTH_HEADER_NAME =
   process.env.OPS_AUTH_HEADER_NAME || "X-Dashboard-Token";
 const AUTH_HEADER_VALUE = process.env.OPS_AUTH_HEADER_VALUE;
-const TIMEOUT_MS = parseInt(process.env.OPS_TIMEOUT_MS || "15000", 10);
+const TIMEOUT_MS = parseInt(process.env.OPS_TIMEOUT_MS || "8000", 10);
 
 /**
  * Generate a cryptographically secure request ID for tracing
  */
 function generateRequestId(): string {
   try {
-    return `predictions-${randomUUID()}`;
+    return `analytics-reports-${randomUUID()}`;
   } catch {
-    return `predictions-${Date.now()}-${process.pid}`;
+    return `analytics-reports-${Date.now()}-${process.pid}`;
   }
 }
 
@@ -84,29 +84,21 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const backendParams = new URLSearchParams();
 
-  // Pass through supported params (multi-value for status/model/league_ids)
-  const statuses = searchParams.getAll("status");
-  const models = searchParams.getAll("model");
-  const leagueIds = searchParams.getAll("league_ids");
+  // Pass through supported params
+  const type = searchParams.get("type");
+  const status = searchParams.get("status");
   const q = searchParams.get("q");
-  const daysBack = searchParams.get("days_back");
-  const daysAhead = searchParams.get("days_ahead");
   const page = searchParams.get("page");
   const limit = searchParams.get("limit");
 
-  // Append multi-value params
-  statuses.forEach((s) => backendParams.append("status", s));
-  models.forEach((m) => backendParams.append("model", m));
-  leagueIds.forEach((id) => backendParams.append("league_ids", id));
-
+  if (type) backendParams.set("type", type);
+  if (status) backendParams.set("status", status);
   if (q) backendParams.set("q", q);
-  if (daysBack) backendParams.set("days_back", daysBack);
-  if (daysAhead) backendParams.set("days_ahead", daysAhead);
   if (page) backendParams.set("page", page);
   if (limit) backendParams.set("limit", limit);
 
   const queryString = backendParams.toString();
-  const url = `${BACKEND_BASE_URL}/dashboard/predictions.json${queryString ? `?${queryString}` : ""}`;
+  const url = `${BACKEND_BASE_URL}/dashboard/analytics/reports.json${queryString ? `?${queryString}` : ""}`;
 
   // Build headers
   const headers: HeadersInit = {
@@ -195,10 +187,7 @@ export async function GET(request: NextRequest) {
 
   // Fallback (shouldn't reach here)
   return NextResponse.json(
-    {
-      error: "Failed after retries",
-      requestId,
-    },
+    { error: "Failed after retries", requestId },
     {
       status: 502,
       headers: {

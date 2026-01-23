@@ -16,9 +16,10 @@ export type AnalyticsTimeRange = "7d" | "30d" | "90d";
 
 /**
  * Analytics report row for table display
+ * Note: id is string to support backend's composite IDs (e.g., "model_perf_14d_20")
  */
 export interface AnalyticsReportRow {
-  id: number;
+  id: number | string;
   type: AnalyticsReportType;
   title: string;
   periodLabel: string; // e.g. "Last 7 days"

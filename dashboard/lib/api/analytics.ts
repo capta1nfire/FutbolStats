@@ -217,6 +217,193 @@ export function parsePredictionsPerformance(data: unknown): PredictionsPerforman
   };
 }
 
+// ============================================================================
+// Analytics Reports API
+// ============================================================================
+
+import {
+  AnalyticsReportRow,
+  AnalyticsReportType,
+  AnalyticsReportStatus,
+} from "@/lib/types";
+
+/**
+ * Helper to check if value is object
+ */
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Pagination metadata from reports response
+ */
+export interface AnalyticsReportsPagination {
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}
+
+/**
+ * Metadata from reports response
+ */
+export interface AnalyticsReportsMetadata {
+  generatedAt: string | null;
+  cached: boolean;
+  cacheAgeSeconds: number;
+}
+
+/**
+ * Full parsed reports response
+ */
+export interface AnalyticsReportsApiResponse {
+  reports: AnalyticsReportRow[];
+  pagination: AnalyticsReportsPagination;
+  metadata: AnalyticsReportsMetadata;
+}
+
+/**
+ * Map backend type to frontend AnalyticsReportType
+ */
+function mapReportType(type: string): AnalyticsReportType {
+  const normalized = type.toLowerCase();
+  if (normalized === "model_performance") return "model_performance";
+  if (normalized === "prediction_accuracy") return "prediction_accuracy";
+  if (normalized === "system_metrics") return "system_metrics";
+  if (normalized === "api_usage") return "api_usage";
+  return "system_metrics"; // default
+}
+
+/**
+ * Map backend status to frontend AnalyticsReportStatus
+ */
+function mapReportStatus(status: string | undefined): AnalyticsReportStatus | undefined {
+  if (!status) return undefined;
+  const normalized = status.toLowerCase();
+  if (normalized === "ok") return "ok";
+  if (normalized === "warning") return "warning";
+  if (normalized === "stale") return "stale";
+  return undefined;
+}
+
+/**
+ * Parse a single report from backend
+ */
+function parseReport(raw: unknown): AnalyticsReportRow | null {
+  if (!isObject(raw)) return null;
+
+  // ID can be number or string (backend uses composite string IDs like "model_perf_14d_20")
+  const id = raw.id;
+  if (typeof id !== "number" && typeof id !== "string") return null;
+
+  const type = typeof raw.type === "string" ? raw.type : "system_metrics";
+  const title = typeof raw.title === "string" ? raw.title : `Report ${id}`;
+  // Backend uses "subtitle" instead of "period_label"
+  const periodLabel = typeof raw.period_label === "string"
+    ? raw.period_label
+    : typeof raw.subtitle === "string"
+      ? raw.subtitle
+      : "Unknown period";
+  // Backend uses "updated_at" instead of "last_updated"
+  const lastUpdated = typeof raw.last_updated === "string"
+    ? raw.last_updated
+    : typeof raw.updated_at === "string"
+      ? raw.updated_at
+      : new Date().toISOString();
+  const status = typeof raw.status === "string" ? raw.status : undefined;
+
+  // Parse summary object
+  const summary: Record<string, string | number> = {};
+  if (isObject(raw.summary)) {
+    for (const [key, value] of Object.entries(raw.summary)) {
+      if (typeof value === "string" || typeof value === "number") {
+        summary[key] = value;
+      }
+    }
+  }
+
+  return {
+    id,
+    type: mapReportType(type),
+    title,
+    periodLabel,
+    lastUpdated,
+    status: mapReportStatus(status),
+    summary,
+  };
+}
+
+/**
+ * Parse analytics reports response
+ *
+ * Expected wrapper:
+ * {
+ *   generated_at: string,
+ *   cached: boolean,
+ *   cache_age_seconds: number,
+ *   data: {
+ *     reports: [...],
+ *     total: number,
+ *     page: number,
+ *     limit: number,
+ *     pages: number
+ *   }
+ * }
+ */
+export function parseAnalyticsReportsResponse(response: unknown): AnalyticsReportsApiResponse | null {
+  if (!isObject(response)) {
+    return null;
+  }
+
+  // Extract metadata from root
+  const generatedAt = typeof response.generated_at === "string" ? response.generated_at : null;
+  const cached = typeof response.cached === "boolean" ? response.cached : false;
+  const cacheAgeSeconds = typeof response.cache_age_seconds === "number" ? response.cache_age_seconds : 0;
+
+  // Extract data object
+  const data = response.data;
+  if (!isObject(data)) {
+    return null;
+  }
+
+  // Extract reports array
+  const rawReports = data.reports;
+  if (!Array.isArray(rawReports)) {
+    return null;
+  }
+
+  // Parse reports with best-effort (skip invalid items)
+  const reports: AnalyticsReportRow[] = [];
+  for (const item of rawReports) {
+    const report = parseReport(item);
+    if (report) {
+      reports.push(report);
+    }
+  }
+
+  // Extract pagination
+  const pagination: AnalyticsReportsPagination = {
+    total: typeof data.total === "number" ? data.total : reports.length,
+    page: typeof data.page === "number" ? data.page : 1,
+    limit: typeof data.limit === "number" ? data.limit : 50,
+    pages: typeof data.pages === "number" ? data.pages : 1,
+  };
+
+  return {
+    reports,
+    pagination,
+    metadata: {
+      generatedAt,
+      cached,
+      cacheAgeSeconds,
+    },
+  };
+}
+
+// ============================================================================
+// History Summary
+// ============================================================================
+
 /**
  * Extract summary stats from history for display
  */

@@ -2,14 +2,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 
 /**
- * Proxy route handler for /dashboard/ops/logs.json
+ * Proxy route handler for /dashboard/audit_logs.json
  *
  * Enterprise-safe architecture:
  * - Same-origin proxy avoids CORS issues
  * - Server-side only - secrets never exposed to client
- * - Configurable auth header via env vars (same as /api/ops)
+ * - Configurable auth header via env vars (X-Dashboard-Token)
  * - Timeout + single retry on network/5xx errors
- * - Passes through query params (since_minutes, limit, level)
+ * - Passes through query params for filtering/pagination
+ *
+ * Supported filters (multi-value where noted):
+ * - type (multi): job_live_tick, job_fastpath, job_global_sync, etc.
+ * - severity (multi): info, warning, error
+ * - actor_kind (multi): system, user
+ * - q: search term
+ * - range: 1h, 24h, 7d, 30d
+ * - page, limit (max 100)
  */
 
 const BACKEND_BASE_URL = process.env.BACKEND_BASE_URL;
@@ -18,6 +26,9 @@ const AUTH_HEADER_NAME =
 const AUTH_HEADER_VALUE = process.env.OPS_AUTH_HEADER_VALUE;
 const TIMEOUT_MS = parseInt(process.env.OPS_TIMEOUT_MS || "8000", 10);
 
+/**
+ * Generate a cryptographically secure request ID for tracing
+ */
 function generateRequestId(): string {
   try {
     return `audit-logs-${randomUUID()}`;
@@ -26,6 +37,9 @@ function generateRequestId(): string {
   }
 }
 
+/**
+ * Fetch with timeout using AbortController
+ */
 async function fetchWithTimeout(
   url: string,
   options: RequestInit,
@@ -45,6 +59,9 @@ async function fetchWithTimeout(
   }
 }
 
+/**
+ * Check if error is retryable (network/timeout/5xx)
+ */
 function isRetryableError(error: unknown, response?: Response): boolean {
   if (error instanceof Error) {
     if (error.name === "AbortError") return true;
@@ -57,6 +74,7 @@ function isRetryableError(error: unknown, response?: Response): boolean {
 export async function GET(request: NextRequest) {
   const requestId = generateRequestId();
 
+  // Check if backend URL is configured
   if (!BACKEND_BASE_URL) {
     return NextResponse.json(
       { error: "Backend not configured", requestId },
@@ -70,27 +88,48 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Build query params - passthrough supported params
+  // Build query params from request
   const searchParams = request.nextUrl.searchParams;
   const backendParams = new URLSearchParams();
 
-  const sinceMinutes = searchParams.get("since_minutes");
-  if (sinceMinutes) backendParams.set("since_minutes", sinceMinutes);
+  // Pass through supported params (multi-value for type, severity, actor_kind)
+  const types = searchParams.getAll("type");
+  for (const t of types) {
+    backendParams.append("type", t);
+  }
+
+  const severities = searchParams.getAll("severity");
+  for (const s of severities) {
+    backendParams.append("severity", s);
+  }
+
+  const actorKinds = searchParams.getAll("actor_kind");
+  for (const a of actorKinds) {
+    backendParams.append("actor_kind", a);
+  }
+
+  const q = searchParams.get("q");
+  if (q) backendParams.set("q", q);
+
+  const range = searchParams.get("range");
+  if (range) backendParams.set("range", range);
+
+  const page = searchParams.get("page");
+  if (page) backendParams.set("page", page);
 
   const limit = searchParams.get("limit");
   if (limit) backendParams.set("limit", limit);
 
-  const level = searchParams.get("level");
-  if (level) backendParams.set("level", level);
-
   const queryString = backendParams.toString();
-  const url = `${BACKEND_BASE_URL}/dashboard/ops/logs.json${queryString ? `?${queryString}` : ""}`;
+  const url = `${BACKEND_BASE_URL}/dashboard/audit_logs.json${queryString ? `?${queryString}` : ""}`;
 
+  // Build headers
   const headers: HeadersInit = {
     "x-request-id": requestId,
     Accept: "application/json",
   };
 
+  // Add auth header if configured
   if (AUTH_HEADER_NAME && AUTH_HEADER_VALUE) {
     headers[AUTH_HEADER_NAME] = AUTH_HEADER_VALUE;
   }
@@ -101,6 +140,7 @@ export async function GET(request: NextRequest) {
     cache: "no-store",
   };
 
+  // Attempt fetch with 1 retry on retryable errors
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const response = await fetchWithTimeout(url, fetchOptions, TIMEOUT_MS);
@@ -116,6 +156,7 @@ export async function GET(request: NextRequest) {
         });
       }
 
+      // 4xx errors - don't retry, don't leak backend details
       if (response.status >= 400 && response.status < 500) {
         return NextResponse.json(
           { error: `Backend returned ${response.status}`, requestId },
@@ -129,6 +170,7 @@ export async function GET(request: NextRequest) {
         );
       }
 
+      // 5xx - may retry
       if (attempt === 0 && isRetryableError(null, response)) {
         continue;
       }
@@ -166,6 +208,7 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Fallback (shouldn't reach here)
   return NextResponse.json(
     { error: "Failed after retries", requestId },
     {

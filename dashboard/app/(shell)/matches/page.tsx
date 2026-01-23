@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMatchesApi, useMatch, useColumnVisibility, usePageSize } from "@/lib/hooks";
+import { useMatchesApi, useMatchApi, useMatch, useColumnVisibility, usePageSize } from "@/lib/hooks";
 import { MatchSummary, MatchFilters, MatchStatus, MATCH_STATUSES } from "@/lib/types";
 import { getMatchesMockSync } from "@/lib/mocks";
 import {
@@ -23,6 +23,13 @@ import {
   toggleArrayValue,
 } from "@/lib/url-state";
 import { Loader } from "@/components/ui/loader";
+import { Database } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 const BASE_PATH = "/matches";
 
@@ -199,16 +206,23 @@ function MatchesPageContent() {
   const matches = apiMatches ?? mockMatches;
 
   // Find selected match from current list first (no extra fetch needed for basic info)
-  // Falls back to mock data if not in current page
+  // Falls back to backend match lookup, then mock data if needed
+  const { match: apiSelectedMatch, isLoading: isMatchApiLoading } = useMatchApi(selectedMatchId);
   const { data: mockSelectedMatch } = useMatch(selectedMatchId);
+
+  const selectedMatchFromList = useMemo(() => {
+    if (!selectedMatchId) return null;
+    return matches.find((m) => m.id === selectedMatchId) ?? null;
+  }, [selectedMatchId, matches]);
+
   const selectedMatch = useMemo(() => {
     if (!selectedMatchId) return null;
-    // First try to find in current list
-    const fromList = matches.find((m) => m.id === selectedMatchId);
-    if (fromList) return fromList;
-    // Fallback to mock data
-    return mockSelectedMatch ?? null;
-  }, [selectedMatchId, matches, mockSelectedMatch]);
+    // Fallback to backend lookup, then mock data
+    return selectedMatchFromList ?? apiSelectedMatch ?? mockSelectedMatch ?? null;
+  }, [selectedMatchId, selectedMatchFromList, apiSelectedMatch, mockSelectedMatch]);
+
+  // Drawer-specific loading: only when deep-link/pagination fallback is fetching the match
+  const isSelectedMatchLoading = selectedMatchId !== null && !selectedMatchFromList && isMatchApiLoading;
 
   // Drawer is open when there's a selected match
   const drawerOpen = selectedMatchId !== null;
@@ -374,6 +388,28 @@ function MatchesPageContent() {
 
       {/* Main content: Table */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
+        {/* Header with mock indicator */}
+        <div className="h-12 flex items-center justify-between px-6 border-b border-border">
+          <h1 className="text-lg font-semibold text-foreground">Matches</h1>
+          {isDegraded && !isLoading && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-yellow-500/10 border border-yellow-500/20">
+                    <Database className="h-3.5 w-3.5 text-yellow-400" />
+                    <span className="text-[10px] text-yellow-400 font-medium">
+                      mock
+                    </span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  <p>Using mock data - backend unavailable</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+        </div>
+
         {/* Table */}
         <MatchesTable
           data={matches}
@@ -395,12 +431,6 @@ function MatchesPageContent() {
           onPageSizeChange={setPageSize}
         />
 
-        {/* Degraded indicator */}
-        {isDegraded && (
-          <div className="absolute bottom-12 left-1/2 -translate-x-1/2 text-xs text-muted-foreground/70 bg-surface px-2 py-1 rounded border border-border">
-            Showing mock data
-          </div>
-        )}
       </div>
 
       {/* Detail Drawer (overlay on desktop, sheet on mobile) */}
@@ -408,6 +438,7 @@ function MatchesPageContent() {
         match={selectedMatch ?? null}
         open={drawerOpen}
         onClose={handleCloseDrawer}
+        isLoading={isSelectedMatchLoading}
       />
     </div>
   );

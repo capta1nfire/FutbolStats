@@ -4,6 +4,7 @@ import { useState } from "react";
 import { MatchSummary, ProbabilitySet } from "@/lib/types";
 import { useIsDesktop } from "@/lib/hooks";
 import { DetailDrawer } from "@/components/shell";
+import { Loader } from "@/components/ui/loader";
 import {
   Sheet,
   SheetContent,
@@ -72,6 +73,8 @@ function PredictionSection({
 
 interface MatchDetailDrawerProps {
   match: MatchSummary | null;
+  /** True when match is being fetched for deep-link / pagination fallback */
+  isLoading?: boolean;
   open: boolean;
   onClose: () => void;
 }
@@ -263,6 +266,7 @@ function MatchDetailContentMobile({ match }: { match: MatchSummary }) {
  */
 export function MatchDetailDrawer({
   match,
+  isLoading = false,
   open,
   onClose,
 }: MatchDetailDrawerProps) {
@@ -290,6 +294,10 @@ export function MatchDetailDrawer({
       >
         {match ? (
           <MatchTabContent match={match} activeTab={activeTab} />
+        ) : isLoading ? (
+          <div className="h-full flex items-center justify-center py-10">
+            <Loader size="md" />
+          </div>
         ) : (
           <p className="text-muted-foreground text-sm">Select a match to view details</p>
         )}
@@ -310,6 +318,10 @@ export function MatchDetailDrawer({
           <div className="p-4">
             {match ? (
               <MatchDetailContentMobile match={match} />
+            ) : isLoading ? (
+              <div className="h-full flex items-center justify-center py-10">
+                <Loader size="md" />
+              </div>
             ) : (
               <p className="text-muted-foreground text-sm">Select a match to view details</p>
             )}
