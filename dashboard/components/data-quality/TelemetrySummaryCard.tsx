@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { OpsTelemetry } from "@/lib/api/ops";
+import { OpsTelemetry, TelemetryStatus } from "@/lib/api/ops";
 import {
   CheckCircle2,
   AlertTriangle,
@@ -20,9 +20,23 @@ interface TelemetrySummaryCardProps {
 }
 
 /**
- * Map telemetry status to display config
+ * Status display configuration
  */
-function getStatusConfig(status: string) {
+interface StatusConfig {
+  label: string;
+  icon: typeof CheckCircle2;
+  bgClass: string;
+  borderClass: string;
+  textClass: string;
+}
+
+/**
+ * Map telemetry status to display config
+ *
+ * Status is already normalized by parseOpsTelemetry:
+ * - "ok" | "warning" | "critical" | "degraded"
+ */
+function getStatusConfig(status: TelemetryStatus): StatusConfig {
   switch (status) {
     case "ok":
       return {
@@ -41,7 +55,6 @@ function getStatusConfig(status: string) {
         textClass: "text-yellow-400",
       };
     case "critical":
-    case "red":
       return {
         label: "Critical",
         icon: XCircle,
@@ -49,9 +62,10 @@ function getStatusConfig(status: string) {
         borderClass: "border-red-500/30",
         textClass: "text-red-400",
       };
+    case "degraded":
     default:
       return {
-        label: "Unknown",
+        label: "Degraded",
         icon: AlertOctagon,
         bgClass: "bg-muted/50",
         borderClass: "border-border",

@@ -1021,10 +1021,40 @@ export function parseOpsFreshness(ops: OpsResponse): OpsFreshness | null {
 // ============================================================================
 
 /**
+ * Telemetry status type
+ *
+ * Separate from ApiBudgetStatus to handle backend's different status format.
+ * Backend sends: "OK" | "WARN" | "RED"
+ * We normalize to: "ok" | "warning" | "critical" | "degraded"
+ */
+export type TelemetryStatus = "ok" | "warning" | "critical" | "degraded";
+
+/**
+ * Normalize telemetry status from backend to frontend format
+ *
+ * Backend can send various formats:
+ * - "OK", "ok", "green" -> "ok"
+ * - "WARN", "warning", "yellow" -> "warning"
+ * - "RED", "critical", "error" -> "critical"
+ * - fallback -> "degraded"
+ */
+function normalizeTelemetryStatus(status: unknown): TelemetryStatus {
+  if (typeof status !== "string") return "degraded";
+
+  const normalized = status.toLowerCase();
+
+  if (normalized === "ok" || normalized === "green") return "ok";
+  if (normalized === "warn" || normalized === "warning" || normalized === "yellow") return "warning";
+  if (normalized === "red" || normalized === "critical" || normalized === "error") return "critical";
+
+  return "degraded";
+}
+
+/**
  * Telemetry summary from ops.json (data quality metrics)
  */
 export interface OpsTelemetry {
-  status: ApiBudgetStatus;
+  status: TelemetryStatus;
   updated_at?: string;
   summary: {
     quarantined_odds_24h: number;
@@ -1040,16 +1070,17 @@ export interface OpsTelemetry {
  * Parse telemetry (data quality) from ops response
  *
  * Expected structure: { data: { telemetry: {...} } }
+ * Backend status is normalized (OK -> ok, WARN -> warning, RED -> critical)
  */
 export function parseOpsTelemetry(ops: OpsResponse): OpsTelemetry | null {
   const telemetry = getNestedValue(ops, "data", "telemetry");
   if (!isObject(telemetry)) return null;
 
-  const status = telemetry.status;
-  if (!isValidStatus(status)) return null;
-
   const summary = telemetry.summary;
   if (!isObject(summary)) return null;
+
+  // Normalize status (accepts OK, WARN, RED from backend)
+  const status = normalizeTelemetryStatus(telemetry.status);
 
   return {
     status,
