@@ -59,11 +59,32 @@ git push origin main                  # Deploy automático en Railway
 ```
 
 ## API Endpoints Principales
+
+### Endpoints públicos (sin auth)
 - `GET /health` - Health check
-- `GET /predictions/upcoming` - Predicciones próximos partidos
-- `GET /predictions/match/{id}` - Predicción específica
-- `GET /dashboard/ops.json` - Dashboard operacional (requiere token)
-- `GET /live-summary` - Partidos en vivo (requiere API key)
+
+### Endpoints protegidos (requieren `X-API-Key`)
+**CRÍTICO**: Estos endpoints NO son públicos. Requieren header `X-API-Key` válido.
+
+| Endpoint | Descripción |
+|----------|-------------|
+| `GET /predictions/upcoming` | Predicciones próximos partidos |
+| `GET /predictions/match/{id}` | Predicción específica |
+| `GET /teams` | Lista de equipos |
+| `GET /matches` | Lista de partidos |
+| `GET /competitions` | Lista de competiciones |
+| `GET /teams/{id}/history` | Historial de equipo |
+| `GET /matches/{id}/details` | Detalles de partido |
+| `GET /matches/{id}/insights` | Insights/narrativa de partido |
+| `GET /matches/{id}/timeline` | Timeline de partido |
+| `GET /matches/{id}/odds-history` | Historial de cuotas |
+| `GET /matches/{id}/lineup` | Alineaciones |
+| `GET /standings/{league_id}` | Tabla de posiciones |
+| `GET /live-summary` | Partidos en vivo |
+
+### Endpoints de dashboard (requieren `X-Dashboard-Token`)
+- `GET /dashboard/ops.json` - Dashboard operacional
+- `GET /dashboard/pit.json` - Dashboard PIT
 
 ## Protocolos Operacionales
 Consultar `docs/` antes de operaciones críticas:
