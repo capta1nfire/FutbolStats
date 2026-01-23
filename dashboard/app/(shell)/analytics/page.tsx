@@ -2,7 +2,14 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useAnalyticsReports, useAnalyticsReport, useColumnVisibility, usePageSize } from "@/lib/hooks";
+import {
+  useAnalyticsReports,
+  useAnalyticsReport,
+  useColumnVisibility,
+  usePageSize,
+  useOpsHistoryApi,
+  usePredictionsPerformanceApi,
+} from "@/lib/hooks";
 import {
   AnalyticsReportRow,
   AnalyticsReportType,
@@ -13,6 +20,8 @@ import {
   AnalyticsTable,
   AnalyticsFilterPanel,
   AnalyticsDetailDrawer,
+  OpsHistorySummary,
+  PredictionsPerformanceCard,
   ANALYTICS_COLUMN_OPTIONS,
   ANALYTICS_DEFAULT_VISIBILITY,
 } from "@/components/analytics";
@@ -112,6 +121,19 @@ function AnalyticsPageContent() {
     isLoading: isLoadingDetail,
   } = useAnalyticsReport(selectedReportId);
 
+  // Fetch real ops data
+  const {
+    data: opsHistory,
+    isLoading: isLoadingHistory,
+    isApiDegraded: isHistoryDegraded,
+  } = useOpsHistoryApi(30);
+
+  const {
+    data: predictionsPerformance,
+    isLoading: isLoadingPerformance,
+    isApiDegraded: isPerformanceDegraded,
+  } = usePredictionsPerformanceApi(7);
+
   // Drawer is open when there's a selected report
   const drawerOpen = selectedReportId !== null;
 
@@ -188,8 +210,22 @@ function AnalyticsPageContent() {
         onCollapse={handleLeftRailToggle}
       />
 
-      {/* Main content: Table */}
+      {/* Main content: Summary Cards + Table */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
+        {/* Real Ops Data Summary Cards */}
+        <div className="p-4 border-b border-border space-y-4">
+          <OpsHistorySummary
+            data={opsHistory}
+            isLoading={isLoadingHistory}
+            isDegraded={isHistoryDegraded}
+          />
+          <PredictionsPerformanceCard
+            data={predictionsPerformance}
+            isLoading={isLoadingPerformance}
+            isDegraded={isPerformanceDegraded}
+          />
+        </div>
+
         {/* Table */}
         <AnalyticsTable
           data={reports}
