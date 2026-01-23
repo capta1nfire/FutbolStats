@@ -12436,6 +12436,288 @@ async def dashboard_analytics_reports(
         }
 
 
+# =============================================================================
+# AUDIT LOGS ENDPOINT
+# =============================================================================
+_audit_logs_cache: dict = {"data": None, "timestamp": 0}
+_AUDIT_LOGS_TTL = 90  # 90 seconds cache
+
+
+def _parse_range_to_hours(range_str: str | None) -> int:
+    """Convert range string to hours. Default 24h."""
+    if not range_str:
+        return 24
+    range_map = {"1h": 1, "24h": 24, "7d": 168, "30d": 720}
+    return range_map.get(range_str, 24)
+
+
+def _derive_severity(result: str | None, error_message: str | None) -> str:
+    """Derive severity from result/error_message."""
+    if error_message or result == "error":
+        return "error"
+    if result == "warning" or result == "partial":
+        return "warning"
+    return "info"
+
+
+def _derive_actor_kind(actor: str | None) -> str:
+    """Derive actor_kind from actor field."""
+    if not actor:
+        return "system"
+    actor_lower = actor.lower()
+    if "scheduler" in actor_lower or "job" in actor_lower or "system" in actor_lower:
+        return "system"
+    if "token" in actor_lower or "key" in actor_lower or "user" in actor_lower:
+        return "user"
+    return "system"
+
+
+async def _build_audit_events(
+    session: AsyncSession,
+    hours: int,
+    types: list[str] | None,
+    severities: list[str] | None,
+    actor_kinds: list[str] | None,
+    search: str | None,
+) -> list[dict]:
+    """Build audit events from multiple sources."""
+    events = []
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+
+    # Source 1: ops_audit_log
+    try:
+        query = text("""
+            SELECT id, action, request_id, actor, actor_id, result, error_message,
+                   created_at, duration_ms
+            FROM ops_audit_log
+            WHERE created_at >= :cutoff
+            ORDER BY created_at DESC
+            LIMIT 500
+        """)
+        result = await session.execute(query, {"cutoff": cutoff})
+        rows = result.mappings().all()
+
+        for row in rows:
+            severity = _derive_severity(row.get("result"), row.get("error_message"))
+            actor_kind = _derive_actor_kind(row.get("actor"))
+
+            # Build display message
+            action = row.get("action", "unknown")
+            result_str = row.get("result", "")
+            duration = row.get("duration_ms")
+            msg_parts = [f"{action}"]
+            if result_str:
+                msg_parts.append(f"→ {result_str}")
+            if duration:
+                msg_parts.append(f"({duration}ms)")
+            message = " ".join(msg_parts)
+
+            # Actor display (redact full IDs)
+            actor_id = row.get("actor_id", "")
+            actor_display = row.get("actor", "system")
+            if actor_id and len(actor_id) > 4:
+                actor_display = f"{actor_display}:{actor_id[:4]}…"
+
+            events.append({
+                "id": f"audit_{row['id']}",
+                "type": action,
+                "severity": severity,
+                "actor_kind": actor_kind,
+                "actor_display": actor_display,
+                "message": message,
+                "created_at": row["created_at"].isoformat() + "Z" if row.get("created_at") else None,
+                "correlation_id": row.get("request_id"),
+                "runbook_url": None,
+            })
+    except Exception as e:
+        logger.warning(f"[AUDIT] Failed to load ops_audit_log: {e}")
+
+    # Source 2: job_runs (scheduler jobs)
+    try:
+        query = text("""
+            SELECT id, job_name, status, started_at, finished_at, duration_ms, error_message
+            FROM job_runs
+            WHERE created_at >= :cutoff
+            ORDER BY created_at DESC
+            LIMIT 500
+        """)
+        result = await session.execute(query, {"cutoff": cutoff})
+        rows = result.mappings().all()
+
+        for row in rows:
+            status = row.get("status", "")
+            severity = "error" if status == "error" else ("warning" if status == "partial" else "info")
+
+            job_name = row.get("job_name", "unknown_job")
+            duration = row.get("duration_ms")
+            msg_parts = [f"job:{job_name}", f"→ {status}"]
+            if duration:
+                msg_parts.append(f"({duration}ms)")
+            if row.get("error_message"):
+                # Truncate error message
+                err = str(row["error_message"])[:50]
+                msg_parts.append(f"- {err}")
+            message = " ".join(msg_parts)
+
+            events.append({
+                "id": f"job_{row['id']}",
+                "type": f"job_{job_name}",
+                "severity": severity,
+                "actor_kind": "system",
+                "actor_display": "scheduler",
+                "message": message,
+                "created_at": row["started_at"].isoformat() + "Z" if row.get("started_at") else None,
+                "correlation_id": None,
+                "runbook_url": "/docs/OPS_RUNBOOK.md" if severity == "error" else None,
+            })
+    except Exception as e:
+        logger.warning(f"[AUDIT] Failed to load job_runs: {e}")
+
+    # Sort all events by created_at DESC
+    events.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+
+    # Apply filters
+    if types:
+        type_set = set(types)
+        events = [e for e in events if e["type"] in type_set]
+
+    if severities:
+        sev_set = set(severities)
+        events = [e for e in events if e["severity"] in sev_set]
+
+    if actor_kinds:
+        ak_set = set(actor_kinds)
+        events = [e for e in events if e["actor_kind"] in ak_set]
+
+    if search:
+        search_lower = search.lower()
+        events = [
+            e for e in events
+            if search_lower in (e.get("message") or "").lower()
+            or search_lower in (e.get("type") or "").lower()
+            or search_lower in (e.get("actor_display") or "").lower()
+        ]
+
+    return events
+
+
+@app.get("/dashboard/audit_logs.json")
+async def dashboard_audit_logs(
+    request: Request,
+    type: str | None = Query(default=None, description="Type filter (comma-separated for multi)"),
+    severity: str | None = Query(default=None, description="Severity filter: info,warning,error (comma-separated)"),
+    actor_kind: str | None = Query(default=None, description="Actor kind filter: system,user (comma-separated)"),
+    q: str | None = Query(default=None, description="Search in message/type/actor"),
+    range: str | None = Query(default="24h", description="Time range: 1h, 24h, 7d, 30d"),
+    page: int = Query(default=1, ge=1, description="Page number"),
+    limit: int = Query(default=50, ge=1, le=100, description="Items per page"),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Audit logs for Dashboard monitoring.
+
+    Auth: X-Dashboard-Token required.
+    TTL: 90s cache.
+
+    Query params:
+    - type: Filter by event type (comma-separated for multi)
+    - severity: Filter by severity: info, warning, error (comma-separated)
+    - actor_kind: Filter by actor kind: system, user (comma-separated)
+    - q: Search in message, type, or actor_display
+    - range: Time range - 1h, 24h (default), 7d, 30d
+    - page: Page number (default 1)
+    - limit: Items per page (default 50, max 100)
+
+    SECURITY: No PII/secrets/payloads. Redacted actor IDs.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    generated_at = datetime.utcnow().isoformat() + "Z"
+
+    # Parse multi-value filters
+    types = [t.strip() for t in type.split(",")] if type else None
+    severities = [s.strip() for s in severity.split(",")] if severity else None
+    actor_kinds = [a.strip() for a in actor_kind.split(",")] if actor_kind else None
+    hours = _parse_range_to_hours(range)
+
+    # Check if we can use cache (only for default/simple requests)
+    use_cache = not types and not severities and not actor_kinds and not q and range == "24h"
+    now = time.time()
+    cache = _audit_logs_cache
+
+    try:
+        if use_cache and cache["data"] and (now - cache["timestamp"]) < _AUDIT_LOGS_TTL:
+            cached_data = cache["data"]
+            # Apply pagination to cached data
+            all_events = cached_data["all_events"]
+            total = len(all_events)
+            pages = (total + limit - 1) // limit if limit > 0 else 1
+            start = (page - 1) * limit
+            end = start + limit
+            paginated = all_events[start:end]
+
+            return {
+                "generated_at": cached_data["generated_at"],
+                "cached": True,
+                "cache_age_seconds": int(now - cache["timestamp"]),
+                "data": {
+                    "events": paginated,
+                    "total": total,
+                    "page": page,
+                    "limit": limit,
+                    "pages": pages,
+                },
+            }
+
+        # Build events list
+        all_events = await _build_audit_events(session, hours, types, severities, actor_kinds, q)
+
+        # Pagination
+        total = len(all_events)
+        pages = (total + limit - 1) // limit if limit > 0 else 1
+        start = (page - 1) * limit
+        end = start + limit
+        paginated = all_events[start:end]
+
+        payload = {
+            "events": paginated,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": pages,
+        }
+
+        # Update cache for default requests
+        if use_cache:
+            cache["data"] = {"generated_at": generated_at, "all_events": all_events}
+            cache["timestamp"] = now
+
+        return {
+            "generated_at": generated_at,
+            "cached": False,
+            "cache_age_seconds": 0,
+            "data": payload,
+        }
+
+    except Exception as e:
+        logger.error(f"[AUDIT] audit_logs.json error: {e}", exc_info=True)
+        return {
+            "generated_at": generated_at,
+            "cached": False,
+            "cache_age_seconds": 0,
+            "data": {
+                "events": [],
+                "total": 0,
+                "page": page,
+                "limit": limit,
+                "pages": 0,
+                "status": "degraded",
+                "error": str(e)[:100],
+            },
+        }
+
+
 @app.get("/dashboard/ops/logs.json")
 async def ops_dashboard_logs_json(
     request: Request,
