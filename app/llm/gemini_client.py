@@ -33,6 +33,9 @@ class GeminiResult:
     error: Optional[str] = None
     finish_reason: Optional[str] = None  # STOP, MAX_TOKENS, SAFETY, RECITATION, OTHER
     delay_ms: int = 0  # Queue/startup delay (0 for direct Gemini API, used by RunPod)
+    # Compatibility with RunPodResult interface (used by narrative_generator.py)
+    worker_id: str = ""  # Gemini has no worker concept
+    job_id: str = ""  # Gemini has no job ID, could use request_id if needed
 
 
 class GeminiError(Exception):
