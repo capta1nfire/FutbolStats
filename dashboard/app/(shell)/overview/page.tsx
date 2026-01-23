@@ -1,48 +1,54 @@
 "use client";
 
-import { useOverviewData, useOpsOverview, useUpcomingMatches } from "@/lib/hooks";
-import { mockApiBudget, mockHealthSummary, mockUpcomingMatches } from "@/lib/mocks";
+import { useOpsOverview } from "@/lib/hooks";
+import { mockApiBudget } from "@/lib/mocks";
 import {
-  HealthCard,
-  CoverageBar,
-  UpcomingMatchesList,
-  ActiveIncidentsList,
   ApiBudgetCard,
   SentryHealthCard,
+  LlmCostCard,
+  OverallOpsTile,
+  PredictionsHealthTile,
+  JobsHealthTile,
+  FastpathHealthTile,
+  DiagnosticsTile,
 } from "@/components/overview";
-import { RefreshCw, AlertCircle } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import Link from "next/link";
 
 /**
  * Overview Page
  *
- * Dashboard home with:
- * - Health cards (System, Predictions, Jobs, Live)
- * - Coverage bar
- * - Two-column layout: Upcoming Matches + Active Incidents
+ * Ops dashboard designed for 5-10 second scan.
+ *
+ * Layout:
+ * - Left Rail (277px): API-Football Budget, Sentry, LLM Cost
+ * - Main: Overall Ops + Tiles grid (Predictions, Jobs, Fastpath, Diagnostics)
  */
 export default function OverviewPage() {
-  const { data, isLoading, error, refetch } = useOverviewData();
-
-  // Fetch real ops data (budget + health + sentry) via proxy (enterprise-safe)
   const {
-    budget: realBudget,
-    health: realHealth,
-    sentry: realSentry,
+    budget,
+    sentry,
+    llmCost,
+    jobs,
+    fastpath,
+    predictions,
+    shadowMode,
+    sensorB,
+    freshness,
     isBudgetDegraded,
-    isHealthDegraded,
     isSentryDegraded,
-    requestId: opsRequestId,
+    isLlmCostDegraded,
+    isJobsDegraded,
+    isFastpathDegraded,
+    isPredictionsDegraded,
+    isDegraded,
+    isLoading,
+    error,
+    requestId,
+    refetch,
   } = useOpsOverview();
-
-  // Fetch upcoming matches from dedicated endpoint
-  const {
-    matches: realUpcomingMatches,
-    isDegraded: isUpcomingDegraded,
-  } = useUpcomingMatches();
 
   // Loading state
   if (isLoading) {
@@ -53,8 +59,8 @@ export default function OverviewPage() {
     );
   }
 
-  // Error state
-  if (error) {
+  // Full error state (only if ALL data failed)
+  if (error && isDegraded) {
     return (
       <div className="h-full flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-4">
@@ -68,7 +74,6 @@ export default function OverviewPage() {
             </p>
           </div>
           <Button variant="outline" onClick={() => refetch()}>
-            <RefreshCw className="h-4 w-4 mr-2" />
             Retry
           </Button>
         </div>
@@ -76,166 +81,82 @@ export default function OverviewPage() {
     );
   }
 
-  // No data (shouldn't happen but handle gracefully)
-  if (!data) {
-    return null;
-  }
+  // Use real data with mock fallback for budget only
+  const displayBudget = budget ?? mockApiBudget;
 
-  const { health: mockHealth, upcomingMatches: mockUpcoming, activeIncidents } = data;
-
-  // Use real data if available, fallback to mock
-  const displayBudget = realBudget ?? mockApiBudget;
-  const displayHealth = realHealth ?? mockHealth ?? mockHealthSummary;
-  const displayUpcoming = realUpcomingMatches ?? mockUpcoming ?? mockUpcomingMatches;
+  // Build statuses for overall rollup
+  const overallStatuses = {
+    jobs: jobs?.status ?? null,
+    predictions: predictions?.status ?? null,
+    fastpath: fastpath?.status ?? null,
+    budget: budget?.status ?? null,
+    sentry: sentry?.status ?? null,
+    llmCost: llmCost?.status ?? null,
+  };
 
   return (
     <div className="h-full flex overflow-hidden">
-      {/* Left Rail: API Budget + Sentry (aligned with FilterPanel at 277px) */}
+      {/* Left Rail: Budget + Sentry + LLM Cost */}
       <aside className="w-[277px] shrink-0 border-r border-border bg-sidebar flex flex-col">
-        {/* Header - consistent with FilterPanel */}
+        {/* Header */}
         <div className="h-12 flex items-center px-3 border-b border-border">
-          <span className="text-sm font-medium text-foreground">Dashboard</span>
+          <span className="text-sm font-medium text-foreground">Services</span>
         </div>
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-3">
-          <ApiBudgetCard
-            budget={displayBudget}
-            isMockFallback={isBudgetDegraded}
-            requestId={opsRequestId}
-          />
-          <SentryHealthCard
-            sentry={realSentry}
-            isMockFallback={isSentryDegraded}
-          />
-        </div>
+        <ScrollArea className="flex-1">
+          <div className="p-3 space-y-3">
+            <ApiBudgetCard
+              budget={displayBudget}
+              isMockFallback={isBudgetDegraded}
+              requestId={requestId}
+            />
+            <SentryHealthCard
+              sentry={sentry}
+              isMockFallback={isSentryDegraded}
+            />
+            <LlmCostCard
+              llmCost={llmCost}
+              isMockFallback={isLlmCostDegraded}
+            />
+          </div>
+        </ScrollArea>
       </aside>
 
       {/* Main content */}
       <ScrollArea className="flex-1">
         <div className="p-6 space-y-6">
-          {/* Page header */}
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-foreground">Overview</h1>
-              <p className="text-sm text-muted-foreground">
-                System health and real-time status
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => refetch()}
-              aria-label="Refresh data"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </Button>
-          </div>
+          {/* Overall Ops - full width at top */}
+          <OverallOpsTile
+            statuses={overallStatuses}
+            freshness={freshness}
+            onRefresh={() => refetch()}
+          />
 
-          {/* Health cards grid */}
-          <section aria-labelledby="health-heading">
-            <h2 id="health-heading" className="sr-only">
-              Health Status
-            </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {displayHealth.cards.map((card) => (
-                <HealthCard
-                  key={card.id}
-                  card={card}
-                  isMockFallback={isHealthDegraded}
-                />
-              ))}
-            </div>
-          </section>
+          {/* Main tiles grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Predictions Health */}
+            <PredictionsHealthTile
+              predictions={predictions}
+              isMockFallback={isPredictionsDegraded}
+            />
 
-          {/* Coverage bar */}
-          <section
-            aria-labelledby="coverage-heading"
-            className="bg-surface rounded-lg border border-border p-4"
-          >
-            <h2 id="coverage-heading" className="sr-only">
-              Prediction Coverage
-            </h2>
-            <CoverageBar percentage={displayHealth.coveragePct} />
-          </section>
+            {/* Jobs Health */}
+            <JobsHealthTile
+              jobs={jobs}
+              isMockFallback={isJobsDegraded}
+            />
 
-          {/* Two-column layout: Upcoming + Incidents */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Upcoming Matches */}
-            <section
-              aria-labelledby="upcoming-heading"
-              className="bg-surface rounded-lg border border-border p-4"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <h2
-                  id="upcoming-heading"
-                  className="text-sm font-semibold text-foreground"
-                >
-                  Upcoming Matches
-                  {isUpcomingDegraded && (
-                    <span className="ml-2 text-[10px] font-normal text-muted-foreground/70">
-                      (mock)
-                    </span>
-                  )}
-                </h2>
-                <span className="text-xs text-muted-foreground">
-                  {displayUpcoming.length} matches
-                </span>
-              </div>
-              <UpcomingMatchesList matches={displayUpcoming.slice(0, 6)} />
-              {displayUpcoming.length > 6 && (
-                <div className="mt-3 pt-3 border-t border-border">
-                  <Link
-                    href="/matches"
-                    className="text-xs text-primary hover:text-primary-hover hover:underline"
-                  >
-                    View all {displayUpcoming.length} matches →
-                  </Link>
-                </div>
-              )}
-            </section>
+            {/* Fastpath Health */}
+            <FastpathHealthTile
+              fastpath={fastpath}
+              isMockFallback={isFastpathDegraded}
+            />
 
-            {/* Active Incidents */}
-            <section
-              aria-labelledby="incidents-heading"
-              className="bg-surface rounded-lg border border-border p-4"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <h2
-                  id="incidents-heading"
-                  className="text-sm font-semibold text-foreground"
-                >
-                  Active Incidents
-                </h2>
-                <span className="text-xs text-muted-foreground">
-                  {activeIncidents.length} active
-                </span>
-              </div>
-              <ActiveIncidentsList incidents={activeIncidents.slice(0, 5)} />
-              {activeIncidents.length > 5 && (
-                <div className="mt-3 pt-3 border-t border-border">
-                  <Link
-                    href="/incidents"
-                    className="text-xs text-primary hover:text-primary-hover hover:underline"
-                  >
-                    View all {activeIncidents.length} incidents →
-                  </Link>
-                </div>
-              )}
-            </section>
-          </div>
-
-          {/* Last updated */}
-          <div className="text-xs text-muted-foreground text-center">
-            Last updated:{" "}
-            {new Date(displayHealth.lastUpdated).toLocaleString("en-US", {
-              month: "short",
-              day: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
-            {isHealthDegraded && (
-              <span className="ml-2 text-muted-foreground/70">(mock data)</span>
-            )}
+            {/* Diagnostics (Shadow Mode + Sensor B) */}
+            <DiagnosticsTile
+              shadowMode={shadowMode}
+              sensorB={sensorB}
+            />
           </div>
         </div>
       </ScrollArea>

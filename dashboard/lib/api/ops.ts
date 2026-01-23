@@ -516,3 +516,502 @@ export function parseOpsSentry(ops: OpsResponse): OpsSentrySummary | null {
   if (!rawSentry) return null;
   return adaptOpsSentry(rawSentry);
 }
+
+// ============================================================================
+// Jobs Health Extraction (best-effort)
+// ============================================================================
+
+/**
+ * Individual job status from backend
+ */
+export interface OpsJobItem {
+  status: ApiBudgetStatus;
+  last_success_at?: string;
+  minutes_since_success?: number;
+  source?: string;
+  help_url?: string;
+  // Job-specific fields
+  ft_pending?: number; // stats_backfill
+  backlog_ready?: number; // fastpath
+}
+
+/**
+ * Jobs health summary from ops.json
+ */
+export interface OpsJobsHealth {
+  status: ApiBudgetStatus;
+  runbook_url?: string;
+  stats_backfill: OpsJobItem | null;
+  odds_sync: OpsJobItem | null;
+  fastpath: OpsJobItem | null;
+}
+
+/**
+ * Parse individual job item
+ */
+function parseJobItem(raw: unknown): OpsJobItem | null {
+  if (!isObject(raw)) return null;
+
+  const status = raw.status;
+  if (!isValidStatus(status)) return null;
+
+  return {
+    status,
+    last_success_at: typeof raw.last_success_at === "string" ? raw.last_success_at : undefined,
+    minutes_since_success: typeof raw.minutes_since_success === "number" ? raw.minutes_since_success : undefined,
+    source: typeof raw.source === "string" ? raw.source : undefined,
+    help_url: typeof raw.help_url === "string" ? raw.help_url : undefined,
+    ft_pending: typeof raw.ft_pending === "number" ? raw.ft_pending : undefined,
+    backlog_ready: typeof raw.backlog_ready === "number" ? raw.backlog_ready : undefined,
+  };
+}
+
+/**
+ * Parse jobs health from ops response
+ */
+export function parseOpsJobsHealth(ops: OpsResponse): OpsJobsHealth | null {
+  const jobsHealth = getNestedValue(ops, "data", "jobs_health");
+  if (!isObject(jobsHealth)) return null;
+
+  const status = jobsHealth.status;
+  if (!isValidStatus(status)) return null;
+
+  return {
+    status,
+    runbook_url: typeof jobsHealth.runbook_url === "string" ? jobsHealth.runbook_url : undefined,
+    stats_backfill: parseJobItem(jobsHealth.stats_backfill),
+    odds_sync: parseJobItem(jobsHealth.odds_sync),
+    fastpath: parseJobItem(jobsHealth.fastpath),
+  };
+}
+
+// ============================================================================
+// Fastpath Health Extraction (detailed)
+// ============================================================================
+
+/**
+ * Fastpath last tick result
+ */
+export interface FastpathTickResult {
+  selected: number;
+  refreshed: number;
+  stats_ready: number;
+  enqueued: number;
+  completed: number;
+  errors: number;
+  skipped: number;
+}
+
+/**
+ * Fastpath 60m stats
+ */
+export interface FastpathLast60m {
+  ok: number;
+  ok_retry: number;
+  error: number;
+  skipped: number;
+  in_queue: number;
+  running: number;
+  total_processed: number;
+  error_rate_pct: number;
+}
+
+/**
+ * Fastpath health summary from ops.json
+ */
+export interface OpsFastpathHealth {
+  status: ApiBudgetStatus;
+  status_reason?: string;
+  enabled: boolean;
+  last_tick_at?: string;
+  minutes_since_tick?: number;
+  last_tick_result?: FastpathTickResult;
+  last_60m?: FastpathLast60m;
+  top_error_codes_60m?: Record<string, number>;
+  pending_ready: number;
+  config?: {
+    interval_seconds: number;
+    lookback_minutes: number;
+    max_concurrent_jobs: number;
+  };
+}
+
+/**
+ * Parse fastpath health from ops response
+ */
+export function parseOpsFastpathHealth(ops: OpsResponse): OpsFastpathHealth | null {
+  const fastpath = getNestedValue(ops, "data", "fastpath_health");
+  if (!isObject(fastpath)) return null;
+
+  const status = fastpath.status;
+  if (!isValidStatus(status)) return null;
+
+  const enabled = typeof fastpath.enabled === "boolean" ? fastpath.enabled : false;
+  const pending_ready = typeof fastpath.pending_ready === "number" ? fastpath.pending_ready : 0;
+
+  // Parse last_tick_result
+  let last_tick_result: FastpathTickResult | undefined;
+  const tickResult = fastpath.last_tick_result;
+  if (isObject(tickResult)) {
+    last_tick_result = {
+      selected: typeof tickResult.selected === "number" ? tickResult.selected : 0,
+      refreshed: typeof tickResult.refreshed === "number" ? tickResult.refreshed : 0,
+      stats_ready: typeof tickResult.stats_ready === "number" ? tickResult.stats_ready : 0,
+      enqueued: typeof tickResult.enqueued === "number" ? tickResult.enqueued : 0,
+      completed: typeof tickResult.completed === "number" ? tickResult.completed : 0,
+      errors: typeof tickResult.errors === "number" ? tickResult.errors : 0,
+      skipped: typeof tickResult.skipped === "number" ? tickResult.skipped : 0,
+    };
+  }
+
+  // Parse last_60m
+  let last_60m: FastpathLast60m | undefined;
+  const l60m = fastpath.last_60m;
+  if (isObject(l60m)) {
+    last_60m = {
+      ok: typeof l60m.ok === "number" ? l60m.ok : 0,
+      ok_retry: typeof l60m.ok_retry === "number" ? l60m.ok_retry : 0,
+      error: typeof l60m.error === "number" ? l60m.error : 0,
+      skipped: typeof l60m.skipped === "number" ? l60m.skipped : 0,
+      in_queue: typeof l60m.in_queue === "number" ? l60m.in_queue : 0,
+      running: typeof l60m.running === "number" ? l60m.running : 0,
+      total_processed: typeof l60m.total_processed === "number" ? l60m.total_processed : 0,
+      error_rate_pct: typeof l60m.error_rate_pct === "number" ? l60m.error_rate_pct : 0,
+    };
+  }
+
+  // Parse config
+  let config: OpsFastpathHealth["config"];
+  const cfg = fastpath.config;
+  if (isObject(cfg)) {
+    config = {
+      interval_seconds: typeof cfg.interval_seconds === "number" ? cfg.interval_seconds : 120,
+      lookback_minutes: typeof cfg.lookback_minutes === "number" ? cfg.lookback_minutes : 180,
+      max_concurrent_jobs: typeof cfg.max_concurrent_jobs === "number" ? cfg.max_concurrent_jobs : 10,
+    };
+  }
+
+  return {
+    status,
+    status_reason: typeof fastpath.status_reason === "string" ? fastpath.status_reason : undefined,
+    enabled,
+    last_tick_at: typeof fastpath.last_tick_at === "string" ? fastpath.last_tick_at : undefined,
+    minutes_since_tick: typeof fastpath.minutes_since_tick === "number" ? fastpath.minutes_since_tick : undefined,
+    last_tick_result,
+    last_60m,
+    top_error_codes_60m: isObject(fastpath.top_error_codes_60m)
+      ? (fastpath.top_error_codes_60m as Record<string, number>)
+      : undefined,
+    pending_ready,
+    config,
+  };
+}
+
+// ============================================================================
+// Predictions Health Extraction
+// ============================================================================
+
+/**
+ * Predictions health summary from ops.json
+ */
+export interface OpsPredictionsHealth {
+  status: ApiBudgetStatus;
+  status_reason?: string;
+  ns_matches_next_48h: number;
+  ns_matches_next_48h_missing_prediction: number;
+  ns_coverage_pct: number;
+  next_ns_match_utc?: string;
+  ft_matches_last_48h: number;
+  ft_matches_last_48h_missing_prediction: number;
+  ft_coverage_pct: number;
+  last_prediction_saved_at?: string;
+  hours_since_last_prediction?: number;
+  predictions_saved_last_24h: number;
+  predictions_saved_today_utc: number;
+  thresholds?: {
+    ns_coverage_warn_pct: number;
+    ns_coverage_red_pct: number;
+    ft_coverage_warn_pct: number;
+    ft_coverage_red_pct: number;
+  };
+}
+
+/**
+ * Parse predictions health from ops response
+ */
+export function parseOpsPredictionsHealth(ops: OpsResponse): OpsPredictionsHealth | null {
+  const pred = getNestedValue(ops, "data", "predictions_health");
+  if (!isObject(pred)) return null;
+
+  const status = pred.status;
+  if (!isValidStatus(status)) return null;
+
+  return {
+    status,
+    status_reason: typeof pred.status_reason === "string" ? pred.status_reason : undefined,
+    ns_matches_next_48h: typeof pred.ns_matches_next_48h === "number" ? pred.ns_matches_next_48h : 0,
+    ns_matches_next_48h_missing_prediction: typeof pred.ns_matches_next_48h_missing_prediction === "number" ? pred.ns_matches_next_48h_missing_prediction : 0,
+    ns_coverage_pct: typeof pred.ns_coverage_pct === "number" ? pred.ns_coverage_pct : 0,
+    next_ns_match_utc: typeof pred.next_ns_match_utc === "string" ? pred.next_ns_match_utc : undefined,
+    ft_matches_last_48h: typeof pred.ft_matches_last_48h === "number" ? pred.ft_matches_last_48h : 0,
+    ft_matches_last_48h_missing_prediction: typeof pred.ft_matches_last_48h_missing_prediction === "number" ? pred.ft_matches_last_48h_missing_prediction : 0,
+    ft_coverage_pct: typeof pred.ft_coverage_pct === "number" ? pred.ft_coverage_pct : 100,
+    last_prediction_saved_at: typeof pred.last_prediction_saved_at === "string" ? pred.last_prediction_saved_at : undefined,
+    hours_since_last_prediction: typeof pred.hours_since_last_prediction === "number" ? pred.hours_since_last_prediction : undefined,
+    predictions_saved_last_24h: typeof pred.predictions_saved_last_24h === "number" ? pred.predictions_saved_last_24h : 0,
+    predictions_saved_today_utc: typeof pred.predictions_saved_today_utc === "number" ? pred.predictions_saved_today_utc : 0,
+    thresholds: isObject(pred.thresholds) ? {
+      ns_coverage_warn_pct: typeof pred.thresholds.ns_coverage_warn_pct === "number" ? pred.thresholds.ns_coverage_warn_pct : 80,
+      ns_coverage_red_pct: typeof pred.thresholds.ns_coverage_red_pct === "number" ? pred.thresholds.ns_coverage_red_pct : 50,
+      ft_coverage_warn_pct: typeof pred.thresholds.ft_coverage_warn_pct === "number" ? pred.thresholds.ft_coverage_warn_pct : 80,
+      ft_coverage_red_pct: typeof pred.thresholds.ft_coverage_red_pct === "number" ? pred.thresholds.ft_coverage_red_pct : 50,
+    } : undefined,
+  };
+}
+
+// ============================================================================
+// Shadow Mode Extraction
+// ============================================================================
+
+/**
+ * Shadow mode summary from ops.json
+ */
+export interface OpsShadowMode {
+  state: {
+    enabled: boolean;
+    shadow_architecture?: string;
+    shadow_model_version?: string;
+    baseline_model_version?: string;
+    last_evaluation_at?: string;
+    evaluation_job_interval_minutes?: number;
+  };
+  counts: {
+    shadow_predictions_total: number;
+    shadow_predictions_evaluated: number;
+    shadow_predictions_pending: number;
+    shadow_predictions_last_24h: number;
+    shadow_evaluations_last_24h: number;
+    shadow_errors_last_24h: number;
+  };
+  metrics: {
+    baseline_accuracy: number;
+    shadow_accuracy: number;
+    baseline_brier: number;
+    shadow_brier: number;
+    delta_accuracy: number;
+    delta_brier: number;
+  };
+  recommendation: {
+    status: string; // "GO" | "NO_GO" | "PENDING"
+    reason?: string;
+  };
+  health: {
+    pending_ft_to_evaluate: number;
+    eval_lag_minutes: number;
+    stale_threshold_minutes: number;
+    is_stale: boolean;
+  };
+}
+
+/**
+ * Parse shadow mode from ops response
+ */
+export function parseOpsShadowMode(ops: OpsResponse): OpsShadowMode | null {
+  const shadow = getNestedValue(ops, "data", "shadow_mode");
+  if (!isObject(shadow)) return null;
+
+  const state = shadow.state;
+  const counts = shadow.counts;
+  const metrics = shadow.metrics;
+  const recommendation = shadow.recommendation;
+  const health = shadow.health;
+
+  if (!isObject(state) || !isObject(counts) || !isObject(metrics) || !isObject(recommendation) || !isObject(health)) {
+    return null;
+  }
+
+  return {
+    state: {
+      enabled: typeof state.enabled === "boolean" ? state.enabled : false,
+      shadow_architecture: typeof state.shadow_architecture === "string" ? state.shadow_architecture : undefined,
+      shadow_model_version: typeof state.shadow_model_version === "string" ? state.shadow_model_version : undefined,
+      baseline_model_version: typeof state.baseline_model_version === "string" ? state.baseline_model_version : undefined,
+      last_evaluation_at: typeof state.last_evaluation_at === "string" ? state.last_evaluation_at : undefined,
+      evaluation_job_interval_minutes: typeof state.evaluation_job_interval_minutes === "number" ? state.evaluation_job_interval_minutes : undefined,
+    },
+    counts: {
+      shadow_predictions_total: typeof counts.shadow_predictions_total === "number" ? counts.shadow_predictions_total : 0,
+      shadow_predictions_evaluated: typeof counts.shadow_predictions_evaluated === "number" ? counts.shadow_predictions_evaluated : 0,
+      shadow_predictions_pending: typeof counts.shadow_predictions_pending === "number" ? counts.shadow_predictions_pending : 0,
+      shadow_predictions_last_24h: typeof counts.shadow_predictions_last_24h === "number" ? counts.shadow_predictions_last_24h : 0,
+      shadow_evaluations_last_24h: typeof counts.shadow_evaluations_last_24h === "number" ? counts.shadow_evaluations_last_24h : 0,
+      shadow_errors_last_24h: typeof counts.shadow_errors_last_24h === "number" ? counts.shadow_errors_last_24h : 0,
+    },
+    metrics: {
+      baseline_accuracy: typeof metrics.baseline_accuracy === "number" ? metrics.baseline_accuracy : 0,
+      shadow_accuracy: typeof metrics.shadow_accuracy === "number" ? metrics.shadow_accuracy : 0,
+      baseline_brier: typeof metrics.baseline_brier === "number" ? metrics.baseline_brier : 0,
+      shadow_brier: typeof metrics.shadow_brier === "number" ? metrics.shadow_brier : 0,
+      delta_accuracy: typeof metrics.delta_accuracy === "number" ? metrics.delta_accuracy : 0,
+      delta_brier: typeof metrics.delta_brier === "number" ? metrics.delta_brier : 0,
+    },
+    recommendation: {
+      status: typeof recommendation.status === "string" ? recommendation.status : "PENDING",
+      reason: typeof recommendation.reason === "string" ? recommendation.reason : undefined,
+    },
+    health: {
+      pending_ft_to_evaluate: typeof health.pending_ft_to_evaluate === "number" ? health.pending_ft_to_evaluate : 0,
+      eval_lag_minutes: typeof health.eval_lag_minutes === "number" ? health.eval_lag_minutes : 0,
+      stale_threshold_minutes: typeof health.stale_threshold_minutes === "number" ? health.stale_threshold_minutes : 120,
+      is_stale: typeof health.is_stale === "boolean" ? health.is_stale : false,
+    },
+  };
+}
+
+// ============================================================================
+// Sensor B Extraction
+// ============================================================================
+
+/**
+ * Sensor B summary from ops.json
+ */
+export interface OpsSensorB {
+  state: string; // "CALIBRATING" | "NOMINAL" | "OVERFITTING_SUSPECTED" | etc.
+  reason?: string;
+  note?: string;
+  signal_score?: number;
+  brier_a?: number;
+  brier_b?: number;
+  delta_brier?: number;
+  accuracy_a?: number;
+  accuracy_b?: number;
+  window_size?: number;
+  is_ready: boolean;
+  health: {
+    pending_ft_to_evaluate: number;
+    eval_lag_minutes: number;
+    stale_threshold_minutes: number;
+    is_stale: boolean;
+  };
+}
+
+/**
+ * Parse sensor B from ops response
+ */
+export function parseOpsSensorB(ops: OpsResponse): OpsSensorB | null {
+  const sensor = getNestedValue(ops, "data", "sensor_b");
+  if (!isObject(sensor)) return null;
+
+  const health = sensor.health;
+  if (!isObject(health)) return null;
+
+  const state = sensor.state;
+  if (typeof state !== "string") return null;
+
+  return {
+    state,
+    reason: typeof sensor.reason === "string" ? sensor.reason : undefined,
+    note: typeof sensor.note === "string" ? sensor.note : undefined,
+    signal_score: typeof sensor.signal_score === "number" ? sensor.signal_score : undefined,
+    brier_a: typeof sensor.brier_a === "number" ? sensor.brier_a : undefined,
+    brier_b: typeof sensor.brier_b === "number" ? sensor.brier_b : undefined,
+    delta_brier: typeof sensor.delta_brier === "number" ? sensor.delta_brier : undefined,
+    accuracy_a: typeof sensor.accuracy_a === "number" ? sensor.accuracy_a : undefined,
+    accuracy_b: typeof sensor.accuracy_b === "number" ? sensor.accuracy_b : undefined,
+    window_size: typeof sensor.window_size === "number" ? sensor.window_size : undefined,
+    is_ready: typeof sensor.is_ready === "boolean" ? sensor.is_ready : false,
+    health: {
+      pending_ft_to_evaluate: typeof health.pending_ft_to_evaluate === "number" ? health.pending_ft_to_evaluate : 0,
+      eval_lag_minutes: typeof health.eval_lag_minutes === "number" ? health.eval_lag_minutes : 0,
+      stale_threshold_minutes: typeof health.stale_threshold_minutes === "number" ? health.stale_threshold_minutes : 120,
+      is_stale: typeof health.is_stale === "boolean" ? health.is_stale : false,
+    },
+  };
+}
+
+// ============================================================================
+// LLM Cost Extraction
+// ============================================================================
+
+/**
+ * LLM cost summary from ops.json
+ */
+export interface OpsLlmCost {
+  status: ApiBudgetStatus;
+  provider: string;
+  cost_24h_usd: number;
+  cost_7d_usd: number;
+  cost_total_usd: number;
+  requests_ok_24h: number;
+  requests_ok_7d: number;
+  requests_ok_total: number;
+  avg_cost_per_ok_24h?: number;
+  tokens_in_24h: number;
+  tokens_out_24h: number;
+  tokens_in_7d: number;
+  tokens_out_7d: number;
+  note?: string;
+}
+
+/**
+ * Parse LLM cost from ops response
+ */
+export function parseOpsLlmCost(ops: OpsResponse): OpsLlmCost | null {
+  const llm = getNestedValue(ops, "data", "llm_cost");
+  if (!isObject(llm)) return null;
+
+  const status = llm.status;
+  if (!isValidStatus(status)) return null;
+
+  const provider = llm.provider;
+  if (typeof provider !== "string") return null;
+
+  return {
+    status,
+    provider,
+    cost_24h_usd: typeof llm.cost_24h_usd === "number" ? llm.cost_24h_usd : 0,
+    cost_7d_usd: typeof llm.cost_7d_usd === "number" ? llm.cost_7d_usd : 0,
+    cost_total_usd: typeof llm.cost_total_usd === "number" ? llm.cost_total_usd : 0,
+    requests_ok_24h: typeof llm.requests_ok_24h === "number" ? llm.requests_ok_24h : 0,
+    requests_ok_7d: typeof llm.requests_ok_7d === "number" ? llm.requests_ok_7d : 0,
+    requests_ok_total: typeof llm.requests_ok_total === "number" ? llm.requests_ok_total : 0,
+    avg_cost_per_ok_24h: typeof llm.avg_cost_per_ok_24h === "number" ? llm.avg_cost_per_ok_24h : undefined,
+    tokens_in_24h: typeof llm.tokens_in_24h === "number" ? llm.tokens_in_24h : 0,
+    tokens_out_24h: typeof llm.tokens_out_24h === "number" ? llm.tokens_out_24h : 0,
+    tokens_in_7d: typeof llm.tokens_in_7d === "number" ? llm.tokens_in_7d : 0,
+    tokens_out_7d: typeof llm.tokens_out_7d === "number" ? llm.tokens_out_7d : 0,
+    note: typeof llm.note === "string" ? llm.note : undefined,
+  };
+}
+
+// ============================================================================
+// Ops Freshness Extraction
+// ============================================================================
+
+/**
+ * Ops freshness metadata
+ */
+export interface OpsFreshness {
+  generated_at: string;
+  cache_age_seconds: number;
+  is_stale: boolean;
+}
+
+/**
+ * Parse ops freshness from response
+ */
+export function parseOpsFreshness(ops: OpsResponse): OpsFreshness | null {
+  if (!isObject(ops)) return null;
+
+  const generated_at = getNestedValue(ops, "data", "generated_at");
+  const cache_age_seconds = ops.cache_age_seconds;
+
+  if (typeof generated_at !== "string") return null;
+  const cacheAge = typeof cache_age_seconds === "number" ? cache_age_seconds : 0;
+
+  return {
+    generated_at,
+    cache_age_seconds: cacheAge,
+    is_stale: cacheAge > 120, // stale if > 2 minutes
+  };
+}
