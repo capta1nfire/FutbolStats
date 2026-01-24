@@ -123,6 +123,7 @@ function AlertItem({ alert, onMarkRead }: { alert: Alert; onMarkRead: (id: numbe
  * - Mark all as read button
  */
 export function AlertsBell() {
+  const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
   const {
     alerts,
@@ -136,6 +137,11 @@ export function AlertsBell() {
   } = useAlerts();
   const { toast } = useToast();
   const shownToastIdsRef = useRef<Set<number>>(new Set());
+
+  // Prevent hydration mismatch - only render Popover on client
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Show toast for new critical alerts
   useEffect(() => {
@@ -172,6 +178,20 @@ export function AlertsBell() {
 
   // Filter to only firing alerts for display
   const firingAlerts = alerts.filter((a) => a.status === "firing");
+
+  // Render placeholder during SSR to prevent hydration mismatch
+  if (!mounted) {
+    return (
+      <Button
+        variant="ghost"
+        size="icon"
+        className="relative"
+        aria-label="Notifications"
+      >
+        <Bell className="h-5 w-5 text-muted-foreground" strokeWidth={1.5} />
+      </Button>
+    );
+  }
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
