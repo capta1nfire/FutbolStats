@@ -151,11 +151,14 @@ function MatchesPageContent() {
   // Construct filters for query (used for both API and mock fallback)
   const filters: MatchFilters = useMemo(() => {
     // Map view to status filter
+    // Each view has a default status, but user can further filter if multiple statuses exist
     let status: MatchFilters["status"];
     if (activeView === "upcoming") {
-      status = ["scheduled"];
+      // Default: scheduled, but allow user to filter within upcoming statuses
+      status = selectedStatuses.length > 0 ? selectedStatuses : ["scheduled"];
     } else if (activeView === "finished") {
-      status = ["ft"];
+      // Default: ft, but allow user to filter within finished statuses
+      status = selectedStatuses.length > 0 ? selectedStatuses : ["ft"];
     } else {
       // Calendar view: use selected statuses or show all
       status = selectedStatuses.length > 0 ? selectedStatuses : undefined;
@@ -207,7 +210,31 @@ function MatchesPageContent() {
 
   // Use API data if available, fallback to mocks
   const mockMatches = useMemo(() => getMatchesMockSync(filters), [filters]);
-  const matches = apiMatches ?? mockMatches;
+  const rawMatches = apiMatches ?? mockMatches;
+
+  // Apply client-side filters (league name and search)
+  // Backend filters by date/status, client filters by league name and search text
+  const matches = useMemo(() => {
+    let filtered = rawMatches;
+
+    // Filter by league name (client-side, backend uses league_id)
+    if (filters.leagues && filters.leagues.length > 0) {
+      filtered = filtered.filter((m) => filters.leagues!.includes(m.leagueName));
+    }
+
+    // Filter by search text (client-side)
+    if (filters.search) {
+      const searchLower = filters.search.toLowerCase();
+      filtered = filtered.filter(
+        (m) =>
+          m.home.toLowerCase().includes(searchLower) ||
+          m.away.toLowerCase().includes(searchLower) ||
+          m.leagueName.toLowerCase().includes(searchLower)
+      );
+    }
+
+    return filtered;
+  }, [rawMatches, filters.leagues, filters.search]);
 
   // Find selected match from current list first (no extra fetch needed for basic info)
   // Falls back to backend match lookup, then mock data if needed
@@ -250,8 +277,8 @@ function MatchesPageContent() {
         range: view !== "calendar" ? (overrides.range ?? selectedTimeRange) : undefined,
         // Only include date for calendar view (as YYYY-MM-DD string)
         date: view === "calendar" ? (overrides.date ?? selectedDate) : undefined,
-        // Only include status for calendar view
-        status: view === "calendar" ? (overrides.status ?? selectedStatuses) : undefined,
+        // Include status for all views (intelligent filtering)
+        status: overrides.status ?? selectedStatuses,
         league: overrides.league ?? selectedLeagues,
         q: overrides.q ?? searchValue,
       });
@@ -274,11 +301,12 @@ function MatchesPageContent() {
     router.replace(buildUrl({ id: null }), { scroll: false });
   }, [router, buildUrl]);
 
-  // Handle view change - reset page to 1
+  // Handle view change - reset page to 1 and clear status filter
   const handleViewChange = useCallback(
     (view: MatchesView) => {
       setCurrentPage(1);
-      router.replace(buildUrl({ view, id: null }), { scroll: false });
+      // Clear status filter when changing views (each view has different available statuses)
+      router.replace(buildUrl({ view, id: null, status: [] }), { scroll: false });
     },
     [router, buildUrl]
   );

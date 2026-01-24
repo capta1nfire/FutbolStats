@@ -148,9 +148,14 @@ export function MatchesFilterPanel({
       });
     }
 
-    // Status filter (only for calendar view)
-    // Shows only statuses present in current matches (intelligent filtering)
-    if (activeView === "calendar" && availableStatuses.length > 0) {
+    // Status filter (intelligent filtering for all views)
+    // Shows only statuses present in current matches
+    // For upcoming/finished views, only show if there are multiple statuses
+    const showStatusFilter = activeView === "calendar"
+      ? availableStatuses.length > 0
+      : availableStatuses.length > 1; // Only show if there's variety in upcoming/finished
+
+    if (showStatusFilter) {
       groups.push({
         id: "status",
         label: "Status",
