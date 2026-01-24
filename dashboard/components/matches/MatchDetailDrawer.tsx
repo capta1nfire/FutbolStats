@@ -19,6 +19,34 @@ import { TeamLogo } from "@/components/ui/team-logo";
 import { Calendar, TrendingUp, Radio, Info } from "lucide-react";
 import { useRegion } from "@/components/providers/RegionProvider";
 
+/** Map country names to ISO 3166-1 alpha-2 codes for flag emoji */
+const COUNTRY_TO_CODE: Record<string, string> = {
+  "Argentina": "AR", "Australia": "AU", "Austria": "AT", "Belgium": "BE",
+  "Brazil": "BR", "Chile": "CL", "China": "CN", "Colombia": "CO",
+  "Croatia": "HR", "Czech-Republic": "CZ", "Denmark": "DK", "Ecuador": "EC",
+  "England": "GB", "Finland": "FI", "France": "FR", "Germany": "DE",
+  "Greece": "GR", "Hungary": "HU", "Ireland": "IE", "Israel": "IL",
+  "Italy": "IT", "Japan": "JP", "Mexico": "MX", "Netherlands": "NL",
+  "Norway": "NO", "Paraguay": "PY", "Peru": "PE", "Poland": "PL",
+  "Portugal": "PT", "Romania": "RO", "Russia": "RU", "Saudi-Arabia": "SA",
+  "Scotland": "GB", "Serbia": "RS", "Slovakia": "SK", "Slovenia": "SI",
+  "South-Korea": "KR", "Spain": "ES", "Sweden": "SE", "Switzerland": "CH",
+  "Turkey": "TR", "Ukraine": "UA", "Uruguay": "UY", "USA": "US",
+  "Venezuela": "VE", "Wales": "GB", "World": "UN",
+};
+
+/** Convert country name to flag emoji */
+function getCountryFlag(country: string): string {
+  const code = COUNTRY_TO_CODE[country];
+  if (!code) return "";
+  // Convert ISO code to flag emoji using regional indicator symbols
+  return code
+    .toUpperCase()
+    .split("")
+    .map((char) => String.fromCodePoint(127397 + char.charCodeAt(0)))
+    .join("");
+}
+
 /** Section for displaying a single prediction model */
 function PredictionSection({
   label,
@@ -99,16 +127,16 @@ function MatchHeader({
   const hasScore = match.score !== undefined && match.score !== null;
   const isLive = match.status === "live" || match.status === "ht";
 
+  const countryFlag = getCountryFlag(match.leagueCountry);
+
   return (
     <div className="bg-surface rounded-lg p-4 space-y-3">
-      {/* League header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Badge variant="secondary" className="text-xs">
-            {match.leagueName}
-          </Badge>
-        </div>
-        <span className="text-xs text-muted-foreground">{match.leagueCountry}</span>
+      {/* League header - centered */}
+      <div className="flex items-center justify-center gap-2">
+        {countryFlag && <span className="text-base">{countryFlag}</span>}
+        <Badge variant="secondary" className="text-xs">
+          {match.leagueName}
+        </Badge>
       </div>
 
       {/* 3-column layout: Home | Score/Time | Away */}
