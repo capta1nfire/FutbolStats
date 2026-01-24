@@ -5825,18 +5825,18 @@ async def dashboard_movement_top(
 
         movers = []
 
-        # Get lineup changes (from match_external_refs sofascore_confirmed_xi_at changes)
+        # Get lineup changes (from match_sofascore_lineup captured_at)
         if type is None or type == "lineup":
             lineup_query = """
-                SELECT m.id, m.date, m.league_id, ht.name as home, at.name as away,
-                       mer.sofascore_confirmed_xi_at as value
-                FROM match_external_refs mer
-                JOIN matches m ON m.id = mer.match_id
+                SELECT DISTINCT ON (m.id) m.id, m.date, m.league_id,
+                       ht.name as home, at.name as away,
+                       msl.captured_at as value
+                FROM match_sofascore_lineup msl
+                JOIN matches m ON m.id = msl.match_id
                 JOIN teams ht ON ht.id = m.home_team_id
                 JOIN teams at ON at.id = m.away_team_id
-                WHERE mer.sofascore_confirmed_xi_at > :cutoff
-                  AND mer.sofascore_confirmed_xi_at IS NOT NULL
-                ORDER BY mer.sofascore_confirmed_xi_at DESC
+                WHERE msl.captured_at > :cutoff
+                ORDER BY m.id, msl.captured_at DESC
                 LIMIT :limit
             """
             lineup_result = await session.execute(
