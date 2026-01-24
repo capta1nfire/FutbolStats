@@ -16210,6 +16210,39 @@ async def migrate_weather_precip_prob(
     }
 
 
+@app.post("/ops/trigger-weather-sync", include_in_schema=False)
+async def trigger_weather_sync(
+    hours: int = 48,
+    limit: int = 100,
+    _: None = Depends(_verify_dashboard_token),
+):
+    """
+    Manually trigger weather forecast capture for upcoming matches.
+
+    Args:
+        hours: Lookahead window (default 48h)
+        limit: Max matches to process (default 100)
+
+    Returns:
+        Stats from the weather capture job.
+    """
+    from app.etl.sota_jobs import capture_weather_prekickoff
+
+    async with AsyncSessionLocal() as session:
+        stats = await capture_weather_prekickoff(
+            session,
+            hours=hours,
+            limit=limit,
+            horizon=24,
+        )
+        await session.commit()
+
+    return {
+        "status": "ok",
+        "stats": stats,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Debug Log Endpoint (for iOS performance instrumentation)
 # ---------------------------------------------------------------------------
