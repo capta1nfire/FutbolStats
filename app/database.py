@@ -102,17 +102,18 @@ def get_pool_status() -> dict:
         return {"type": "sqlite", "pooled": False}
 
     pool = async_engine.pool
+    checked_out = pool.checkedout()
+    total_capacity = pool.size() + pool.overflow()
     return {
         "type": "postgresql",
         "pool_size": pool.size(),
         "checked_in": pool.checkedin(),
-        "checked_out": pool.checkedout(),
+        "checked_out": checked_out,
         "overflow": pool.overflow(),
-        "invalid": pool.invalidatedcount(),
         # Utilization percentage
         "utilization_pct": round(
-            (pool.checkedout() / (pool.size() + pool.overflow())) * 100, 1
-        ) if (pool.size() + pool.overflow()) > 0 else 0,
+            (checked_out / total_capacity) * 100, 1
+        ) if total_capacity > 0 else 0,
     }
 
 
