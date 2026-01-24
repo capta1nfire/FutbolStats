@@ -172,3 +172,10 @@ GO.
 
 eliminar medallas "Tier" (y codigo) de oro, plata bronce en las predicciones de cada partido o revisar el codigo e implementarlo bien.
 
+- [ ] Partido Test para entormno de pruebas.
+
+FEATURES APP:
+1. Calculo dinamico del minuto 1'
+2. Seguimiento "en vivo" con polling optimiado.
+3. Features enriquecidas para narrativas por deduccion.
+4. mapa tipo Unifi para motores (Pendiente).

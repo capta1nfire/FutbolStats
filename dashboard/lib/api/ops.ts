@@ -539,6 +539,19 @@ export interface OpsJobItem {
 }
 
 /**
+ * Top alert from jobs_health (Auditor Dashboard enhancement)
+ * Only present when jobs_health.status is warn or red
+ */
+export interface OpsJobTopAlert {
+  job_key: string;
+  label: string;
+  severity: "warn" | "red";
+  reason: string;
+  minutes_since_success: number | null;
+  runbook_url?: string;
+}
+
+/**
  * Jobs health summary from ops.json
  */
 export interface OpsJobsHealth {
@@ -547,6 +560,10 @@ export interface OpsJobsHealth {
   stats_backfill: OpsJobItem | null;
   odds_sync: OpsJobItem | null;
   fastpath: OpsJobItem | null;
+  /** Top alert - only present when status is warn or red */
+  top_alert?: OpsJobTopAlert;
+  /** Count of jobs with alerts */
+  alerts_count?: number;
 }
 
 /**
@@ -571,6 +588,33 @@ function parseJobItem(raw: unknown): OpsJobItem | null {
 }
 
 /**
+ * Parse top_alert from jobs_health
+ */
+function parseJobTopAlert(raw: unknown): OpsJobTopAlert | undefined {
+  if (!isObject(raw)) return undefined;
+
+  const job_key = raw.job_key;
+  const label = raw.label;
+  const severity = raw.severity;
+  const reason = raw.reason;
+
+  // Validate required fields
+  if (typeof job_key !== "string") return undefined;
+  if (typeof label !== "string") return undefined;
+  if (severity !== "warn" && severity !== "red") return undefined;
+  if (typeof reason !== "string") return undefined;
+
+  return {
+    job_key,
+    label,
+    severity,
+    reason,
+    minutes_since_success: typeof raw.minutes_since_success === "number" ? raw.minutes_since_success : null,
+    runbook_url: typeof raw.runbook_url === "string" ? raw.runbook_url : undefined,
+  };
+}
+
+/**
  * Parse jobs health from ops response
  */
 export function parseOpsJobsHealth(ops: OpsResponse): OpsJobsHealth | null {
@@ -581,12 +625,18 @@ export function parseOpsJobsHealth(ops: OpsResponse): OpsJobsHealth | null {
   const status = normalizeStatus(jobsHealth.status);
   if (status === null) return null;
 
+  // Parse top_alert (only present when status is warn/red)
+  const top_alert = parseJobTopAlert(jobsHealth.top_alert);
+  const alerts_count = typeof jobsHealth.alerts_count === "number" ? jobsHealth.alerts_count : undefined;
+
   return {
     status,
     runbook_url: typeof jobsHealth.runbook_url === "string" ? jobsHealth.runbook_url : undefined,
     stats_backfill: parseJobItem(jobsHealth.stats_backfill),
     odds_sync: parseJobItem(jobsHealth.odds_sync),
     fastpath: parseJobItem(jobsHealth.fastpath),
+    top_alert,
+    alerts_count,
   };
 }
 
@@ -941,11 +991,43 @@ export function parseOpsSensorB(ops: OpsResponse): OpsSensorB | null {
 // ============================================================================
 
 /**
+ * Model pricing entry
+ */
+export interface OpsLlmModelPricing {
+  input: number;
+  output: number;
+}
+
+/**
+ * Model usage stats for a time window
+ */
+export interface OpsLlmModelUsage {
+  model: string;
+  requests: number;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+}
+
+/**
  * LLM cost summary from ops.json
  */
 export interface OpsLlmCost {
   status: ApiBudgetStatus;
   provider: string;
+  /** Source of pricing config (e.g., "config.GEMINI_PRICING") */
+  pricing_source?: string;
+  /** Current model in use */
+  model?: string;
+  /** Pricing for current model (per 1M tokens) */
+  pricing_input_per_1m?: number;
+  pricing_output_per_1m?: number;
+  /** Full pricing table for all models */
+  model_pricing?: Record<string, OpsLlmModelPricing>;
+  /** Model usage breakdown by time window (when available) */
+  model_usage_24h?: OpsLlmModelUsage[];
+  model_usage_7d?: OpsLlmModelUsage[];
+  model_usage_28d?: OpsLlmModelUsage[];
   cost_24h_usd: number;
   cost_7d_usd: number;
   cost_28d_usd: number;
@@ -966,6 +1048,51 @@ export interface OpsLlmCost {
   tokens_in_28d: number;
   tokens_out_28d: number;
   note?: string;
+}
+
+/**
+ * Parse model_pricing dict from backend
+ */
+function parseModelPricing(raw: unknown): Record<string, OpsLlmModelPricing> | undefined {
+  if (!isObject(raw)) return undefined;
+
+  const result: Record<string, OpsLlmModelPricing> = {};
+  for (const [model, pricing] of Object.entries(raw)) {
+    if (isObject(pricing) && typeof pricing.input === "number" && typeof pricing.output === "number") {
+      result[model] = { input: pricing.input, output: pricing.output };
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * Parse model_usage array from backend
+ */
+function parseModelUsage(raw: unknown): OpsLlmModelUsage[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+
+  const result: OpsLlmModelUsage[] = [];
+  for (const item of raw) {
+    if (
+      isObject(item) &&
+      typeof item.model === "string" &&
+      typeof item.requests === "number" &&
+      typeof item.tokens_in === "number" &&
+      typeof item.tokens_out === "number" &&
+      typeof item.cost_usd === "number"
+    ) {
+      result.push({
+        model: item.model,
+        requests: item.requests,
+        tokens_in: item.tokens_in,
+        tokens_out: item.tokens_out,
+        cost_usd: item.cost_usd,
+      });
+    }
+  }
+
+  return result.length > 0 ? result : undefined;
 }
 
 /**
@@ -991,9 +1118,29 @@ export function parseOpsLlmCost(ops: OpsResponse): OpsLlmCost | null {
   const requests_total = typeof llm.requests_total === "number" ? llm.requests_total
     : typeof llm.requests_ok_total === "number" ? llm.requests_ok_total : 0;
 
+  // Parse pricing fields
+  const pricing_source = typeof llm.pricing_source === "string" ? llm.pricing_source : undefined;
+  const model = typeof llm.model === "string" ? llm.model : undefined;
+  const pricing_input_per_1m = typeof llm.pricing_input_per_1m === "number" ? llm.pricing_input_per_1m : undefined;
+  const pricing_output_per_1m = typeof llm.pricing_output_per_1m === "number" ? llm.pricing_output_per_1m : undefined;
+  const model_pricing = parseModelPricing(llm.model_pricing);
+
+  // Parse model usage breakdowns (when available)
+  const model_usage_24h = parseModelUsage(llm.model_usage_24h);
+  const model_usage_7d = parseModelUsage(llm.model_usage_7d);
+  const model_usage_28d = parseModelUsage(llm.model_usage_28d);
+
   return {
     status,
     provider,
+    pricing_source,
+    model,
+    pricing_input_per_1m,
+    pricing_output_per_1m,
+    model_pricing,
+    model_usage_24h,
+    model_usage_7d,
+    model_usage_28d,
     cost_24h_usd: typeof llm.cost_24h_usd === "number" ? llm.cost_24h_usd : 0,
     cost_7d_usd: typeof llm.cost_7d_usd === "number" ? llm.cost_7d_usd : 0,
     cost_28d_usd: typeof llm.cost_28d_usd === "number" ? llm.cost_28d_usd : 0,

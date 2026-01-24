@@ -125,6 +125,7 @@ Consultar `docs/` antes de operaciones críticas:
 | Troubleshooting | `docs/OPS_RUNBOOK.md` |
 | Alertas Grafana | `docs/GRAFANA_ALERTS_CHECKLIST.md` |
 | Evaluar modelo | `docs/PIT_EVALUATION_PROTOCOL.md` |
+| **SOTA Pendientes** | `docs/SOTA_PENDIENTES.md` |
 
 ## Convenciones
 - **Timestamps**: Siempre UTC (`datetime.utcnow()`)

@@ -27,6 +27,8 @@ interface SotaEnrichmentSectionProps {
   data: SotaEnrichmentNormalized | null;
   isMockFallback?: boolean;
   className?: string;
+  /** Optional tile to render as 6th card in the grid (e.g., Movement) */
+  movementTile?: React.ReactNode;
 }
 
 /**
@@ -195,6 +197,7 @@ export function SotaEnrichmentSection({
   data,
   isMockFallback = false,
   className,
+  movementTile,
 }: SotaEnrichmentSectionProps) {
   const isDegraded = !data || isMockFallback;
 
@@ -240,11 +243,17 @@ export function SotaEnrichmentSection({
         )}
       </div>
 
-      {/* Cards grid - 5 columns on lg, 3 on md, 2 on sm */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+      {/* Cards grid - 6 columns on xl (5 SOTA + Movement), 5 on lg, 3 on md, 2 on sm */}
+      <div className={cn(
+        "grid gap-3",
+        movementTile
+          ? "grid-cols-2 md:grid-cols-3 lg:grid-cols-6"
+          : "grid-cols-2 md:grid-cols-3 lg:grid-cols-5"
+      )}>
         {items.map((item) => (
           <SotaCard key={item.key} item={item} />
         ))}
+        {movementTile}
       </div>
     </div>
   );
