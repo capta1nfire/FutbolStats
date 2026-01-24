@@ -1039,10 +1039,11 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                             # NO FALLBACK: We cannot use stale odds as baseline
                             # This would invalidate the evaluation metric
                             # The baseline MUST be the market odds at the exact moment of lineup detection
-                            logger.error(
+                            # Note: This is expected when odds aren't published yet (e.g., >2h before kickoff)
+                            logger.warning(
                                 f"Cannot capture fresh odds for match {match_id} "
                                 f"(external: {external_id}) - API returned: {fresh_odds}. "
-                                f"Skipping this match. Will retry in next run (5 min)."
+                                f"Skipping this match. Will retry in next run."
                             )
                             continue
 
