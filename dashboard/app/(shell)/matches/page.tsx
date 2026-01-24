@@ -87,13 +87,13 @@ function MatchesPageContent() {
     return "upcoming";
   }, [searchParams]);
 
-  // Parse time range from URL (default: 7d)
+  // Parse time range from URL (default: today)
   const selectedTimeRange = useMemo((): TimeRange => {
     const rangeParam = searchParams.get("range");
     if (rangeParam && VALID_TIME_RANGES.includes(rangeParam as TimeRange)) {
       return rangeParam as TimeRange;
     }
-    return "7d";
+    return "today";
   }, [searchParams]);
 
   // Parse selected statuses from URL (for calendar view)
