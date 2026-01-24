@@ -5780,12 +5780,12 @@ async def dashboard_predictions_missing(
         return _make_v2_wrapper(base_data, cached=False, cache_age_seconds=0)
 
 
-# Cache for /dashboard/movement/top.json
-_movement_cache: dict = {"data": None, "timestamp": 0, "ttl": 60, "params": None}
+# Cache for /dashboard/movement/recent.json (activity by recency)
+_movement_recent_cache: dict = {"data": None, "timestamp": 0, "ttl": 60, "params": None}
 
 
-@app.get("/dashboard/movement/top.json")
-async def dashboard_movement_top(
+@app.get("/dashboard/movement/recent.json")
+async def dashboard_movement_recent(
     request: Request,
     range: str = "24h",
     type: str = None,  # "lineup" or "market"
@@ -5793,8 +5793,7 @@ async def dashboard_movement_top(
     session: AsyncSession = Depends(get_async_session),
 ):
     """
-    V2 endpoint: Recent lineup/market activity with standard wrapper.
-    Note: Returns recent captures ordered by recency, NOT by movement magnitude.
+    V2 endpoint: Recent lineup/market activity ordered by recency.
     TTL: 60s
     Auth: X-Dashboard-Token
     Query params: range (24h|7d), type (lineup|market), limit (max 100)
@@ -5823,14 +5822,14 @@ async def dashboard_movement_top(
     cache_key = f"{range}:{type}:{limit}"
 
     # Check cache
-    if (_movement_cache["data"] and
-        _movement_cache["params"] == cache_key and
-        (now_ts - _movement_cache["timestamp"]) < _movement_cache["ttl"]):
-        cache_age = now_ts - _movement_cache["timestamp"]
-        return _make_v2_wrapper(_movement_cache["data"], cached=True, cache_age_seconds=cache_age)
+    if (_movement_recent_cache["data"] and
+        _movement_recent_cache["params"] == cache_key and
+        (now_ts - _movement_recent_cache["timestamp"]) < _movement_recent_cache["ttl"]):
+        cache_age = now_ts - _movement_recent_cache["timestamp"]
+        return _make_v2_wrapper(_movement_recent_cache["data"], cached=True, cache_age_seconds=cache_age)
 
     base_data = {
-        "movers": [],
+        "items": [],
         "status": "degraded",
         "note": "upstream unavailable",
     }
@@ -5839,14 +5838,14 @@ async def dashboard_movement_top(
         now_dt = datetime.utcnow()
         cutoff = now_dt - timedelta(hours=hours)
 
-        movers = []
+        items = []
 
         # Get lineup changes (from match_sofascore_lineup captured_at)
         if type is None or type == "lineup":
             lineup_query = """
                 SELECT DISTINCT ON (m.id) m.id, m.date, m.league_id,
                        ht.name as home, at.name as away,
-                       msl.captured_at as value
+                       msl.captured_at
                 FROM match_sofascore_lineup msl
                 JOIN matches m ON m.id = msl.match_id
                 JOIN teams ht ON ht.id = m.home_team_id
@@ -5860,7 +5859,7 @@ async def dashboard_movement_top(
                 {"cutoff": cutoff, "limit": limit}
             )
             for row in lineup_result.fetchall():
-                movers.append({
+                items.append({
                     "match_id": row[0],
                     "kickoff_utc": row[1].isoformat() + "Z" if row[1] else None,
                     "league_id": row[2],
@@ -5871,17 +5870,18 @@ async def dashboard_movement_top(
                     "source": "sofascore",
                 })
 
-        # Get market/odds movements (from odds_history)
+        # Get market/odds captures (from odds_history)
         if type is None or type == "market":
             market_query = """
                 SELECT DISTINCT ON (m.id) m.id, m.date, m.league_id,
                        ht.name as home, at.name as away,
-                       oh.recorded_at as value
+                       oh.recorded_at
                 FROM odds_history oh
                 JOIN matches m ON m.id = oh.match_id
                 JOIN teams ht ON ht.id = m.home_team_id
                 JOIN teams at ON at.id = m.away_team_id
                 WHERE oh.recorded_at > :cutoff
+                  AND NOT COALESCE(oh.quarantined, false)
                 ORDER BY m.id, oh.recorded_at DESC
                 LIMIT :limit
             """
@@ -5890,7 +5890,7 @@ async def dashboard_movement_top(
                 {"cutoff": cutoff, "limit": limit}
             )
             for row in market_result.fetchall():
-                movers.append({
+                items.append({
                     "match_id": row[0],
                     "kickoff_utc": row[1].isoformat() + "Z" if row[1] else None,
                     "league_id": row[2],
@@ -5902,18 +5902,185 @@ async def dashboard_movement_top(
                 })
 
         # Sort by captured_at (most recent first) and limit
-        movers.sort(key=lambda x: x["captured_at"] or "", reverse=True)
+        items.sort(key=lambda x: x["captured_at"] or "", reverse=True)
+        items = items[:limit]
+
+        result = {
+            "items": items,
+            "status": "ok" if items else "warn",
+            "note": "recent activity ordered by recency",
+        }
+
+        _movement_recent_cache["data"] = result
+        _movement_recent_cache["timestamp"] = now_ts
+        _movement_recent_cache["params"] = cache_key
+
+        return _make_v2_wrapper(result, cached=False, cache_age_seconds=0)
+
+    except Exception as e:
+        logger.warning(f"Movement recent endpoint error: {e}")
+        base_data["note"] = f"db error: {str(e)[:50]}"
+        return _make_v2_wrapper(base_data, cached=False, cache_age_seconds=0)
+
+
+# Cache for /dashboard/movement/top.json (top movers by magnitude)
+_movement_top_cache: dict = {"data": None, "timestamp": 0, "ttl": 60, "params": None}
+
+
+@app.get("/dashboard/movement/top.json")
+async def dashboard_movement_top(
+    request: Request,
+    range: str = "24h",
+    type: str = None,  # "lineup" or "market"
+    limit: int = 50,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    V2 endpoint: Top movers by movement magnitude.
+    TTL: 60s
+    Auth: X-Dashboard-Token
+    Query params: range (24h|7d), type (lineup|market), limit (max 100)
+
+    Movement magnitude:
+    - market: max |Δimplied_prob| between first and last snapshot in window
+    - lineup: placeholder (no magnitude metric yet, returns empty for type=lineup)
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    import time as time_module
+    from sqlalchemy import text
+
+    # Clamp params
+    limit = min(max(1, limit), 100)
+
+    # Validate range
+    valid_ranges = {"24h": 24, "7d": 168}
+    if range not in valid_ranges:
+        range = "24h"
+    hours = valid_ranges[range]
+
+    # Validate type
+    valid_types = ["lineup", "market", None]
+    if type not in valid_types:
+        type = None
+
+    now_ts = time_module.time()
+    cache_key = f"{range}:{type}:{limit}"
+
+    # Check cache
+    if (_movement_top_cache["data"] and
+        _movement_top_cache["params"] == cache_key and
+        (now_ts - _movement_top_cache["timestamp"]) < _movement_top_cache["ttl"]):
+        cache_age = now_ts - _movement_top_cache["timestamp"]
+        return _make_v2_wrapper(_movement_top_cache["data"], cached=True, cache_age_seconds=cache_age)
+
+    base_data = {
+        "movers": [],
+        "status": "degraded",
+        "note": "upstream unavailable",
+    }
+
+    try:
+        now_dt = datetime.utcnow()
+        cutoff = now_dt - timedelta(hours=hours)
+
+        movers = []
+
+        # Market movers: calculate magnitude as max delta in implied probs
+        if type is None or type == "market":
+            # Get matches with multiple odds snapshots and calculate movement
+            market_query = """
+                WITH match_odds_range AS (
+                    SELECT
+                        match_id,
+                        FIRST_VALUE(implied_home) OVER w AS first_implied_home,
+                        FIRST_VALUE(implied_draw) OVER w AS first_implied_draw,
+                        FIRST_VALUE(implied_away) OVER w AS first_implied_away,
+                        LAST_VALUE(implied_home) OVER w AS last_implied_home,
+                        LAST_VALUE(implied_draw) OVER w AS last_implied_draw,
+                        LAST_VALUE(implied_away) OVER w AS last_implied_away,
+                        MAX(recorded_at) OVER (PARTITION BY match_id) AS last_recorded_at,
+                        ROW_NUMBER() OVER (PARTITION BY match_id ORDER BY recorded_at DESC) AS rn
+                    FROM odds_history
+                    WHERE recorded_at > :cutoff
+                      AND NOT COALESCE(quarantined, false)
+                      AND implied_home IS NOT NULL
+                    WINDOW w AS (PARTITION BY match_id ORDER BY recorded_at
+                                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+                ),
+                match_movement AS (
+                    SELECT
+                        match_id,
+                        last_recorded_at,
+                        GREATEST(
+                            ABS(COALESCE(last_implied_home, 0) - COALESCE(first_implied_home, 0)),
+                            ABS(COALESCE(last_implied_draw, 0) - COALESCE(first_implied_draw, 0)),
+                            ABS(COALESCE(last_implied_away, 0) - COALESCE(first_implied_away, 0))
+                        ) AS magnitude
+                    FROM match_odds_range
+                    WHERE rn = 1
+                )
+                SELECT m.id, m.date, m.league_id, ht.name, at.name,
+                       mm.magnitude, mm.last_recorded_at
+                FROM match_movement mm
+                JOIN matches m ON m.id = mm.match_id
+                JOIN teams ht ON ht.id = m.home_team_id
+                JOIN teams at ON at.id = m.away_team_id
+                WHERE mm.magnitude > 0.01  -- Filter noise (>1% movement)
+                ORDER BY mm.magnitude DESC
+                LIMIT :limit
+            """
+            try:
+                market_result = await session.execute(
+                    text(market_query),
+                    {"cutoff": cutoff, "limit": limit}
+                )
+                for row in market_result.fetchall():
+                    movers.append({
+                        "match_id": row[0],
+                        "kickoff_utc": row[1].isoformat() + "Z" if row[1] else None,
+                        "league_id": row[2],
+                        "home": row[3],
+                        "away": row[4],
+                        "type": "market",
+                        "value": round(float(row[5]) * 100, 2) if row[5] else 0,  # As percentage points
+                        "captured_at": row[6].isoformat() + "Z" if row[6] else None,
+                        "source": "api-football",
+                    })
+            except Exception as market_err:
+                logger.debug(f"Market movers query failed: {market_err}")
+                # Continue without market data
+
+        # Lineup movers: no magnitude metric yet
+        # For type=lineup, return empty with note
+        if type == "lineup":
+            result = {
+                "movers": [],
+                "status": "warn",
+                "note": "lineup magnitude metric not implemented yet; use /movement/recent.json for lineup activity",
+            }
+            return _make_v2_wrapper(result, cached=False, cache_age_seconds=0)
+
+        # Sort by magnitude (value) descending
+        movers.sort(key=lambda x: abs(x.get("value", 0)), reverse=True)
         movers = movers[:limit]
+
+        # Determine status
+        status = "ok" if movers else "warn"
+        note = "top movers by implied probability change (percentage points)"
+        if not movers:
+            note = "no significant market movements detected in window"
 
         result = {
             "movers": movers,
-            "status": "ok" if movers else "warn",
-            "note": "recent activity ordered by recency (not movement magnitude)",
+            "status": status,
+            "note": note,
         }
 
-        _movement_cache["data"] = result
-        _movement_cache["timestamp"] = now_ts
-        _movement_cache["params"] = cache_key
+        _movement_top_cache["data"] = result
+        _movement_top_cache["timestamp"] = now_ts
+        _movement_top_cache["params"] = cache_key
 
         return _make_v2_wrapper(result, cached=False, cache_age_seconds=0)
 
