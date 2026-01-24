@@ -18,7 +18,7 @@ from sqlalchemy import select, text, column
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.database import close_db, get_async_session, init_db, AsyncSessionLocal
+from app.database import close_db, get_async_session, init_db, AsyncSessionLocal, get_pool_status
 from app.etl import APIFootballProvider, ETLPipeline
 from app.etl.competitions import ALL_LEAGUE_IDS, COMPETITIONS
 from app.features import FeatureEngineer
@@ -8709,6 +8709,7 @@ async def _load_ops_data() -> dict:
         "coverage_by_league": coverage_by_league,
         "ml_model": ml_model_info,
         "live_summary": live_summary_stats,
+        "db_pool": get_pool_status(),
     }
 
 

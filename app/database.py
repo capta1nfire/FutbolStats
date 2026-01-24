@@ -50,10 +50,16 @@ if is_sqlite:
 else:
     # PostgreSQL-specific settings
     engine_kwargs["pool_pre_ping"] = True  # Verify connection before checkout
-    engine_kwargs["pool_size"] = 5
-    engine_kwargs["max_overflow"] = 10
+    engine_kwargs["pool_size"] = 10  # Increased from 5 - base connections kept open
+    engine_kwargs["max_overflow"] = 20  # Increased from 10 - temporary connections when pool is full
     engine_kwargs["pool_recycle"] = 300  # Recycle connections every 5 min (Railway can drop idle connections)
     engine_kwargs["pool_timeout"] = 30  # Timeout waiting for connection from pool
+    # Return connections to pool in clean state (prevents leaks)
+    engine_kwargs["pool_reset_on_return"] = "rollback"
+    # Statement timeout: kill queries that run longer than 60s (prevents connection hogging)
+    engine_kwargs["connect_args"] = {
+        "server_settings": {"statement_timeout": "60000"}  # 60 seconds in milliseconds
+    }
 
 async_engine = create_async_engine(DATABASE_URL, **engine_kwargs)
 
@@ -88,6 +94,26 @@ async def close_db() -> None:
     logger.info("Closing database connections...")
     await async_engine.dispose()
     logger.info("Database connections closed.")
+
+
+def get_pool_status() -> dict:
+    """Get current connection pool statistics for monitoring."""
+    if is_sqlite:
+        return {"type": "sqlite", "pooled": False}
+
+    pool = async_engine.pool
+    return {
+        "type": "postgresql",
+        "pool_size": pool.size(),
+        "checked_in": pool.checkedin(),
+        "checked_out": pool.checkedout(),
+        "overflow": pool.overflow(),
+        "invalid": pool.invalidatedcount(),
+        # Utilization percentage
+        "utilization_pct": round(
+            (pool.checkedout() / (pool.size() + pool.overflow())) * 100, 1
+        ) if (pool.size() + pool.overflow()) > 0 else 0,
+    }
 
 
 @asynccontextmanager
