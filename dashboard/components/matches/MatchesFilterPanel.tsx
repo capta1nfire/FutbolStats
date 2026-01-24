@@ -102,19 +102,20 @@ export function MatchesFilterPanel({
     }
   }, [activeView]);
 
+  // Get available statuses from current matches (intelligent filtering)
+  const availableStatuses = useMemo(() => {
+    const statuses = new Set<MatchStatus>();
+    for (const match of matches) {
+      statuses.add(match.status);
+    }
+    // Order statuses logically
+    const statusOrder: MatchStatus[] = ["scheduled", "live", "ht", "ft", "postponed", "cancelled"];
+    return statusOrder.filter((s) => statuses.has(s));
+  }, [matches]);
+
   // Build filter groups based on active view
   const filterGroups: FilterGroup[] = useMemo(() => {
     const groups: FilterGroup[] = [];
-
-    // All possible statuses for calendar view filter
-    const allStatuses: MatchStatus[] = [
-      "scheduled",
-      "live",
-      "ht",
-      "ft",
-      "postponed",
-      "cancelled",
-    ];
 
     // Only show time range filter for upcoming/finished views (not calendar)
     if (activeView !== "calendar") {
@@ -148,13 +149,13 @@ export function MatchesFilterPanel({
     }
 
     // Status filter (only for calendar view)
-    // Shows all statuses without counts to avoid confusion with paginated data
-    if (activeView === "calendar") {
+    // Shows only statuses present in current matches (intelligent filtering)
+    if (activeView === "calendar" && availableStatuses.length > 0) {
       groups.push({
         id: "status",
         label: "Status",
         icon: <Activity className="h-4 w-4" strokeWidth={1.5} />,
-        options: allStatuses.map((status) => ({
+        options: availableStatuses.map((status) => ({
           id: status,
           label: STATUS_LABELS[status],
           checked: selectedStatuses.includes(status),
