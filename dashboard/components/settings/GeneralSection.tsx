@@ -13,7 +13,7 @@ interface GeneralSectionProps {
 
 export function GeneralSection({ settings }: GeneralSectionProps) {
   return (
-    <div>
+    <div className="bg-background rounded-lg p-6 space-y-6 border border-border">
       <SettingsSectionHeader
         title="General Settings"
         description="Basic configuration for the FutbolStats platform"

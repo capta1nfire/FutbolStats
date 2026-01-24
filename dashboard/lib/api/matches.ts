@@ -284,9 +284,11 @@ export function parseMatches(response: unknown): MatchSummary[] | null {
 
 /**
  * Map frontend MatchStatus filter to backend status param
+ *
+ * When no statuses provided, returns "ALL" to get all matches.
  */
 export function mapStatusFilter(statuses: MatchStatus[]): string | undefined {
-  if (statuses.length === 0) return undefined;
+  if (statuses.length === 0) return "ALL";
 
   // Map frontend status to backend
   const backendStatuses: string[] = [];

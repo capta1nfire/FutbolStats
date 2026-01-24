@@ -43,6 +43,8 @@ export interface UseMatchesApiResult {
 interface MatchesQueryParams {
   status?: string;
   hours?: number;
+  from_time?: string;
+  to_time?: string;
   league_id?: number;
   match_id?: number;
   page?: number;
@@ -69,6 +71,8 @@ function buildQueryString(params: MatchesQueryParams): string {
 
   if (params.status) searchParams.set("status", params.status);
   if (params.hours) searchParams.set("hours", params.hours.toString());
+  if (params.from_time) searchParams.set("from_time", params.from_time);
+  if (params.to_time) searchParams.set("to_time", params.to_time);
   if (params.league_id) searchParams.set("league_id", params.league_id.toString());
   if (params.match_id) searchParams.set("match_id", params.match_id.toString());
   if (params.page) searchParams.set("page", params.page.toString());
@@ -143,6 +147,8 @@ async function fetchMatches(params: MatchesQueryParams): Promise<MatchesData> {
 export function useMatchesApi(options?: {
   status?: MatchStatus[];
   hours?: number;
+  fromTime?: string;
+  toTime?: string;
   leagueId?: number;
   page?: number;
   limit?: number;
@@ -150,7 +156,9 @@ export function useMatchesApi(options?: {
 }): UseMatchesApiResult {
   const {
     status = [],
-    hours = 168, // 7 days default
+    hours,
+    fromTime,
+    toTime,
     leagueId,
     page = 1,
     limit = 50,
@@ -160,9 +168,12 @@ export function useMatchesApi(options?: {
   // Map frontend status filter to backend
   const backendStatus = mapStatusFilter(status);
 
+  // Build query params - use fromTime/toTime if provided, otherwise fall back to hours
   const queryParams: MatchesQueryParams = {
     status: backendStatus,
-    hours,
+    hours: fromTime && toTime ? undefined : (hours ?? 168), // Only use hours if no date range
+    from_time: fromTime,
+    to_time: toTime,
     league_id: leagueId,
     page,
     limit,

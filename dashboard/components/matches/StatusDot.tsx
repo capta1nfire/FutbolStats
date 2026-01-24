@@ -32,8 +32,8 @@ interface StatusConfig {
 const statusConfig: Record<MatchStatus, StatusConfig> = {
   scheduled: { icon: Calendar, color: "text-primary", label: "Scheduled" },
   live: { icon: Play, color: "text-success animate-pulse", label: "Live" },
-  ht: { icon: Coffee, color: "text-warning", label: "HT" },
-  ft: { icon: CheckCircle, color: "text-info", label: "FT" },
+  ht: { icon: Coffee, color: "text-warning", label: "Half Time" },
+  ft: { icon: CheckCircle, color: "text-primary", label: "Finished" },
   postponed: { icon: AlertTriangle, color: "text-warning", label: "Postponed" },
   cancelled: { icon: XCircle, color: "text-error", label: "Cancelled" },
 };
@@ -46,11 +46,11 @@ export function StatusDot({ status, className }: StatusDotProps) {
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <div className={cn("flex items-center gap-2", className)}>
+          <span className={cn("inline-flex", className)}>
             <Icon className={cn("h-4 w-4", config.color)} />
-          </div>
+          </span>
         </TooltipTrigger>
-        <TooltipContent side="right">
+        <TooltipContent side="top" sideOffset={8}>
           <p>{config.label}</p>
         </TooltipContent>
       </Tooltip>

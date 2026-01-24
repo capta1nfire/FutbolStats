@@ -7,17 +7,27 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Clock, Globe2, Check, RotateCcw, Search } from "lucide-react";
 import { useRegion } from "@/components/providers/RegionProvider";
-import { getSupportedTimeZones, formatCurrentTime } from "@/lib/region";
+import { getSupportedTimeZones, formatCurrentTime, formatCurrentDate } from "@/lib/region";
 import { cn } from "@/lib/utils";
 
 interface TimezoneSectionProps {
   settings: SettingsSummary;
 }
 
+/**
+ * Format timezone name for display
+ * "America/Los_Angeles" → "America / Los Angeles"
+ * "Europe/London" → "Europe / London"
+ */
+function formatTimezoneName(tz: string): string {
+  return tz.replace(/_/g, " ").replace(/\//g, " / ");
+}
+
 export function TimezoneSection({ settings }: TimezoneSectionProps) {
   const { region, setRegion, resetRegion } = useRegion();
   const [searchQuery, setSearchQuery] = useState("");
   const [currentTime, setCurrentTime] = useState("");
+  const [currentDate, setCurrentDate] = useState("");
 
   // Get supported timezones
   const timezones = useMemo(() => getSupportedTimeZones(), []);
@@ -33,6 +43,7 @@ export function TimezoneSection({ settings }: TimezoneSectionProps) {
   useEffect(() => {
     const updateTime = () => {
       setCurrentTime(formatCurrentTime(region));
+      setCurrentDate(formatCurrentDate(region));
     };
     updateTime();
     const interval = setInterval(updateTime, 1000);
@@ -50,7 +61,7 @@ export function TimezoneSection({ settings }: TimezoneSectionProps) {
   };
 
   return (
-    <div>
+    <div className="bg-background rounded-lg p-6 space-y-6 border border-border">
       <SettingsSectionHeader
         title="Timezone Settings"
         description="Configure timezone and time format for the dashboard"
@@ -74,13 +85,18 @@ export function TimezoneSection({ settings }: TimezoneSectionProps) {
               Reset to Browser
             </Button>
           </div>
-          <div className="flex items-baseline gap-3">
-            <span className="text-3xl font-mono text-foreground tabular-nums">
-              {currentTime}
-            </span>
-            <span className="text-sm text-muted-foreground">
-              {region.timeZone}
-            </span>
+          <div className="space-y-1">
+            <div className="text-sm text-muted-foreground">
+              {currentDate}
+            </div>
+            <div className="flex items-baseline gap-3">
+              <span className="text-3xl font-mono text-foreground tabular-nums">
+                {currentTime}
+              </span>
+              <span className="text-sm text-muted-foreground">
+                {formatTimezoneName(region.timeZone)}
+              </span>
+            </div>
           </div>
         </div>
 
@@ -94,7 +110,7 @@ export function TimezoneSection({ settings }: TimezoneSectionProps) {
               onClick={() => handleHourCycleChange("h12")}
               className="flex-1"
             >
-              12-hour (AM/PM)
+              12 hour (AM/PM)
             </Button>
             <Button
               variant={region.hourCycle === "h23" ? "default" : "outline"}
@@ -102,7 +118,7 @@ export function TimezoneSection({ settings }: TimezoneSectionProps) {
               onClick={() => handleHourCycleChange("h23")}
               className="flex-1"
             >
-              24-hour
+              24 hour
             </Button>
           </div>
         </div>
@@ -140,12 +156,12 @@ export function TimezoneSection({ settings }: TimezoneSectionProps) {
                     onClick={() => handleTimezoneSelect(tz)}
                     className={cn(
                       "w-full px-3 py-2 text-left text-sm hover:bg-surface transition-colors flex items-center justify-between",
-                      region.timeZone === tz && "bg-primary/10 text-primary"
+                      region.timeZone === tz && "bg-accent/10 text-accent"
                     )}
                   >
-                    <span className="font-mono text-xs">{tz}</span>
+                    <span className="text-xs">{formatTimezoneName(tz)}</span>
                     {region.timeZone === tz && (
-                      <Check className="h-4 w-4 text-primary" />
+                      <Check className="h-4 w-4 text-accent" />
                     )}
                   </button>
                 ))}

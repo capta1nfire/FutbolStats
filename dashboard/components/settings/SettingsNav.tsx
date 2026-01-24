@@ -37,8 +37,8 @@ export function SettingsNav({
   onSectionChange,
 }: SettingsNavProps) {
   return (
-    <nav className="w-[200px] border-r border-border bg-surface flex flex-col">
-      <div className="h-12 flex items-center px-4 border-b border-border">
+    <nav className="w-[200px] bg-background border-r border-border flex flex-col">
+      <div className="h-12 flex items-center px-4">
         <span className="text-sm font-medium text-foreground">Settings</span>
       </div>
       <div className="flex-1 py-2">
@@ -49,7 +49,7 @@ export function SettingsNav({
             className={cn(
               "w-full justify-start gap-2 px-4 py-2 h-9 text-sm font-normal",
               activeSection === section
-                ? "bg-accent/10 text-accent"
+                ? "text-primary"
                 : "text-muted-foreground hover:text-foreground"
             )}
             onClick={() => onSectionChange(section)}

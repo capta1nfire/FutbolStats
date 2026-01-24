@@ -10193,8 +10193,12 @@ def _get_matches_cache_key(
     page: int,
     limit: int,
     match_id: int | None = None,
+    from_time: str | None = None,
+    to_time: str | None = None,
 ) -> str:
     """Generate cache key including all query params (P1 guardrail)."""
+    if from_time and to_time:
+        return f"matches:{status}:range:{from_time}:{to_time}:{league_id}:{page}:{limit}:{match_id}"
     return f"matches:{status}:{hours}:{league_id}:{page}:{limit}:{match_id}"
 
 
@@ -10203,6 +10207,8 @@ async def get_matches_dashboard(
     request: Request,
     status: str = "NS",  # NS, LIVE, FT, or ALL
     hours: int = 168,  # 7 days default for table view
+    from_time: str | None = None,  # ISO8601 UTC start time (overrides hours)
+    to_time: str | None = None,  # ISO8601 UTC end time (overrides hours)
     league_id: int | None = None,
     match_id: int | None = None,  # optional exact match lookup (deep-link support)
     page: int = 1,
@@ -10220,6 +10226,8 @@ async def get_matches_dashboard(
     Query params:
     - status: NS (scheduled), LIVE (in-play), FT (finished), ALL
     - hours: time window (1-168, default 168 = 7 days)
+    - from_time: ISO8601 UTC start time (overrides hours if both from_time and to_time provided)
+    - to_time: ISO8601 UTC end time (overrides hours if both from_time and to_time provided)
     - league_id: optional filter by league
     - page: pagination (1-indexed)
     - limit: rows per page (1-100)
@@ -10251,9 +10259,26 @@ async def get_matches_dashboard(
     page = max(page, 1)
     limit = min(max(limit, 1), 100)
 
+    # Parse from_time/to_time if provided (ISO8601 UTC)
+    parsed_from_time = None
+    parsed_to_time = None
+    if from_time and to_time:
+        try:
+            # Parse ISO8601 format (e.g., 2026-01-23T00:00:00Z)
+            parsed_from_time = datetime.fromisoformat(from_time.replace("Z", "+00:00")).replace(tzinfo=None)
+            parsed_to_time = datetime.fromisoformat(to_time.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            # Invalid format, ignore and use hours-based window
+            pass
+
     # Cache TTL based on status
     cache_ttl = _MATCHES_CACHE_TTL_LIVE if status == "LIVE" else _MATCHES_CACHE_TTL_DEFAULT
-    cache_key = _get_matches_cache_key(status, hours, league_id, page, limit, match_id=match_id)
+    # Include from_time/to_time in cache key when used
+    cache_key = _get_matches_cache_key(
+        status, hours, league_id, page, limit, match_id=match_id,
+        from_time=from_time if parsed_from_time else None,
+        to_time=to_time if parsed_to_time else None
+    )
 
     now = time.time()
 
@@ -10275,8 +10300,12 @@ async def get_matches_dashboard(
 
     now_dt = datetime.utcnow()
 
-    # Time window depends on status
-    if status == "NS":
+    # Time window: use from_time/to_time if provided, otherwise calculate from hours
+    if parsed_from_time and parsed_to_time:
+        # Explicit date range from calendar view
+        start_dt = parsed_from_time
+        end_dt = parsed_to_time
+    elif status == "NS":
         # Upcoming: now to +hours
         start_dt = now_dt
         end_dt = now_dt + timedelta(hours=hours)

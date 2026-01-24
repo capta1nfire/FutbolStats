@@ -35,7 +35,7 @@ export function ApiKeysSection({ settings }: ApiKeysSectionProps) {
   };
 
   return (
-    <div>
+    <div className="bg-background rounded-lg p-6 space-y-6 border border-border">
       <SettingsSectionHeader
         title="API Keys"
         description="Manage external service credentials"

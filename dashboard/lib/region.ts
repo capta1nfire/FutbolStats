@@ -330,6 +330,20 @@ export function formatCurrentTime(region: RegionSettings): string {
   }).format(new Date());
 }
 
+/**
+ * Get current date formatted for display
+ * Example: "Thu, Jan 23, 2026"
+ */
+export function formatCurrentDate(region: RegionSettings): string {
+  return new Intl.DateTimeFormat(region.locale, {
+    timeZone: region.timeZone,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date());
+}
+
 // ============================================================================
 // LocalDate Helpers
 // ============================================================================

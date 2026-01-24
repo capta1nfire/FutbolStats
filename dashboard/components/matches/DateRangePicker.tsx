@@ -57,10 +57,7 @@ export function DateRangePicker({
         mode="single"
         selected={selectedDate}
         onSelect={handleCalendarSelect}
-        className="rounded-lg [&_[data-selected-single=true]]:rounded-full"
-        classNames={{
-          today: "text-foreground font-medium",
-        }}
+        className="rounded-lg"
       />
     </div>
   );

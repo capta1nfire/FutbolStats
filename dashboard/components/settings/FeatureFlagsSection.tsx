@@ -21,7 +21,7 @@ export function FeatureFlagsSection() {
   const disabledCount = flags.filter((f) => !f.enabled).length;
 
   return (
-    <div>
+    <div className="bg-background rounded-lg p-6 space-y-6 border border-border">
       <SettingsSectionHeader
         title="Feature Flags"
         description="Toggle features on or off across the platform"

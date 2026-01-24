@@ -21,7 +21,7 @@ export function UsersSection() {
   const readonlyCount = users.filter((u) => u.role === "readonly").length;
 
   return (
-    <div>
+    <div className="bg-background rounded-lg p-6 space-y-6 border border-border">
       <SettingsSectionHeader
         title="Users & Permissions"
         description="Manage user access and roles"

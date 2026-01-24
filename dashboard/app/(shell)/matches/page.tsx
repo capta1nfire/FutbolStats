@@ -168,14 +168,25 @@ function MatchesPageContent() {
     };
   }, [activeView, selectedLeagues, selectedStatuses, searchValue]);
 
-  // Calculate hours for API based on view
+  // Calculate hours for API based on view (for non-calendar views)
   const hoursForApi = useMemo(() => {
     if (activeView === "calendar") {
-      // For calendar view with single date, use 24 hours
-      return 24;
+      return undefined; // Use fromTime/toTime instead
     }
     return timeRangeToHours(selectedTimeRange, activeView);
   }, [activeView, selectedTimeRange]);
+
+  // Calculate UTC time range for calendar view
+  const { fromTime, toTime } = useMemo(() => {
+    if (activeView !== "calendar") {
+      return { fromTime: undefined, toTime: undefined };
+    }
+    // Convert selected LocalDate to UTC range for the whole day
+    return {
+      fromTime: localDateToUtcStartIso(selectedDate),
+      toTime: localDateToUtcEndIso(selectedDate),
+    };
+  }, [activeView, selectedDate, localDateToUtcStartIso, localDateToUtcEndIso]);
 
   // Fetch data from API with view-specific status
   const {
@@ -188,6 +199,8 @@ function MatchesPageContent() {
   } = useMatchesApi({
     status: filters.status,
     hours: hoursForApi,
+    fromTime,
+    toTime,
     page: currentPage,
     limit: pageSize,
   });

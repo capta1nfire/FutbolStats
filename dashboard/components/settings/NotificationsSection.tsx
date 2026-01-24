@@ -8,7 +8,7 @@ import { Bell, Mail, MessageSquare, AlertTriangle } from "lucide-react";
 
 export function NotificationsSection() {
   return (
-    <div>
+    <div className="bg-background rounded-lg p-6 space-y-6 border border-border">
       <SettingsSectionHeader
         title="Notifications"
         description="Configure alert and notification preferences"

@@ -14,7 +14,7 @@ export function ModelVersionsSection({ settings }: ModelVersionsSectionProps) {
   const { modelVersions } = settings;
 
   return (
-    <div>
+    <div className="bg-background rounded-lg p-6 space-y-6 border border-border">
       <SettingsSectionHeader
         title="Model Versions"
         description="ML model versions currently deployed"

@@ -7,9 +7,9 @@ export type MatchesView = "upcoming" | "finished" | "calendar";
 
 /** Tab definitions for matches view */
 const MATCHES_VIEW_TABS = [
-  { id: "upcoming", icon: <Calendar />, label: "Upcoming" },
-  { id: "finished", icon: <History />, label: "Finished" },
   { id: "calendar", icon: <CalendarRange />, label: "Calendar" },
+  { id: "finished", icon: <History />, label: "Finished" },
+  { id: "upcoming", icon: <Calendar />, label: "Upcoming" },
 ];
 
 interface MatchesViewTabsProps {
