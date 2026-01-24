@@ -10433,11 +10433,26 @@ async def get_matches_dashboard(
     result = await session.execute(query)
     rows = result.all()
 
-    # League names from COMPETITIONS
+    # League names from COMPETITIONS with extended fallback
     from app.etl.competitions import COMPETITIONS
-    league_name_by_id: dict[int, str] = {
-        lid: comp.name for lid, comp in COMPETITIONS.items() if comp.name
+
+    # Extended fallback for leagues not in COMPETITIONS
+    LEAGUE_NAMES_EXTENDED: dict[int, str] = {
+        1: "World Cup", 2: "Champions League", 3: "Europa League",
+        39: "Premier League", 40: "Championship", 61: "Ligue 1",
+        78: "Bundesliga", 135: "Serie A", 140: "La Liga",
+        94: "Primeira Liga", 88: "Eredivisie", 203: "Süper Lig",
+        239: "Liga BetPlay", 253: "MLS", 262: "Liga MX",
+        128: "Argentina Primera", 71: "Brasileirão",
+        848: "Conference League", 45: "FA Cup", 143: "Copa del Rey",
+        242: "Ecuador Liga Pro", 250: "Paraguay Primera",
     }
+
+    # Build league name lookup: COMPETITIONS takes priority, then extended fallback
+    league_name_by_id: dict[int, str] = LEAGUE_NAMES_EXTENDED.copy()
+    for lid, comp in COMPETITIONS.items():
+        if comp.name:
+            league_name_by_id[lid] = comp.name
 
     # Format response
     matches = []

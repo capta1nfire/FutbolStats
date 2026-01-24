@@ -21,6 +21,8 @@ import {
 interface StatusDotProps {
   status: MatchStatus;
   className?: string;
+  /** Show label text next to icon */
+  showLabel?: boolean;
 }
 
 interface StatusConfig {
@@ -38,17 +40,29 @@ const statusConfig: Record<MatchStatus, StatusConfig> = {
   cancelled: { icon: XCircle, color: "text-error", label: "Cancelled" },
 };
 
-export function StatusDot({ status, className }: StatusDotProps) {
+export function StatusDot({ status, className, showLabel = false }: StatusDotProps) {
   const config = statusConfig[status];
   const Icon = config.icon;
+
+  const content = (
+    <span className={cn("inline-flex items-center gap-1.5", className)}>
+      <Icon className={cn("h-4 w-4", config.color)} />
+      {showLabel && (
+        <span className={cn("text-xs", config.color)}>{config.label}</span>
+      )}
+    </span>
+  );
+
+  // Only wrap in tooltip when label is not shown
+  if (showLabel) {
+    return content;
+  }
 
   return (
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <span className={cn("inline-flex", className)}>
-            <Icon className={cn("h-4 w-4", config.color)} />
-          </span>
+          {content}
         </TooltipTrigger>
         <TooltipContent side="top" sideOffset={8}>
           <p>{config.label}</p>

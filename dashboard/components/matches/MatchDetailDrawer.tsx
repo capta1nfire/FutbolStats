@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { MatchSummary, ProbabilitySet } from "@/lib/types";
-import { useIsDesktop } from "@/lib/hooks";
+import { useIsDesktop, useTeamLogos } from "@/lib/hooks";
 import { DetailDrawer } from "@/components/shell";
 import { Loader } from "@/components/ui/loader";
 import {
@@ -15,7 +15,9 @@ import { IconTabs } from "@/components/ui/icon-tabs";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { StatusDot } from "./StatusDot";
+import { TeamLogo } from "@/components/ui/team-logo";
 import { Calendar, TrendingUp, Radio, Info } from "lucide-react";
+import { useRegion } from "@/components/providers/RegionProvider";
 
 /** Section for displaying a single prediction model */
 function PredictionSection({
@@ -77,6 +79,88 @@ interface MatchDetailDrawerProps {
   isLoading?: boolean;
   open: boolean;
   onClose: () => void;
+}
+
+/**
+ * Match Header - 3 column layout showing teams and score/time
+ * Replicates the design: [Home Team] | [Score/Time + Status] | [Away Team]
+ */
+function MatchHeader({
+  match,
+  getLogoUrl,
+}: {
+  match: MatchSummary;
+  getLogoUrl: (teamName: string) => string | null;
+}) {
+  const { formatTime } = useRegion();
+  const formattedTime = formatTime(match.kickoffISO);
+
+  // Determine what to show in center: score or time
+  const hasScore = match.score !== undefined && match.score !== null;
+  const isLive = match.status === "live" || match.status === "ht";
+
+  return (
+    <div className="bg-surface rounded-lg p-4 space-y-3">
+      {/* League header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary" className="text-xs">
+            {match.leagueName}
+          </Badge>
+        </div>
+        <span className="text-xs text-muted-foreground">{match.leagueCountry}</span>
+      </div>
+
+      {/* 3-column layout: Home | Score/Time | Away */}
+      <div className="grid grid-cols-3 gap-2 items-center">
+        {/* Home team */}
+        <div className="flex flex-col items-center gap-2">
+          <TeamLogo
+            src={getLogoUrl(match.home) ?? null}
+            teamName={match.home}
+            size={48}
+          />
+          <span className="text-xs text-muted-foreground text-center line-clamp-2">
+            {match.home}
+          </span>
+        </div>
+
+        {/* Center: Score or Time + Status */}
+        <div className="flex flex-col items-center gap-1">
+          {hasScore ? (
+            <>
+              <div className="text-2xl font-bold text-foreground">
+                {match.score!.home} - {match.score!.away}
+              </div>
+              {isLive && match.elapsed && (
+                <div className="text-xs text-muted-foreground">
+                  {match.elapsed.min}&apos;
+                  {match.elapsed.extra ? ` +${match.elapsed.extra}` : ""}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="text-xl font-medium text-foreground">
+              {formattedTime}
+            </div>
+          )}
+          <StatusDot status={match.status} showLabel />
+        </div>
+
+        {/* Away team */}
+        <div className="flex flex-col items-center gap-2">
+          <TeamLogo
+            src={getLogoUrl(match.away) ?? null}
+            teamName={match.away}
+            size={48}
+          />
+          <span className="text-xs text-muted-foreground text-center line-clamp-2">
+            {match.away}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /** Tab definitions for match detail drawer */
@@ -242,11 +326,18 @@ function MatchTabContent({ match, activeTab }: { match: MatchSummary; activeTab:
 /**
  * Match Detail Content - used for mobile sheet (tabs + content together)
  */
-function MatchDetailContentMobile({ match }: { match: MatchSummary }) {
+function MatchDetailContentMobile({
+  match,
+  getLogoUrl,
+}: {
+  match: MatchSummary;
+  getLogoUrl: (teamName: string) => string | null;
+}) {
   const [activeTab, setActiveTab] = useState("overview");
 
   return (
     <div className="w-full space-y-3">
+      <MatchHeader match={match} getLogoUrl={getLogoUrl} />
       <IconTabs
         tabs={MATCH_TABS}
         value={activeTab}
@@ -272,7 +363,8 @@ export function MatchDetailDrawer({
 }: MatchDetailDrawerProps) {
   const isDesktop = useIsDesktop();
   const [activeTab, setActiveTab] = useState("overview");
-  const matchTitle = match ? `${match.home} vs ${match.away}` : "Match Details";
+  const { getLogoUrl } = useTeamLogos();
+  const matchTitle = match ? `Match ID ${match.id}` : "Match Details";
 
   // Desktop: overlay drawer with tabs in fixedContent (prevents tooltip clipping)
   if (isDesktop) {
@@ -283,12 +375,15 @@ export function MatchDetailDrawer({
         title={matchTitle}
         fixedContent={
           match && (
-            <IconTabs
-              tabs={MATCH_TABS}
-              value={activeTab}
-              onValueChange={setActiveTab}
-              className="w-full"
-            />
+            <div className="space-y-3">
+              <MatchHeader match={match} getLogoUrl={getLogoUrl} />
+              <IconTabs
+                tabs={MATCH_TABS}
+                value={activeTab}
+                onValueChange={setActiveTab}
+                className="w-full"
+              />
+            </div>
           )
         }
       >
@@ -317,7 +412,7 @@ export function MatchDetailDrawer({
         <ScrollArea className="h-[calc(100vh-60px)]">
           <div className="p-4">
             {match ? (
-              <MatchDetailContentMobile match={match} />
+              <MatchDetailContentMobile match={match} getLogoUrl={getLogoUrl} />
             ) : isLoading ? (
               <div className="h-full flex items-center justify-center py-10">
                 <Loader size="md" />
