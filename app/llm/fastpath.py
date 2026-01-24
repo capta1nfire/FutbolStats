@@ -728,8 +728,14 @@ class FastPathService:
                         llm_latency_ms.labels(provider="gemini").observe(result.exec_ms)
                         llm_tokens_total.labels(provider="gemini", direction="input").inc(result.tokens_in)
                         llm_tokens_total.labels(provider="gemini", direction="output").inc(result.tokens_out)
-                        # Gemini 2.0 Flash pricing: $0.075/1M input, $0.30/1M output
-                        cost = (result.tokens_in * 0.075 + result.tokens_out * 0.30) / 1_000_000
+                        # Gemini pricing per model (per 1M tokens) - Jan 2026 prices
+                        # 2.0/2.5-flash: $0.10 in / $0.40 out
+                        # 2.5-pro: $1.25 in / $10.00 out
+                        model_version = result.model_version or self.settings.GEMINI_MODEL
+                        if "pro" in model_version.lower():
+                            cost = (result.tokens_in * 1.25 + result.tokens_out * 10.00) / 1_000_000
+                        else:
+                            cost = (result.tokens_in * 0.10 + result.tokens_out * 0.40) / 1_000_000
                         llm_cost_usd.labels(provider="gemini").inc(cost)
 
                         if result.status == "COMPLETED":
@@ -764,7 +770,7 @@ class FastPathService:
                                 logger.warning(f"[FASTPATH] Gemini response invalid for match {match.id}")
 
                             audit.llm_narrative_request_id = f"gemini-{match.id}"
-                            audit.llm_narrative_model = "gemini-2.0-flash"
+                            audit.llm_narrative_model = result.model_version or self.settings.GEMINI_MODEL
                             audit.llm_narrative_generated_at = datetime.utcnow()
                             audit.llm_narrative_delay_ms = 0
                             audit.llm_narrative_exec_ms = result.exec_ms

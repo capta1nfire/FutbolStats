@@ -713,9 +713,12 @@ class NarrativeGenerator:
                     schema_valid=True,
                     status="ok",
                 )
+                # Set model from result (Gemini returns model_version, RunPod uses worker_id)
+                model_name = getattr(result, 'model_version', None) or self.settings.GEMINI_MODEL if self.provider_name == "gemini" else "qwen-vllm"
                 return NarrativeResult(
                     status="ok",
                     narrative_json=parsed,
+                    model=model_name,
                     delay_ms=result.delay_ms,
                     exec_ms=result.exec_ms,
                     tokens_in=result.tokens_in,
@@ -758,9 +761,11 @@ IMPORTANTE: Responde ÚNICAMENTE con JSON válido. Nada más."""
                     schema_valid=True,
                     status="ok_retry",
                 )
+                model_name2 = getattr(result2, 'model_version', None) or self.settings.GEMINI_MODEL if self.provider_name == "gemini" else "qwen-vllm"
                 return NarrativeResult(
                     status="ok",
                     narrative_json=parsed2,
+                    model=model_name2,
                     delay_ms=result2.delay_ms,
                     exec_ms=result2.exec_ms,
                     tokens_in=result2.tokens_in,
@@ -784,10 +789,12 @@ IMPORTANTE: Responde ÚNICAMENTE con JSON válido. Nada más."""
                 status="error",
                 error=error_msg,
             )
+            model_name_err = getattr(result2, 'model_version', None) or self.settings.GEMINI_MODEL if self.provider_name == "gemini" else "qwen-vllm"
             return NarrativeResult(
                 status="error",
                 error=error_msg,
                 error_code="schema_invalid",
+                model=model_name_err,
                 delay_ms=result2.delay_ms,
                 exec_ms=result2.exec_ms,
                 tokens_in=result2.tokens_in,
