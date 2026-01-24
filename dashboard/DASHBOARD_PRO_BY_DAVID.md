@@ -891,3 +891,76 @@ Todas las secciones muestran claramente que están en Phase 0 con mocks:
 - Settings: "Read-only in Phase 0" en controles deshabilitados
 - Data tables: Loading/error/empty states con datos mock
 - Overview cards: Datos calculados desde mocks
+
+---
+
+## 15) Overview Drawer Routing (SSOT)
+
+El Overview page tiene tiles/cards clickeables que abren un drawer overlay con tabs.
+Las keys de panel y tab son canónicas y estables (no renombrar).
+
+### 15.1 Panel Keys
+
+| Key | Component | Description |
+|-----|-----------|-------------|
+| `overall` | OverallOpsBar | System-wide status rollup |
+| `jobs` | JobsCompactTile | Jobs health + runs |
+| `predictions` | PredictionsCompactTile | Predictions coverage + missing |
+| `fastpath` | FastpathCompactTile | Fastpath/narrative health |
+| `pit` | PitProgressCompactTile | PIT evaluation progress |
+| `movement` | MovementSummaryTile | Lineup/market movement |
+| `sota` | SotaEnrichmentSection | SOTA enrichment status |
+| `sentry` | SentryHealthCard | Sentry errors + issues |
+| `budget` | ApiBudgetCard | API-Football budget |
+| `llm` | LlmCostCard | LLM cost tracking |
+| `upcoming` | UpcomingMatchesList | Upcoming matches |
+| `incidents` | ActiveIncidentsList | Active incidents |
+
+### 15.2 Tab Keys
+
+| Key | Label | Usage |
+|-----|-------|-------|
+| `summary` | Summary | Default view from ops/rollup data |
+| `issues` | Issues | Sentry issues list (paginated) |
+| `timeline` | Timeline | Timeline/history view |
+| `missing` | Missing | Predictions missing list (paginated) |
+| `movers` | Top Movers | Movement top movers list |
+| `runs` | Runs | Job runs history |
+| `links` | Links | External links (runbooks, docs) |
+
+### 15.3 Tabs by Panel
+
+| Panel | Available Tabs |
+|-------|----------------|
+| `overall` | summary |
+| `jobs` | summary, runs, links |
+| `predictions` | summary, missing |
+| `fastpath` | summary, runs |
+| `pit` | summary, timeline |
+| `movement` | summary, movers |
+| `sota` | summary |
+| `sentry` | summary, issues |
+| `budget` | summary |
+| `llm` | summary |
+| `upcoming` | summary |
+| `incidents` | summary, timeline |
+
+### 15.4 URL Format
+
+```
+/overview?panel=<panel>&tab=<tab>
+```
+
+Examples:
+- `/overview?panel=sentry&tab=issues` - Sentry issues list
+- `/overview?panel=predictions&tab=missing` - Missing predictions
+- `/overview?panel=movement&tab=movers` - Top movers
+- `/overview?panel=jobs` - Jobs summary (tab defaults to summary)
+
+### 15.5 Implementation
+
+- SSOT: `lib/overview-drawer.ts`
+- Types: `OverviewPanel`, `OverviewTab`
+- Helpers: `parsePanel()`, `parseTab()`, `buildOverviewDrawerUrl()`
+- Default tab per panel: `DEFAULT_TAB_BY_PANEL`
+- Valid tabs per panel: `TABS_BY_PANEL`

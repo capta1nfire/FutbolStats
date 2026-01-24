@@ -15,3 +15,7 @@ export * from "./use-ops-budget";
 export * from "./use-upcoming-matches";
 export * from "./use-team-logos";
 export * from "./use-standings";
+// v2 drawer hooks
+export * from "./use-sentry-issues";
+export * from "./use-predictions-missing";
+export * from "./use-overview-rollup";

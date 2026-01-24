@@ -14,16 +14,21 @@ import {
   ApiBudgetCard,
   SentryHealthCard,
   LlmCostCard,
-  OverallOpsTile,
-  PredictionsHealthTile,
-  JobsHealthTile,
-  FastpathHealthTile,
-  DiagnosticsTile,
   UpcomingMatchesList,
   ActiveIncidentsList,
-  ProgressCard,
   SotaEnrichmentSection,
+  // New compact components for above-the-fold layout
+  OverallOpsBar,
+  PredictionsCompactTile,
+  JobsCompactTile,
+  FastpathCompactTile,
+  PitProgressCompactTile,
+  MovementSummaryTile,
+  // Drawer
+  OverviewDrawer,
 } from "@/components/overview";
+import { useOverviewDrawer } from "@/lib/hooks/use-overview-drawer";
+import { OverviewPanel } from "@/lib/overview-drawer";
 import { AlertCircle, AlertTriangle, Calendar } from "lucide-react";
 import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
@@ -33,11 +38,39 @@ import { ScrollArea } from "@/components/ui/scroll-area";
  * Overview Page
  *
  * Ops dashboard designed for 5-10 second scan.
+ * Above-the-fold layout optimized for 1440x900.
  *
  * Layout:
- * - Left Rail (277px): API-Football Budget, Sentry, LLM Cost
- * - Main: Overall Ops + Tiles grid (Predictions, Jobs, Fastpath, Diagnostics)
+ * - Left Rail (277px): API-Football Budget, Sentry, LLM Cost, Upcoming Matches
+ * - Main:
+ *   - Row 1: Overall Ops Bar (≤48px)
+ *   - Row 2: Grid 2x2 (Predictions, Jobs, Fastpath, PIT Progress)
+ *   - Row 3: Grid 2 cols (SOTA Enrichment, Movement Summary)
  */
+/**
+ * Clickable tile wrapper that opens the drawer
+ */
+function ClickableTile({
+  panel,
+  children,
+  className,
+}: {
+  panel: OverviewPanel;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const { openDrawer } = useOverviewDrawer();
+
+  return (
+    <button
+      onClick={() => openDrawer({ panel })}
+      className={`w-full text-left cursor-pointer hover:ring-1 hover:ring-primary/50 rounded-lg transition-all ${className ?? ""}`}
+    >
+      {children}
+    </button>
+  );
+}
+
 export default function OverviewPage() {
   const {
     budget,
@@ -46,8 +79,6 @@ export default function OverviewPage() {
     jobs,
     fastpath,
     predictions,
-    shadowMode,
-    sensorB,
     freshness,
     progress,
     pitActivity,
@@ -136,6 +167,9 @@ export default function OverviewPage() {
 
   return (
     <div className="h-full flex overflow-hidden">
+      {/* Overview Drawer (URL-controlled) */}
+      <OverviewDrawer />
+
       {/* Left Rail: Budget + Sentry + LLM Cost + Upcoming Matches */}
       <aside className="w-[277px] min-w-[277px] shrink-0 border-r border-border bg-sidebar flex flex-col overflow-hidden">
         {/* Header */}
@@ -145,19 +179,25 @@ export default function OverviewPage() {
         {/* Content */}
         <ScrollArea className="flex-1">
           <div className="p-3 space-y-3">
-            <ApiBudgetCard
-              budget={displayBudget}
-              isMockFallback={isBudgetDegraded}
-              requestId={requestId}
-            />
-            <SentryHealthCard
-              sentry={sentry}
-              isMockFallback={isSentryDegraded}
-            />
-            <LlmCostCard
-              llmCost={llmCost}
-              isMockFallback={isLlmCostDegraded}
-            />
+            <ClickableTile panel="budget">
+              <ApiBudgetCard
+                budget={displayBudget}
+                isMockFallback={isBudgetDegraded}
+                requestId={requestId}
+              />
+            </ClickableTile>
+            <ClickableTile panel="sentry">
+              <SentryHealthCard
+                sentry={sentry}
+                isMockFallback={isSentryDegraded}
+              />
+            </ClickableTile>
+            <ClickableTile panel="llm">
+              <LlmCostCard
+                llmCost={llmCost}
+                isMockFallback={isLlmCostDegraded}
+              />
+            </ClickableTile>
 
             {/* Upcoming Matches */}
             <div className="pt-3 border-t border-border">
@@ -210,60 +250,64 @@ export default function OverviewPage() {
         </ScrollArea>
       </aside>
 
-      {/* Main content */}
-      <ScrollArea className="flex-1">
-        <div className="p-6 space-y-6">
-          {/* Overall Ops - full width at top */}
-          <OverallOpsTile
+      {/* Main content - optimized for above-the-fold at 1440x900 */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="p-4 space-y-4 flex-1 overflow-auto">
+          {/* Row 1: Overall Ops Bar (≤48px) */}
+          <OverallOpsBar
             statuses={overallStatuses}
+            jobs={jobs}
             freshness={freshness}
             onRefresh={() => refetch()}
           />
 
-          {/* Main tiles grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Predictions Health */}
-            <PredictionsHealthTile
-              predictions={predictions}
-              isMockFallback={isPredictionsDegraded}
-            />
-
-            {/* Jobs Health */}
-            <JobsHealthTile
-              jobs={jobs}
-              isMockFallback={isJobsDegraded}
-            />
-
-            {/* Fastpath Health */}
-            <FastpathHealthTile
-              fastpath={fastpath}
-              isMockFallback={isFastpathDegraded}
-            />
-
-            {/* Diagnostics (Shadow Mode + Sensor B) */}
-            <DiagnosticsTile
-              shadowMode={shadowMode}
-              sensorB={sensorB}
-            />
+          {/* Row 2: Grid 2x2 - Predictions, Jobs, Fastpath, PIT Progress */}
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+            <ClickableTile panel="predictions">
+              <PredictionsCompactTile
+                predictions={predictions}
+                isMockFallback={isPredictionsDegraded}
+              />
+            </ClickableTile>
+            <ClickableTile panel="jobs">
+              <JobsCompactTile
+                jobs={jobs}
+                isMockFallback={isJobsDegraded}
+              />
+            </ClickableTile>
+            <ClickableTile panel="fastpath">
+              <FastpathCompactTile
+                fastpath={fastpath}
+                isMockFallback={isFastpathDegraded}
+              />
+            </ClickableTile>
+            <ClickableTile panel="pit">
+              <PitProgressCompactTile
+                progress={progress}
+                pitActivity={pitActivity}
+                isProgressDegraded={isProgressDegraded}
+                isPitActivityDegraded={isPitActivityDegraded}
+              />
+            </ClickableTile>
           </div>
 
-          {/* PIT Progress Card */}
-          <ProgressCard
-            progress={progress}
-            pitActivity={pitActivity}
-            movement={movement}
-            isProgressDegraded={isProgressDegraded}
-            isPitActivityDegraded={isPitActivityDegraded}
-            isMovementDegraded={isMovementDegraded}
-          />
-
-          {/* SOTA Enrichment Section */}
-          <SotaEnrichmentSection
-            data={sotaEnrichment}
-            isMockFallback={isSotaEnrichmentDegraded}
-          />
+          {/* Row 3: SOTA Enrichment + Movement Summary (same row as last SOTA card) */}
+          <ClickableTile panel="sota">
+            <SotaEnrichmentSection
+              data={sotaEnrichment}
+              isMockFallback={isSotaEnrichmentDegraded}
+              movementTile={
+                <ClickableTile panel="movement">
+                  <MovementSummaryTile
+                    movement={movement}
+                    isMovementDegraded={isMovementDegraded}
+                  />
+                </ClickableTile>
+              }
+            />
+          </ClickableTile>
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }

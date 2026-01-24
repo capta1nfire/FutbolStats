@@ -12,3 +12,12 @@ export { DiagnosticsTile } from "./DiagnosticsTile";
 export { OverallOpsTile } from "./OverallOpsTile";
 export { ProgressCard } from "./ProgressCard";
 export { SotaEnrichmentSection } from "./SotaEnrichmentSection";
+// Compact components for new Overview layout
+export { OverallOpsBar } from "./OverallOpsBar";
+export { PredictionsCompactTile } from "./PredictionsCompactTile";
+export { JobsCompactTile } from "./JobsCompactTile";
+export { FastpathCompactTile } from "./FastpathCompactTile";
+export { PitProgressCompactTile } from "./PitProgressCompactTile";
+export { MovementSummaryTile } from "./MovementSummaryTile";
+// Overview Drawer
+export { OverviewDrawer } from "./OverviewDrawer";
