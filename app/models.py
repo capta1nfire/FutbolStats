@@ -1023,6 +1023,57 @@ class SensorPrediction(SQLModel, table=True):
     sensor_state: str = Field(default="LEARNING", max_length=20, description="LEARNING, READY, ERROR")
 
 
+class OpsAlert(SQLModel, table=True):
+    """
+    Alerts from Grafana Alerting webhook for ops dashboard notifications.
+
+    Used for bell icon + toast in /dashboard/ops. Grafana is source of truth
+    for alert rules; this table just stores/displays them.
+    """
+
+    __tablename__ = "ops_alerts"
+    __table_args__ = (
+        UniqueConstraint("dedupe_key", name="uq_ops_alerts_dedupe_key"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    # Deduplication key (Grafana fingerprint or computed)
+    dedupe_key: str = Field(max_length=255, index=True, description="Unique key for idempotent upserts")
+
+    # Alert status and severity
+    status: str = Field(default="firing", max_length=20, description="firing or resolved")
+    severity: str = Field(default="warning", max_length=20, description="critical, warning, info")
+
+    # Content
+    title: str = Field(max_length=500, description="Alert title/summary")
+    message: Optional[str] = Field(default=None, description="Alert description (truncated to 1000 chars)")
+
+    # Grafana metadata (stored as JSON)
+    labels: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    annotations: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+
+    # Timestamps from Grafana
+    starts_at: Optional[datetime] = Field(default=None, description="When alert started firing")
+    ends_at: Optional[datetime] = Field(default=None, description="When alert resolved")
+
+    # Source info
+    source: str = Field(default="grafana", max_length=50, description="Alert source")
+    source_url: Optional[str] = Field(default=None, description="Link to Grafana alert/silence")
+
+    # Tracking
+    first_seen_at: datetime = Field(default_factory=datetime.utcnow, description="First time we saw this alert")
+    last_seen_at: datetime = Field(default_factory=datetime.utcnow, description="Last webhook received")
+
+    # User interaction
+    is_read: bool = Field(default=False, description="User has seen in bell dropdown")
+    is_ack: bool = Field(default=False, description="User has acknowledged")
+
+    # Standard timestamps
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class TeamOverride(SQLModel, table=True):
     """
     Team identity overrides for display purposes.

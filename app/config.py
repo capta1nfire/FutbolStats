@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     # Dashboard security
     DASHBOARD_TOKEN: str = ""  # Token for /dashboard/pit access (empty = disabled)
 
+    # Alerts webhook security (Grafana → ops_alerts)
+    ALERTS_WEBHOOK_SECRET: str = ""  # Secret for POST /dashboard/ops/alerts/webhook
+
     # Stats Backfill Job Configuration
     STATS_BACKFILL_ENABLED: bool = True
     STATS_BACKFILL_LOOKBACK_HOURS: int = 72

@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel, Field, model_validator
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from sqlalchemy import select, text, column
+from sqlalchemy import func, select, text, column
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -24,7 +24,7 @@ from app.etl.competitions import ALL_LEAGUE_IDS, COMPETITIONS
 from app.features import FeatureEngineer
 from app.ml import XGBoostEngine
 from app.ml.persistence import load_active_model, persist_model_snapshot
-from app.models import JobRun, Match, OddsHistory, PITReport, PostMatchAudit, Prediction, PredictionOutcome, SensorPrediction, ShadowPrediction, Team, TeamAdjustment, TeamOverride
+from app.models import JobRun, Match, OddsHistory, OpsAlert, PITReport, PostMatchAudit, Prediction, PredictionOutcome, SensorPrediction, ShadowPrediction, Team, TeamAdjustment, TeamOverride
 from app.teams.overrides import preload_team_overrides, resolve_team_display
 from app.scheduler import start_scheduler, stop_scheduler, get_last_sync_time, get_sync_leagues, SYNC_LEAGUES, global_sync_window
 from app.security import limiter, verify_api_key, verify_api_key_or_ops_session
@@ -10417,9 +10417,120 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
       color: var(--blue);
       opacity: 1;
     }}
+    /* Alerts Bell */
+    .alerts-bell {{
+      position: relative;
+      cursor: pointer;
+      font-size: 1.25rem;
+      margin-left: 0.75rem;
+      padding: 0.35rem;
+    }}
+    .alerts-bell:hover {{ opacity: 0.8; }}
+    .alerts-badge {{
+      position: absolute;
+      top: -4px;
+      right: -6px;
+      background: var(--red);
+      color: white;
+      font-size: 0.65rem;
+      font-weight: 700;
+      min-width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }}
+    .alerts-dropdown {{
+      display: none;
+      position: absolute;
+      top: 100%;
+      right: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      width: 320px;
+      max-height: 400px;
+      overflow-y: auto;
+      z-index: 1000;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }}
+    .alerts-dropdown.open {{ display: block; }}
+    .alerts-header {{
+      padding: 0.75rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }}
+    .alerts-header button {{
+      background: var(--border);
+      border: none;
+      color: var(--muted);
+      padding: 0.25rem 0.5rem;
+      border-radius: 0.25rem;
+      font-size: 0.7rem;
+      cursor: pointer;
+    }}
+    .alerts-header button:hover {{ background: var(--blue); color: white; }}
+    .alerts-list {{ padding: 0; }}
+    .alert-item {{
+      padding: 0.6rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8rem;
+    }}
+    .alert-item:last-child {{ border-bottom: none; }}
+    .alert-item.critical {{ border-left: 3px solid var(--red); }}
+    .alert-item.warning {{ border-left: 3px solid var(--yellow); }}
+    .alert-item.info {{ border-left: 3px solid var(--blue); }}
+    .alert-item.resolved {{ opacity: 0.6; }}
+    .alert-title {{ font-weight: 600; margin-bottom: 0.2rem; }}
+    .alert-meta {{ color: var(--muted); font-size: 0.7rem; }}
+    .alert-empty {{ padding: 1.5rem; text-align: center; color: var(--muted); font-size: 0.85rem; }}
+    /* Toast Notifications */
+    .toast-container {{
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }}
+    .toast {{
+      background: var(--card);
+      border: 1px solid var(--red);
+      border-left: 4px solid var(--red);
+      border-radius: 0.5rem;
+      padding: 0.75rem 1rem;
+      min-width: 280px;
+      max-width: 380px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      animation: slideIn 0.3s ease;
+    }}
+    .toast-title {{ font-weight: 600; font-size: 0.85rem; margin-bottom: 0.2rem; }}
+    .toast-message {{ color: var(--muted); font-size: 0.75rem; }}
+    .toast-close {{
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 1rem;
+    }}
+    @keyframes slideIn {{
+      from {{ transform: translateX(100%); opacity: 0; }}
+      to {{ transform: translateX(0); opacity: 1; }}
+    }}
   </style>
 </head>
 <body>
+  <div class="toast-container" id="toastContainer"></div>
   <div class="header">
     <div>
       <h1>Ops Dashboard</h1>
@@ -10440,6 +10551,20 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
           <a class="nav-link" data-path="/dashboard/ops/history" href="/dashboard/ops/history">History</a>
           <a class="nav-link" data-path="/dashboard/ops/logs" href="/dashboard/ops/logs">Logs (debug)</a>
           <a class="nav-link" href="/ops/logout" style="margin-left: auto; color: #f87171;">Logout</a>
+          <!-- Alerts Bell -->
+          <div class="alerts-bell" id="alertsBell" onclick="toggleAlertsDropdown()">
+            🔔
+            <span class="alerts-badge" id="alertsBadge" style="display: none;">0</span>
+            <div class="alerts-dropdown" id="alertsDropdown">
+              <div class="alerts-header">
+                <span>Alertas</span>
+                <button onclick="event.stopPropagation(); ackAllAlerts();">Marcar leídas</button>
+              </div>
+              <div class="alerts-list" id="alertsList">
+                <div class="alert-empty">Sin alertas</div>
+              </div>
+            </div>
+          </div>
           <button class="debug-pack-btn" id="debugPackBtn">📦 Copy Debug Pack</button>
           <div class="json-dropdown">
             <span class="json-dropdown-btn">JSON ▾</span>
@@ -10914,6 +11039,137 @@ def _render_ops_dashboard_html(data: dict, history: list | None = None, audit_lo
         if (seconds < 0) seconds = 60;
         countdownEl.textContent = seconds;
       }}, 1000);
+    }})();
+
+    // =========================================================================
+    // ALERTS BELL: Polling + Toast Notifications
+    // =========================================================================
+    (function() {{
+      const seenAlertIds = new Set(JSON.parse(localStorage.getItem('seenAlertIds') || '[]'));
+      let alertsDropdownOpen = false;
+
+      // Get token for API calls
+      function getAuthHeaders() {{
+        const params = new URLSearchParams(window.location.search);
+        const token = params.get('token');
+        const headers = {{}};
+        if (token) headers['X-Dashboard-Token'] = token;
+        return headers;
+      }}
+
+      // Toggle dropdown
+      window.toggleAlertsDropdown = function() {{
+        const dropdown = document.getElementById('alertsDropdown');
+        alertsDropdownOpen = !alertsDropdownOpen;
+        dropdown.classList.toggle('open', alertsDropdownOpen);
+      }};
+
+      // Close dropdown on outside click
+      document.addEventListener('click', (e) => {{
+        const bell = document.getElementById('alertsBell');
+        if (bell && !bell.contains(e.target)) {{
+          document.getElementById('alertsDropdown').classList.remove('open');
+          alertsDropdownOpen = false;
+        }}
+      }});
+
+      // Mark all as read
+      window.ackAllAlerts = async function() {{
+        try {{
+          const token = new URLSearchParams(window.location.search).get('token');
+          const url = token ? `/dashboard/ops/alerts/ack?token=${{encodeURIComponent(token)}}` : '/dashboard/ops/alerts/ack';
+          await fetch(url, {{
+            method: 'POST',
+            headers: {{ 'Content-Type': 'application/json', ...getAuthHeaders() }},
+            body: JSON.stringify({{ ack_all: true }})
+          }});
+          fetchAlerts();
+        }} catch (e) {{
+          console.error('Ack alerts error:', e);
+        }}
+      }};
+
+      // Show toast for critical alerts
+      function showToast(alert) {{
+        const container = document.getElementById('toastContainer');
+        const toast = document.createElement('div');
+        toast.className = 'toast';
+        toast.style.position = 'relative';
+        toast.innerHTML = `
+          <button class="toast-close" onclick="this.parentElement.remove()">×</button>
+          <div class="toast-title">${{alert.title}}</div>
+          <div class="toast-message">${{alert.message || ''}}</div>
+        `;
+        container.appendChild(toast);
+        // Auto-remove after 10s
+        setTimeout(() => toast.remove(), 10000);
+      }}
+
+      // Format time ago
+      function timeAgo(isoString) {{
+        if (!isoString) return '';
+        const diff = Date.now() - new Date(isoString).getTime();
+        const mins = Math.floor(diff / 60000);
+        if (mins < 1) return 'ahora';
+        if (mins < 60) return `${{mins}}m`;
+        const hrs = Math.floor(mins / 60);
+        if (hrs < 24) return `${{hrs}}h`;
+        return `${{Math.floor(hrs / 24)}}d`;
+      }}
+
+      // Fetch and render alerts
+      async function fetchAlerts() {{
+        try {{
+          const token = new URLSearchParams(window.location.search).get('token');
+          const url = token
+            ? `/dashboard/ops/alerts.json?status=firing&limit=20&token=${{encodeURIComponent(token)}}`
+            : '/dashboard/ops/alerts.json?status=firing&limit=20';
+          const res = await fetch(url, {{ headers: getAuthHeaders() }});
+          if (!res.ok) return;
+          const data = await res.json();
+
+          // Update badge
+          const badge = document.getElementById('alertsBadge');
+          if (data.unread_count > 0) {{
+            badge.textContent = data.unread_count > 9 ? '9+' : data.unread_count;
+            badge.style.display = 'flex';
+          }} else {{
+            badge.style.display = 'none';
+          }}
+
+          // Render list
+          const list = document.getElementById('alertsList');
+          if (data.items && data.items.length > 0) {{
+            list.innerHTML = data.items.map(a => `
+              <div class="alert-item ${{a.severity}} ${{a.status === 'resolved' ? 'resolved' : ''}}">
+                <div class="alert-title">${{a.title}}</div>
+                <div class="alert-meta">
+                  ${{a.severity.toUpperCase()}} · ${{timeAgo(a.last_seen_at)}}
+                  ${{a.source_url ? `<a href="${{a.source_url}}" target="_blank" style="color:var(--blue);">→ Grafana</a>` : ''}}
+                </div>
+              </div>
+            `).join('');
+
+            // Show toast for new CRITICAL alerts
+            data.items.forEach(a => {{
+              if (a.severity === 'critical' && a.status === 'firing' && !seenAlertIds.has(a.id)) {{
+                showToast(a);
+                seenAlertIds.add(a.id);
+              }}
+            }});
+            // Persist seen IDs
+            localStorage.setItem('seenAlertIds', JSON.stringify([...seenAlertIds].slice(-100)));
+          }} else {{
+            list.innerHTML = '<div class="alert-empty">Sin alertas activas</div>';
+          }}
+        }} catch (e) {{
+          console.error('Fetch alerts error:', e);
+        }}
+      }}
+
+      // Initial fetch + polling every 20s
+      fetchAlerts();
+      setInterval(fetchAlerts, 20000);
     }})();
   </script>
 </body>
@@ -17200,6 +17456,311 @@ async def migrate_fastpath_fields(
         "status": "ok",
         "migrations": results,
         "verified_columns": columns,
+    }
+
+
+# =============================================================================
+# OPS ALERTS: Grafana Webhook → Bell + Toast Notifications
+# =============================================================================
+
+
+def _verify_alerts_webhook_secret(request: Request) -> bool:
+    """Verify X-Alerts-Secret header for webhook authentication."""
+    settings = get_settings()
+    if not settings.ALERTS_WEBHOOK_SECRET:
+        return False  # Webhook disabled if no secret configured
+    provided = request.headers.get("X-Alerts-Secret", "")
+    return provided == settings.ALERTS_WEBHOOK_SECRET
+
+
+@app.post("/dashboard/ops/alerts/webhook")
+async def ops_alerts_webhook(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Receive alerts from Grafana Alerting webhook.
+
+    Auth: X-Alerts-Secret header (dedicated secret, not dashboard token).
+
+    Expects Grafana Unified Alerting format. Tolerant parsing.
+    Upserts by dedupe_key (fingerprint) for idempotence.
+    """
+    if not _verify_alerts_webhook_secret(request):
+        raise HTTPException(status_code=401, detail="Invalid or missing X-Alerts-Secret")
+
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    # Grafana sends alerts in different formats depending on version
+    # Handle both single alert and array of alerts
+    alerts = []
+    if isinstance(payload, list):
+        alerts = payload
+    elif isinstance(payload, dict):
+        # Grafana Unified Alerting format: { alerts: [...] }
+        if "alerts" in payload:
+            alerts = payload.get("alerts", [])
+        else:
+            # Single alert object
+            alerts = [payload]
+
+    if not alerts:
+        return {"status": "ok", "processed": 0, "message": "No alerts in payload"}
+
+    processed = 0
+    errors = []
+
+    for alert in alerts:
+        try:
+            # Extract fields with fallbacks
+            labels = alert.get("labels", {})
+            annotations = alert.get("annotations", {})
+
+            # Dedupe key: prefer fingerprint, fallback to alertname + labels hash
+            fingerprint = alert.get("fingerprint", "")
+            if not fingerprint:
+                # Generate from alertname + sorted labels
+                import hashlib
+                alertname = labels.get("alertname", "unknown")
+                labels_str = str(sorted(labels.items()))
+                fingerprint = hashlib.sha256(f"{alertname}:{labels_str}".encode()).hexdigest()[:32]
+
+            # Status: firing or resolved
+            status = alert.get("status", "firing").lower()
+            if status not in ("firing", "resolved"):
+                status = "firing"
+
+            # Severity from labels
+            severity = labels.get("severity", "warning").lower()
+            if severity not in ("critical", "warning", "info"):
+                severity = "warning"
+
+            # Title: prefer annotations.summary, fallback to labels.alertname
+            title = (
+                annotations.get("summary")
+                or labels.get("alertname")
+                or alert.get("title")
+                or "Unknown Alert"
+            )[:500]  # Truncate
+
+            # Message: prefer annotations.description
+            message = annotations.get("description") or annotations.get("message") or ""
+            if len(message) > 1000:
+                message = message[:997] + "..."
+
+            # Timestamps
+            starts_at = None
+            ends_at = None
+            try:
+                if alert.get("startsAt"):
+                    starts_at = datetime.fromisoformat(alert["startsAt"].replace("Z", "+00:00"))
+                if alert.get("endsAt") and alert.get("endsAt") != "0001-01-01T00:00:00Z":
+                    ends_at = datetime.fromisoformat(alert["endsAt"].replace("Z", "+00:00"))
+            except Exception:
+                pass
+
+            # Source URL (Grafana panel/alert link)
+            source_url = (
+                alert.get("generatorURL")
+                or alert.get("silenceURL")
+                or annotations.get("runbook_url")
+            )
+
+            # Upsert into ops_alerts
+            now = datetime.utcnow()
+
+            # Check if exists
+            existing = await session.execute(
+                select(OpsAlert).where(OpsAlert.dedupe_key == fingerprint)
+            )
+            existing_alert = existing.scalar_one_or_none()
+
+            if existing_alert:
+                # Update existing
+                existing_alert.status = status
+                existing_alert.severity = severity
+                existing_alert.title = title
+                existing_alert.message = message
+                existing_alert.labels = labels
+                existing_alert.annotations = annotations
+                existing_alert.starts_at = starts_at or existing_alert.starts_at
+                existing_alert.ends_at = ends_at
+                existing_alert.source_url = source_url or existing_alert.source_url
+                existing_alert.last_seen_at = now
+                existing_alert.updated_at = now
+                # If resolved, mark as read (auto-clear)
+                if status == "resolved":
+                    existing_alert.is_read = True
+            else:
+                # Insert new
+                new_alert = OpsAlert(
+                    dedupe_key=fingerprint,
+                    status=status,
+                    severity=severity,
+                    title=title,
+                    message=message,
+                    labels=labels,
+                    annotations=annotations,
+                    starts_at=starts_at,
+                    ends_at=ends_at,
+                    source="grafana",
+                    source_url=source_url,
+                    first_seen_at=now,
+                    last_seen_at=now,
+                    is_read=False,
+                    is_ack=False,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(new_alert)
+
+            processed += 1
+
+        except Exception as e:
+            errors.append(str(e)[:100])
+            logger.warning(f"Failed to process alert: {e}")
+
+    await session.commit()
+
+    return {
+        "status": "ok",
+        "processed": processed,
+        "errors": errors if errors else None,
+    }
+
+
+@app.get("/dashboard/ops/alerts.json")
+async def ops_alerts_list(
+    request: Request,
+    limit: int = 50,
+    status: str = "all",  # firing, resolved, all
+    unread_only: bool = False,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Get ops alerts for bell dropdown.
+
+    Auth: X-Dashboard-Token (same as ops.json).
+
+    Returns unread_count and list of recent alerts.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    # Clamp limit
+    limit = min(max(1, limit), 100)
+
+    # Build query
+    query = select(OpsAlert).order_by(OpsAlert.last_seen_at.desc())
+
+    # Status filter
+    if status == "firing":
+        query = query.where(OpsAlert.status == "firing")
+    elif status == "resolved":
+        query = query.where(OpsAlert.status == "resolved")
+    # else: all
+
+    # Unread filter
+    if unread_only:
+        query = query.where(OpsAlert.is_read == False)
+
+    query = query.limit(limit)
+
+    result = await session.execute(query)
+    alerts = result.scalars().all()
+
+    # Get unread count (always firing + unread)
+    unread_result = await session.execute(
+        select(func.count(OpsAlert.id)).where(
+            OpsAlert.is_read == False,
+            OpsAlert.status == "firing"
+        )
+    )
+    unread_count = unread_result.scalar() or 0
+
+    # Format response
+    items = []
+    for a in alerts:
+        items.append({
+            "id": a.id,
+            "dedupe_key": a.dedupe_key,
+            "status": a.status,
+            "severity": a.severity,
+            "title": a.title,
+            "message": a.message[:200] if a.message else None,  # Truncate for list
+            "starts_at": a.starts_at.isoformat() if a.starts_at else None,
+            "ends_at": a.ends_at.isoformat() if a.ends_at else None,
+            "last_seen_at": a.last_seen_at.isoformat() if a.last_seen_at else None,
+            "source_url": a.source_url,
+            "is_read": a.is_read,
+            "is_ack": a.is_ack,
+        })
+
+    return {
+        "unread_count": unread_count,
+        "items": items,
+    }
+
+
+@app.post("/dashboard/ops/alerts/ack")
+async def ops_alerts_ack(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Mark alerts as read/acknowledged.
+
+    Auth: X-Dashboard-Token.
+
+    Body: { "ids": [1,2,3] } or { "ack_all": true }
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    now = datetime.utcnow()
+    updated = 0
+
+    if body.get("ack_all"):
+        # Mark all unread firing alerts as read
+        result = await session.execute(
+            text("""
+                UPDATE ops_alerts
+                SET is_read = true, is_ack = true, updated_at = :now
+                WHERE is_read = false AND status = 'firing'
+            """),
+            {"now": now}
+        )
+        updated = result.rowcount
+    elif body.get("ids"):
+        ids = body.get("ids", [])
+        if not isinstance(ids, list):
+            raise HTTPException(status_code=400, detail="ids must be an array")
+        # Mark specific alerts as read
+        result = await session.execute(
+            text("""
+                UPDATE ops_alerts
+                SET is_read = true, is_ack = true, updated_at = :now
+                WHERE id = ANY(:ids)
+            """),
+            {"now": now, "ids": ids}
+        )
+        updated = result.rowcount
+    else:
+        raise HTTPException(status_code=400, detail="Provide 'ids' array or 'ack_all': true")
+
+    await session.commit()
+
+    return {
+        "status": "ok",
+        "updated": updated,
     }
 
 

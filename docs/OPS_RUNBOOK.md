@@ -314,3 +314,92 @@ curl -s -H "X-API-Key: $API_KEY" \
 - El engine selecciona features dinámicamente según `model.n_features_in_`
 - Si el modelo espera 14 y runtime produce 17, se truncan automáticamente
 - OPS muestra `n_features` para diagnóstico rápido
+
+---
+
+## Alerts Bell (Grafana Webhook → Dashboard)
+
+El dashboard `/dashboard/ops` incluye un icono de campana (🔔) que muestra alertas provenientes de Grafana Alerting.
+
+### Arquitectura
+```
+Grafana Alerting Rules
+        ↓
+  Contact Point (Webhook)
+        ↓
+POST /dashboard/ops/alerts/webhook
+        ↓
+      ops_alerts (PostgreSQL)
+        ↓
+GET /dashboard/ops/alerts.json
+        ↓
+   Bell + Toast (UI polling 20s)
+```
+
+### Configuración Grafana
+
+1. **Crear Contact Point (Webhook)**:
+   - Type: `webhook`
+   - URL: `https://web-production-f2de9.up.railway.app/dashboard/ops/alerts/webhook`
+   - HTTP Method: `POST`
+   - HTTP Headers:
+     - `X-Alerts-Secret: <ALERTS_WEBHOOK_SECRET>`
+
+2. **Crear Alert Rules** (ejemplos):
+   ```
+   # Shadow stale
+   shadow_eval_lag_minutes > 120
+   severity: critical
+
+   # Sensor stale
+   sensor_eval_lag_minutes > 120
+   severity: critical
+
+   # Jobs failing
+   job_last_success_minutes{job="fastpath"} > 10
+   severity: warning
+   ```
+
+3. **Asignar Contact Point a Notification Policy**
+
+### Env Vars (Railway)
+```bash
+# Secreto para webhook (NO reutilizar DASHBOARD_TOKEN)
+ALERTS_WEBHOOK_SECRET=<generar-secret-aleatorio>
+```
+
+### Endpoints
+
+| Endpoint | Method | Auth | Descripción |
+|----------|--------|------|-------------|
+| `/dashboard/ops/alerts/webhook` | POST | `X-Alerts-Secret` | Ingesta desde Grafana |
+| `/dashboard/ops/alerts.json` | GET | `X-Dashboard-Token` | Lista alertas (bell dropdown) |
+| `/dashboard/ops/alerts/ack` | POST | `X-Dashboard-Token` | Marcar leídas |
+
+### Comportamiento UI
+
+- **Badge**: Muestra conteo de alertas firing + unread
+- **Dropdown**: Lista alertas recientes con link a Grafana
+- **Toast**: Solo para alertas `severity: critical` + `status: firing` (una vez por alerta)
+- **Polling**: Cada 20 segundos
+
+### Test Manual (curl)
+```bash
+# Simular alerta desde Grafana
+curl -X POST "https://web-production-f2de9.up.railway.app/dashboard/ops/alerts/webhook" \
+  -H "X-Alerts-Secret: $ALERTS_WEBHOOK_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "alerts": [{
+      "status": "firing",
+      "labels": {"alertname": "ShadowStale", "severity": "critical"},
+      "annotations": {"summary": "Shadow eval lag > 2h", "description": "Shadow predictions pending > 120 min"},
+      "startsAt": "2026-01-24T12:00:00Z",
+      "fingerprint": "abc123"
+    }]
+  }'
+
+# Verificar
+curl -s -H "X-Dashboard-Token: $DASHBOARD_TOKEN" \
+  "https://web-production-f2de9.up.railway.app/dashboard/ops/alerts.json" | jq
+```
