@@ -5150,14 +5150,16 @@ def start_scheduler(ml_engine):
 
     # Prediction save safety net: Every 6 hours to catch missed daily runs
     # This ensures predictions are generated even if deploys interrupt the 7:00 UTC job
-    # NOTE: next_run_time ensures job runs immediately on startup
     scheduler.add_job(
         daily_save_predictions,
         trigger=IntervalTrigger(hours=6),
         id="predictions_safety_net",
         name="Predictions Safety Net (every 6h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow(),
+        next_run_time=datetime.utcnow() + timedelta(seconds=55),  # Offset: +55s
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
     )
 
     # Prediction gap safety net: Every 30 minutes to catch isolated matches
@@ -5192,7 +5194,6 @@ def start_scheduler(ml_engine):
 
     # Sensor B retrain: Every 6 hours (configurable via SENSOR_RETRAIN_INTERVAL_HOURS)
     # LogReg L2 calibration diagnostics - INTERNAL ONLY, never affects production
-    # NOTE: next_run_time ensures job runs immediately on startup
     from app.config import get_settings
     sensor_settings = get_settings()
     if sensor_settings.SENSOR_ENABLED:
@@ -5202,7 +5203,10 @@ def start_scheduler(ml_engine):
             id="retrain_sensor_model",
             name=f"Sensor B Retrain (every {sensor_settings.SENSOR_RETRAIN_INTERVAL_HOURS}h)",
             replace_existing=True,
-            next_run_time=datetime.utcnow(),
+            next_run_time=datetime.utcnow() + timedelta(seconds=65),  # Offset: +65s
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=300,
         )
 
         # Sensor B evaluation: Every 30 minutes (same as shadow)
@@ -5319,21 +5323,22 @@ def start_scheduler(ml_engine):
     # Stats Refresh: Every 2 hours, re-fetch stats for recently finished matches
     # Captures late events (red cards, late goals) missed by live sync
     # Guardrails: STATS_REFRESH_ENABLED, lookback 6h, max 50 calls/run (~600/day)
-    # NOTE: next_run_time ensures job runs immediately on startup
     scheduler.add_job(
         refresh_recent_ft_stats,
         trigger=IntervalTrigger(hours=2),
         id="stats_refresh_recent",
         name="Stats Refresh Recent FT (every 2h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow(),
+        next_run_time=datetime.utcnow() + timedelta(seconds=75),  # Offset: +75s
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
     )
 
     # Odds Sync: Every 6 hours (configurable via ODDS_SYNC_INTERVAL_HOURS)
     # Fetches 1X2 odds for upcoming NS matches in 48h window
     # Guardrails: ODDS_SYNC_ENABLED, ODDS_SYNC_MAX_FIXTURES (100), freshness 6h
     # Budget: ~250-400 requests/day (well within Pro plan 7,500/day)
-    # NOTE: next_run_time ensures job runs immediately on startup
     _odds_settings = get_settings()
     if _odds_settings.ODDS_SYNC_ENABLED:
         scheduler.add_job(
@@ -5342,7 +5347,10 @@ def start_scheduler(ml_engine):
             id="odds_sync_upcoming",
             name=f"Odds Sync (every {_odds_settings.ODDS_SYNC_INTERVAL_HOURS}h)",
             replace_existing=True,
-            next_run_time=datetime.utcnow(),
+            next_run_time=datetime.utcnow() + timedelta(seconds=85),  # Offset: +85s
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=300,
         )
 
     # Fast-Path LLM Narratives: Every 2 minutes (configurable via FASTPATH_INTERVAL_SECONDS)
@@ -5442,42 +5450,54 @@ def start_scheduler(ml_engine):
     # =========================================================================
     # SOTA ENRICHMENT JOBS (Understat xG, Weather, Venue Geo)
     # All disabled by default except Understat jobs (core SOTA pipeline)
+    #
+    # HARDENING: All SOTA jobs use:
+    #   - max_instances=1: Prevent concurrent execution
+    #   - coalesce=True: Collapse missed runs into single execution
+    #   - misfire_grace_time=300: 5min grace for delayed runs
+    #   - Staggered offsets: Prevent startup stampede
     # =========================================================================
 
     # SOTA: Understat refs sync - every 12 hours
     # Links matches to Understat IDs for xG retrieval
-    # NOTE: next_run_time ensures job runs immediately on startup
     scheduler.add_job(
         sota_understat_refs_sync,
         trigger=IntervalTrigger(hours=12),
         id="sota_understat_refs_sync",
         name="SOTA Understat Refs Sync (every 12h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow(),
+        next_run_time=datetime.utcnow() + timedelta(seconds=5),  # Offset: +5s
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
     )
 
     # SOTA: Understat xG backfill - every 6 hours
     # Fetches actual xG data for matches with refs
-    # NOTE: next_run_time ensures job runs immediately on startup
     scheduler.add_job(
         sota_understat_ft_backfill,
         trigger=IntervalTrigger(hours=6),
         id="sota_understat_ft_backfill",
         name="SOTA Understat xG Backfill (every 6h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow(),
+        next_run_time=datetime.utcnow() + timedelta(seconds=15),  # Offset: +15s
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
     )
 
     # SOTA: Weather capture - every 60 minutes
     # Captures weather forecasts for upcoming matches (disabled by default)
-    # NOTE: next_run_time ensures job runs immediately on startup
     scheduler.add_job(
         sota_weather_capture_prekickoff,
         trigger=IntervalTrigger(minutes=60),
         id="sota_weather_capture",
         name="SOTA Weather Capture (every 60 min)",
         replace_existing=True,
-        next_run_time=datetime.utcnow(),
+        next_run_time=datetime.utcnow() + timedelta(seconds=25),  # Offset: +25s
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
     )
 
     # SOTA: Venue geo expand - daily at 03:00 UTC
@@ -5488,30 +5508,37 @@ def start_scheduler(ml_engine):
         id="sota_venue_geo_expand",
         name="SOTA Venue Geo Expand (daily 03:00 UTC)",
         replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
     )
 
     # SOTA: Sofascore refs sync - every 6 hours
     # Links matches to Sofascore event IDs (disabled by default)
-    # NOTE: next_run_time ensures job runs immediately on startup, then every 6h
     scheduler.add_job(
         sota_sofascore_refs_sync,
         trigger=IntervalTrigger(hours=6),
         id="sota_sofascore_refs_sync",
         name="SOTA Sofascore Refs Sync (every 6h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow(),
+        next_run_time=datetime.utcnow() + timedelta(seconds=35),  # Offset: +35s
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
     )
 
     # SOTA: Sofascore XI capture - every 30 minutes
     # Captures lineup/formation/ratings for upcoming matches (disabled by default)
-    # NOTE: next_run_time ensures job runs immediately on startup, then every 30min
     scheduler.add_job(
         sota_sofascore_xi_capture,
         trigger=IntervalTrigger(minutes=30),
         id="sota_sofascore_xi_capture",
         name="SOTA Sofascore XI Capture (every 30 min)",
         replace_existing=True,
-        next_run_time=datetime.utcnow(),
+        next_run_time=datetime.utcnow() + timedelta(seconds=45),  # Offset: +45s
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
     )
 
     scheduler.start()
