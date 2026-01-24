@@ -5429,19 +5429,34 @@ async def dashboard_overview_rollup(request: Request):
     try:
         ops_data = await _get_cached_ops_data()
 
-        # Extract stable rollup fields
+        # Extract stable rollup fields - use REAL keys from ops_data
+        # Required fields (core dashboard)
         rollup = {
-            "system_status": ops_data.get("system_status", "unknown"),
-            "uptime_seconds": ops_data.get("uptime_seconds"),
-            "predictions_health": ops_data.get("predictions_health"),
-            "jobs_health": ops_data.get("jobs_health"),
+            "generated_at": ops_data.get("generated_at"),
+            "budget": ops_data.get("budget"),
             "sentry": ops_data.get("sentry"),
+            "jobs_health": ops_data.get("jobs_health"),
+            "predictions_health": ops_data.get("predictions_health"),
+            "fastpath_health": ops_data.get("fastpath_health"),
+            "pit": ops_data.get("pit"),
+            "movement": ops_data.get("movement"),
             "llm_cost": ops_data.get("llm_cost"),
-            "api_budget": ops_data.get("api_budget"),
-            "data_quality": ops_data.get("data_quality"),
-            "model": ops_data.get("model"),
-            "environment": ops_data.get("environment"),
+            "sota_enrichment": ops_data.get("sota_enrichment"),
+            "providers": ops_data.get("providers"),
         }
+
+        # Optional fields (include if present)
+        optional_keys = [
+            "coverage_by_league",
+            "shadow_mode",
+            "sensor_b",
+            "rerun_serving",
+            "ml_model",
+            "telemetry",
+        ]
+        for key in optional_keys:
+            if key in ops_data and ops_data[key] is not None:
+                rollup[key] = ops_data[key]
 
         _rollup_cache["data"] = rollup
         _rollup_cache["timestamp"] = now_ts
@@ -5778,7 +5793,8 @@ async def dashboard_movement_top(
     session: AsyncSession = Depends(get_async_session),
 ):
     """
-    V2 endpoint: Top lineup/market movers with standard wrapper.
+    V2 endpoint: Recent lineup/market activity with standard wrapper.
+    Note: Returns recent captures ordered by recency, NOT by movement magnitude.
     TTL: 60s
     Auth: X-Dashboard-Token
     Query params: range (24h|7d), type (lineup|market), limit (max 100)
@@ -5851,7 +5867,7 @@ async def dashboard_movement_top(
                     "home": row[3],
                     "away": row[4],
                     "type": "lineup",
-                    "value": row[5].isoformat() + "Z" if row[5] else None,
+                    "captured_at": row[5].isoformat() + "Z" if row[5] else None,
                     "source": "sofascore",
                 })
 
@@ -5881,17 +5897,18 @@ async def dashboard_movement_top(
                     "home": row[3],
                     "away": row[4],
                     "type": "market",
-                    "value": row[5].isoformat() + "Z" if row[5] else None,
+                    "captured_at": row[5].isoformat() + "Z" if row[5] else None,
                     "source": "api-football",
                 })
 
-        # Sort by value (most recent first) and limit
-        movers.sort(key=lambda x: x["value"] or "", reverse=True)
+        # Sort by captured_at (most recent first) and limit
+        movers.sort(key=lambda x: x["captured_at"] or "", reverse=True)
         movers = movers[:limit]
 
         result = {
             "movers": movers,
             "status": "ok" if movers else "warn",
+            "note": "recent activity ordered by recency (not movement magnitude)",
         }
 
         _movement_cache["data"] = result
