@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel, Field, model_validator
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from sqlalchemy import select, text
+from sqlalchemy import select, text, column
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -10324,22 +10324,29 @@ async def get_matches_dashboard(
 
     # Base query with LEFT JOINs for predictions and weather
     # Use GROUP BY and MAX to get one row per match when there are multiple predictions
-    # Weather: use subquery to get latest forecast (smallest horizon_hours)
-    weather_subq = (
-        select(
-            text("match_id"),
-            text("temp_c"),
-            text("humidity"),
-            text("wind_ms"),
-            text("precip_mm"),
-            text("precip_prob"),
-            text("cloudcover"),
-            text("is_daylight"),
-        )
-        .select_from(text("match_weather"))
-        .where(text("forecast_horizon_hours = (SELECT MIN(forecast_horizon_hours) FROM match_weather mw2 WHERE mw2.match_id = match_weather.match_id)"))
-        .subquery("weather")
-    )
+    # Weather: use raw SQL subquery with DISTINCT ON to get latest forecast per match
+    weather_subq = text("""
+        SELECT DISTINCT ON (match_id)
+            match_id,
+            temp_c,
+            humidity,
+            wind_ms,
+            precip_mm,
+            precip_prob,
+            cloudcover,
+            is_daylight
+        FROM match_weather
+        ORDER BY match_id, forecast_horizon_hours ASC
+    """).columns(
+        column("match_id"),
+        column("temp_c"),
+        column("humidity"),
+        column("wind_ms"),
+        column("precip_mm"),
+        column("precip_prob"),
+        column("cloudcover"),
+        column("is_daylight"),
+    ).subquery("weather")
 
     base_query = (
         select(
