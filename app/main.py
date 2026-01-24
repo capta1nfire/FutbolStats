@@ -10322,8 +10322,25 @@ async def get_matches_dashboard(
     home_team = aliased(Team, name="home_team")
     away_team = aliased(Team, name="away_team")
 
-    # Base query with LEFT JOINs for predictions
+    # Base query with LEFT JOINs for predictions and weather
     # Use GROUP BY and MAX to get one row per match when there are multiple predictions
+    # Weather: use subquery to get latest forecast (smallest horizon_hours)
+    weather_subq = (
+        select(
+            text("match_id"),
+            text("temp_c"),
+            text("humidity"),
+            text("wind_ms"),
+            text("precip_mm"),
+            text("precip_prob"),
+            text("cloudcover"),
+            text("is_daylight"),
+        )
+        .select_from(text("match_weather"))
+        .where(text("forecast_horizon_hours = (SELECT MIN(forecast_horizon_hours) FROM match_weather mw2 WHERE mw2.match_id = match_weather.match_id)"))
+        .subquery("weather")
+    )
+
     base_query = (
         select(
             Match.id,
@@ -10334,6 +10351,8 @@ async def get_matches_dashboard(
             Match.away_goals,
             Match.elapsed,
             Match.elapsed_extra,
+            Match.venue_name,
+            Match.venue_city,
             home_team.name.label("home_name"),
             away_team.name.label("away_name"),
             # Model A (production) prediction - use MAX to pick one value
@@ -10352,12 +10371,21 @@ async def get_matches_dashboard(
             func.max(SensorPrediction.b_home_prob).label("sensor_b_home"),
             func.max(SensorPrediction.b_draw_prob).label("sensor_b_draw"),
             func.max(SensorPrediction.b_away_prob).label("sensor_b_away"),
+            # Weather forecast
+            func.max(weather_subq.c.temp_c).label("weather_temp_c"),
+            func.max(weather_subq.c.humidity).label("weather_humidity"),
+            func.max(weather_subq.c.wind_ms).label("weather_wind_ms"),
+            func.max(weather_subq.c.precip_mm).label("weather_precip_mm"),
+            func.max(weather_subq.c.precip_prob).label("weather_precip_prob"),
+            func.max(weather_subq.c.cloudcover).label("weather_cloudcover"),
+            func.max(weather_subq.c.is_daylight).label("weather_is_daylight"),
         )
         .join(home_team, Match.home_team_id == home_team.id)
         .join(away_team, Match.away_team_id == away_team.id)
         .outerjoin(Prediction, Prediction.match_id == Match.id)
         .outerjoin(ShadowPrediction, ShadowPrediction.match_id == Match.id)
         .outerjoin(SensorPrediction, SensorPrediction.match_id == Match.id)
+        .outerjoin(weather_subq, weather_subq.c.match_id == Match.id)
         .group_by(
             Match.id,
             Match.date,
@@ -10367,6 +10395,8 @@ async def get_matches_dashboard(
             Match.away_goals,
             Match.elapsed,
             Match.elapsed_extra,
+            Match.venue_name,
+            Match.venue_city,
             home_team.name,
             away_team.name,
         )
@@ -10494,6 +10524,25 @@ async def get_matches_dashboard(
             "away": row.away_name,
             "status": row.status,
         }
+
+        # Venue (stadium name and city)
+        if row.venue_name or row.venue_city:
+            match_data["venue"] = {
+                "name": row.venue_name,
+                "city": row.venue_city,
+            }
+
+        # Weather forecast (if available)
+        if row.weather_temp_c is not None:
+            match_data["weather"] = {
+                "temp_c": round(row.weather_temp_c, 1),
+                "humidity": round(row.weather_humidity, 0) if row.weather_humidity else None,
+                "wind_ms": round(row.weather_wind_ms, 1) if row.weather_wind_ms else None,
+                "precip_mm": round(row.weather_precip_mm, 1) if row.weather_precip_mm else None,
+                "precip_prob": round(row.weather_precip_prob, 0) if row.weather_precip_prob else None,
+                "cloudcover": round(row.weather_cloudcover, 0) if row.weather_cloudcover else None,
+                "is_daylight": bool(row.weather_is_daylight) if row.weather_is_daylight is not None else None,
+            }
 
         # Score (only if played/playing)
         if row.home_goals is not None and row.away_goals is not None:
