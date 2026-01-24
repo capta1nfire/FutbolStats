@@ -948,15 +948,23 @@ export interface OpsLlmCost {
   provider: string;
   cost_24h_usd: number;
   cost_7d_usd: number;
+  cost_28d_usd: number;
   cost_total_usd: number;
+  requests_24h: number;
+  requests_7d: number;
+  requests_28d: number;
+  requests_total: number;
+  // Legacy fields (mapped from new field names for backwards compat)
   requests_ok_24h: number;
   requests_ok_7d: number;
   requests_ok_total: number;
-  avg_cost_per_ok_24h?: number;
+  avg_cost_per_request_24h?: number;
   tokens_in_24h: number;
   tokens_out_24h: number;
   tokens_in_7d: number;
   tokens_out_7d: number;
+  tokens_in_28d: number;
+  tokens_out_28d: number;
   note?: string;
 }
 
@@ -974,20 +982,37 @@ export function parseOpsLlmCost(ops: OpsResponse): OpsLlmCost | null {
   const provider = llm.provider;
   if (typeof provider !== "string") return null;
 
+  // Parse new field names with fallback to legacy names
+  const requests_24h = typeof llm.requests_24h === "number" ? llm.requests_24h
+    : typeof llm.requests_ok_24h === "number" ? llm.requests_ok_24h : 0;
+  const requests_7d = typeof llm.requests_7d === "number" ? llm.requests_7d
+    : typeof llm.requests_ok_7d === "number" ? llm.requests_ok_7d : 0;
+  const requests_28d = typeof llm.requests_28d === "number" ? llm.requests_28d : 0;
+  const requests_total = typeof llm.requests_total === "number" ? llm.requests_total
+    : typeof llm.requests_ok_total === "number" ? llm.requests_ok_total : 0;
+
   return {
     status,
     provider,
     cost_24h_usd: typeof llm.cost_24h_usd === "number" ? llm.cost_24h_usd : 0,
     cost_7d_usd: typeof llm.cost_7d_usd === "number" ? llm.cost_7d_usd : 0,
+    cost_28d_usd: typeof llm.cost_28d_usd === "number" ? llm.cost_28d_usd : 0,
     cost_total_usd: typeof llm.cost_total_usd === "number" ? llm.cost_total_usd : 0,
-    requests_ok_24h: typeof llm.requests_ok_24h === "number" ? llm.requests_ok_24h : 0,
-    requests_ok_7d: typeof llm.requests_ok_7d === "number" ? llm.requests_ok_7d : 0,
-    requests_ok_total: typeof llm.requests_ok_total === "number" ? llm.requests_ok_total : 0,
-    avg_cost_per_ok_24h: typeof llm.avg_cost_per_ok_24h === "number" ? llm.avg_cost_per_ok_24h : undefined,
+    requests_24h,
+    requests_7d,
+    requests_28d,
+    requests_total,
+    // Legacy field mappings for backwards compat
+    requests_ok_24h: requests_24h,
+    requests_ok_7d: requests_7d,
+    requests_ok_total: requests_total,
+    avg_cost_per_request_24h: typeof llm.avg_cost_per_request_24h === "number" ? llm.avg_cost_per_request_24h : undefined,
     tokens_in_24h: typeof llm.tokens_in_24h === "number" ? llm.tokens_in_24h : 0,
     tokens_out_24h: typeof llm.tokens_out_24h === "number" ? llm.tokens_out_24h : 0,
     tokens_in_7d: typeof llm.tokens_in_7d === "number" ? llm.tokens_in_7d : 0,
     tokens_out_7d: typeof llm.tokens_out_7d === "number" ? llm.tokens_out_7d : 0,
+    tokens_in_28d: typeof llm.tokens_in_28d === "number" ? llm.tokens_in_28d : 0,
+    tokens_out_28d: typeof llm.tokens_out_28d === "number" ? llm.tokens_out_28d : 0,
     note: typeof llm.note === "string" ? llm.note : undefined,
   };
 }

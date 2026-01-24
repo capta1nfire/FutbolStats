@@ -8447,38 +8447,40 @@ async def _load_ops_data() -> dict:
             DEFAULT_PRICE_IN = settings.GEMINI_PRICE_INPUT
             DEFAULT_PRICE_OUT = settings.GEMINI_PRICE_OUTPUT
 
-            # Query that calculates cost per model with correct pricing
+            # Helper function to build LLM cost query with specific interval
             # Uses CASE to apply model-specific pricing
-            LLM_COST_BY_MODEL_QUERY = """
-                SELECT
-                    COUNT(*) AS request_count,
-                    COALESCE(SUM(llm_narrative_tokens_in), 0) AS tokens_in,
-                    COALESCE(SUM(llm_narrative_tokens_out), 0) AS tokens_out,
-                    COALESCE(SUM(
-                        CASE
-                            WHEN llm_narrative_model = 'gemini-2.5-pro' THEN
-                                (COALESCE(llm_narrative_tokens_in, 0) * 1.25 +
-                                 COALESCE(llm_narrative_tokens_out, 0) * 10.00) / 1000000.0
-                            WHEN llm_narrative_model IN ('gemini-2.0-flash', 'gemini-2.5-flash') THEN
-                                (COALESCE(llm_narrative_tokens_in, 0) * 0.10 +
-                                 COALESCE(llm_narrative_tokens_out, 0) * 0.40) / 1000000.0
-                            ELSE
-                                (COALESCE(llm_narrative_tokens_in, 0) * :default_in +
-                                 COALESCE(llm_narrative_tokens_out, 0) * :default_out) / 1000000.0
-                        END
-                    ), 0) AS cost_usd
-                FROM post_match_audits
-                WHERE llm_narrative_model LIKE 'gemini%'
-                  AND (COALESCE(llm_narrative_tokens_in, 0) > 0
-                       OR COALESCE(llm_narrative_tokens_out, 0) > 0)
-                  AND created_at > NOW() - INTERVAL :interval
-            """
+            # Note: INTERVAL cannot be parameterized in PostgreSQL, must use literal
+            def llm_cost_query(interval_literal: str) -> str:
+                return f"""
+                    SELECT
+                        COUNT(*) AS request_count,
+                        COALESCE(SUM(llm_narrative_tokens_in), 0) AS tokens_in,
+                        COALESCE(SUM(llm_narrative_tokens_out), 0) AS tokens_out,
+                        COALESCE(SUM(
+                            CASE
+                                WHEN llm_narrative_model = 'gemini-2.5-pro' THEN
+                                    (COALESCE(llm_narrative_tokens_in, 0) * 1.25 +
+                                     COALESCE(llm_narrative_tokens_out, 0) * 10.00) / 1000000.0
+                                WHEN llm_narrative_model IN ('gemini-2.0-flash', 'gemini-2.5-flash') THEN
+                                    (COALESCE(llm_narrative_tokens_in, 0) * 0.10 +
+                                     COALESCE(llm_narrative_tokens_out, 0) * 0.40) / 1000000.0
+                                ELSE
+                                    (COALESCE(llm_narrative_tokens_in, 0) * :default_in +
+                                     COALESCE(llm_narrative_tokens_out, 0) * :default_out) / 1000000.0
+                            END
+                        ), 0) AS cost_usd
+                    FROM post_match_audits
+                    WHERE llm_narrative_model LIKE 'gemini%'
+                      AND (COALESCE(llm_narrative_tokens_in, 0) > 0
+                           OR COALESCE(llm_narrative_tokens_out, 0) > 0)
+                      AND created_at > NOW() - INTERVAL '{interval_literal}'
+                """
 
             query_params = {"default_in": DEFAULT_PRICE_IN, "default_out": DEFAULT_PRICE_OUT}
 
             # 24h metrics
             res_24h = await session.execute(
-                text(LLM_COST_BY_MODEL_QUERY), {**query_params, "interval": "24 hours"}
+                text(llm_cost_query("24 hours")), query_params
             )
             row_24h = res_24h.first()
             requests_24h = int(row_24h[0] or 0) if row_24h else 0
@@ -8488,7 +8490,7 @@ async def _load_ops_data() -> dict:
 
             # 7d metrics
             res_7d = await session.execute(
-                text(LLM_COST_BY_MODEL_QUERY), {**query_params, "interval": "7 days"}
+                text(llm_cost_query("7 days")), query_params
             )
             row_7d = res_7d.first()
             requests_7d = int(row_7d[0] or 0) if row_7d else 0
@@ -8498,7 +8500,7 @@ async def _load_ops_data() -> dict:
 
             # 28d metrics (matches Google AI Studio billing window)
             res_28d = await session.execute(
-                text(LLM_COST_BY_MODEL_QUERY), {**query_params, "interval": "28 days"}
+                text(llm_cost_query("28 days")), query_params
             )
             row_28d = res_28d.first()
             requests_28d = int(row_28d[0] or 0) if row_28d else 0

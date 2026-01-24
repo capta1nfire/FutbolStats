@@ -88,32 +88,51 @@ export function LlmCostCard({
         </div>
       )}
 
-      {/* Cost metrics */}
+      {/* Primary cost metric: 28d (aligns with Google billing) */}
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="mb-3 cursor-help">
+              <div className="text-2xl font-bold text-foreground tabular-nums">
+                {formatCost(llmCost?.cost_28d_usd ?? 0)}
+              </div>
+              <div className="text-[10px] text-muted-foreground">
+                28d billing period
+              </div>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            <p>28d aligns with Google AI Studio billing window</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+
+      {/* Secondary cost metrics: 24h and 7d */}
       <div className="grid grid-cols-2 gap-3 mb-3">
         <div>
-          <div className="text-lg font-bold text-foreground tabular-nums">
+          <div className="text-sm font-medium text-foreground tabular-nums">
             {formatCost(llmCost?.cost_24h_usd ?? 0)}
           </div>
           <div className="text-[10px] text-muted-foreground">24h</div>
         </div>
         <div>
-          <div className="text-lg font-bold text-foreground tabular-nums">
+          <div className="text-sm font-medium text-foreground tabular-nums">
             {formatCost(llmCost?.cost_7d_usd ?? 0)}
           </div>
           <div className="text-[10px] text-muted-foreground">7d</div>
         </div>
       </div>
 
-      {/* Requests & tokens */}
+      {/* Requests & tokens (28d to match billing) */}
       <div className="text-xs text-muted-foreground space-y-0.5">
         <div className="flex justify-between">
-          <span>Requests 24h:</span>
-          <span className="text-foreground tabular-nums">{llmCost?.requests_ok_24h ?? 0}</span>
+          <span>Requests 28d:</span>
+          <span className="text-foreground tabular-nums">{llmCost?.requests_28d ?? 0}</span>
         </div>
         <div className="flex justify-between">
-          <span>Tokens 24h:</span>
+          <span>Tokens 28d:</span>
           <span className="text-foreground tabular-nums">
-            {formatTokens((llmCost?.tokens_in_24h ?? 0) + (llmCost?.tokens_out_24h ?? 0))}
+            {formatTokens((llmCost?.tokens_in_28d ?? 0) + (llmCost?.tokens_out_28d ?? 0))}
           </span>
         </div>
       </div>
