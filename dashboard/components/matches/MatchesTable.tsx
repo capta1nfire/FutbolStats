@@ -93,6 +93,7 @@ interface MatchesTableProps {
  * Maps column IDs to human-readable labels
  */
 export const MATCHES_COLUMN_OPTIONS: ColumnOption[] = [
+  { id: "id", label: "Match ID", enableHiding: true },
   { id: "status", label: "Status", enableHiding: false }, // Always visible
   { id: "match", label: "Match", enableHiding: false }, // Always visible
   { id: "leagueName", label: "League", enableHiding: true },
@@ -126,9 +127,20 @@ export function MatchesTable({
   const columns: ColumnDef<MatchSummary>[] = useMemo(
     () => [
       {
+        accessorKey: "id",
+        header: "ID",
+        size: 70,
+        cell: ({ row }) => (
+          <span className="font-mono text-xs text-muted-foreground">
+            {row.original.id}
+          </span>
+        ),
+        enableSorting: true,
+      },
+      {
         accessorKey: "status",
         header: "Status",
-        size: 100,
+        size: 50,
         cell: ({ row }) => <StatusDot status={row.original.status} />,
         enableSorting: true,
       },

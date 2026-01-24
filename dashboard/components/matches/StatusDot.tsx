@@ -2,28 +2,58 @@
 
 import { cn } from "@/lib/utils";
 import { MatchStatus } from "@/lib/types";
+import {
+  Calendar,
+  Play,
+  Coffee,
+  CheckCircle,
+  XCircle,
+  AlertTriangle,
+  LucideIcon,
+} from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface StatusDotProps {
   status: MatchStatus;
   className?: string;
 }
 
-const statusConfig: Record<MatchStatus, { color: string; label: string }> = {
-  scheduled: { color: "bg-muted-foreground", label: "Scheduled" },
-  live: { color: "bg-success animate-pulse", label: "Live" },
-  ht: { color: "bg-warning", label: "HT" },
-  ft: { color: "bg-info", label: "FT" },
-  postponed: { color: "bg-warning", label: "Postponed" },
-  cancelled: { color: "bg-error", label: "Cancelled" },
+interface StatusConfig {
+  icon: LucideIcon;
+  color: string;
+  label: string;
+}
+
+const statusConfig: Record<MatchStatus, StatusConfig> = {
+  scheduled: { icon: Calendar, color: "text-primary", label: "Scheduled" },
+  live: { icon: Play, color: "text-success animate-pulse", label: "Live" },
+  ht: { icon: Coffee, color: "text-warning", label: "HT" },
+  ft: { icon: CheckCircle, color: "text-info", label: "FT" },
+  postponed: { icon: AlertTriangle, color: "text-warning", label: "Postponed" },
+  cancelled: { icon: XCircle, color: "text-error", label: "Cancelled" },
 };
 
 export function StatusDot({ status, className }: StatusDotProps) {
   const config = statusConfig[status];
+  const Icon = config.icon;
 
   return (
-    <div className={cn("flex items-center gap-2", className)}>
-      <span className={cn("w-2 h-2 rounded-full", config.color)} />
-      <span className="text-xs text-muted-foreground uppercase">{config.label}</span>
-    </div>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className={cn("flex items-center gap-2", className)}>
+            <Icon className={cn("h-4 w-4", config.color)} />
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="right">
+          <p>{config.label}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
