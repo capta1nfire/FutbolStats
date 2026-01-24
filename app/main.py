@@ -17465,12 +17465,28 @@ async def migrate_fastpath_fields(
 
 
 def _verify_alerts_webhook_secret(request: Request) -> bool:
-    """Verify X-Alerts-Secret header for webhook authentication."""
+    """Verify webhook authentication via X-Alerts-Secret header or Authorization header.
+
+    Supports two formats:
+    1. X-Alerts-Secret: <token>  (direct header)
+    2. Authorization: X-Alerts-Secret <token>  (Grafana webhook format)
+    """
     settings = get_settings()
     if not settings.ALERTS_WEBHOOK_SECRET:
         return False  # Webhook disabled if no secret configured
+
+    # Try direct header first
     provided = request.headers.get("X-Alerts-Secret", "")
-    return provided == settings.ALERTS_WEBHOOK_SECRET
+    if provided == settings.ALERTS_WEBHOOK_SECRET:
+        return True
+
+    # Try Authorization header with custom scheme (Grafana format)
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("X-Alerts-Secret "):
+        provided = auth_header[len("X-Alerts-Secret "):]
+        return provided == settings.ALERTS_WEBHOOK_SECRET
+
+    return False
 
 
 @app.post("/dashboard/ops/alerts/webhook")
