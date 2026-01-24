@@ -2106,24 +2106,21 @@ async def _overlay_rerun_predictions(
     match_dates: dict[int, datetime],  # match_id -> match date for freshness check
 ) -> tuple[list[dict], dict]:
     """
-    Overlay rerun predictions from DB for NS matches when PREFER_RERUN_PREDICTIONS=true.
+    Overlay rerun predictions from DB for NS matches.
 
-    This implements "DB-first gated" serving:
-    1. If PREFER_RERUN_PREDICTIONS=false: return predictions unchanged (baseline)
-    2. If true: for each NS match, try to serve from DB if:
-       - A prediction with run_id exists (from a rerun)
-       - The prediction is "fresh" (created within RERUN_FRESHNESS_HOURS of match kickoff)
-    3. If no fresh DB prediction: fall back to live baseline
+    DISABLED (2025-01): Per audit directive, serving is baseline-only.
+    Rerun/shadow predictions are for evaluation only, not production serving.
+    This function now always returns predictions unchanged (baseline).
+
+    The PREFER_RERUN_PREDICTIONS flag and rerun infrastructure remain for
+    OPS/analysis endpoints but do not affect public prediction serving.
 
     Returns:
-        tuple: (modified predictions, serving stats dict)
+        tuple: (unchanged predictions, empty stats dict)
     """
-    settings = get_settings()
+    # AUDIT P0: Baseline-only serving - always return unchanged
     stats = {"db_hits": 0, "db_stale": 0, "live_fallback": 0, "total_ns": 0}
-
-    # If flag is off, return unchanged
-    if not settings.PREFER_RERUN_PREDICTIONS:
-        return predictions, stats
+    return predictions, stats
 
     if not predictions:
         return predictions, stats
@@ -6719,13 +6716,17 @@ async def _calculate_sensor_b_summary(session) -> dict:
         report = await get_sensor_report(session)
 
         # Determine state for card display (Auditor-approved statuses)
+        # AUDIT P0: Derive state from recommendation.status (source of truth)
         rec = report.get("recommendation", {})
         rec_status = rec.get("status", "NO_DATA")
+        report_status = report.get("status", "")
 
-        if report.get("status") == "NO_DATA":
+        if report_status in ("NO_DATA", "INSUFFICIENT_DATA", "DISABLED"):
             state = "LEARNING"
         elif rec_status in ("SIGNAL_DETECTED", "OVERFITTING_SUSPECTED", "TRACKING"):
             state = rec_status
+        elif rec_status == "LEARNING":
+            state = "LEARNING"
         else:
             state = "LEARNING"
 
@@ -6752,7 +6753,11 @@ async def _calculate_sensor_b_summary(session) -> dict:
             logger.warning(f"Sensor health metrics query failed: {he}")
 
         # Compute accuracy percentages (only if samples >= min_samples)
-        samples_evaluated = counts.get("evaluated", 0)
+        # AUDIT P0: Use evaluated_with_b for A vs B comparison (where sensor produced predictions)
+        samples_evaluated = counts.get("evaluated_with_b", 0)
+        samples_evaluated_total = counts.get("evaluated_total", 0)
+        samples_pending = counts.get("pending_with_b", 0)
+        samples_pending_total = counts.get("pending_total", 0)
         min_samples = gating.get("min_samples_required", 50)
         has_enough_samples = samples_evaluated >= min_samples
 
@@ -6772,16 +6777,18 @@ async def _calculate_sensor_b_summary(session) -> dict:
         return {
             "state": state,
             "reason": rec.get("reason", ""),
-            # Counts
-            "samples_evaluated": samples_evaluated,
-            "samples_pending": counts.get("pending", 0),
+            # Counts - AUDIT P0: expose both total and with_b, use with_b for card
+            "samples_evaluated": samples_evaluated,  # evaluated_with_b (A vs B comparison)
+            "samples_evaluated_total": samples_evaluated_total,  # all evaluated
+            "samples_pending": samples_pending,  # pending_with_b (will have B to compare)
+            "samples_pending_total": samples_pending_total,  # all pending
             "min_samples": min_samples,
             # Accuracy A vs B (Auditor card) - only present if samples >= min_samples
             "accuracy_a_pct": accuracy_a_pct,
             "accuracy_b_pct": accuracy_b_pct,
             "delta_accuracy_pct": delta_accuracy_pct,
             "window_days": sensor_settings.SENSOR_EVAL_WINDOW_DAYS,
-            "note": "solo FT evaluados",
+            "note": "solo FT evaluados (apples-to-apples con Model A)",
             # Metrics (only show if we have enough samples - gating)
             "signal_score": metrics.get("signal_score") if state != "LEARNING" else None,
             "brier_a": metrics.get("a_brier") if state != "LEARNING" else None,

@@ -211,14 +211,15 @@ async def evaluate_shadow_outcomes(session: AsyncSession) -> dict:
 
     from app.models import Match
 
-    # Get shadow predictions without outcomes (FT candidates)
+    # Get shadow predictions without outcomes (FT-only per audit directive)
+    # AUDIT P0: FT-only evaluation for apples-to-apples comparison with Model A training
     result = await session.execute(
         select(ShadowPrediction, Match)
         .join(Match, ShadowPrediction.match_id == Match.id)
         .where(
             and_(
                 ShadowPrediction.actual_result.is_(None),
-                Match.status.in_(["FT", "AET", "PEN"]),
+                Match.status == "FT",  # FT-only (excludes AET/PEN)
                 Match.home_goals.isnot(None),
                 Match.away_goals.isnot(None),
             )
@@ -461,6 +462,7 @@ async def get_shadow_health_metrics(session: AsyncSession) -> dict:
     from app.models import Match
 
     # Count DISTINCT pending FT matches (not rows, which could have duplicates)
+    # AUDIT P0: FT-only for apples-to-apples with Model A training
     result = await session.execute(
         select(
             func.count(func.distinct(ShadowPrediction.match_id)).label("pending"),
@@ -470,7 +472,7 @@ async def get_shadow_health_metrics(session: AsyncSession) -> dict:
         .where(
             and_(
                 ShadowPrediction.actual_result.is_(None),
-                Match.status.in_(["FT", "AET", "PEN"]),
+                Match.status == "FT",  # FT-only (excludes AET/PEN)
                 Match.home_goals.isnot(None),
                 Match.away_goals.isnot(None),
             )

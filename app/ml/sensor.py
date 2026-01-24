@@ -200,7 +200,7 @@ async def retrain_sensor(session: AsyncSession) -> dict:
     window_size = settings.SENSOR_WINDOW_SIZE
 
     # Query recent finished matches with features
-    # We need to rebuild features from match data
+    # AUDIT P0: FT-only for apples-to-apples with Model A training
     query = text("""
         SELECT
             m.id as match_id,
@@ -209,7 +209,7 @@ async def retrain_sensor(session: AsyncSession) -> dict:
             -- We'll compute label in Python
             m.date
         FROM matches m
-        WHERE m.status IN ('FT', 'AET', 'PEN')
+        WHERE m.status = 'FT'
           AND m.home_goals IS NOT NULL
           AND m.away_goals IS NOT NULL
         ORDER BY m.date DESC
@@ -388,6 +388,7 @@ async def evaluate_sensor_predictions(session: AsyncSession) -> dict:
         return {"status": "DISABLED"}
 
     # Find predictions to evaluate
+    # AUDIT P0: FT-only for apples-to-apples with Model A training
     query = text("""
         SELECT sp.id, sp.match_id,
                sp.a_home_prob, sp.a_draw_prob, sp.a_away_prob, sp.a_pick,
@@ -396,7 +397,7 @@ async def evaluate_sensor_predictions(session: AsyncSession) -> dict:
         FROM sensor_predictions sp
         JOIN matches m ON sp.match_id = m.id
         WHERE sp.evaluated_at IS NULL
-          AND m.status IN ('FT', 'AET', 'PEN')
+          AND m.status = 'FT'
           AND m.home_goals IS NOT NULL
           AND m.away_goals IS NOT NULL
     """)
@@ -696,6 +697,7 @@ async def get_sensor_health_metrics(session: AsyncSession) -> dict:
         }
 
     # Count DISTINCT pending FT matches (not rows, which could have duplicates)
+    # AUDIT P0: FT-only for apples-to-apples with Model A training
     query = text("""
         SELECT
             COUNT(DISTINCT sp.match_id) AS pending,
@@ -703,7 +705,7 @@ async def get_sensor_health_metrics(session: AsyncSession) -> dict:
         FROM sensor_predictions sp
         JOIN matches m ON sp.match_id = m.id
         WHERE sp.evaluated_at IS NULL
-          AND m.status IN ('FT', 'AET', 'PEN')
+          AND m.status = 'FT'
           AND m.home_goals IS NOT NULL
           AND m.away_goals IS NOT NULL
     """)

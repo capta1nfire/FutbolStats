@@ -975,6 +975,8 @@ class SensorPrediction(SQLModel, table=True):
 
     Stores predictions from Model A (production) and Sensor B (sliding-window LogReg)
     for comparison. Used to detect if Model A has become stale/rigid.
+
+    AUDIT P0: Column names aligned with migrations/add_sensor_predictions_table.sql
     """
 
     __tablename__ = "sensor_predictions"
@@ -985,22 +987,26 @@ class SensorPrediction(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     match_id: int = Field(foreign_key="matches.id", index=True)
 
-    # Sensor state at prediction time
-    sensor_state: str = Field(max_length=20, description="'learning', 'ready', 'error'")
+    # Metadata
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    evaluated_at: Optional[datetime] = Field(default=None)
+    window_size: int = Field(description="Training window size at prediction time")
 
-    # Model A predictions (production)
-    a_version: str = Field(max_length=50, description="Model A version")
+    # Model versions
+    model_a_version: str = Field(max_length=50, description="Model A version")
+    model_b_version: Optional[str] = Field(default=None, max_length=50, description="Sensor version, NULL if LEARNING")
+
+    # Model A predictions (production) - always present
     a_home_prob: float
     a_draw_prob: float
     a_away_prob: float
     a_pick: str = Field(max_length=10, description="'home', 'draw', or 'away'")
 
-    # Sensor B predictions (diagnostic)
-    b_window_size: int = Field(description="Training window size")
-    b_home_prob: float
-    b_draw_prob: float
-    b_away_prob: float
-    b_pick: str = Field(max_length=10, description="'home', 'draw', or 'away'")
+    # Sensor B predictions (diagnostic) - NULL if sensor in LEARNING state
+    b_home_prob: Optional[float] = Field(default=None)
+    b_draw_prob: Optional[float] = Field(default=None)
+    b_away_prob: Optional[float] = Field(default=None)
+    b_pick: Optional[str] = Field(default=None, max_length=10, description="'home', 'draw', or 'away'")
 
     # Outcome (filled after match completes)
     actual_outcome: Optional[str] = Field(
@@ -1013,9 +1019,8 @@ class SensorPrediction(SQLModel, table=True):
     a_brier: Optional[float] = Field(default=None)
     b_brier: Optional[float] = Field(default=None)
 
-    # Metadata
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    evaluated_at: Optional[datetime] = Field(default=None)
+    # Sensor state at prediction time
+    sensor_state: str = Field(default="LEARNING", max_length=20, description="LEARNING, READY, ERROR")
 
 
 class TeamOverride(SQLModel, table=True):
