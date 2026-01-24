@@ -611,6 +611,7 @@ async def _upsert_weather_data(
         "humidity": forecast.humidity,
         "wind_ms": forecast.wind_ms,
         "precip_mm": forecast.precip_mm,
+        "precip_prob": forecast.precip_prob,
         "pressure_hpa": forecast.pressure_hpa,
         "cloudcover": forecast.cloudcover,
         "is_daylight": forecast.is_daylight,
@@ -622,20 +623,20 @@ async def _upsert_weather_data(
         await session.execute(text("""
             UPDATE match_weather SET
                 temp_c = :temp_c, humidity = :humidity, wind_ms = :wind_ms,
-                precip_mm = :precip_mm, pressure_hpa = :pressure_hpa,
-                cloudcover = :cloudcover, is_daylight = :is_daylight,
-                captured_at = :captured_at
+                precip_mm = :precip_mm, precip_prob = :precip_prob,
+                pressure_hpa = :pressure_hpa, cloudcover = :cloudcover,
+                is_daylight = :is_daylight, captured_at = :captured_at
             WHERE match_id = :match_id AND forecast_horizon_hours = :forecast_horizon_hours
         """), params)
         return "updated"
     else:
         await session.execute(text("""
             INSERT INTO match_weather (
-                match_id, temp_c, humidity, wind_ms, precip_mm,
+                match_id, temp_c, humidity, wind_ms, precip_mm, precip_prob,
                 pressure_hpa, cloudcover, is_daylight,
                 forecast_horizon_hours, captured_at
             ) VALUES (
-                :match_id, :temp_c, :humidity, :wind_ms, :precip_mm,
+                :match_id, :temp_c, :humidity, :wind_ms, :precip_mm, :precip_prob,
                 :pressure_hpa, :cloudcover, :is_daylight,
                 :forecast_horizon_hours, :captured_at
             )

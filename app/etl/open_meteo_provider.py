@@ -55,6 +55,7 @@ class WeatherForecastData:
     humidity: float
     wind_ms: float
     precip_mm: float
+    precip_prob: Optional[float] = None  # Precipitation probability (0-100%)
     pressure_hpa: Optional[float] = None
     cloudcover: Optional[float] = None
     is_daylight: bool = False
@@ -74,6 +75,7 @@ class OpenMeteoProvider:
     - relative_humidity_2m (%)
     - wind_speed_10m (m/s - converted from km/h)
     - precipitation (mm)
+    - precipitation_probability (0-100%)
     - surface_pressure (hPa)
     - cloud_cover (%)
     - sunrise/sunset (for is_daylight calculation)
@@ -134,7 +136,7 @@ class OpenMeteoProvider:
             params = {
                 "latitude": lat,
                 "longitude": lon,
-                "hourly": "temperature_2m,relative_humidity_2m,precipitation,surface_pressure,cloud_cover,wind_speed_10m",
+                "hourly": "temperature_2m,relative_humidity_2m,precipitation,precipitation_probability,surface_pressure,cloud_cover,wind_speed_10m",
                 "daily": "sunrise,sunset",
                 "timezone": "UTC",
                 "start_date": date_str,
@@ -184,6 +186,7 @@ class OpenMeteoProvider:
             temp_c = hourly.get("temperature_2m", [None])[hour_idx]
             humidity = hourly.get("relative_humidity_2m", [None])[hour_idx]
             precip_mm = hourly.get("precipitation", [0])[hour_idx] or 0
+            precip_prob = hourly.get("precipitation_probability", [None])[hour_idx]
             pressure_hpa = hourly.get("surface_pressure", [None])[hour_idx]
             cloudcover = hourly.get("cloud_cover", [None])[hour_idx]
 
@@ -208,6 +211,7 @@ class OpenMeteoProvider:
                 humidity=humidity,
                 wind_ms=wind_ms,
                 precip_mm=precip_mm,
+                precip_prob=precip_prob,
                 pressure_hpa=pressure_hpa,
                 cloudcover=cloudcover,
                 is_daylight=is_daylight,
@@ -273,6 +277,7 @@ class OpenMeteoProvider:
             humidity=round(random.uniform(40, 85), 0),
             wind_ms=round(random.uniform(1, 8), 1),
             precip_mm=round(random.uniform(0, 5), 1),
+            precip_prob=round(random.uniform(0, 100), 0),
             pressure_hpa=round(random.uniform(1000, 1030), 0),
             cloudcover=round(random.uniform(0, 100), 0),
             is_daylight=6 <= kickoff_utc.hour < 20,

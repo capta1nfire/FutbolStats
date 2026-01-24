@@ -16168,6 +16168,48 @@ async def migrate_fastpath_fields(
     }
 
 
+@app.post("/ops/migrate-weather-precip-prob", include_in_schema=False)
+async def migrate_weather_precip_prob(
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(verify_dashboard_token),
+):
+    """
+    One-time migration to add precipitation probability field to match_weather.
+    Also triggers a backfill for upcoming matches.
+    """
+    from sqlalchemy import text
+
+    migrations = [
+        "ALTER TABLE match_weather ADD COLUMN IF NOT EXISTS precip_prob double precision",
+    ]
+
+    results = []
+    for sql in migrations:
+        try:
+            await session.execute(text(sql))
+            await session.commit()
+            results.append({"sql": sql[:60] + "...", "status": "ok"})
+        except Exception as e:
+            results.append({"sql": sql[:60] + "...", "status": "error", "error": str(e)})
+
+    # Verify column was added
+    verify = await session.execute(
+        text("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'match_weather'
+            ORDER BY ordinal_position
+        """)
+    )
+    columns = [row[0] for row in verify.all()]
+
+    return {
+        "status": "ok",
+        "migrations": results,
+        "verified_columns": columns,
+        "note": "Backfill will happen automatically on next weather_sync job run",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Debug Log Endpoint (for iOS performance instrumentation)
 # ---------------------------------------------------------------------------
