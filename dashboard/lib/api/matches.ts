@@ -113,6 +113,10 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
   const leagueName = raw.leagueName ?? raw.league_name ?? "";
   const leagueNameStr = typeof leagueName === "string" ? leagueName : "Unknown";
 
+  // Accept both leagueCountry and league_country from backend
+  const leagueCountry = raw.leagueCountry ?? raw.league_country ?? "";
+  const leagueCountryStr = typeof leagueCountry === "string" ? leagueCountry : "";
+
   // Status mapping
   const backendStatus = typeof raw.status === "string" ? raw.status : "NS";
   const status = mapStatus(backendStatus);
@@ -122,7 +126,7 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
     id,
     status,
     leagueName: leagueNameStr,
-    leagueCountry: "", // Backend doesn't provide this yet
+    leagueCountry: leagueCountryStr,
     home,
     away,
     kickoffISO,

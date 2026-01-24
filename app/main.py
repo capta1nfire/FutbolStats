@@ -10448,6 +10448,33 @@ async def get_matches_dashboard(
         242: "Ecuador Liga Pro", 250: "Paraguay Primera",
     }
 
+    # League ID to country mapping for flags
+    LEAGUE_COUNTRY: dict[int, str] = {
+        # International
+        1: "World", 2: "World", 3: "World", 848: "World",
+        4: "World", 5: "World", 6: "World", 7: "World",
+        9: "World", 10: "World", 11: "World", 13: "World",
+        22: "World", 29: "World", 30: "World", 31: "World",
+        32: "World", 33: "World", 34: "World", 37: "World",
+        # Europe Top 5
+        39: "England", 40: "England", 45: "England",
+        140: "Spain", 143: "Spain",
+        135: "Italy",
+        78: "Germany",
+        61: "France",
+        # Europe Secondary
+        94: "Portugal", 88: "Netherlands", 144: "Belgium",
+        203: "Turkey",
+        # Americas
+        253: "USA", 262: "Mexico",
+        128: "Argentina", 71: "Brazil",
+        239: "Colombia", 242: "Ecuador", 250: "Paraguay",
+        265: "Chile", 268: "Uruguay", 281: "Peru",
+        299: "Venezuela", 344: "Bolivia",
+        # Middle East
+        307: "Saudi-Arabia",
+    }
+
     # Build league name lookup: COMPETITIONS takes priority, then extended fallback
     league_name_by_id: dict[int, str] = LEAGUE_NAMES_EXTENDED.copy()
     for lid, comp in COMPETITIONS.items():
@@ -10462,6 +10489,7 @@ async def get_matches_dashboard(
             "kickoff_iso": row.date.isoformat() + "Z" if row.date else None,
             "league_id": row.league_id,
             "league_name": league_name_by_id.get(row.league_id, f"League {row.league_id}"),
+            "league_country": LEAGUE_COUNTRY.get(row.league_id, ""),
             "home": row.home_name,
             "away": row.away_name,
             "status": row.status,
