@@ -16171,7 +16171,7 @@ async def migrate_fastpath_fields(
 @app.post("/ops/migrate-weather-precip-prob", include_in_schema=False)
 async def migrate_weather_precip_prob(
     session: AsyncSession = Depends(get_async_session),
-    _: None = Depends(verify_dashboard_token),
+    _: None = Depends(_verify_dashboard_token),
 ):
     """
     One-time migration to add precipitation probability field to match_weather.
