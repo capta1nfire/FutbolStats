@@ -5159,7 +5159,7 @@ def start_scheduler(ml_engine):
         next_run_time=datetime.utcnow() + timedelta(seconds=55),  # Offset: +55s
         max_instances=1,
         coalesce=True,
-        misfire_grace_time=300,
+        misfire_grace_time=6 * 3600,  # 6h grace for 6h interval
     )
 
     # Prediction gap safety net: Every 30 minutes to catch isolated matches
@@ -5206,7 +5206,7 @@ def start_scheduler(ml_engine):
             next_run_time=datetime.utcnow() + timedelta(seconds=65),  # Offset: +65s
             max_instances=1,
             coalesce=True,
-            misfire_grace_time=300,
+            misfire_grace_time=sensor_settings.SENSOR_RETRAIN_INTERVAL_HOURS * 3600,  # Grace = interval
         )
 
         # Sensor B evaluation: Every 30 minutes (same as shadow)
@@ -5332,7 +5332,7 @@ def start_scheduler(ml_engine):
         next_run_time=datetime.utcnow() + timedelta(seconds=75),  # Offset: +75s
         max_instances=1,
         coalesce=True,
-        misfire_grace_time=300,
+        misfire_grace_time=2 * 3600,  # 2h grace for 2h interval
     )
 
     # Odds Sync: Every 6 hours (configurable via ODDS_SYNC_INTERVAL_HOURS)
@@ -5350,7 +5350,7 @@ def start_scheduler(ml_engine):
             next_run_time=datetime.utcnow() + timedelta(seconds=85),  # Offset: +85s
             max_instances=1,
             coalesce=True,
-            misfire_grace_time=300,
+            misfire_grace_time=_odds_settings.ODDS_SYNC_INTERVAL_HOURS * 3600,  # Grace = interval
         )
 
     # Fast-Path LLM Narratives: Every 2 minutes (configurable via FASTPATH_INTERVAL_SECONDS)
@@ -5454,7 +5454,7 @@ def start_scheduler(ml_engine):
     # HARDENING: All SOTA jobs use:
     #   - max_instances=1: Prevent concurrent execution
     #   - coalesce=True: Collapse missed runs into single execution
-    #   - misfire_grace_time=300: 5min grace for delayed runs
+    #   - misfire_grace_time: Scaled to job interval (1h for hourly, 6h for 6h jobs, etc)
     #   - Staggered offsets: Prevent startup stampede
     # =========================================================================
 
@@ -5469,7 +5469,7 @@ def start_scheduler(ml_engine):
         next_run_time=datetime.utcnow() + timedelta(seconds=5),  # Offset: +5s
         max_instances=1,
         coalesce=True,
-        misfire_grace_time=300,
+        misfire_grace_time=12 * 3600,  # 12h grace for 12h interval
     )
 
     # SOTA: Understat xG backfill - every 6 hours
@@ -5483,7 +5483,7 @@ def start_scheduler(ml_engine):
         next_run_time=datetime.utcnow() + timedelta(seconds=15),  # Offset: +15s
         max_instances=1,
         coalesce=True,
-        misfire_grace_time=300,
+        misfire_grace_time=6 * 3600,  # 6h grace for 6h interval
     )
 
     # SOTA: Weather capture - every 60 minutes
@@ -5497,7 +5497,7 @@ def start_scheduler(ml_engine):
         next_run_time=datetime.utcnow() + timedelta(seconds=25),  # Offset: +25s
         max_instances=1,
         coalesce=True,
-        misfire_grace_time=300,
+        misfire_grace_time=3600,  # 1h grace for 1h interval
     )
 
     # SOTA: Venue geo expand - daily at 03:00 UTC
@@ -5510,7 +5510,7 @@ def start_scheduler(ml_engine):
         replace_existing=True,
         max_instances=1,
         coalesce=True,
-        misfire_grace_time=300,
+        misfire_grace_time=24 * 3600,  # 24h grace for daily job
     )
 
     # SOTA: Sofascore refs sync - every 6 hours
@@ -5524,7 +5524,7 @@ def start_scheduler(ml_engine):
         next_run_time=datetime.utcnow() + timedelta(seconds=35),  # Offset: +35s
         max_instances=1,
         coalesce=True,
-        misfire_grace_time=300,
+        misfire_grace_time=6 * 3600,  # 6h grace for 6h interval
     )
 
     # SOTA: Sofascore XI capture - every 30 minutes
@@ -5538,7 +5538,7 @@ def start_scheduler(ml_engine):
         next_run_time=datetime.utcnow() + timedelta(seconds=45),  # Offset: +45s
         max_instances=1,
         coalesce=True,
-        misfire_grace_time=300,
+        misfire_grace_time=1800,  # 30min grace for 30min interval
     )
 
     scheduler.start()
