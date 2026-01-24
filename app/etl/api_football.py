@@ -2,7 +2,8 @@
 
 import asyncio
 import logging
-from datetime import datetime, date
+from collections import deque
+from datetime import datetime, date, timedelta
 from typing import Optional
 
 import httpx
@@ -14,6 +15,69 @@ from app.etl.competitions import COMPETITIONS
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+
+# =============================================================================
+# PROVIDER ERROR TRACKING (for ops.json visibility)
+# =============================================================================
+_error_log: deque = deque(maxlen=100)  # Last 100 errors
+_error_lock = asyncio.Lock()
+
+
+async def _record_provider_error(error_type: str, status_code: int, message: str) -> None:
+    """Record an error for ops.json visibility."""
+    async with _error_lock:
+        _error_log.append({
+            "timestamp": datetime.utcnow().isoformat(),
+            "type": error_type,
+            "status_code": status_code,
+            "message": message[:200],  # Truncate long messages
+        })
+
+
+def get_provider_health() -> dict:
+    """Get API-Football provider health stats for ops.json."""
+    now = datetime.utcnow()
+    cutoff_24h = now - timedelta(hours=24)
+
+    # Count errors in last 24h
+    errors_24h = []
+    last_error_at = None
+
+    for err in _error_log:
+        try:
+            err_time = datetime.fromisoformat(err["timestamp"])
+            if err_time >= cutoff_24h:
+                errors_24h.append(err)
+            if last_error_at is None or err_time > datetime.fromisoformat(last_error_at):
+                last_error_at = err["timestamp"]
+        except (ValueError, KeyError):
+            continue
+
+    # Determine status based on error count
+    error_count = len(errors_24h)
+    if error_count == 0:
+        status = "healthy"
+    elif error_count < 10:
+        status = "degraded"
+    else:
+        status = "unhealthy"
+
+    return {
+        "status": status,
+        "errors_24h": error_count,
+        "last_error_at": last_error_at,
+        "error_types_24h": _summarize_error_types(errors_24h),
+    }
+
+
+def _summarize_error_types(errors: list) -> dict:
+    """Summarize error types for quick diagnosis."""
+    summary = {}
+    for err in errors:
+        err_type = err.get("type", "unknown")
+        summary[err_type] = summary.get(err_type, 0) + 1
+    return summary
 
 
 class APIBudgetExceeded(RuntimeError):
@@ -266,7 +330,9 @@ class APIFootballProvider(DataProvider):
             except httpx.TimeoutException as e:
                 latency_ms = (time.time() - start_time) * 1000
                 record_telemetry(0, latency_ms, is_timeout=True, error_code="timeout")
-                logger.error(f"Timeout error: {e}")
+                # Use warning instead of error - external provider issues shouldn't flood Sentry
+                logger.warning(f"API-Football timeout (attempt {attempt + 1}/{max_retries}): {e}")
+                await _record_provider_error("timeout", 0, str(e))
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay * (2**attempt))
                     continue
@@ -274,8 +340,16 @@ class APIFootballProvider(DataProvider):
 
             except httpx.HTTPStatusError as e:
                 latency_ms = (time.time() - start_time) * 1000
-                record_telemetry(e.response.status_code if e.response else 0, latency_ms, error_code=f"http_{e.response.status_code if e.response else 'unknown'}")
-                logger.error(f"HTTP error: {e}")
+                status_code = e.response.status_code if e.response else 0
+                record_telemetry(status_code, latency_ms, error_code=f"http_{status_code}")
+                # Use warning for 5xx (server errors) - these are external provider issues
+                if status_code >= 500:
+                    logger.warning(f"API-Football {status_code} error (attempt {attempt + 1}/{max_retries}): {e}")
+                    await _record_provider_error(f"http_{status_code}", status_code, str(e))
+                else:
+                    # 4xx errors are still logged as error (likely our bug)
+                    logger.error(f"API-Football client error {status_code}: {e}")
+                    await _record_provider_error(f"http_{status_code}", status_code, str(e))
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay * (2**attempt))
                     continue
@@ -284,7 +358,9 @@ class APIFootballProvider(DataProvider):
             except httpx.RequestError as e:
                 latency_ms = (time.time() - start_time) * 1000
                 record_telemetry(0, latency_ms, error_code="request_error")
-                logger.error(f"Request error: {e}")
+                # Use warning - network issues are transient
+                logger.warning(f"API-Football request error (attempt {attempt + 1}/{max_retries}): {e}")
+                await _record_provider_error("request_error", 0, str(e))
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay * (2**attempt))
                     continue

@@ -8075,6 +8075,20 @@ async def _fetch_sentry_health() -> dict:
     return base_response
 
 
+def _get_providers_health() -> dict:
+    """Get health status for external data providers."""
+    try:
+        from app.etl.api_football import get_provider_health
+        api_football = get_provider_health()
+    except Exception as e:
+        logger.warning(f"Could not get API-Football provider health: {e}")
+        api_football = {"status": "unknown", "error": str(e)}
+
+    return {
+        "api_football": api_football,
+    }
+
+
 async def _load_ops_data() -> dict:
     """
     Ops dashboard: read-only aggregated metrics from DB + in-process state.
@@ -8774,6 +8788,7 @@ async def _load_ops_data() -> dict:
         "ml_model": ml_model_info,
         "live_summary": live_summary_stats,
         "db_pool": get_pool_status(),
+        "providers": _get_providers_health(),
     }
 
 
