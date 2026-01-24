@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { MatchSummary, ProbabilitySet } from "@/lib/types";
-import { useIsDesktop, useTeamLogos } from "@/lib/hooks";
+import { MatchSummary, MatchWeather, ProbabilitySet, StandingEntry } from "@/lib/types";
+import { useIsDesktop, useTeamLogos, useStandings } from "@/lib/hooks";
 import { DetailDrawer } from "@/components/shell";
 import { Loader } from "@/components/ui/loader";
 import {
@@ -16,7 +16,24 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { StatusDot } from "./StatusDot";
 import { TeamLogo } from "@/components/ui/team-logo";
-import { Calendar, TrendingUp, Radio, Info } from "lucide-react";
+import {
+  Calendar,
+  TrendingUp,
+  TableProperties,
+  Info,
+  MapPin,
+  Sun,
+  Moon,
+  Cloud,
+  CloudSun,
+  CloudMoon,
+  CloudRain,
+  CloudLightning,
+  Snowflake,
+  Wind,
+  Thermometer,
+  Droplets,
+} from "lucide-react";
 import { useRegion } from "@/components/providers/RegionProvider";
 
 /** Map country names to ISO 3166-1 alpha-2 codes for flag emoji */
@@ -45,6 +62,321 @@ function getCountryFlag(country: string): string {
     .split("")
     .map((char) => String.fromCodePoint(127397 + char.charCodeAt(0)))
     .join("");
+}
+
+/** Get weather icon component based on conditions */
+function getWeatherIcon(weather: MatchWeather): React.ComponentType<{ className?: string }> {
+  // Rain
+  if ((weather.precip_prob ?? 0) > 60 || (weather.precip_mm ?? 0) > 2) {
+    return (weather.precip_mm ?? 0) > 5 ? CloudLightning : CloudRain;
+  }
+  // Snow
+  if (weather.temp_c < 2 && (weather.precip_prob ?? 0) > 40) {
+    return Snowflake;
+  }
+  // Strong wind
+  if ((weather.wind_ms ?? 0) > 10) {
+    return Wind;
+  }
+  // Cloudy
+  if ((weather.cloudcover ?? 0) > 70) {
+    return Cloud;
+  }
+  // Partly cloudy
+  if ((weather.cloudcover ?? 0) > 30) {
+    return weather.is_daylight ? CloudSun : CloudMoon;
+  }
+  // Clear
+  return weather.is_daylight ? Sun : Moon;
+}
+
+/** Venue and Weather info section */
+function VenueWeatherSection({ match }: { match: MatchSummary }) {
+  const hasVenue = match.venue?.name || match.venue?.city;
+  const hasWeather = match.weather?.temp_c !== undefined;
+
+  if (!hasVenue && !hasWeather) return null;
+
+  const WeatherIcon = match.weather ? getWeatherIcon(match.weather) : Sun;
+
+  return (
+    <div className="bg-surface rounded-lg p-3">
+      <div className="flex items-center justify-between gap-4">
+        {/* Venue info (left side) */}
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <MapPin className="h-4 w-4 text-muted-foreground shrink-0" />
+          <div className="min-w-0">
+            {match.venue?.name && (
+              <div className="text-sm text-foreground truncate">
+                {match.venue.name}
+              </div>
+            )}
+            {match.venue?.city && (
+              <div className="text-xs text-muted-foreground truncate">
+                {match.venue.city}
+              </div>
+            )}
+            {!hasVenue && (
+              <div className="text-xs text-muted-foreground">Unknown venue</div>
+            )}
+          </div>
+        </div>
+
+        {/* Weather info (right side) */}
+        {hasWeather && match.weather && (
+          <div className="flex items-center gap-3 shrink-0">
+            {/* Weather icon */}
+            <WeatherIcon className="h-6 w-6 text-muted-foreground" />
+
+            {/* Temperature */}
+            <div className="flex items-center gap-1">
+              <Thermometer className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-medium text-foreground">
+                {Math.round(match.weather.temp_c)}°C
+              </span>
+            </div>
+
+            {/* Rain probability (if significant) */}
+            {(match.weather.precip_prob ?? 0) > 20 && (
+              <div className="flex items-center gap-1">
+                <Droplets className="h-4 w-4 text-blue-400" />
+                <span className="text-sm text-muted-foreground">
+                  {Math.round(match.weather.precip_prob ?? 0)}%
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Standings row component */
+function StandingsRow({ row }: { row: StandingEntry }) {
+  return (
+    <div className="grid grid-cols-[24px_1fr_28px_28px_28px_28px_40px_32px_28px] gap-1 items-center font-condensed text-sm px-1 py-1.5 rounded hover:bg-muted/30 transition-colors">
+      <span className="text-muted-foreground text-center">{row.position}</span>
+      <span className="text-foreground truncate">{row.teamName}</span>
+      <span className="text-muted-foreground text-center">{row.played}</span>
+      <span className="text-muted-foreground text-center">{row.won}</span>
+      <span className="text-muted-foreground text-center">{row.drawn}</span>
+      <span className="text-muted-foreground text-center">{row.lost}</span>
+      <span className="text-muted-foreground text-center">{row.goalsFor}:{row.goalsAgainst}</span>
+      <span className={`text-center font-medium ${row.goalDiff > 0 ? "text-success" : row.goalDiff < 0 ? "text-error" : "text-muted-foreground"}`}>
+        {row.goalDiff > 0 ? `+${row.goalDiff}` : row.goalDiff}
+      </span>
+      <span className="text-foreground text-center font-semibold">{row.points}</span>
+    </div>
+  );
+}
+
+/** Standings table component */
+function StandingsTable({ leagueId }: { leagueId: number }) {
+  const { data, isLoading, error } = useStandings(leagueId);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <Loader size="md" />
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div className="text-center py-8">
+        <TableProperties className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">
+          {error?.message || "Standings not available"}
+        </p>
+      </div>
+    );
+  }
+
+  if (data.standings.length === 0) {
+    return (
+      <div className="text-center py-8">
+        <TableProperties className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">No standings data</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1 font-condensed">
+      {/* Table header */}
+      <div className="grid grid-cols-[24px_1fr_28px_28px_28px_28px_40px_32px_28px] gap-1 text-xs text-muted-foreground px-1 py-1">
+        <span></span>
+        <span>Club</span>
+        <span className="text-center">MP</span>
+        <span className="text-center">W</span>
+        <span className="text-center">D</span>
+        <span className="text-center">L</span>
+        <span className="text-center">G</span>
+        <span className="text-center">GD</span>
+        <span className="text-center">P</span>
+      </div>
+
+      {/* Table rows */}
+      <div className="space-y-0">
+        {data.standings.map((row) => (
+          <StandingsRow key={row.position} row={row} />
+        ))}
+      </div>
+
+      {/* Source indicator */}
+      {(data.isPlaceholder || data.isCalculated) && (
+        <div className="text-center pt-2 border-t border-border">
+          <p className="text-xs text-muted-foreground">
+            {data.isPlaceholder ? "Provisional data" : "Calculated from results"}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Single form badge (W/D/L) - badge style with border and transparent background */
+function FormBadge({ result }: { result: string }) {
+  const isWin = result === "W";
+  const isLoss = result === "L";
+  const isDraw = result === "D";
+
+  // Badge style: border color + transparent background
+  let borderColor = "border-muted-foreground/50";
+  let bgColor = "bg-muted-foreground/10";
+  let textColor = "text-muted-foreground";
+
+  if (isWin) {
+    borderColor = "border-success";
+    bgColor = "bg-success/15";
+    textColor = "text-success";
+  } else if (isLoss) {
+    borderColor = "border-error";
+    bgColor = "bg-error/15";
+    textColor = "text-error";
+  } else if (isDraw) {
+    borderColor = "border-muted-foreground/50";
+    bgColor = "bg-muted-foreground/15";
+    textColor = "text-muted-foreground";
+  }
+
+  return (
+    <span
+      className={`
+        inline-flex items-center justify-center w-7 h-7 rounded text-sm font-bold
+        border ${borderColor} ${bgColor} ${textColor}
+      `}
+    >
+      {result}
+    </span>
+  );
+}
+
+/** Recent form display for a team */
+function TeamRecentForm({
+  position,
+  teamLogo,
+  form,
+  points,
+  getLogoUrl,
+  teamName,
+}: {
+  position: number | null;
+  teamLogo: string | null;
+  form: string;
+  points: number | null;
+  getLogoUrl: (teamName: string) => string | null;
+  teamName: string;
+}) {
+  // Parse form string (e.g., "WLDWW" -> ["W", "L", "D", "W", "W"])
+  const formArray = form ? form.split("").slice(0, 5) : [];
+
+  return (
+    <div className="flex items-center justify-between py-3 border-b border-border last:border-b-0">
+      {/* Position */}
+      <span className="text-muted-foreground text-lg w-10">
+        #{position ?? "—"}
+      </span>
+
+      {/* Team logo */}
+      <div className="w-12 flex justify-center">
+        <TeamLogo
+          src={teamLogo ?? getLogoUrl(teamName)}
+          teamName={teamName}
+          size={36}
+        />
+      </div>
+
+      {/* Form badges */}
+      <div className="flex items-center gap-1.5 flex-1 justify-center">
+        {formArray.length > 0 ? (
+          formArray.map((result, idx) => (
+            <FormBadge key={idx} result={result} />
+          ))
+        ) : (
+          <span className="text-xs text-muted-foreground">No data</span>
+        )}
+      </div>
+
+      {/* Points */}
+      <div className="flex items-baseline gap-1 w-16 justify-end">
+        <span className="text-lg font-bold text-foreground">
+          {points ?? 0}
+        </span>
+        <span className="text-xs text-muted-foreground">Pts</span>
+      </div>
+    </div>
+  );
+}
+
+/** Recent form section using standings data */
+function RecentFormSection({
+  match,
+  getLogoUrl,
+}: {
+  match: MatchSummary;
+  getLogoUrl: (teamName: string) => string | null;
+}) {
+  const { data: standingsData, isLoading } = useStandings(match.leagueId);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-4">
+        <Loader size="sm" />
+      </div>
+    );
+  }
+
+  // Find teams in standings
+  const homeStanding = standingsData?.standings.find(
+    (s) => s.teamName.toLowerCase() === match.home.toLowerCase()
+  );
+  const awayStanding = standingsData?.standings.find(
+    (s) => s.teamName.toLowerCase() === match.away.toLowerCase()
+  );
+
+  return (
+    <div className="bg-surface rounded-lg p-3">
+      <TeamRecentForm
+        position={homeStanding?.position ?? null}
+        teamLogo={homeStanding?.teamLogo ?? null}
+        form={homeStanding?.form ?? ""}
+        points={homeStanding?.points ?? null}
+        getLogoUrl={getLogoUrl}
+        teamName={match.home}
+      />
+      <TeamRecentForm
+        position={awayStanding?.position ?? null}
+        teamLogo={awayStanding?.teamLogo ?? null}
+        form={awayStanding?.form ?? ""}
+        points={awayStanding?.points ?? null}
+        getLogoUrl={getLogoUrl}
+        teamName={match.away}
+      />
+    </div>
+  );
 }
 
 /** Section for displaying a single prediction model */
@@ -132,34 +464,39 @@ function MatchHeader({
   return (
     <div className="bg-surface rounded-lg p-4 space-y-3">
       {/* League header - centered */}
-      <div className="flex items-center justify-center gap-2">
-        {countryFlag && <span className="text-base">{countryFlag}</span>}
+      <div className="flex items-center justify-center">
         <Badge variant="secondary" className="text-xs">
+          {countryFlag && <span className="mr-1.5">{countryFlag}</span>}
           {match.leagueName}
         </Badge>
       </div>
 
-      {/* 3-column layout: Home | Score/Time | Away */}
-      <div className="grid grid-cols-3 gap-2 items-center">
-        {/* Home team */}
-        <div className="flex flex-col items-center gap-2">
-          <TeamLogo
-            src={getLogoUrl(match.home) ?? null}
-            teamName={match.home}
-            size={48}
-          />
-          <span className="text-xs text-muted-foreground text-center line-clamp-2">
-            {match.home}
-          </span>
+      {/* Score/Time row with teams */}
+      <div className="flex items-start justify-between">
+        {/* Home team + score - aligned to left */}
+        <div className="flex items-start gap-6">
+          <div className="flex flex-col items-center gap-1">
+            <TeamLogo
+              src={getLogoUrl(match.home) ?? null}
+              teamName={match.home}
+              size={48}
+            />
+            <span className="text-[10px] text-muted-foreground text-center line-clamp-1 max-w-[80px]">
+              {match.home}
+            </span>
+          </div>
+          {hasScore && (
+            <span className="text-5xl font-bold text-foreground font-condensed">
+              {match.score!.home}
+            </span>
+          )}
         </div>
 
-        {/* Center: Score or Time + Status */}
-        <div className="flex flex-col items-center gap-1">
+        {/* Center: status or time */}
+        <div className="flex flex-col items-center justify-center gap-1 flex-1 pt-[18px]">
           {hasScore ? (
             <>
-              <div className="text-2xl font-bold text-foreground">
-                {match.score!.home} - {match.score!.away}
-              </div>
+              <StatusDot status={match.status} showLabel />
               {isLive && match.elapsed && (
                 <div className="text-xs text-muted-foreground">
                   {match.elapsed.min}&apos;
@@ -168,23 +505,32 @@ function MatchHeader({
               )}
             </>
           ) : (
-            <div className="text-xl font-medium text-foreground">
-              {formattedTime}
-            </div>
+            <>
+              <div className="text-xl font-medium text-foreground">
+                {formattedTime}
+              </div>
+              <StatusDot status={match.status} showLabel />
+            </>
           )}
-          <StatusDot status={match.status} showLabel />
         </div>
 
-        {/* Away team */}
-        <div className="flex flex-col items-center gap-2">
-          <TeamLogo
-            src={getLogoUrl(match.away) ?? null}
-            teamName={match.away}
-            size={48}
-          />
-          <span className="text-xs text-muted-foreground text-center line-clamp-2">
-            {match.away}
-          </span>
+        {/* Away team + score - aligned to right */}
+        <div className="flex items-start gap-6">
+          {hasScore && (
+            <span className="text-5xl font-bold text-foreground font-condensed">
+              {match.score!.away}
+            </span>
+          )}
+          <div className="flex flex-col items-center gap-1">
+            <TeamLogo
+              src={getLogoUrl(match.away) ?? null}
+              teamName={match.away}
+              size={48}
+            />
+            <span className="text-[10px] text-muted-foreground text-center line-clamp-1 max-w-[80px]">
+              {match.away}
+            </span>
+          </div>
         </div>
       </div>
     </div>
@@ -195,13 +541,21 @@ function MatchHeader({
 const MATCH_TABS = [
   { id: "overview", icon: <Info />, label: "Overview" },
   { id: "predictions", icon: <TrendingUp />, label: "Predictions" },
-  { id: "live", icon: <Radio />, label: "Live Data" },
+  { id: "standings", icon: <TableProperties />, label: "Standings" },
 ];
 
 /**
  * Tab content only - without tabs component (for desktop drawer with fixedContent)
  */
-function MatchTabContent({ match, activeTab }: { match: MatchSummary; activeTab: string }) {
+function MatchTabContent({
+  match,
+  activeTab,
+  getLogoUrl,
+}: {
+  match: MatchSummary;
+  activeTab: string;
+  getLogoUrl: (teamName: string) => string | null;
+}) {
   const kickoffDate = new Date(match.kickoffISO);
   const formattedDate = kickoffDate.toLocaleDateString("en-US", {
     weekday: "short",
@@ -214,32 +568,15 @@ function MatchTabContent({ match, activeTab }: { match: MatchSummary; activeTab:
   });
 
   return (
-    <div className="w-full">
-      {/* Overview Tab */}
+    <div className="w-full space-y-3">
+      {/* Overview Tab - Venue/Weather Section (first card) */}
+      {activeTab === "overview" && (
+        <VenueWeatherSection match={match} />
+      )}
+
+      {/* Overview Tab - Match Details */}
       {activeTab === "overview" && (
         <div className="bg-surface rounded-lg p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <StatusDot status={match.status} />
-            <Badge variant="secondary" className="text-xs">
-              {match.leagueName}
-            </Badge>
-          </div>
-
-          {/* Score (if available) */}
-          {match.score && (
-            <div className="text-center py-2">
-              <div className="text-3xl font-bold text-foreground">
-                {match.score.home} - {match.score.away}
-              </div>
-              {match.elapsed && (
-                <div className="text-sm text-muted-foreground mt-1">
-                  {match.elapsed.min}&apos;
-                  {match.elapsed.extra ? ` +${match.elapsed.extra}` : ""}
-                </div>
-              )}
-            </div>
-          )}
-
           {/* Match info */}
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-sm">
@@ -249,15 +586,16 @@ function MatchTabContent({ match, activeTab }: { match: MatchSummary; activeTab:
               </span>
             </div>
             <div className="text-sm">
-              <span className="text-muted-foreground">Country:</span>{" "}
-              <span className="text-foreground">{match.leagueCountry}</span>
-            </div>
-            <div className="text-sm">
               <span className="text-muted-foreground">Match ID:</span>{" "}
               <span className="text-foreground font-mono">{match.id}</span>
             </div>
           </div>
         </div>
+      )}
+
+      {/* Recent Form Section (shown in Overview) */}
+      {activeTab === "overview" && (
+        <RecentFormSection match={match} getLogoUrl={getLogoUrl} />
       )}
 
       {/* Predictions Tab */}
@@ -314,37 +652,10 @@ function MatchTabContent({ match, activeTab }: { match: MatchSummary; activeTab:
         </div>
       )}
 
-      {/* Live Data Tab */}
-      {activeTab === "live" && (
-        <div className="bg-surface rounded-lg p-4">
-          <div className="flex items-center gap-2 mb-4">
-            <Radio className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">Live Data</span>
-          </div>
-
-          {match.status === "live" || match.status === "ht" ? (
-            <div className="space-y-3">
-              <div>
-                <div className="text-xs text-muted-foreground mb-1">Events</div>
-                <p className="text-sm text-muted-foreground">
-                  Live events feed coming soon
-                </p>
-              </div>
-              <div className="pt-3 border-t border-border">
-                <div className="text-xs text-muted-foreground mb-1">Statistics</div>
-                <p className="text-sm text-muted-foreground">
-                  Match statistics coming soon
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="text-center py-8">
-              <Radio className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">
-                Match is not live
-              </p>
-            </div>
-          )}
+      {/* Standings Tab */}
+      {activeTab === "standings" && (
+        <div className="bg-surface rounded-lg py-2 px-1">
+          <StandingsTable leagueId={match.leagueId} />
         </div>
       )}
     </div>
@@ -372,7 +683,7 @@ function MatchDetailContentMobile({
         onValueChange={setActiveTab}
         className="w-full"
       />
-      <MatchTabContent match={match} activeTab={activeTab} />
+      <MatchTabContent match={match} activeTab={activeTab} getLogoUrl={getLogoUrl} />
     </div>
   );
 }
@@ -416,7 +727,7 @@ export function MatchDetailDrawer({
         }
       >
         {match ? (
-          <MatchTabContent match={match} activeTab={activeTab} />
+          <MatchTabContent match={match} activeTab={activeTab} getLogoUrl={getLogoUrl} />
         ) : isLoading ? (
           <div className="h-full flex items-center justify-center py-10">
             <Loader size="md" />

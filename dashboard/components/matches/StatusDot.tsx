@@ -26,7 +26,7 @@ interface StatusDotProps {
 }
 
 interface StatusConfig {
-  icon: LucideIcon;
+  icon: LucideIcon | null;
   color: string;
   label: string;
 }
@@ -35,7 +35,7 @@ const statusConfig: Record<MatchStatus, StatusConfig> = {
   scheduled: { icon: Calendar, color: "text-primary", label: "Scheduled" },
   live: { icon: Play, color: "text-success animate-pulse", label: "Live" },
   ht: { icon: Coffee, color: "text-warning", label: "Half Time" },
-  ft: { icon: CheckCircle, color: "text-primary", label: "Finished" },
+  ft: { icon: null, color: "text-muted-foreground", label: "Final" },
   postponed: { icon: AlertTriangle, color: "text-warning", label: "Postponed" },
   cancelled: { icon: XCircle, color: "text-error", label: "Cancelled" },
 };
@@ -46,15 +46,15 @@ export function StatusDot({ status, className, showLabel = false }: StatusDotPro
 
   const content = (
     <span className={cn("inline-flex items-center gap-1.5", className)}>
-      <Icon className={cn("h-4 w-4", config.color)} />
-      {showLabel && (
+      {Icon && <Icon className={cn("h-4 w-4", config.color)} />}
+      {(showLabel || !Icon) && (
         <span className={cn("text-xs", config.color)}>{config.label}</span>
       )}
     </span>
   );
 
-  // Only wrap in tooltip when label is not shown
-  if (showLabel) {
+  // Only wrap in tooltip when label is not shown AND icon exists
+  if (showLabel || !Icon) {
     return content;
   }
 
