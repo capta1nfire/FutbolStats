@@ -17551,14 +17551,16 @@ async def ops_alerts_webhook(
             if len(message) > 1000:
                 message = message[:997] + "..."
 
-            # Timestamps
+            # Timestamps (convert to naive UTC for DB compatibility)
             starts_at = None
             ends_at = None
             try:
                 if alert.get("startsAt"):
-                    starts_at = datetime.fromisoformat(alert["startsAt"].replace("Z", "+00:00"))
+                    dt = datetime.fromisoformat(alert["startsAt"].replace("Z", "+00:00"))
+                    starts_at = dt.replace(tzinfo=None)  # Convert to naive UTC
                 if alert.get("endsAt") and alert.get("endsAt") != "0001-01-01T00:00:00Z":
-                    ends_at = datetime.fromisoformat(alert["endsAt"].replace("Z", "+00:00"))
+                    dt = datetime.fromisoformat(alert["endsAt"].replace("Z", "+00:00"))
+                    ends_at = dt.replace(tzinfo=None)  # Convert to naive UTC
             except Exception:
                 pass
 
