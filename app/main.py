@@ -5388,6 +5388,529 @@ async def pit_trigger_evaluation(request: Request):
         return {"status": "error", "message": str(e)}
 
 
+# =============================================================================
+# DASHBOARD V2 ENDPOINTS (wrapper-compliant)
+# Wrapper: { generated_at, cached, cache_age_seconds, data }
+# =============================================================================
+
+def _make_v2_wrapper(data: dict, cached: bool = False, cache_age_seconds: float = 0) -> dict:
+    """Build standard v2 wrapper for dashboard endpoints."""
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "cached": cached,
+        "cache_age_seconds": round(cache_age_seconds, 1),
+        "data": data,
+    }
+
+
+# Cache for /dashboard/overview/rollup.json
+_rollup_cache: dict = {"data": None, "timestamp": 0, "ttl": 60}
+
+
+@app.get("/dashboard/overview/rollup.json")
+async def dashboard_overview_rollup(request: Request):
+    """
+    V2 endpoint: Overview rollup data with standard wrapper.
+    TTL: 60s
+    Auth: X-Dashboard-Token
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    import time as time_module
+    now_ts = time_module.time()
+
+    # Check cache
+    if _rollup_cache["data"] and (now_ts - _rollup_cache["timestamp"]) < _rollup_cache["ttl"]:
+        cache_age = now_ts - _rollup_cache["timestamp"]
+        return _make_v2_wrapper(_rollup_cache["data"], cached=True, cache_age_seconds=cache_age)
+
+    # Best-effort: get ops data and extract rollup subset
+    try:
+        ops_data = await _get_cached_ops_data()
+
+        # Extract stable rollup fields
+        rollup = {
+            "system_status": ops_data.get("system_status", "unknown"),
+            "uptime_seconds": ops_data.get("uptime_seconds"),
+            "predictions_health": ops_data.get("predictions_health"),
+            "jobs_health": ops_data.get("jobs_health"),
+            "sentry": ops_data.get("sentry"),
+            "llm_cost": ops_data.get("llm_cost"),
+            "api_budget": ops_data.get("api_budget"),
+            "data_quality": ops_data.get("data_quality"),
+            "model": ops_data.get("model"),
+            "environment": ops_data.get("environment"),
+        }
+
+        _rollup_cache["data"] = rollup
+        _rollup_cache["timestamp"] = now_ts
+
+        return _make_v2_wrapper(rollup, cached=False, cache_age_seconds=0)
+
+    except Exception as e:
+        logger.warning(f"Rollup endpoint error: {e}")
+        return _make_v2_wrapper(
+            {"status": "degraded", "note": f"upstream error: {str(e)[:50]}"},
+            cached=False,
+            cache_age_seconds=0,
+        )
+
+
+# Cache for /dashboard/sentry/issues.json
+_sentry_issues_cache: dict = {"data": None, "timestamp": 0, "ttl": 90, "params": None}
+
+
+@app.get("/dashboard/sentry/issues.json")
+async def dashboard_sentry_issues(
+    request: Request,
+    range: str = "24h",
+    page: int = 1,
+    limit: int = 50,
+):
+    """
+    V2 endpoint: Sentry issues with standard wrapper.
+    TTL: 90s
+    Auth: X-Dashboard-Token
+    Query params: range (24h|1h|7d), page, limit (max 100)
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    import time as time_module
+    import httpx
+    from datetime import timedelta
+
+    # Clamp limit
+    limit = min(max(1, limit), 100)
+    page = max(1, page)
+
+    # Validate range
+    valid_ranges = {"1h": 1, "24h": 24, "7d": 168}
+    if range not in valid_ranges:
+        range = "24h"
+    hours = valid_ranges[range]
+
+    now_ts = time_module.time()
+    cache_key = f"{range}:{page}:{limit}"
+
+    # Check cache (only if same params)
+    if (_sentry_issues_cache["data"] and
+        _sentry_issues_cache["params"] == cache_key and
+        (now_ts - _sentry_issues_cache["timestamp"]) < _sentry_issues_cache["ttl"]):
+        cache_age = now_ts - _sentry_issues_cache["timestamp"]
+        return _make_v2_wrapper(_sentry_issues_cache["data"], cached=True, cache_age_seconds=cache_age)
+
+    # Base response (degraded fallback)
+    base_data = {
+        "issues": [],
+        "total": 0,
+        "page": page,
+        "limit": limit,
+        "pages": 0,
+        "status": "degraded",
+        "note": "upstream unavailable",
+    }
+
+    # Check credentials
+    if not settings.SENTRY_AUTH_TOKEN or not settings.SENTRY_ORG or not settings.SENTRY_PROJECT_SLUG:
+        base_data["note"] = "Sentry credentials not configured"
+        return _make_v2_wrapper(base_data, cached=False, cache_age_seconds=0)
+
+    org_slug = settings.SENTRY_ORG
+    project_slug = settings.SENTRY_PROJECT_SLUG
+    auth_token = settings.SENTRY_AUTH_TOKEN
+    env_filter = settings.SENTRY_ENV or "production"
+
+    headers = {
+        "Authorization": f"Bearer {auth_token}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(headers=headers, timeout=10.0) as client:
+            issues_url = f"https://sentry.io/api/0/projects/{org_slug}/{project_slug}/issues/"
+
+            # Time boundary
+            now_dt = datetime.utcnow()
+            time_ago = (now_dt - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
+
+            env_query = f"environment:{env_filter}" if env_filter else ""
+
+            # Fetch issues
+            params = {
+                "query": f"is:unresolved {env_query}".strip(),
+                "sort": "date",
+                "limit": 100,  # Fetch more, then paginate
+            }
+            resp = await client.get(issues_url, params=params)
+
+            if resp.status_code != 200:
+                base_data["note"] = f"Sentry API returned {resp.status_code}"
+                return _make_v2_wrapper(base_data, cached=False, cache_age_seconds=0)
+
+            all_issues = resp.json() if isinstance(resp.json(), list) else []
+
+            # Filter by time range (lastSeen within range)
+            filtered_issues = [
+                i for i in all_issues
+                if i.get("lastSeen", "") >= time_ago
+            ]
+
+            # Build issue list (no PII, no stacktraces)
+            issues = []
+            for issue in filtered_issues:
+                title = issue.get("title", "Unknown")[:100]
+                title = title.replace("@", "[at]")  # Basic sanitization
+                issue_id = issue.get("id")
+
+                issues.append({
+                    "id": str(issue_id) if issue_id else None,
+                    "title": title,
+                    "level": issue.get("level", "error"),
+                    "count": int(issue.get("count", 0)),
+                    "last_seen_at": issue.get("lastSeen"),
+                    "first_seen_at": issue.get("firstSeen"),
+                    "issue_url": f"https://sentry.io/organizations/{org_slug}/issues/{issue_id}/" if issue_id else None,
+                })
+
+            # Sort by count descending
+            issues.sort(key=lambda x: x["count"], reverse=True)
+
+            # Paginate
+            total = len(issues)
+            pages = (total + limit - 1) // limit if total > 0 else 0
+            start = (page - 1) * limit
+            end = start + limit
+            paginated_issues = issues[start:end]
+
+            # Determine status
+            status = "ok"
+            if len([i for i in issues if i["level"] == "error"]) >= 5:
+                status = "warn"
+            if len([i for i in issues if i["level"] == "error"]) >= 20:
+                status = "red"
+
+            result = {
+                "issues": paginated_issues,
+                "total": total,
+                "page": page,
+                "limit": limit,
+                "pages": pages,
+                "status": status,
+            }
+
+            # Cache
+            _sentry_issues_cache["data"] = result
+            _sentry_issues_cache["timestamp"] = now_ts
+            _sentry_issues_cache["params"] = cache_key
+
+            return _make_v2_wrapper(result, cached=False, cache_age_seconds=0)
+
+    except Exception as e:
+        logger.warning(f"Sentry issues endpoint error: {e}")
+        base_data["note"] = f"fetch error: {str(e)[:50]}"
+        return _make_v2_wrapper(base_data, cached=False, cache_age_seconds=0)
+
+
+# Cache for /dashboard/predictions/missing.json
+_missing_preds_cache: dict = {"data": None, "timestamp": 0, "ttl": 60, "params": None}
+
+
+@app.get("/dashboard/predictions/missing.json")
+async def dashboard_predictions_missing(
+    request: Request,
+    hours: int = 48,
+    league_ids: str = None,  # comma-separated
+    page: int = 1,
+    limit: int = 50,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    V2 endpoint: Matches missing predictions with standard wrapper.
+    TTL: 60s
+    Auth: X-Dashboard-Token
+    Query params: hours (1-72), league_ids (comma-separated), page, limit (max 100)
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    import time as time_module
+
+    # Clamp params
+    hours = min(max(1, hours), 72)
+    limit = min(max(1, limit), 100)
+    page = max(1, page)
+
+    # Parse league_ids
+    league_filter = []
+    if league_ids:
+        try:
+            league_filter = [int(x.strip()) for x in league_ids.split(",") if x.strip().isdigit()]
+        except Exception:
+            pass
+
+    now_ts = time_module.time()
+    cache_key = f"{hours}:{','.join(map(str, league_filter))}:{page}:{limit}"
+
+    # Check cache
+    if (_missing_preds_cache["data"] and
+        _missing_preds_cache["params"] == cache_key and
+        (now_ts - _missing_preds_cache["timestamp"]) < _missing_preds_cache["ttl"]):
+        cache_age = now_ts - _missing_preds_cache["timestamp"]
+        return _make_v2_wrapper(_missing_preds_cache["data"], cached=True, cache_age_seconds=cache_age)
+
+    base_data = {
+        "missing": [],
+        "missing_total": 0,
+        "matches_total": 0,
+        "coverage_pct": None,
+        "total": 0,
+        "page": page,
+        "limit": limit,
+        "pages": 0,
+        "status": "degraded",
+        "note": "upstream unavailable",
+    }
+
+    try:
+        from sqlalchemy import text
+
+        now_dt = datetime.utcnow()
+        cutoff = now_dt + timedelta(hours=hours)
+
+        # Build query for matches without predictions
+        league_clause = ""
+        if league_filter:
+            league_clause = f"AND m.league_id IN ({','.join(map(str, league_filter))})"
+
+        # Count total matches in window
+        total_query = f"""
+            SELECT COUNT(*) FROM matches m
+            WHERE m.status = 'NS'
+              AND m.date BETWEEN NOW() AND :cutoff
+              {league_clause}
+        """
+        total_result = await session.execute(text(total_query), {"cutoff": cutoff})
+        matches_total = total_result.scalar() or 0
+
+        # Get matches missing predictions
+        missing_query = f"""
+            SELECT m.id, m.date, m.league_id, ht.name as home, at.name as away
+            FROM matches m
+            JOIN teams ht ON ht.id = m.home_team_id
+            JOIN teams at ON at.id = m.away_team_id
+            LEFT JOIN predictions p ON p.match_id = m.id
+            WHERE m.status = 'NS'
+              AND m.date BETWEEN NOW() AND :cutoff
+              AND p.id IS NULL
+              {league_clause}
+            ORDER BY m.date ASC
+        """
+        missing_result = await session.execute(text(missing_query), {"cutoff": cutoff})
+        all_missing = missing_result.fetchall()
+
+        missing_total = len(all_missing)
+
+        # Build missing list
+        missing_list = []
+        for row in all_missing:
+            missing_list.append({
+                "match_id": row[0],
+                "kickoff_utc": row[1].isoformat() + "Z" if row[1] else None,
+                "league_id": row[2],
+                "home": row[3],
+                "away": row[4],
+            })
+
+        # Paginate
+        pages = (missing_total + limit - 1) // limit if missing_total > 0 else 0
+        start = (page - 1) * limit
+        end = start + limit
+        paginated = missing_list[start:end]
+
+        # Calculate coverage
+        coverage_pct = None
+        if matches_total > 0:
+            coverage_pct = round(((matches_total - missing_total) / matches_total) * 100, 1)
+
+        # Determine status
+        status = "ok"
+        if missing_total > 0:
+            status = "warn"
+        if matches_total > 0 and (missing_total / matches_total) > 0.1:
+            status = "red"
+
+        result = {
+            "missing": paginated,
+            "missing_total": missing_total,
+            "matches_total": matches_total,
+            "coverage_pct": coverage_pct,
+            "total": missing_total,
+            "page": page,
+            "limit": limit,
+            "pages": pages,
+            "status": status,
+        }
+
+        _missing_preds_cache["data"] = result
+        _missing_preds_cache["timestamp"] = now_ts
+        _missing_preds_cache["params"] = cache_key
+
+        return _make_v2_wrapper(result, cached=False, cache_age_seconds=0)
+
+    except Exception as e:
+        logger.warning(f"Missing predictions endpoint error: {e}")
+        base_data["note"] = f"db error: {str(e)[:50]}"
+        return _make_v2_wrapper(base_data, cached=False, cache_age_seconds=0)
+
+
+# Cache for /dashboard/movement/top.json
+_movement_cache: dict = {"data": None, "timestamp": 0, "ttl": 60, "params": None}
+
+
+@app.get("/dashboard/movement/top.json")
+async def dashboard_movement_top(
+    request: Request,
+    range: str = "24h",
+    type: str = None,  # "lineup" or "market"
+    limit: int = 50,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    V2 endpoint: Top lineup/market movers with standard wrapper.
+    TTL: 60s
+    Auth: X-Dashboard-Token
+    Query params: range (24h|7d), type (lineup|market), limit (max 100)
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    import time as time_module
+    from sqlalchemy import text
+
+    # Clamp params
+    limit = min(max(1, limit), 100)
+
+    # Validate range
+    valid_ranges = {"24h": 24, "7d": 168}
+    if range not in valid_ranges:
+        range = "24h"
+    hours = valid_ranges[range]
+
+    # Validate type
+    valid_types = ["lineup", "market", None]
+    if type not in valid_types:
+        type = None
+
+    now_ts = time_module.time()
+    cache_key = f"{range}:{type}:{limit}"
+
+    # Check cache
+    if (_movement_cache["data"] and
+        _movement_cache["params"] == cache_key and
+        (now_ts - _movement_cache["timestamp"]) < _movement_cache["ttl"]):
+        cache_age = now_ts - _movement_cache["timestamp"]
+        return _make_v2_wrapper(_movement_cache["data"], cached=True, cache_age_seconds=cache_age)
+
+    base_data = {
+        "movers": [],
+        "status": "degraded",
+        "note": "upstream unavailable",
+    }
+
+    try:
+        now_dt = datetime.utcnow()
+        cutoff = now_dt - timedelta(hours=hours)
+
+        movers = []
+
+        # Get lineup changes (from match_external_refs sofascore_confirmed_xi_at changes)
+        if type is None or type == "lineup":
+            lineup_query = """
+                SELECT m.id, m.date, m.league_id, ht.name as home, at.name as away,
+                       mer.sofascore_confirmed_xi_at as value
+                FROM match_external_refs mer
+                JOIN matches m ON m.id = mer.match_id
+                JOIN teams ht ON ht.id = m.home_team_id
+                JOIN teams at ON at.id = m.away_team_id
+                WHERE mer.sofascore_confirmed_xi_at > :cutoff
+                  AND mer.sofascore_confirmed_xi_at IS NOT NULL
+                ORDER BY mer.sofascore_confirmed_xi_at DESC
+                LIMIT :limit
+            """
+            lineup_result = await session.execute(
+                text(lineup_query),
+                {"cutoff": cutoff, "limit": limit}
+            )
+            for row in lineup_result.fetchall():
+                movers.append({
+                    "match_id": row[0],
+                    "kickoff_utc": row[1].isoformat() + "Z" if row[1] else None,
+                    "league_id": row[2],
+                    "home": row[3],
+                    "away": row[4],
+                    "type": "lineup",
+                    "value": row[5].isoformat() + "Z" if row[5] else None,
+                    "source": "sofascore",
+                })
+
+        # Get market/odds movements (from odds_history)
+        if type is None or type == "market":
+            market_query = """
+                SELECT DISTINCT ON (m.id) m.id, m.date, m.league_id,
+                       ht.name as home, at.name as away,
+                       oh.recorded_at as value
+                FROM odds_history oh
+                JOIN matches m ON m.id = oh.match_id
+                JOIN teams ht ON ht.id = m.home_team_id
+                JOIN teams at ON at.id = m.away_team_id
+                WHERE oh.recorded_at > :cutoff
+                ORDER BY m.id, oh.recorded_at DESC
+                LIMIT :limit
+            """
+            market_result = await session.execute(
+                text(market_query),
+                {"cutoff": cutoff, "limit": limit}
+            )
+            for row in market_result.fetchall():
+                movers.append({
+                    "match_id": row[0],
+                    "kickoff_utc": row[1].isoformat() + "Z" if row[1] else None,
+                    "league_id": row[2],
+                    "home": row[3],
+                    "away": row[4],
+                    "type": "market",
+                    "value": row[5].isoformat() + "Z" if row[5] else None,
+                    "source": "api-football",
+                })
+
+        # Sort by value (most recent first) and limit
+        movers.sort(key=lambda x: x["value"] or "", reverse=True)
+        movers = movers[:limit]
+
+        result = {
+            "movers": movers,
+            "status": "ok" if movers else "warn",
+        }
+
+        _movement_cache["data"] = result
+        _movement_cache["timestamp"] = now_ts
+        _movement_cache["params"] = cache_key
+
+        return _make_v2_wrapper(result, cached=False, cache_age_seconds=0)
+
+    except Exception as e:
+        logger.warning(f"Movement top endpoint error: {e}")
+        base_data["note"] = f"db error: {str(e)[:50]}"
+        return _make_v2_wrapper(base_data, cached=False, cache_age_seconds=0)
+
+
+# =============================================================================
+# END DASHBOARD V2 ENDPOINTS
+# =============================================================================
+
+
 @app.post("/dashboard/predictions/trigger")
 async def predictions_trigger_save(request: Request):
     """
