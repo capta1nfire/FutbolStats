@@ -1,15 +1,15 @@
 "use client";
 
-import { Calendar, History, CalendarRange } from "lucide-react";
+import { CalendarClock, CalendarCheck2, CalendarDays } from "lucide-react";
 import { IconTabs } from "@/components/ui/icon-tabs";
 
 export type MatchesView = "upcoming" | "finished" | "calendar";
 
 /** Tab definitions for matches view */
 const MATCHES_VIEW_TABS = [
-  { id: "calendar", icon: <CalendarRange />, label: "Calendar" },
-  { id: "finished", icon: <History />, label: "Finished" },
-  { id: "upcoming", icon: <Calendar />, label: "Upcoming" },
+  { id: "calendar", icon: <CalendarDays />, label: "Calendar" },
+  { id: "finished", icon: <CalendarCheck2 />, label: "Finished" },
+  { id: "upcoming", icon: <CalendarClock />, label: "Upcoming" },
 ];
 
 interface MatchesViewTabsProps {
