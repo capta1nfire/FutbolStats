@@ -137,7 +137,7 @@ export default function OverviewPage() {
   return (
     <div className="h-full flex overflow-hidden">
       {/* Left Rail: Budget + Sentry + LLM Cost + Upcoming Matches */}
-      <aside className="w-[277px] shrink-0 border-r border-border bg-sidebar flex flex-col">
+      <aside className="w-[277px] min-w-[277px] shrink-0 border-r border-border bg-sidebar flex flex-col overflow-hidden">
         {/* Header */}
         <div className="h-12 flex items-center px-3 border-b border-border">
           <span className="text-sm font-medium text-foreground">Services</span>
