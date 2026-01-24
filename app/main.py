@@ -10378,14 +10378,14 @@ async def get_matches_dashboard(
             func.max(SensorPrediction.b_home_prob).label("sensor_b_home"),
             func.max(SensorPrediction.b_draw_prob).label("sensor_b_draw"),
             func.max(SensorPrediction.b_away_prob).label("sensor_b_away"),
-            # Weather forecast
-            func.max(weather_subq.c.temp_c).label("weather_temp_c"),
-            func.max(weather_subq.c.humidity).label("weather_humidity"),
-            func.max(weather_subq.c.wind_ms).label("weather_wind_ms"),
-            func.max(weather_subq.c.precip_mm).label("weather_precip_mm"),
-            func.max(weather_subq.c.precip_prob).label("weather_precip_prob"),
-            func.max(weather_subq.c.cloudcover).label("weather_cloudcover"),
-            func.max(weather_subq.c.is_daylight).label("weather_is_daylight"),
+            # Weather forecast (use direct columns, added to GROUP BY since subquery has DISTINCT ON)
+            weather_subq.c.temp_c.label("weather_temp_c"),
+            weather_subq.c.humidity.label("weather_humidity"),
+            weather_subq.c.wind_ms.label("weather_wind_ms"),
+            weather_subq.c.precip_mm.label("weather_precip_mm"),
+            weather_subq.c.precip_prob.label("weather_precip_prob"),
+            weather_subq.c.cloudcover.label("weather_cloudcover"),
+            weather_subq.c.is_daylight.label("weather_is_daylight"),
         )
         .join(home_team, Match.home_team_id == home_team.id)
         .join(away_team, Match.away_team_id == away_team.id)
@@ -10406,6 +10406,14 @@ async def get_matches_dashboard(
             Match.venue_city,
             home_team.name,
             away_team.name,
+            # Weather fields (from DISTINCT ON subquery, so safe to group by)
+            weather_subq.c.temp_c,
+            weather_subq.c.humidity,
+            weather_subq.c.wind_ms,
+            weather_subq.c.precip_mm,
+            weather_subq.c.precip_prob,
+            weather_subq.c.cloudcover,
+            weather_subq.c.is_daylight,
         )
     )
 
