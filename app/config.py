@@ -90,11 +90,19 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.0-flash"
     GEMINI_MAX_TOKENS: int = 1000
-    # Gemini pricing (per 1M tokens) - adjust when changing models
-    # Pricing as of Jan 2026:
-    #   2.0-flash:  $0.10 in / $0.40 out
-    #   2.5-flash:  $0.10 in / $0.40 out
-    #   2.5-pro:    $1.25 in / $10.00 out (≤200K context)
+
+    # Gemini pricing (per 1M tokens) - SINGLE SOURCE OF TRUTH
+    # Update this dict when adding/changing models
+    # Pricing as of Jan 2026 (https://ai.google.dev/pricing)
+    GEMINI_PRICING: dict = {
+        "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
+        "gemini-2.0-flash-exp": {"input": 0.10, "output": 0.40},
+        "gemini-2.5-flash": {"input": 0.10, "output": 0.40},
+        "gemini-2.5-pro": {"input": 1.25, "output": 10.00},
+        "gemini-1.5-flash": {"input": 0.075, "output": 0.30},
+        "gemini-1.5-pro": {"input": 1.25, "output": 5.00},
+    }
+    # Default pricing fallback (used when model not in GEMINI_PRICING)
     GEMINI_PRICE_INPUT: float = 0.10
     GEMINI_PRICE_OUTPUT: float = 0.40
 

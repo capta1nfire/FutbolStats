@@ -8518,19 +8518,43 @@ async def _load_ops_data() -> dict:
             # Rollback any previous failed transaction state
             await session.rollback()
 
-            # Gemini pricing per model (per 1M tokens) - Jan 2026 prices
-            # Source: https://ai.google.dev/gemini-api/docs/pricing
-            MODEL_PRICING = {
-                "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
-                "gemini-2.5-flash": {"input": 0.10, "output": 0.40},
-                "gemini-2.5-pro": {"input": 1.25, "output": 10.00},
-            }
-            # Default pricing from settings (for unknown models)
+            # Use pricing from settings (single source of truth)
+            MODEL_PRICING = settings.GEMINI_PRICING
             DEFAULT_PRICE_IN = settings.GEMINI_PRICE_INPUT
             DEFAULT_PRICE_OUT = settings.GEMINI_PRICE_OUTPUT
 
+            # Build dynamic CASE statements from MODEL_PRICING
+            # Groups models by same pricing to reduce SQL complexity
+            def build_pricing_case_sql() -> str:
+                """Generate SQL CASE for model-specific pricing from settings."""
+                # Group models by pricing tuple (input, output)
+                pricing_groups: dict[tuple[float, float], list[str]] = {}
+                for model, prices in MODEL_PRICING.items():
+                    key = (prices["input"], prices["output"])
+                    if key not in pricing_groups:
+                        pricing_groups[key] = []
+                    pricing_groups[key].append(model)
+
+                case_parts = []
+                for (price_in, price_out), models in pricing_groups.items():
+                    models_sql = ", ".join(f"'{m}'" for m in models)
+                    case_parts.append(
+                        f"WHEN llm_narrative_model IN ({models_sql}) THEN "
+                        f"(COALESCE(llm_narrative_tokens_in, 0) * {price_in} + "
+                        f"COALESCE(llm_narrative_tokens_out, 0) * {price_out}) / 1000000.0"
+                    )
+
+                # Add ELSE for unknown models (uses default pricing via params)
+                case_parts.append(
+                    "ELSE (COALESCE(llm_narrative_tokens_in, 0) * :default_in + "
+                    "COALESCE(llm_narrative_tokens_out, 0) * :default_out) / 1000000.0"
+                )
+
+                return "CASE " + " ".join(case_parts) + " END"
+
+            pricing_case_sql = build_pricing_case_sql()
+
             # Helper function to build LLM cost query with specific interval
-            # Uses CASE to apply model-specific pricing
             # Note: INTERVAL cannot be parameterized in PostgreSQL, must use literal
             def llm_cost_query(interval_literal: str) -> str:
                 return f"""
@@ -8538,19 +8562,7 @@ async def _load_ops_data() -> dict:
                         COUNT(*) AS request_count,
                         COALESCE(SUM(llm_narrative_tokens_in), 0) AS tokens_in,
                         COALESCE(SUM(llm_narrative_tokens_out), 0) AS tokens_out,
-                        COALESCE(SUM(
-                            CASE
-                                WHEN llm_narrative_model = 'gemini-2.5-pro' THEN
-                                    (COALESCE(llm_narrative_tokens_in, 0) * 1.25 +
-                                     COALESCE(llm_narrative_tokens_out, 0) * 10.00) / 1000000.0
-                                WHEN llm_narrative_model IN ('gemini-2.0-flash', 'gemini-2.5-flash') THEN
-                                    (COALESCE(llm_narrative_tokens_in, 0) * 0.10 +
-                                     COALESCE(llm_narrative_tokens_out, 0) * 0.40) / 1000000.0
-                                ELSE
-                                    (COALESCE(llm_narrative_tokens_in, 0) * :default_in +
-                                     COALESCE(llm_narrative_tokens_out, 0) * :default_out) / 1000000.0
-                            END
-                        ), 0) AS cost_usd
+                        COALESCE(SUM({pricing_case_sql}), 0) AS cost_usd
                     FROM post_match_audits
                     WHERE llm_narrative_model LIKE 'gemini%'
                       AND (COALESCE(llm_narrative_tokens_in, 0) > 0
@@ -8593,24 +8605,12 @@ async def _load_ops_data() -> dict:
             # Total accumulated cost (all time)
             res_total = await session.execute(
                 text(
-                    """
+                    f"""
                     SELECT
                         COUNT(*) AS request_count,
                         COALESCE(SUM(llm_narrative_tokens_in), 0) AS tokens_in,
                         COALESCE(SUM(llm_narrative_tokens_out), 0) AS tokens_out,
-                        COALESCE(SUM(
-                            CASE
-                                WHEN llm_narrative_model = 'gemini-2.5-pro' THEN
-                                    (COALESCE(llm_narrative_tokens_in, 0) * 1.25 +
-                                     COALESCE(llm_narrative_tokens_out, 0) * 10.00) / 1000000.0
-                                WHEN llm_narrative_model IN ('gemini-2.0-flash', 'gemini-2.5-flash') THEN
-                                    (COALESCE(llm_narrative_tokens_in, 0) * 0.10 +
-                                     COALESCE(llm_narrative_tokens_out, 0) * 0.40) / 1000000.0
-                                ELSE
-                                    (COALESCE(llm_narrative_tokens_in, 0) * :default_in +
-                                     COALESCE(llm_narrative_tokens_out, 0) * :default_out) / 1000000.0
-                            END
-                        ), 0) AS cost_usd
+                        COALESCE(SUM({pricing_case_sql}), 0) AS cost_usd
                     FROM post_match_audits
                     WHERE llm_narrative_model LIKE 'gemini%'
                       AND (COALESCE(llm_narrative_tokens_in, 0) > 0
@@ -8632,6 +8632,67 @@ async def _load_ops_data() -> dict:
             status = "ok"
             if cost_24h > 1.0 or avg_cost_per_request > 0.01:
                 status = "warn"
+
+            # Model usage breakdown by window (for tooltip/audit)
+            # Best-effort: if fails, omit model_usage_* (don't break llm_cost)
+            model_usage_28d = None
+            model_usage_7d = None
+            model_usage_24h = None
+            try:
+                def model_usage_query(interval_literal: str) -> str:
+                    return f"""
+                        SELECT
+                            llm_narrative_model,
+                            COUNT(*) AS requests,
+                            COALESCE(SUM(llm_narrative_tokens_in), 0) AS tokens_in,
+                            COALESCE(SUM(llm_narrative_tokens_out), 0) AS tokens_out
+                        FROM post_match_audits
+                        WHERE llm_narrative_model LIKE 'gemini%'
+                          AND (COALESCE(llm_narrative_tokens_in, 0) > 0
+                               OR COALESCE(llm_narrative_tokens_out, 0) > 0)
+                          AND created_at > NOW() - INTERVAL '{interval_literal}'
+                        GROUP BY llm_narrative_model
+                        ORDER BY requests DESC
+                    """
+
+                def parse_model_usage(rows) -> dict | None:
+                    if not rows:
+                        return None
+                    models = {}
+                    top_model = None
+                    max_requests = 0
+                    for row in rows:
+                        model_name = row[0]
+                        req_count = int(row[1] or 0)
+                        t_in = int(row[2] or 0)
+                        t_out = int(row[3] or 0)
+                        models[model_name] = {
+                            "requests": req_count,
+                            "tokens_in": t_in,
+                            "tokens_out": t_out,
+                        }
+                        if req_count > max_requests:
+                            max_requests = req_count
+                            top_model = model_name
+                    if not models:
+                        return None
+                    return {"top_model": top_model, "models": models}
+
+                # 28d usage
+                res_usage_28d = await session.execute(text(model_usage_query("28 days")))
+                model_usage_28d = parse_model_usage(res_usage_28d.fetchall())
+
+                # 7d usage
+                res_usage_7d = await session.execute(text(model_usage_query("7 days")))
+                model_usage_7d = parse_model_usage(res_usage_7d.fetchall())
+
+                # 24h usage
+                res_usage_24h = await session.execute(text(model_usage_query("24 hours")))
+                model_usage_24h = parse_model_usage(res_usage_24h.fetchall())
+
+            except Exception as usage_err:
+                logger.debug(f"Could not calculate model usage breakdown: {usage_err}")
+                # Continue without model_usage_* (best-effort)
 
             # Get current model pricing for transparency
             current_model = settings.GEMINI_MODEL
@@ -8672,7 +8733,12 @@ async def _load_ops_data() -> dict:
                 "tokens_in_total": tokens_in_total,
                 "tokens_out_total": tokens_out_total,
                 "status": status,
-                "note": "Cost calculated per-model: 2.0/2.5-flash=$0.10/$0.40, 2.5-pro=$1.25/$10.00 per 1M tokens. 28d window matches Google AI Studio billing.",
+                "note": "Cost calculated per-model from settings.GEMINI_PRICING. 28d window matches Google AI Studio billing.",
+                "pricing_source": "config.GEMINI_PRICING",
+                # Model usage breakdown (best-effort, may be None)
+                **({"model_usage_28d": model_usage_28d} if model_usage_28d else {}),
+                **({"model_usage_7d": model_usage_7d} if model_usage_7d else {}),
+                **({"model_usage_24h": model_usage_24h} if model_usage_24h else {}),
             }
         except Exception as e:
             logger.warning(f"Could not calculate LLM cost: {e}")

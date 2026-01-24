@@ -27,16 +27,31 @@ logger = logging.getLogger(__name__)
 _sentry_initialized = False
 
 
-def scrub_sensitive_data(event: dict, hint: dict) -> Optional[dict]:
+def filter_and_scrub_event(event: dict, hint: dict) -> Optional[dict]:
     """
-    Scrub sensitive data from Sentry events before sending.
+    Filter noisy events and scrub sensitive data from Sentry events before sending.
 
-    Removes:
+    Filters (returns None to drop):
+    - "Event loop is closed" RuntimeError (shutdown noise during deploys)
+
+    Scrubs:
     - API keys and tokens from headers
     - Token parameters from query strings
     - Authorization headers
     - Cookies
     """
+    # Filter: Drop "Event loop is closed" errors (shutdown noise)
+    # These occur during Railway redeploys when asyncpg DNS callbacks fire on closed loop
+    try:
+        exception_values = event.get("exception", {}).get("values", [])
+        for exc in exception_values:
+            exc_type = exc.get("type", "")
+            exc_value = exc.get("value", "")
+            if exc_type == "RuntimeError" and "Event loop is closed" in exc_value:
+                logger.debug("Sentry: Dropping 'Event loop is closed' event (shutdown noise)")
+                return None
+    except Exception:
+        pass  # Don't fail filtering, continue to scrubbing
     try:
         request = event.get("request") or {}
 
@@ -151,7 +166,7 @@ def init_sentry() -> bool:
 
         # Privacy & Security
         send_default_pii=False,
-        before_send=scrub_sensitive_data,
+        before_send=filter_and_scrub_event,
 
         # Performance
         enable_tracing=True,

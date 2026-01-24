@@ -728,14 +728,13 @@ class FastPathService:
                         llm_latency_ms.labels(provider="gemini").observe(result.exec_ms)
                         llm_tokens_total.labels(provider="gemini", direction="input").inc(result.tokens_in)
                         llm_tokens_total.labels(provider="gemini", direction="output").inc(result.tokens_out)
-                        # Gemini pricing per model (per 1M tokens) - Jan 2026 prices
-                        # 2.0/2.5-flash: $0.10 in / $0.40 out
-                        # 2.5-pro: $1.25 in / $10.00 out
+                        # Calculate cost using pricing from settings (single source of truth)
                         model_version = result.model_version or self.settings.GEMINI_MODEL
-                        if "pro" in model_version.lower():
-                            cost = (result.tokens_in * 1.25 + result.tokens_out * 10.00) / 1_000_000
-                        else:
-                            cost = (result.tokens_in * 0.10 + result.tokens_out * 0.40) / 1_000_000
+                        pricing = self.settings.GEMINI_PRICING.get(
+                            model_version,
+                            {"input": self.settings.GEMINI_PRICE_INPUT, "output": self.settings.GEMINI_PRICE_OUTPUT}
+                        )
+                        cost = (result.tokens_in * pricing["input"] + result.tokens_out * pricing["output"]) / 1_000_000
                         llm_cost_usd.labels(provider="gemini").inc(cost)
 
                         if result.status == "COMPLETED":
