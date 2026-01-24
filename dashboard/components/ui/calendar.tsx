@@ -214,12 +214,10 @@ function CalendarDayButton({
       data-range-middle={modifiers.range_middle}
       className={cn(
         "rounded-full transition-none hover:bg-surface hover:text-foreground",
-        // Today (not selected): blue text
-        "data-[today=true]:text-primary data-[today=true]:font-semibold",
-        // Selected states (override today color with white text)
+        // Today (not selected): blue text - only when NOT selected
+        !isSelected && isToday && "text-primary font-semibold",
+        // Selected states
         "data-[selected-single=true]:bg-primary data-[selected-single=true]:text-primary-foreground data-[selected-single=true]:hover:bg-primary data-[selected-single=true]:hover:text-primary-foreground",
-        // Today + Selected: ensure white text overrides blue
-        "data-[today=true][data-selected-single=true]:text-primary-foreground",
         // Range states
         "data-[range-middle=true]:bg-accent data-[range-middle=true]:text-accent-foreground data-[range-start=true]:bg-primary data-[range-start=true]:text-primary-foreground data-[range-start=true]:hover:bg-primary data-[range-end=true]:bg-primary data-[range-end=true]:text-primary-foreground data-[range-end=true]:hover:bg-primary",
         // Layout

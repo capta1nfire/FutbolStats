@@ -12,6 +12,7 @@
 @theme inline {
   /* Typography - Inter from @fontsource/inter (offline-friendly) */
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-condensed: "Barlow Condensed", ui-sans-serif, system-ui, sans-serif;
 
   /* Colors mapped to semantic tokens */
   --color-background: var(--background);

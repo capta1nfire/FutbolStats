@@ -5,7 +5,7 @@
  * Designed to be resilient to partial or malformed responses.
  */
 
-import { MatchSummary, MatchStatus, ProbabilitySet } from "@/lib/types";
+import { MatchSummary, MatchStatus, ProbabilitySet, MatchVenue, MatchWeather } from "@/lib/types";
 
 /**
  * Expected response structure from backend
@@ -109,6 +109,10 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
   const kickoffISO = raw.kickoffISO ?? raw.kickoff_iso ?? raw.kickoff;
   if (typeof kickoffISO !== "string") return null;
 
+  // Accept both leagueId and league_id from backend
+  const leagueId = raw.leagueId ?? raw.league_id ?? 0;
+  const leagueIdNum = typeof leagueId === "number" ? leagueId : 0;
+
   // Accept both leagueName and league_name from backend
   const leagueName = raw.leagueName ?? raw.league_name ?? "";
   const leagueNameStr = typeof leagueName === "string" ? leagueName : "Unknown";
@@ -125,6 +129,7 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
   const result: MatchSummary = {
     id,
     status,
+    leagueId: leagueIdNum,
     leagueName: leagueNameStr,
     leagueCountry: leagueCountryStr,
     home,
@@ -148,6 +153,14 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
       extra: typeof raw.elapsed_extra === "number" ? raw.elapsed_extra : undefined,
     };
   }
+
+  // Optional: Venue
+  const venue = parseVenue(raw.venue);
+  if (venue) result.venue = venue;
+
+  // Optional: Weather
+  const weather = parseWeather(raw.weather);
+  if (weather) result.weather = weather;
 
   // Optional: Market implied probabilities
   const market = parseProbabilitySet(raw.market);
@@ -183,6 +196,46 @@ function parseProbabilitySet(raw: unknown): ProbabilitySet | null {
   }
 
   return { home, draw, away };
+}
+
+/**
+ * Parse venue from raw object
+ */
+function parseVenue(raw: unknown): MatchVenue | null {
+  if (!isObject(raw)) return null;
+
+  const name = raw.name;
+  const city = raw.city;
+
+  // At least one field should be present
+  if (typeof name !== "string" && typeof city !== "string") {
+    return null;
+  }
+
+  return {
+    name: typeof name === "string" ? name : null,
+    city: typeof city === "string" ? city : null,
+  };
+}
+
+/**
+ * Parse weather from raw object
+ */
+function parseWeather(raw: unknown): MatchWeather | null {
+  if (!isObject(raw)) return null;
+
+  const temp_c = raw.temp_c;
+  if (typeof temp_c !== "number") return null;
+
+  return {
+    temp_c,
+    humidity: typeof raw.humidity === "number" ? raw.humidity : null,
+    wind_ms: typeof raw.wind_ms === "number" ? raw.wind_ms : null,
+    precip_mm: typeof raw.precip_mm === "number" ? raw.precip_mm : null,
+    precip_prob: typeof raw.precip_prob === "number" ? raw.precip_prob : null,
+    cloudcover: typeof raw.cloudcover === "number" ? raw.cloudcover : null,
+    is_daylight: typeof raw.is_daylight === "boolean" ? raw.is_daylight : null,
+  };
 }
 
 /**

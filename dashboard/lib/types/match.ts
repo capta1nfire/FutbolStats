@@ -44,9 +44,31 @@ export interface ProbabilitySet {
   away: number;
 }
 
+/**
+ * Venue information (stadium)
+ */
+export interface MatchVenue {
+  name: string | null;
+  city: string | null;
+}
+
+/**
+ * Weather forecast data
+ */
+export interface MatchWeather {
+  temp_c: number;
+  humidity: number | null;
+  wind_ms: number | null;
+  precip_mm: number | null;
+  precip_prob: number | null;
+  cloudcover: number | null;
+  is_daylight: boolean | null;
+}
+
 export interface MatchSummary {
   id: number;
   status: MatchStatus;
+  leagueId: number;
   leagueName: string;
   leagueCountry: string;
   home: string;
@@ -54,6 +76,10 @@ export interface MatchSummary {
   kickoffISO: string;
   score?: MatchScore;
   elapsed?: MatchElapsed;
+  /** Venue/stadium information */
+  venue?: MatchVenue;
+  /** Weather forecast at kickoff */
+  weather?: MatchWeather;
   /** Market implied probabilities (from frozen odds) */
   market?: ProbabilitySet;
   /** Model A prediction (production model) */
@@ -73,4 +99,36 @@ export interface MatchFilters {
   dateFrom?: string;
   dateTo?: string;
   search?: string;
+}
+
+/**
+ * Standing entry for a team in a league
+ */
+export interface StandingEntry {
+  position: number;
+  teamId: number;
+  teamName: string;
+  teamLogo: string | null;
+  points: number;
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDiff: number;
+  form?: string;
+  description?: string | null; // Promotion/Relegation status
+}
+
+/**
+ * League standings response
+ */
+export interface StandingsResponse {
+  leagueId: number;
+  season: number;
+  standings: StandingEntry[];
+  source: string;
+  isPlaceholder?: boolean;
+  isCalculated?: boolean;
 }

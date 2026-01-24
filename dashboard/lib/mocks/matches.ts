@@ -19,13 +19,13 @@ const BASE_TIMESTAMP = new Date("2026-01-20T15:00:00Z").getTime();
 
 // Sample data for variety
 const leagues = [
-  { name: "Premier League", country: "England" },
-  { name: "La Liga", country: "Spain" },
-  { name: "Serie A", country: "Italy" },
-  { name: "Bundesliga", country: "Germany" },
-  { name: "Ligue 1", country: "France" },
-  { name: "Liga BetPlay", country: "Colombia" },
-  { name: "Liga MX", country: "Mexico" },
+  { id: 39, name: "Premier League", country: "England" },
+  { id: 140, name: "La Liga", country: "Spain" },
+  { id: 135, name: "Serie A", country: "Italy" },
+  { id: 78, name: "Bundesliga", country: "Germany" },
+  { id: 61, name: "Ligue 1", country: "France" },
+  { id: 239, name: "Liga BetPlay", country: "Colombia" },
+  { id: 262, name: "Liga MX", country: "Mexico" },
 ];
 
 const teams = [
@@ -67,6 +67,7 @@ function createDeterministicMatch(index: number): MatchSummary {
   const match: MatchSummary = {
     id: index + 1,
     status,
+    leagueId: league.id,
     leagueName: league.name,
     leagueCountry: league.country,
     home: teamPair[0],
