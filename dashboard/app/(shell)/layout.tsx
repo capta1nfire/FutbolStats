@@ -2,6 +2,7 @@
 
 import { ReactNode } from "react";
 import { TopBar, IconSidebar } from "@/components/shell";
+import { Toaster } from "@/components/ui/toaster";
 
 interface ShellLayoutProps {
   children: ReactNode;
@@ -37,6 +38,7 @@ export default function ShellLayout({ children }: ShellLayoutProps) {
         {/* Column 2+: Main content area (FilterPanel + Table + Drawer managed by pages) */}
         <main className="flex-1 overflow-hidden">{children}</main>
       </div>
+      <Toaster />
     </div>
   );
 }

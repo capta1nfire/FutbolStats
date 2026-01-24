@@ -1,13 +1,8 @@
 "use client";
 
-import { Bell, ChevronDown, User } from "lucide-react";
+import { ChevronDown, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { AlertsBell } from "./AlertsBell";
 
 export function TopBar() {
   return (
@@ -52,25 +47,7 @@ export function TopBar() {
 
       {/* Right: Notifications + Avatar */}
       <div className="flex items-center gap-2">
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="relative"
-                aria-label="Notifications"
-              >
-                <Bell className="h-5 w-5 text-muted-foreground" strokeWidth={1.5} />
-                {/* Notification badge */}
-                <span className="absolute top-1 right-1 w-2 h-2 bg-error rounded-full" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>Notifications</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <AlertsBell />
 
         {/* Avatar (mock) */}
         <Button
