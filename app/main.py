@@ -6225,13 +6225,81 @@ async def _calculate_jobs_health_summary(session) -> dict:
     odds_health["help_url"] = f"{runbook_base}#odds-sync-job"
     fastpath_health["help_url"] = f"{runbook_base}#fastpath-llm-narratives-job"
 
-    return {
+    # Build top_alert for warn/red status (Auditor Dashboard enhancement)
+    top_alert = None
+    alerts_count = 0
+
+    if overall in ("warn", "red"):
+        # Collect all jobs with their severity for ranking
+        job_alerts = []
+        jobs_meta = {
+            "stats_backfill": {"data": stats_health, "label": "Stats Backfill"},
+            "odds_sync": {"data": odds_health, "label": "Odds Sync"},
+            "fastpath": {"data": fastpath_health, "label": "Fast-Path Narratives"},
+        }
+
+        for job_key, meta in jobs_meta.items():
+            job_data = meta["data"]
+            job_status_val = job_data.get("status", "unknown")
+
+            if job_status_val in ("warn", "red"):
+                alerts_count += 1
+                minutes_since = job_data.get("minutes_since_success")
+
+                # Build reason string
+                if minutes_since is not None:
+                    if minutes_since >= 60:
+                        hours_ago = round(minutes_since / 60, 1)
+                        reason = f"Last success {hours_ago}h ago"
+                    else:
+                        reason = f"Last success {int(minutes_since)}m ago"
+                else:
+                    reason = "No recent success recorded"
+
+                # Add context for specific jobs
+                if job_key == "stats_backfill" and job_data.get("ft_pending"):
+                    reason += f" ({job_data['ft_pending']} FT pending)"
+                elif job_key == "fastpath" and job_data.get("backlog_ready"):
+                    reason += f" ({job_data['backlog_ready']} backlog)"
+
+                job_alerts.append({
+                    "job_key": job_key,
+                    "label": meta["label"],
+                    "severity": job_status_val,
+                    "reason": reason,
+                    "minutes_since_success": minutes_since,
+                    "runbook_url": job_data.get("help_url"),
+                    # Sort key: red=2, warn=1; then by minutes_since_success desc
+                    "_sort_key": (2 if job_status_val == "red" else 1, minutes_since or 0),
+                })
+
+        # Select worst job as top_alert
+        if job_alerts:
+            job_alerts.sort(key=lambda x: x["_sort_key"], reverse=True)
+            worst = job_alerts[0]
+            top_alert = {
+                "job_key": worst["job_key"],
+                "label": worst["label"],
+                "severity": worst["severity"],
+                "reason": worst["reason"],
+                "minutes_since_success": worst["minutes_since_success"],
+                "runbook_url": worst["runbook_url"],
+            }
+
+    result = {
         "status": overall,
         "runbook_url": f"{runbook_base}#p0-jobs-health-scheduler-jobs",
         "stats_backfill": stats_health,
         "odds_sync": odds_health,
         "fastpath": fastpath_health,
     }
+
+    # Only include top_alert fields when there are alerts
+    if top_alert:
+        result["top_alert"] = top_alert
+        result["alerts_count"] = alerts_count
+
+    return result
 
 
 async def _calculate_sota_enrichment_summary(session) -> dict:
