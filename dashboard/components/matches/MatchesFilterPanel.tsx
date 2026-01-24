@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { Trophy, Calendar, Activity } from "lucide-react";
 import { FilterPanel, FilterGroup } from "@/components/shell";
 import { MatchesViewTabs, MatchesView } from "./MatchesViewTabs";
-import { DateRangePicker, DateRangeValue } from "./DateRangePicker";
+import { DateRangePicker, type LocalDate } from "./DateRangePicker";
 import { MatchSummary, MatchStatus } from "@/lib/types";
 
 /** Time range options for filtering */
@@ -31,10 +31,10 @@ interface MatchesFilterPanelProps {
   selectedTimeRange: TimeRange;
   /** Callback when time range changes */
   onTimeRangeChange: (range: TimeRange) => void;
-  /** Custom date range (for calendar view) */
-  customDateRange?: DateRangeValue;
-  /** Callback when custom date range changes */
-  onCustomDateRangeChange?: (range: DateRangeValue) => void;
+  /** Selected date (for calendar view) as LocalDate string YYYY-MM-DD */
+  selectedDate?: LocalDate;
+  /** Callback when selected date changes */
+  onDateChange?: (date: LocalDate) => void;
   /** Current matches data (for intelligent filtering) */
   matches?: MatchSummary[];
   /** Selected statuses (for calendar view) */
@@ -60,8 +60,8 @@ export function MatchesFilterPanel({
   onViewChange,
   selectedTimeRange,
   onTimeRangeChange,
-  customDateRange,
-  onCustomDateRangeChange,
+  selectedDate,
+  onDateChange,
   matches = [],
   selectedStatuses = [],
   onStatusChange,
@@ -207,12 +207,11 @@ export function MatchesFilterPanel({
     <MatchesViewTabs activeView={activeView} onViewChange={onViewChange} />
   );
 
-  // Render date range picker for calendar view
-  const quickFilterContent = activeView === "calendar" && onCustomDateRangeChange ? (
+  // Render date picker for calendar view
+  const quickFilterContent = activeView === "calendar" && onDateChange ? (
     <DateRangePicker
-      value={customDateRange}
-      onChange={onCustomDateRangeChange}
-      mode="past" // Calendar view shows all matches (past by default)
+      value={selectedDate}
+      onChange={onDateChange}
     />
   ) : null;
 

@@ -2,6 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactNode, useState } from "react";
+import { RegionProvider } from "@/components/providers/RegionProvider";
 
 interface ProvidersProps {
   children: ReactNode;
@@ -21,6 +22,8 @@ export function Providers({ children }: ProvidersProps) {
   );
 
   return (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    <QueryClientProvider client={queryClient}>
+      <RegionProvider>{children}</RegionProvider>
+    </QueryClientProvider>
   );
 }

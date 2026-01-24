@@ -1,12 +1,69 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useCallback } from "react";
 import { ColumnDef, VisibilityState } from "@tanstack/react-table";
-import { MatchSummary, MatchScore, ProbabilitySet } from "@/lib/types";
+import { MatchSummary, MatchScore, ProbabilitySet, MatchStatus } from "@/lib/types";
 import { DataTable } from "@/components/tables";
 import { ColumnOption } from "@/components/tables";
 import { StatusDot } from "./StatusDot";
 import { TeamLogo } from "@/components/ui/team-logo";
+import { toast } from "sonner";
+import { Copy } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { useRegion } from "@/components/providers/RegionProvider";
+
+/**
+ * Get color classes for a match status
+ */
+function getStatusColor(status: MatchStatus): { text: string; hover: string } {
+  switch (status) {
+    case "live":
+      return { text: "text-success", hover: "hover:text-success/80" };
+    case "ht":
+      return { text: "text-warning", hover: "hover:text-warning/80" };
+    case "postponed":
+      return { text: "text-warning", hover: "hover:text-warning/80" };
+    case "cancelled":
+      return { text: "text-error", hover: "hover:text-error/80" };
+    case "scheduled":
+    case "ft":
+    default:
+      return { text: "text-primary", hover: "hover:text-primary-hover" };
+  }
+}
+
+/**
+ * Copyable ID cell - click to copy to clipboard with toast feedback
+ * Color matches the status icon color
+ */
+function CopyableId({ id, status }: { id: number; status: MatchStatus }) {
+  const colors = getStatusColor(status);
+
+  const handleClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation(); // Prevent row click
+      navigator.clipboard.writeText(String(id));
+      toast(
+        <div className="flex items-center gap-2">
+          <Copy className={cn("h-4 w-4", colors.text)} />
+          <span>
+            Match ID <span className={cn("font-medium", colors.text)}>{id}</span> copied to clipboard
+          </span>
+        </div>
+      );
+    },
+    [id, colors.text]
+  );
+
+  return (
+    <button
+      onClick={handleClick}
+      className={cn("font-mono text-xs cursor-pointer transition-colors", colors.text, colors.hover)}
+    >
+      {id}
+    </button>
+  );
+}
 
 /**
  * Determine actual match outcome from score
@@ -93,8 +150,7 @@ interface MatchesTableProps {
  * Maps column IDs to human-readable labels
  */
 export const MATCHES_COLUMN_OPTIONS: ColumnOption[] = [
-  { id: "id", label: "Match ID", enableHiding: true },
-  { id: "status", label: "Status", enableHiding: false }, // Always visible
+  { id: "id", label: "ID", enableHiding: false }, // Status + Match ID combined, always visible
   { id: "match", label: "Match", enableHiding: false }, // Always visible
   { id: "leagueName", label: "League", enableHiding: true },
   { id: "kickoffISO", label: "Kickoff", enableHiding: true },
@@ -124,24 +180,20 @@ export function MatchesTable({
   onColumnVisibilityChange,
   getLogoUrl,
 }: MatchesTableProps) {
+  const { formatShortDate, formatTime } = useRegion();
+
   const columns: ColumnDef<MatchSummary>[] = useMemo(
     () => [
       {
-        accessorKey: "id",
+        id: "id",
         header: "ID",
-        size: 70,
+        size: 100,
         cell: ({ row }) => (
-          <span className="font-mono text-xs text-muted-foreground">
-            {row.original.id}
-          </span>
+          <div className="flex items-center gap-2">
+            <StatusDot status={row.original.status} />
+            <CopyableId id={row.original.id} status={row.original.status} />
+          </div>
         ),
-        enableSorting: true,
-      },
-      {
-        accessorKey: "status",
-        header: "Status",
-        size: 50,
-        cell: ({ row }) => <StatusDot status={row.original.status} />,
         enableSorting: true,
       },
       {
@@ -186,20 +238,14 @@ export function MatchesTable({
         header: "Kickoff",
         size: 90,
         cell: ({ row }) => {
-          const date = new Date(row.original.kickoffISO);
+          const isoUtc = row.original.kickoffISO;
           return (
             <div className="text-sm">
               <div className="text-foreground">
-                {date.toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                })}
+                {formatShortDate(isoUtc)}
               </div>
               <div className="text-muted-foreground text-xs">
-                {date.toLocaleTimeString("en-US", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
+                {formatTime(isoUtc)}
               </div>
             </div>
           );
@@ -289,7 +335,7 @@ export function MatchesTable({
         enableSorting: false,
       },
     ],
-    [getLogoUrl]
+    [getLogoUrl, formatShortDate, formatTime]
   );
 
   return (

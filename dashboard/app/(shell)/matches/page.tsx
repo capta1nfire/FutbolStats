@@ -13,7 +13,7 @@ import {
   MATCHES_DEFAULT_VISIBILITY,
   type MatchesView,
   type TimeRange,
-  type DateRangeValue,
+  type LocalDate,
 } from "@/components/matches";
 import { CustomizeColumnsPanel, Pagination } from "@/components/tables";
 import {
@@ -23,13 +23,8 @@ import {
   toggleArrayValue,
 } from "@/lib/url-state";
 import { Loader } from "@/components/ui/loader";
-import { Database } from "lucide-react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { useRegion } from "@/components/providers/RegionProvider";
+import { isValidLocalDate } from "@/lib/region";
 
 const BASE_PATH = "/matches";
 
@@ -71,6 +66,7 @@ function timeRangeToHours(range: TimeRange, view: MatchesView): number {
 function MatchesPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { getTodayLocalDate, localDateToUtcStartIso, localDateToUtcEndIso } = useRegion();
 
   // Parse URL state
   const selectedMatchId = useMemo(
@@ -78,13 +74,13 @@ function MatchesPageContent() {
     [searchParams]
   );
 
-  // Parse view from URL (default: upcoming)
+  // Parse view from URL (default: calendar)
   const activeView = useMemo((): MatchesView => {
     const viewParam = searchParams.get("view");
     if (viewParam && VALID_VIEWS.includes(viewParam as MatchesView)) {
       return viewParam as MatchesView;
     }
-    return "upcoming";
+    return "calendar";
   }, [searchParams]);
 
   // Parse time range from URL (default: today)
@@ -112,22 +108,15 @@ function MatchesPageContent() {
     [searchParams]
   );
 
-  // Parse custom date range from URL (for calendar view)
-  const customDateRange = useMemo((): DateRangeValue | undefined => {
-    const fromParam = searchParams.get("from");
-    const toParam = searchParams.get("to");
-    if (fromParam && toParam) {
-      const from = new Date(fromParam);
-      const to = new Date(toParam);
-      if (!isNaN(from.getTime()) && !isNaN(to.getTime())) {
-        return { from, to };
-      }
+  // Parse selected date from URL (for calendar view) as LocalDate string
+  const selectedDate = useMemo((): LocalDate => {
+    const dateParam = searchParams.get("date");
+    if (dateParam && isValidLocalDate(dateParam)) {
+      return dateParam;
     }
-    // Default: last 7 days
-    const now = new Date();
-    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    return { from: weekAgo, to: now };
-  }, [searchParams]);
+    // Default: today in user's timezone
+    return getTodayLocalDate();
+  }, [searchParams, getTodayLocalDate]);
 
   // Normalize URL if id param is invalid
   const selectedIdParam = searchParams.get("id");
@@ -181,13 +170,12 @@ function MatchesPageContent() {
 
   // Calculate hours for API based on view
   const hoursForApi = useMemo(() => {
-    if (activeView === "calendar" && customDateRange) {
-      // Calculate hours from date range
-      const diffMs = customDateRange.to.getTime() - customDateRange.from.getTime();
-      return Math.ceil(diffMs / (1000 * 60 * 60));
+    if (activeView === "calendar") {
+      // For calendar view with single date, use 24 hours
+      return 24;
     }
     return timeRangeToHours(selectedTimeRange, activeView);
-  }, [activeView, customDateRange, selectedTimeRange]);
+  }, [activeView, selectedTimeRange]);
 
   // Fetch data from API with view-specific status
   const {
@@ -239,8 +227,7 @@ function MatchesPageContent() {
       league?: string[];
       status?: MatchStatus[];
       q?: string;
-      from?: string;
-      to?: string;
+      date?: LocalDate;
     }) => {
       const view = overrides.view ?? activeView;
       const params = buildSearchParams({
@@ -248,9 +235,8 @@ function MatchesPageContent() {
         view,
         // Only include range for upcoming/finished views
         range: view !== "calendar" ? (overrides.range ?? selectedTimeRange) : undefined,
-        // Only include from/to for calendar view
-        from: view === "calendar" ? (overrides.from ?? customDateRange?.from.toISOString().split("T")[0]) : undefined,
-        to: view === "calendar" ? (overrides.to ?? customDateRange?.to.toISOString().split("T")[0]) : undefined,
+        // Only include date for calendar view (as YYYY-MM-DD string)
+        date: view === "calendar" ? (overrides.date ?? selectedDate) : undefined,
         // Only include status for calendar view
         status: view === "calendar" ? (overrides.status ?? selectedStatuses) : undefined,
         league: overrides.league ?? selectedLeagues,
@@ -259,7 +245,7 @@ function MatchesPageContent() {
       const search = params.toString();
       return `${BASE_PATH}${search ? `?${search}` : ""}`;
     },
-    [selectedMatchId, activeView, selectedTimeRange, customDateRange, selectedStatuses, selectedLeagues, searchValue]
+    [selectedMatchId, activeView, selectedTimeRange, selectedDate, selectedStatuses, selectedLeagues, searchValue]
   );
 
   // Handle row click - update URL with router.replace (no history entry)
@@ -293,17 +279,11 @@ function MatchesPageContent() {
     [router, buildUrl]
   );
 
-  // Handle custom date range change (calendar view) - reset page to 1
-  const handleCustomDateRangeChange = useCallback(
-    (range: DateRangeValue) => {
+  // Handle date change (calendar view) - reset page to 1
+  const handleDateChange = useCallback(
+    (date: LocalDate) => {
       setCurrentPage(1);
-      router.replace(
-        buildUrl({
-          from: range.from.toISOString().split("T")[0],
-          to: range.to.toISOString().split("T")[0],
-        }),
-        { scroll: false }
-      );
+      router.replace(buildUrl({ date }), { scroll: false });
     },
     [router, buildUrl]
   );
@@ -364,8 +344,8 @@ function MatchesPageContent() {
         onViewChange={handleViewChange}
         selectedTimeRange={selectedTimeRange}
         onTimeRangeChange={handleTimeRangeChange}
-        customDateRange={customDateRange}
-        onCustomDateRangeChange={handleCustomDateRangeChange}
+        selectedDate={selectedDate}
+        onDateChange={handleDateChange}
         matches={matches}
         selectedStatuses={selectedStatuses}
         onStatusChange={handleStatusChange}
@@ -391,28 +371,6 @@ function MatchesPageContent() {
 
       {/* Main content: Table */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
-        {/* Header with mock indicator */}
-        <div className="h-12 flex items-center justify-between px-6 border-b border-border">
-          <h1 className="text-lg font-semibold text-foreground">Matches</h1>
-          {isDegraded && !isLoading && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-yellow-500/10 border border-yellow-500/20">
-                    <Database className="h-3.5 w-3.5 text-yellow-400" />
-                    <span className="text-[10px] text-yellow-400 font-medium">
-                      mock
-                    </span>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  <p>Using mock data - backend unavailable</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-        </div>
-
         {/* Table */}
         <MatchesTable
           data={matches}
@@ -468,7 +426,7 @@ function MatchesLoading() {
  * - DetailDrawer (overlay, right, no reflow)
  *
  * URL sync (full state):
- * - Canonical: /matches?view=upcoming&range=7d&id=123&league=Premier%20League&q=arsenal
+ * - Canonical: /matches?view=calendar&date=2026-01-23&id=123&league=Premier%20League&q=arsenal
  * - Uses router.replace with scroll:false
  */
 export default function MatchesPage() {
