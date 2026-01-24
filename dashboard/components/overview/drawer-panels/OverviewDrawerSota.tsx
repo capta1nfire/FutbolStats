@@ -10,7 +10,8 @@ interface OverviewDrawerSotaProps {
   tab: OverviewTab;
 }
 
-export function OverviewDrawerSota(_props: OverviewDrawerSotaProps) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- tab prop reserved for future use
+export function OverviewDrawerSota({ tab }: OverviewDrawerSotaProps) {
   // Only summary tab for now
   return <SotaSummaryTab />;
 }

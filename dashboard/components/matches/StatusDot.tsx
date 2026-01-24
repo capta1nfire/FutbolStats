@@ -6,7 +6,6 @@ import {
   Calendar,
   Play,
   Coffee,
-  CheckCircle,
   XCircle,
   AlertTriangle,
   LucideIcon,

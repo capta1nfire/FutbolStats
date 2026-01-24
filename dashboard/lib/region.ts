@@ -29,7 +29,6 @@ const STORAGE_KEY = "futbolstats-region";
 
 const DEFAULT_LOCALE = "en-US";
 const DEFAULT_TIMEZONE = "UTC";
-const DEFAULT_HOUR_CYCLE: "h12" | "h23" = "h23";
 
 // ============================================================================
 // Defaults Detection

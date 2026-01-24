@@ -23,6 +23,7 @@ function formatTimezoneName(tz: string): string {
   return tz.replace(/_/g, " ").replace(/\//g, " / ");
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- settings prop for interface consistency
 export function TimezoneSection({ settings }: TimezoneSectionProps) {
   const { region, setRegion, resetRegion } = useRegion();
   const [searchQuery, setSearchQuery] = useState("");

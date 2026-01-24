@@ -9,7 +9,8 @@ interface OverviewDrawerBudgetProps {
   tab: OverviewTab;
 }
 
-export function OverviewDrawerBudget(_props: OverviewDrawerBudgetProps) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- tab prop reserved for future use
+export function OverviewDrawerBudget({ tab }: OverviewDrawerBudgetProps) {
   // Only summary tab for now
   return <BudgetSummaryTab />;
 }

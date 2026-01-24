@@ -16,7 +16,8 @@ interface OverviewDrawerOverallProps {
  * Tabs:
  * - summary: Rollup status from ops/rollup
  */
-export function OverviewDrawerOverall(_props: OverviewDrawerOverallProps) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- tab prop reserved for future use
+export function OverviewDrawerOverall({ tab }: OverviewDrawerOverallProps) {
   // Only summary tab for now
   return <OverallSummaryTab />;
 }

@@ -71,14 +71,20 @@ interface RegionProviderProps {
 }
 
 export function RegionProvider({ children }: RegionProviderProps) {
-  // Start with defaults, then load from storage
-  const [region, setRegionState] = useState<RegionSettings>(getDefaultRegionSettings);
+  // Load from storage on initial render (lazy initialization)
+  // This avoids the cascading render from setState in useEffect
+  const [region, setRegionState] = useState<RegionSettings>(() => {
+    // loadRegionSettings handles SSR gracefully (returns defaults if no window)
+    return loadRegionSettings();
+  });
+
+  // Track hydration state - this is a valid pattern for client-side hydration
+  // The setState in useEffect is intentional to trigger re-render after hydration
   const [isLoaded, setIsLoaded] = useState(false);
 
-  // Load settings from localStorage on mount
+  // Mark as loaded after hydration
   useEffect(() => {
-    const stored = loadRegionSettings();
-    setRegionState(stored);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional hydration pattern for SSR
     setIsLoaded(true);
   }, []);
 

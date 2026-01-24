@@ -97,7 +97,11 @@ function VenueWeatherSection({ match }: { match: MatchSummary }) {
 
   if (!hasVenue && !hasWeather) return null;
 
-  const WeatherIcon = match.weather ? getWeatherIcon(match.weather) : Sun;
+  // Render weather icon inline to avoid component-during-render issue
+  const renderWeatherIcon = () => {
+    const IconComponent = match.weather ? getWeatherIcon(match.weather) : Sun;
+    return <IconComponent className="h-6 w-6 text-muted-foreground" />;
+  };
 
   return (
     <div className="bg-surface rounded-lg p-3">
@@ -126,7 +130,7 @@ function VenueWeatherSection({ match }: { match: MatchSummary }) {
         {hasWeather && match.weather && (
           <div className="flex items-center gap-3 shrink-0">
             {/* Weather icon */}
-            <WeatherIcon className="h-6 w-6 text-muted-foreground" />
+            {renderWeatherIcon()}
 
             {/* Temperature */}
             <div className="flex items-center gap-1">

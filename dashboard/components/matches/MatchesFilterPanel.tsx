@@ -187,6 +187,7 @@ export function MatchesFilterPanel({
   }, [
     activeView,
     availableLeagues,
+    availableStatuses,
     selectedLeagues,
     selectedStatuses,
     selectedTimeRange,

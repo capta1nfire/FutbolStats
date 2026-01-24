@@ -9,7 +9,8 @@ interface OverviewDrawerLlmProps {
   tab: OverviewTab;
 }
 
-export function OverviewDrawerLlm(_props: OverviewDrawerLlmProps) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- tab prop reserved for future use
+export function OverviewDrawerLlm({ tab }: OverviewDrawerLlmProps) {
   // Only summary tab for now
   return <LlmSummaryTab />;
 }

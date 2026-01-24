@@ -9,7 +9,8 @@ interface OverviewDrawerUpcomingProps {
   tab: OverviewTab;
 }
 
-export function OverviewDrawerUpcoming(_props: OverviewDrawerUpcomingProps) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- tab prop reserved for future use
+export function OverviewDrawerUpcoming({ tab }: OverviewDrawerUpcomingProps) {
   // Only summary tab for now
   return <UpcomingSummaryTab />;
 }
