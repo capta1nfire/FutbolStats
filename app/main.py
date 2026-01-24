@@ -8436,97 +8436,159 @@ async def _load_ops_data() -> dict:
             # Rollback any previous failed transaction state
             await session.rollback()
 
-            # Gemini pricing from settings (per 1M tokens)
-            GEMINI_PRICE_IN = settings.GEMINI_PRICE_INPUT
-            GEMINI_PRICE_OUT = settings.GEMINI_PRICE_OUTPUT
+            # Gemini pricing per model (per 1M tokens) - Jan 2026 prices
+            # Source: https://ai.google.dev/gemini-api/docs/pricing
+            MODEL_PRICING = {
+                "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
+                "gemini-2.5-flash": {"input": 0.10, "output": 0.40},
+                "gemini-2.5-pro": {"input": 1.25, "output": 10.00},
+            }
+            # Default pricing from settings (for unknown models)
+            DEFAULT_PRICE_IN = settings.GEMINI_PRICE_INPUT
+            DEFAULT_PRICE_OUT = settings.GEMINI_PRICE_OUTPUT
 
-            # 24h metrics (includes 'ok' and legacy 'completed_sync' statuses)
+            # Query that calculates cost per model with correct pricing
+            # Uses CASE to apply model-specific pricing
+            LLM_COST_BY_MODEL_QUERY = """
+                SELECT
+                    COUNT(*) AS request_count,
+                    COALESCE(SUM(llm_narrative_tokens_in), 0) AS tokens_in,
+                    COALESCE(SUM(llm_narrative_tokens_out), 0) AS tokens_out,
+                    COALESCE(SUM(
+                        CASE
+                            WHEN llm_narrative_model = 'gemini-2.5-pro' THEN
+                                (COALESCE(llm_narrative_tokens_in, 0) * 1.25 +
+                                 COALESCE(llm_narrative_tokens_out, 0) * 10.00) / 1000000.0
+                            WHEN llm_narrative_model IN ('gemini-2.0-flash', 'gemini-2.5-flash') THEN
+                                (COALESCE(llm_narrative_tokens_in, 0) * 0.10 +
+                                 COALESCE(llm_narrative_tokens_out, 0) * 0.40) / 1000000.0
+                            ELSE
+                                (COALESCE(llm_narrative_tokens_in, 0) * :default_in +
+                                 COALESCE(llm_narrative_tokens_out, 0) * :default_out) / 1000000.0
+                        END
+                    ), 0) AS cost_usd
+                FROM post_match_audits
+                WHERE llm_narrative_model LIKE 'gemini%'
+                  AND (COALESCE(llm_narrative_tokens_in, 0) > 0
+                       OR COALESCE(llm_narrative_tokens_out, 0) > 0)
+                  AND created_at > NOW() - INTERVAL :interval
+            """
+
+            query_params = {"default_in": DEFAULT_PRICE_IN, "default_out": DEFAULT_PRICE_OUT}
+
+            # 24h metrics
             res_24h = await session.execute(
-                text(
-                    """
-                    SELECT
-                        COUNT(*) AS ok_count,
-                        COALESCE(SUM(llm_narrative_tokens_in), 0) AS tokens_in,
-                        COALESCE(SUM(llm_narrative_tokens_out), 0) AS tokens_out
-                    FROM post_match_audits
-                    WHERE llm_narrative_model LIKE 'gemini%'
-                      AND llm_narrative_status IN ('ok', 'completed_sync')
-                      AND created_at > NOW() - INTERVAL '24 hours'
-                    """
-                )
+                text(LLM_COST_BY_MODEL_QUERY), {**query_params, "interval": "24 hours"}
             )
             row_24h = res_24h.first()
-            ok_24h = int(row_24h[0] or 0) if row_24h else 0
+            requests_24h = int(row_24h[0] or 0) if row_24h else 0
             tokens_in_24h = int(row_24h[1] or 0) if row_24h else 0
             tokens_out_24h = int(row_24h[2] or 0) if row_24h else 0
-            cost_24h = (tokens_in_24h * GEMINI_PRICE_IN + tokens_out_24h * GEMINI_PRICE_OUT) / 1_000_000
+            cost_24h = float(row_24h[3] or 0) if row_24h else 0.0
 
             # 7d metrics
             res_7d = await session.execute(
-                text(
-                    """
-                    SELECT
-                        COUNT(*) AS ok_count,
-                        COALESCE(SUM(llm_narrative_tokens_in), 0) AS tokens_in,
-                        COALESCE(SUM(llm_narrative_tokens_out), 0) AS tokens_out
-                    FROM post_match_audits
-                    WHERE llm_narrative_model LIKE 'gemini%'
-                      AND llm_narrative_status IN ('ok', 'completed_sync')
-                      AND created_at > NOW() - INTERVAL '7 days'
-                    """
-                )
+                text(LLM_COST_BY_MODEL_QUERY), {**query_params, "interval": "7 days"}
             )
             row_7d = res_7d.first()
-            ok_7d = int(row_7d[0] or 0) if row_7d else 0
+            requests_7d = int(row_7d[0] or 0) if row_7d else 0
             tokens_in_7d = int(row_7d[1] or 0) if row_7d else 0
             tokens_out_7d = int(row_7d[2] or 0) if row_7d else 0
-            cost_7d = (tokens_in_7d * GEMINI_PRICE_IN + tokens_out_7d * GEMINI_PRICE_OUT) / 1_000_000
+            cost_7d = float(row_7d[3] or 0) if row_7d else 0.0
+
+            # 28d metrics (matches Google AI Studio billing window)
+            res_28d = await session.execute(
+                text(LLM_COST_BY_MODEL_QUERY), {**query_params, "interval": "28 days"}
+            )
+            row_28d = res_28d.first()
+            requests_28d = int(row_28d[0] or 0) if row_28d else 0
+            tokens_in_28d = int(row_28d[1] or 0) if row_28d else 0
+            tokens_out_28d = int(row_28d[2] or 0) if row_28d else 0
+            cost_28d = float(row_28d[3] or 0) if row_28d else 0.0
 
             # Total accumulated cost (all time)
             res_total = await session.execute(
                 text(
                     """
                     SELECT
-                        COUNT(*) AS ok_count,
+                        COUNT(*) AS request_count,
                         COALESCE(SUM(llm_narrative_tokens_in), 0) AS tokens_in,
-                        COALESCE(SUM(llm_narrative_tokens_out), 0) AS tokens_out
+                        COALESCE(SUM(llm_narrative_tokens_out), 0) AS tokens_out,
+                        COALESCE(SUM(
+                            CASE
+                                WHEN llm_narrative_model = 'gemini-2.5-pro' THEN
+                                    (COALESCE(llm_narrative_tokens_in, 0) * 1.25 +
+                                     COALESCE(llm_narrative_tokens_out, 0) * 10.00) / 1000000.0
+                                WHEN llm_narrative_model IN ('gemini-2.0-flash', 'gemini-2.5-flash') THEN
+                                    (COALESCE(llm_narrative_tokens_in, 0) * 0.10 +
+                                     COALESCE(llm_narrative_tokens_out, 0) * 0.40) / 1000000.0
+                                ELSE
+                                    (COALESCE(llm_narrative_tokens_in, 0) * :default_in +
+                                     COALESCE(llm_narrative_tokens_out, 0) * :default_out) / 1000000.0
+                            END
+                        ), 0) AS cost_usd
                     FROM post_match_audits
                     WHERE llm_narrative_model LIKE 'gemini%'
-                      AND llm_narrative_status IN ('ok', 'completed_sync')
+                      AND (COALESCE(llm_narrative_tokens_in, 0) > 0
+                           OR COALESCE(llm_narrative_tokens_out, 0) > 0)
                     """
-                )
+                ),
+                query_params,
             )
             row_total = res_total.first()
-            ok_total = int(row_total[0] or 0) if row_total else 0
+            requests_total = int(row_total[0] or 0) if row_total else 0
             tokens_in_total = int(row_total[1] or 0) if row_total else 0
             tokens_out_total = int(row_total[2] or 0) if row_total else 0
-            cost_total = (tokens_in_total * GEMINI_PRICE_IN + tokens_out_total * GEMINI_PRICE_OUT) / 1_000_000
+            cost_total = float(row_total[3] or 0) if row_total else 0.0
 
-            # Calculate avg cost per OK request
-            avg_cost_per_ok = cost_24h / ok_24h if ok_24h > 0 else 0.0
+            # Calculate avg cost per request
+            avg_cost_per_request = cost_24h / requests_24h if requests_24h > 0 else 0.0
 
             # Status: warn if cost_24h > $1 or avg_cost > $0.01
             status = "ok"
-            if cost_24h > 1.0 or avg_cost_per_ok > 0.01:
+            if cost_24h > 1.0 or avg_cost_per_request > 0.01:
                 status = "warn"
+
+            # Get current model pricing for transparency
+            current_model = settings.GEMINI_MODEL
+            current_pricing = MODEL_PRICING.get(
+                current_model, {"input": DEFAULT_PRICE_IN, "output": DEFAULT_PRICE_OUT}
+            )
 
             llm_cost_data = {
                 "provider": "gemini",
-                "cost_total_usd": round(cost_total, 2),
+                "model": current_model,
+                # Pricing transparency for auditing (current model)
+                "pricing_input_per_1m": current_pricing["input"],
+                "pricing_output_per_1m": current_pricing["output"],
+                # All model pricing for reference
+                "model_pricing": MODEL_PRICING,
+                # Cost metrics (calculated with per-model pricing)
                 "cost_24h_usd": round(cost_24h, 4),
                 "cost_7d_usd": round(cost_7d, 4),
-                "requests_ok_total": ok_total,
-                "requests_ok_24h": ok_24h,
-                "requests_ok_7d": ok_7d,
-                "avg_cost_per_ok_24h": round(avg_cost_per_ok, 6),
+                "cost_28d_usd": round(cost_28d, 4),
+                "cost_total_usd": round(cost_total, 2),
+                # Request counts (all requests with tokens, not filtered by status)
+                "requests_24h": requests_24h,
+                "requests_7d": requests_7d,
+                "requests_28d": requests_28d,
+                "requests_total": requests_total,
+                # Legacy fields for backward compatibility
+                "requests_ok_24h": requests_24h,
+                "requests_ok_7d": requests_7d,
+                "requests_ok_total": requests_total,
+                "avg_cost_per_ok_24h": round(avg_cost_per_request, 6),
+                # Token breakdown
                 "tokens_in_24h": tokens_in_24h,
                 "tokens_out_24h": tokens_out_24h,
                 "tokens_in_7d": tokens_in_7d,
                 "tokens_out_7d": tokens_out_7d,
+                "tokens_in_28d": tokens_in_28d,
+                "tokens_out_28d": tokens_out_28d,
                 "tokens_in_total": tokens_in_total,
                 "tokens_out_total": tokens_out_total,
                 "status": status,
-                "note": "Estimated from token usage. Gemini 2.0 Flash: $0.075/1M in, $0.30/1M out",
+                "note": "Cost calculated per-model: 2.0/2.5-flash=$0.10/$0.40, 2.5-pro=$1.25/$10.00 per 1M tokens. 28d window matches Google AI Studio billing.",
             }
         except Exception as e:
             logger.warning(f"Could not calculate LLM cost: {e}")
