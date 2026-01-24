@@ -5438,32 +5438,38 @@ def start_scheduler(ml_engine):
 
     # SOTA: Understat refs sync - every 12 hours
     # Links matches to Understat IDs for xG retrieval
+    # NOTE: next_run_time ensures job runs immediately on startup
     scheduler.add_job(
         sota_understat_refs_sync,
         trigger=IntervalTrigger(hours=12),
         id="sota_understat_refs_sync",
         name="SOTA Understat Refs Sync (every 12h)",
         replace_existing=True,
+        next_run_time=datetime.utcnow(),
     )
 
     # SOTA: Understat xG backfill - every 6 hours
     # Fetches actual xG data for matches with refs
+    # NOTE: next_run_time ensures job runs immediately on startup
     scheduler.add_job(
         sota_understat_ft_backfill,
         trigger=IntervalTrigger(hours=6),
         id="sota_understat_ft_backfill",
         name="SOTA Understat xG Backfill (every 6h)",
         replace_existing=True,
+        next_run_time=datetime.utcnow(),
     )
 
     # SOTA: Weather capture - every 60 minutes
     # Captures weather forecasts for upcoming matches (disabled by default)
+    # NOTE: next_run_time ensures job runs immediately on startup
     scheduler.add_job(
         sota_weather_capture_prekickoff,
         trigger=IntervalTrigger(minutes=60),
         id="sota_weather_capture",
         name="SOTA Weather Capture (every 60 min)",
         replace_existing=True,
+        next_run_time=datetime.utcnow(),
     )
 
     # SOTA: Venue geo expand - daily at 03:00 UTC
@@ -5478,22 +5484,26 @@ def start_scheduler(ml_engine):
 
     # SOTA: Sofascore refs sync - every 6 hours
     # Links matches to Sofascore event IDs (disabled by default)
+    # NOTE: next_run_time ensures job runs immediately on startup, then every 6h
     scheduler.add_job(
         sota_sofascore_refs_sync,
         trigger=IntervalTrigger(hours=6),
         id="sota_sofascore_refs_sync",
         name="SOTA Sofascore Refs Sync (every 6h)",
         replace_existing=True,
+        next_run_time=datetime.utcnow(),
     )
 
     # SOTA: Sofascore XI capture - every 30 minutes
     # Captures lineup/formation/ratings for upcoming matches (disabled by default)
+    # NOTE: next_run_time ensures job runs immediately on startup, then every 30min
     scheduler.add_job(
         sota_sofascore_xi_capture,
         trigger=IntervalTrigger(minutes=30),
         id="sota_sofascore_xi_capture",
         name="SOTA Sofascore XI Capture (every 30 min)",
         replace_existing=True,
+        next_run_time=datetime.utcnow(),
     )
 
     scheduler.start()
