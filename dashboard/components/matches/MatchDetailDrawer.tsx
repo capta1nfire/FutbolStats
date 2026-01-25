@@ -157,9 +157,9 @@ function VenueWeatherSection({ match }: { match: MatchSummary }) {
 }
 
 /** Standings row component */
-function StandingsRow({ row }: { row: StandingEntry }) {
+function StandingsRow({ row, isHighlighted }: { row: StandingEntry; isHighlighted?: boolean }) {
   return (
-    <div className="grid grid-cols-[24px_1fr_28px_28px_28px_28px_40px_32px_28px] gap-1 items-center font-condensed text-sm px-1 py-1.5 rounded hover:bg-muted/30 transition-colors">
+    <div className={`grid grid-cols-[24px_1fr_28px_28px_28px_28px_40px_32px_28px] gap-1 items-center font-condensed text-sm px-1 py-1.5 rounded transition-colors ${isHighlighted ? "bg-[#05254d] hover:bg-[#05254d]" : "hover:bg-muted/30"}`}>
       <span className="text-muted-foreground text-center">{row.position}</span>
       <span className="text-foreground truncate">{row.teamName}</span>
       <span className="text-muted-foreground text-center">{row.played}</span>
@@ -176,7 +176,17 @@ function StandingsRow({ row }: { row: StandingEntry }) {
 }
 
 /** Standings table component */
-function StandingsTable({ leagueId }: { leagueId: number }) {
+function StandingsTable({
+  leagueId,
+  homeTeamName,
+  awayTeamName,
+  isLive
+}: {
+  leagueId: number;
+  homeTeamName?: string;
+  awayTeamName?: string;
+  isLive?: boolean;
+}) {
   const { data, isLoading, error } = useStandings(leagueId);
 
   if (isLoading) {
@@ -225,7 +235,11 @@ function StandingsTable({ leagueId }: { leagueId: number }) {
       {/* Table rows */}
       <div className="space-y-0">
         {data.standings.map((row) => (
-          <StandingsRow key={row.position} row={row} />
+          <StandingsRow
+            key={row.position}
+            row={row}
+            isHighlighted={isLive && (row.teamName === homeTeamName || row.teamName === awayTeamName)}
+          />
         ))}
       </div>
 
@@ -571,6 +585,8 @@ function MatchTabContent({
     minute: "2-digit",
   });
 
+  const isLive = match.status === "live" || match.status === "ht";
+
   return (
     <div className="w-full space-y-3">
       {/* Overview Tab - Venue/Weather Section (first card) */}
@@ -659,7 +675,12 @@ function MatchTabContent({
       {/* Standings Tab */}
       {activeTab === "standings" && (
         <div className="bg-surface rounded-lg py-2 px-1">
-          <StandingsTable leagueId={match.leagueId} />
+          <StandingsTable
+            leagueId={match.leagueId}
+            homeTeamName={match.home}
+            awayTeamName={match.away}
+            isLive={isLive}
+          />
         </div>
       )}
     </div>

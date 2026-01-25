@@ -119,7 +119,7 @@ export function Pagination({
               >
                 <SelectTrigger
                   size="sm"
-                  className="w-[70px] h-8 bg-[rgba(249,250,250,0.04)] border-transparent hover:border-[#b7bcc2] text-[13px] text-[#f9fafa]"
+                  className="w-[80px] h-8 bg-[rgba(249,250,250,0.04)] border-transparent hover:border-[#b7bcc2] text-[13px] text-[#f9fafa]"
                 >
                   <SelectValue />
                 </SelectTrigger>
