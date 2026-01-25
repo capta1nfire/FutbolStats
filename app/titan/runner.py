@@ -149,6 +149,7 @@ class TitanRunner:
         limit: int,
     ) -> list[dict]:
         """Get matches from public.matches for a date."""
+        # public.matches.date is TIMESTAMP (naive), so use naive datetimes
         params = {
             "start": datetime.combine(target_date, datetime.min.time()),
             "end": datetime.combine(target_date, datetime.max.time()),

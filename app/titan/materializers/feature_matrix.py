@@ -292,9 +292,12 @@ class FeatureMatrixMaterializer:
             LIMIT :limit
         """)
 
+        # public.matches.date is TIMESTAMP (naive), so strip timezone for comparison
+        kickoff_naive = kickoff_utc.replace(tzinfo=None) if kickoff_utc.tzinfo else kickoff_utc
+
         result = await self.session.execute(query, {
             "team_id": team_id,
-            "kickoff": kickoff_utc,
+            "kickoff": kickoff_naive,
             "limit": limit,
         })
         rows = result.fetchall()
@@ -375,10 +378,13 @@ class FeatureMatrixMaterializer:
             LIMIT :limit
         """)
 
+        # public.matches.date is TIMESTAMP (naive), so strip timezone for comparison
+        kickoff_naive = kickoff_utc.replace(tzinfo=None) if kickoff_utc.tzinfo else kickoff_utc
+
         result = await self.session.execute(query, {
             "home_id": home_team_id,
             "away_id": away_team_id,
-            "kickoff": kickoff_utc,
+            "kickoff": kickoff_naive,
             "limit": limit,
         })
         rows = result.fetchall()
@@ -497,17 +503,20 @@ class FeatureMatrixMaterializer:
             ) t
         """)
 
+        # public.matches.date is TIMESTAMP (naive), so strip timezone for comparison
+        kickoff_naive = kickoff_utc.replace(tzinfo=None) if kickoff_utc.tzinfo else kickoff_utc
+
         # Execute both queries
         home_result = await self.session.execute(home_query, {
             "team_id": home_team_id,
-            "kickoff": kickoff_utc,
+            "kickoff": kickoff_naive,
             "limit": limit,
         })
         home_row = home_result.fetchone()
 
         away_result = await self.session.execute(away_query, {
             "team_id": away_team_id,
-            "kickoff": kickoff_utc,
+            "kickoff": kickoff_naive,
             "limit": limit,
         })
         away_row = away_result.fetchone()

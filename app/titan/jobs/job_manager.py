@@ -139,7 +139,7 @@ class TitanJobManager:
                 captured_at, idempotency_key, r2_bucket, r2_key, response_size_bytes
             ) VALUES (
                 :source_id, :job_id, :url, :endpoint, :params_hash, :date_bucket,
-                :response_type, :response_body::jsonb, :http_status, :response_time_ms,
+                :response_type, CAST(:response_body AS jsonb), :http_status, :response_time_ms,
                 :captured_at, :idempotency_key, :r2_bucket, :r2_key, :response_size_bytes
             )
             ON CONFLICT (idempotency_key) DO NOTHING
