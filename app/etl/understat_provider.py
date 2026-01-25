@@ -14,6 +14,22 @@ Usage:
 Rate limiting: ~1 req/s to be respectful of Understat servers.
 
 Reference: docs/ARCHITECTURE_SOTA.md section 1.3 (match_understat_team)
+
+API Discovery (Jan 2026):
+    Understat changed their HTML structure - they no longer embed JSON data inline
+    (datesData, match_info, shotsData). The frontend now fetches data via AJAX.
+
+    How we discovered the endpoints:
+    1. Inspected js/league.min.js and js/match.min.js in browser DevTools
+    2. Found AJAX calls to internal endpoints that return JSON directly
+
+    Endpoints:
+    - GET /getLeagueData/{league}/{season} -> {dates: [...matches], teams: {...}}
+    - GET /getMatchData/{match_id} -> {shots: {h: [...], a: [...]}, rosters: {...}}
+
+    Required headers (otherwise returns 404):
+    - X-Requested-With: XMLHttpRequest
+    - Referer: https://understat.com/league/{league}/{season} (or /match/{id})
 """
 
 import asyncio
