@@ -5311,6 +5311,36 @@ async def pit_dashboard_json(request: Request):
     }
 
 
+# =============================================================================
+# TITAN OMNISCIENCE Dashboard
+# =============================================================================
+
+
+@app.get("/dashboard/titan.json")
+async def titan_dashboard_json(request: Request):
+    """
+    TITAN OMNISCIENCE Dashboard JSON - Enterprise scraping status.
+
+    Returns comprehensive TITAN operational status including:
+    - Extraction counts and coverage
+    - DLQ (Dead Letter Queue) status
+    - PIT (Point-in-Time) compliance metrics
+    - Feature matrix statistics
+
+    Protected by X-Dashboard-Token (same auth as /dashboard/ops.json).
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(
+            status_code=401,
+            detail="Dashboard access requires valid token.",
+        )
+
+    from app.titan.dashboard import get_titan_status
+
+    async with AsyncSessionLocal() as session:
+        return await get_titan_status(session)
+
+
 @app.get("/dashboard/pit/debug")
 async def pit_dashboard_debug(request: Request):
     """
