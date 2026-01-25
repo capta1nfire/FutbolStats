@@ -1,6 +1,6 @@
 """TITAN OMNISCIENCE Configuration.
 
-Minimal configuration for FASE 1. R2/aioboto3 deferred to FASE 2.
+Configuration for TITAN infrastructure including R2 storage (FASE 2).
 """
 
 from functools import lru_cache
@@ -26,11 +26,36 @@ class TitanSettings(BaseSettings):
     # Feature Matrix
     TITAN_FEATURE_MATRIX_REQUIRE_TIER1: bool = True  # Tier 1 (odds) required for insert
 
-    # Sources (FASE 1: only API-Football)
+    # Sources
     TITAN_SOURCE_API_FOOTBALL: str = "api_football"
+    TITAN_SOURCE_UNDERSTAT: str = "understat"
 
     # Dashboard
     TITAN_DASHBOARD_ENABLED: bool = True
+
+    # ==========================================================================
+    # R2 Storage Configuration (FASE 2)
+    # ==========================================================================
+    # Cloudflare R2 / S3-compatible storage for large response offload
+
+    R2_ENABLED: bool = False
+    R2_ENDPOINT_URL: str = ""  # https://<account_id>.r2.cloudflarestorage.com
+    R2_ACCESS_KEY_ID: str = ""
+    R2_SECRET_ACCESS_KEY: str = ""
+    R2_BUCKET: str = "titan-extractions"
+
+    # Offload threshold: responses larger than this go to R2
+    R2_OFFLOAD_THRESHOLD_BYTES: int = 100 * 1024  # 100KB
+
+    # Retention policy
+    RETENTION_DAYS_DB: int = 90   # Keep response_body in DB for 90 days
+    RETENTION_DAYS_R2: int = 365  # Keep in R2 for 1 year
+
+    # ==========================================================================
+    # xG Features Configuration (FASE 2)
+    # ==========================================================================
+
+    XG_ROLLING_WINDOW: int = 5  # Number of past matches for xG average
 
     class Config:
         env_prefix = "TITAN_"

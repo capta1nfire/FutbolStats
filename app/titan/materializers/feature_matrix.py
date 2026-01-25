@@ -55,6 +55,23 @@ class OddsFeatures:
 
 
 @dataclass
+class XGFeatures:
+    """Tier 1b: xG features (Understat).
+
+    Rolling averages over last N matches per team.
+    Naming convention: *_last5 clarifies these are rolling windows.
+    """
+
+    xg_home_last5: Decimal  # Home team avg xG
+    xg_away_last5: Decimal  # Away team avg xG
+    xga_home_last5: Decimal  # Home team avg xG Against
+    xga_away_last5: Decimal  # Away team avg xG Against
+    npxg_home_last5: Decimal  # Home team avg non-penalty xG
+    npxg_away_last5: Decimal  # Away team avg non-penalty xG
+    captured_at: datetime
+
+
+@dataclass
 class FormFeatures:
     """Tier 2: Form features for ONE team.
 
@@ -86,17 +103,19 @@ def should_insert_feature_row(
     odds: Optional[OddsFeatures],
     form: Optional[FormFeatures],
     h2h: Optional[H2HFeatures],
+    xg: Optional[XGFeatures] = None,
 ) -> tuple[bool, str]:
     """
     Insertion policy for feature_matrix.
 
     RULE 1: No odds -> DON'T insert (Tier 1 is mandatory gate)
-    RULE 2: With odds, missing Tier 2/3 -> DO insert with NULLs
+    RULE 2: With odds, missing Tier 1b/2/3 -> DO insert with NULLs
 
     Args:
         odds: Tier 1 odds features (or None)
         form: Tier 2 form features (or None)
         h2h: Tier 3 H2H features (or None)
+        xg: Tier 1b xG features (or None) - optional enrichment
 
     Returns:
         (should_insert, reason)
@@ -105,14 +124,15 @@ def should_insert_feature_row(
     if odds is None:
         return False, "Missing Tier 1 (odds) - skipping"
 
-    # RULE 2: With odds, missing Tier 2/3 -> YES insert with NULLs
-    return True, "Tier 1 complete, inserting (Tier 2/3 may be NULL)"
+    # RULE 2: With odds, missing Tier 1b/2/3 -> YES insert with NULLs
+    return True, "Tier 1 complete, inserting (Tier 1b/2/3 may be NULL)"
 
 
 def compute_pit_max(
     odds: Optional[OddsFeatures],
     form: Optional[FormFeatures],
     h2h: Optional[H2HFeatures],
+    xg: Optional[XGFeatures] = None,
 ) -> datetime:
     """
     Compute pit_max_captured_at.
@@ -124,6 +144,7 @@ def compute_pit_max(
         odds: Tier 1 features (MUST have at least this per insertion policy)
         form: Tier 2 features (optional)
         h2h: Tier 3 features (optional)
+        xg: Tier 1b xG features (optional)
 
     Returns:
         Maximum captured_at timestamp
@@ -139,6 +160,8 @@ def compute_pit_max(
         timestamps.append(form.captured_at)
     if h2h and h2h.captured_at:
         timestamps.append(h2h.captured_at)
+    if xg and xg.captured_at:
+        timestamps.append(xg.captured_at)
 
     if not timestamps:
         raise ValueError("No captured_at timestamps available")
@@ -404,6 +427,116 @@ class FeatureMatrixMaterializer:
             captured_at=_utc_now(),
         )
 
+    async def compute_xg_last5_features(
+        self,
+        home_team_id: int,
+        away_team_id: int,
+        kickoff_utc: datetime,
+        limit: int = None,
+    ) -> Optional[XGFeatures]:
+        """Compute Tier 1b xG features from public.match_understat_team.
+
+        Uses proper subquery pattern per auditor requirement:
+        SELECT AVG(...) FROM (SELECT ... ORDER BY date DESC LIMIT N) t
+
+        PIT-SAFE: Only uses matches with date < kickoff_utc.
+
+        Args:
+            home_team_id: Home team ID
+            away_team_id: Away team ID
+            kickoff_utc: Target match kickoff (for PIT filter)
+            limit: Number of recent matches (default from config.XG_ROLLING_WINDOW)
+
+        Returns:
+            XGFeatures or None if insufficient data
+        """
+        if limit is None:
+            limit = titan_settings.XG_ROLLING_WINDOW
+
+        # Query for home team xG (using subquery for proper AVG with ORDER BY/LIMIT)
+        home_query = text("""
+            SELECT
+                AVG(t.xg) as avg_xg,
+                AVG(t.xga) as avg_xga,
+                AVG(t.npxg) as avg_npxg,
+                COUNT(*) as match_count
+            FROM (
+                SELECT
+                    CASE WHEN m.home_team_id = :team_id THEN mut.xg_home ELSE mut.xg_away END as xg,
+                    CASE WHEN m.home_team_id = :team_id THEN mut.xga_home ELSE mut.xga_away END as xga,
+                    CASE WHEN m.home_team_id = :team_id THEN mut.npxg_home ELSE mut.npxg_away END as npxg
+                FROM public.matches m
+                JOIN public.match_understat_team mut ON m.id = mut.match_id
+                WHERE (m.home_team_id = :team_id OR m.away_team_id = :team_id)
+                  AND m.date < :kickoff
+                  AND m.status IN ('FT', 'AET', 'PEN')
+                ORDER BY m.date DESC
+                LIMIT :limit
+            ) t
+        """)
+
+        # Query for away team xG
+        away_query = text("""
+            SELECT
+                AVG(t.xg) as avg_xg,
+                AVG(t.xga) as avg_xga,
+                AVG(t.npxg) as avg_npxg,
+                COUNT(*) as match_count
+            FROM (
+                SELECT
+                    CASE WHEN m.home_team_id = :team_id THEN mut.xg_home ELSE mut.xg_away END as xg,
+                    CASE WHEN m.home_team_id = :team_id THEN mut.xga_home ELSE mut.xga_away END as xga,
+                    CASE WHEN m.home_team_id = :team_id THEN mut.npxg_home ELSE mut.npxg_away END as npxg
+                FROM public.matches m
+                JOIN public.match_understat_team mut ON m.id = mut.match_id
+                WHERE (m.home_team_id = :team_id OR m.away_team_id = :team_id)
+                  AND m.date < :kickoff
+                  AND m.status IN ('FT', 'AET', 'PEN')
+                ORDER BY m.date DESC
+                LIMIT :limit
+            ) t
+        """)
+
+        # Execute both queries
+        home_result = await self.session.execute(home_query, {
+            "team_id": home_team_id,
+            "kickoff": kickoff_utc,
+            "limit": limit,
+        })
+        home_row = home_result.fetchone()
+
+        away_result = await self.session.execute(away_query, {
+            "team_id": away_team_id,
+            "kickoff": kickoff_utc,
+            "limit": limit,
+        })
+        away_row = away_result.fetchone()
+
+        # Check if we have enough data for both teams
+        home_count = home_row[3] if home_row else 0
+        away_count = away_row[3] if away_row else 0
+
+        if home_count < limit or away_count < limit:
+            logger.debug(
+                f"Insufficient xG data for match: home={home_count}/{limit}, away={away_count}/{limit}"
+            )
+            return None
+
+        # Check for NULL values (shouldn't happen but defensive)
+        if home_row[0] is None or away_row[0] is None:
+            logger.warning("xG query returned NULL values despite having enough matches")
+            return None
+
+        return XGFeatures(
+            xg_home_last5=Decimal(str(round(home_row[0], 2))),
+            xg_away_last5=Decimal(str(round(away_row[0], 2))),
+            xga_home_last5=Decimal(str(round(home_row[1], 2))),
+            xga_away_last5=Decimal(str(round(away_row[1], 2))),
+            npxg_home_last5=Decimal(str(round(home_row[2], 2))),
+            npxg_away_last5=Decimal(str(round(away_row[2], 2))),
+            captured_at=_utc_now(),
+        )
+
     async def insert_row(
         self,
         match_id: int,
@@ -416,6 +549,7 @@ class FeatureMatrixMaterializer:
         form_home: Optional[FormFeatures] = None,
         form_away: Optional[FormFeatures] = None,
         h2h: Optional[H2HFeatures] = None,
+        xg: Optional[XGFeatures] = None,
     ) -> bool:
         """Insert or update feature_matrix row with policy enforcement.
 
@@ -430,6 +564,7 @@ class FeatureMatrixMaterializer:
             form_home: Tier 2 form for home team
             form_away: Tier 2 form for away team
             h2h: Tier 3 H2H features
+            xg: Tier 1b xG features (optional enrichment)
 
         Returns:
             True if inserted, False if skipped
@@ -439,13 +574,13 @@ class FeatureMatrixMaterializer:
             InsertionPolicyViolation: If policy requirements not met
         """
         # Check insertion policy
-        should_insert, reason = should_insert_feature_row(odds, form_home, h2h)
+        should_insert, reason = should_insert_feature_row(odds, form_home, h2h, xg)
         if not should_insert:
             logger.info(f"Skipping match {match_id}: {reason}")
             return False
 
         # Compute pit_max_captured_at
-        pit_max = compute_pit_max(odds, form_home, h2h)
+        pit_max = compute_pit_max(odds, form_home, h2h, xg)
 
         # Validate PIT constraint
         if pit_max >= kickoff_utc:
@@ -464,6 +599,7 @@ class FeatureMatrixMaterializer:
             "away_team_id": away_team_id,
             "pit_max_captured_at": pit_max,
             "tier1_complete": odds is not None,
+            "tier1b_complete": xg is not None,
             "tier2_complete": form_home is not None and form_away is not None,
             "tier3_complete": h2h is not None,
         }
@@ -478,6 +614,18 @@ class FeatureMatrixMaterializer:
                 "implied_prob_draw": odds.implied_prob_draw,
                 "implied_prob_away": odds.implied_prob_away,
                 "odds_captured_at": odds.captured_at,
+            })
+
+        # Tier 1b: xG (Understat)
+        if xg:
+            values.update({
+                "xg_home_last5": xg.xg_home_last5,
+                "xg_away_last5": xg.xg_away_last5,
+                "xga_home_last5": xg.xga_home_last5,
+                "xga_away_last5": xg.xga_away_last5,
+                "npxg_home_last5": xg.npxg_home_last5,
+                "npxg_away_last5": xg.npxg_away_last5,
+                "xg_captured_at": xg.captured_at,
             })
 
         # Tier 2: Form (form_home = home team's form, form_away = away team's form)
@@ -512,22 +660,26 @@ class FeatureMatrixMaterializer:
                 match_id, kickoff_utc, competition_id, season, home_team_id, away_team_id,
                 odds_home_close, odds_draw_close, odds_away_close,
                 implied_prob_home, implied_prob_draw, implied_prob_away, odds_captured_at,
+                xg_home_last5, xg_away_last5, xga_home_last5, xga_away_last5,
+                npxg_home_last5, npxg_away_last5, xg_captured_at,
                 form_home_last5, form_away_last5, goals_home_last5, goals_away_last5,
                 goals_against_home_last5, goals_against_away_last5,
                 points_home_last5, points_away_last5, form_captured_at,
                 h2h_total_matches, h2h_home_wins, h2h_draws, h2h_away_wins,
                 h2h_home_goals, h2h_away_goals, h2h_captured_at,
-                pit_max_captured_at, tier1_complete, tier2_complete, tier3_complete
+                pit_max_captured_at, tier1_complete, tier1b_complete, tier2_complete, tier3_complete
             ) VALUES (
                 :match_id, :kickoff_utc, :competition_id, :season, :home_team_id, :away_team_id,
                 :odds_home_close, :odds_draw_close, :odds_away_close,
                 :implied_prob_home, :implied_prob_draw, :implied_prob_away, :odds_captured_at,
+                :xg_home_last5, :xg_away_last5, :xga_home_last5, :xga_away_last5,
+                :npxg_home_last5, :npxg_away_last5, :xg_captured_at,
                 :form_home_last5, :form_away_last5, :goals_home_last5, :goals_away_last5,
                 :goals_against_home_last5, :goals_against_away_last5,
                 :points_home_last5, :points_away_last5, :form_captured_at,
                 :h2h_total_matches, :h2h_home_wins, :h2h_draws, :h2h_away_wins,
                 :h2h_home_goals, :h2h_away_goals, :h2h_captured_at,
-                :pit_max_captured_at, :tier1_complete, :tier2_complete, :tier3_complete
+                :pit_max_captured_at, :tier1_complete, :tier1b_complete, :tier2_complete, :tier3_complete
             )
             ON CONFLICT (match_id) DO UPDATE SET
                 odds_home_close = COALESCE(EXCLUDED.odds_home_close, {self.schema}.feature_matrix.odds_home_close),
@@ -537,6 +689,13 @@ class FeatureMatrixMaterializer:
                 implied_prob_draw = COALESCE(EXCLUDED.implied_prob_draw, {self.schema}.feature_matrix.implied_prob_draw),
                 implied_prob_away = COALESCE(EXCLUDED.implied_prob_away, {self.schema}.feature_matrix.implied_prob_away),
                 odds_captured_at = COALESCE(EXCLUDED.odds_captured_at, {self.schema}.feature_matrix.odds_captured_at),
+                xg_home_last5 = COALESCE(EXCLUDED.xg_home_last5, {self.schema}.feature_matrix.xg_home_last5),
+                xg_away_last5 = COALESCE(EXCLUDED.xg_away_last5, {self.schema}.feature_matrix.xg_away_last5),
+                xga_home_last5 = COALESCE(EXCLUDED.xga_home_last5, {self.schema}.feature_matrix.xga_home_last5),
+                xga_away_last5 = COALESCE(EXCLUDED.xga_away_last5, {self.schema}.feature_matrix.xga_away_last5),
+                npxg_home_last5 = COALESCE(EXCLUDED.npxg_home_last5, {self.schema}.feature_matrix.npxg_home_last5),
+                npxg_away_last5 = COALESCE(EXCLUDED.npxg_away_last5, {self.schema}.feature_matrix.npxg_away_last5),
+                xg_captured_at = COALESCE(EXCLUDED.xg_captured_at, {self.schema}.feature_matrix.xg_captured_at),
                 form_home_last5 = COALESCE(EXCLUDED.form_home_last5, {self.schema}.feature_matrix.form_home_last5),
                 form_away_last5 = COALESCE(EXCLUDED.form_away_last5, {self.schema}.feature_matrix.form_away_last5),
                 goals_home_last5 = COALESCE(EXCLUDED.goals_home_last5, {self.schema}.feature_matrix.goals_home_last5),
@@ -555,6 +714,7 @@ class FeatureMatrixMaterializer:
                 h2h_captured_at = COALESCE(EXCLUDED.h2h_captured_at, {self.schema}.feature_matrix.h2h_captured_at),
                 pit_max_captured_at = GREATEST(EXCLUDED.pit_max_captured_at, {self.schema}.feature_matrix.pit_max_captured_at),
                 tier1_complete = EXCLUDED.tier1_complete OR {self.schema}.feature_matrix.tier1_complete,
+                tier1b_complete = EXCLUDED.tier1b_complete OR {self.schema}.feature_matrix.tier1b_complete,
                 tier2_complete = EXCLUDED.tier2_complete OR {self.schema}.feature_matrix.tier2_complete,
                 tier3_complete = EXCLUDED.tier3_complete OR {self.schema}.feature_matrix.tier3_complete
         """)
@@ -562,7 +722,10 @@ class FeatureMatrixMaterializer:
         # Set NULL for missing optional values
         for key in ["odds_home_close", "odds_draw_close", "odds_away_close",
                     "implied_prob_home", "implied_prob_draw", "implied_prob_away",
-                    "odds_captured_at", "form_home_last5", "form_away_last5",
+                    "odds_captured_at",
+                    "xg_home_last5", "xg_away_last5", "xga_home_last5", "xga_away_last5",
+                    "npxg_home_last5", "npxg_away_last5", "xg_captured_at",
+                    "form_home_last5", "form_away_last5",
                     "goals_home_last5", "goals_away_last5", "goals_against_home_last5",
                     "goals_against_away_last5", "points_home_last5", "points_away_last5",
                     "form_captured_at", "h2h_total_matches", "h2h_home_wins", "h2h_draws",
@@ -586,6 +749,7 @@ class FeatureMatrixMaterializer:
             SELECT
                 COUNT(*) as total_rows,
                 COUNT(*) FILTER (WHERE tier1_complete) as tier1_count,
+                COUNT(*) FILTER (WHERE tier1b_complete) as tier1b_count,
                 COUNT(*) FILTER (WHERE tier2_complete) as tier2_count,
                 COUNT(*) FILTER (WHERE tier3_complete) as tier3_count,
                 COUNT(*) FILTER (WHERE pit_max_captured_at >= kickoff_utc) as pit_violations,
@@ -598,16 +762,19 @@ class FeatureMatrixMaterializer:
         result = await self.session.execute(query)
         row = result.fetchone()
 
+        total = row[0] or 0
         return {
-            "total_rows": row[0] or 0,
+            "total_rows": total,
             "tier1_complete": row[1] or 0,
-            "tier2_complete": row[2] or 0,
-            "tier3_complete": row[3] or 0,
-            "pit_violations": row[4] or 0,
-            "with_outcome": row[5] or 0,
-            "earliest_match": row[6].isoformat() if row[6] else None,
-            "latest_match": row[7].isoformat() if row[7] else None,
-            "tier1_coverage_pct": round((row[1] or 0) / row[0] * 100, 1) if row[0] else 0,
-            "tier2_coverage_pct": round((row[2] or 0) / row[0] * 100, 1) if row[0] else 0,
-            "tier3_coverage_pct": round((row[3] or 0) / row[0] * 100, 1) if row[0] else 0,
+            "tier1b_complete": row[2] or 0,
+            "tier2_complete": row[3] or 0,
+            "tier3_complete": row[4] or 0,
+            "pit_violations": row[5] or 0,
+            "with_outcome": row[6] or 0,
+            "earliest_match": row[7].isoformat() if row[7] else None,
+            "latest_match": row[8].isoformat() if row[8] else None,
+            "tier1_coverage_pct": round((row[1] or 0) / total * 100, 1) if total else 0,
+            "tier1b_coverage_pct": round((row[2] or 0) / total * 100, 1) if total else 0,
+            "tier2_coverage_pct": round((row[3] or 0) / total * 100, 1) if total else 0,
+            "tier3_coverage_pct": round((row[4] or 0) / total * 100, 1) if total else 0,
         }

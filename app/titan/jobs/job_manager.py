@@ -7,6 +7,7 @@ Responsibilities:
 4. Manage DLQ retry logic with exponential backoff
 """
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -22,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.titan.extractors.base import ExtractionResult
 from app.titan.config import get_titan_settings
+from app.titan.storage.r2_client import get_r2_client, build_r2_key
 
 logger = logging.getLogger(__name__)
 titan_settings = get_titan_settings()
@@ -71,6 +73,11 @@ class TitanJobManager:
     async def save_extraction(self, result: ExtractionResult) -> int:
         """Save successful extraction to raw_extractions.
 
+        If response_body > R2_OFFLOAD_THRESHOLD_BYTES:
+        1. Upload to R2 with key: {source_id}/{date_bucket}/{job_id}.json
+        2. Set r2_bucket, r2_key in DB
+        3. Set response_body = NULL (integrity constraint enforced by DB)
+
         Args:
             result: ExtractionResult from extractor
 
@@ -80,25 +87,64 @@ class TitanJobManager:
         Raises:
             IntegrityError: If idempotency_key already exists (race condition)
         """
+        result_dict = result.to_dict()
+
+        # Convert response_body to JSON string for size check and JSONB
+        response_json = None
+        response_size = 0
+        if result_dict["response_body"] is not None:
+            response_json = json.dumps(result_dict["response_body"])
+            response_size = len(response_json.encode("utf-8"))
+
+        # Check if R2 offload is needed
+        r2_bucket = None
+        r2_key = None
+        r2_client = get_r2_client()
+
+        if (
+            r2_client is not None
+            and response_size > titan_settings.R2_OFFLOAD_THRESHOLD_BYTES
+        ):
+            # Offload to R2
+            date_bucket_str = (
+                result.date_bucket.isoformat() if result.date_bucket else "unknown"
+            )
+            r2_key = build_r2_key(result.source_id, date_bucket_str, result.job_id)
+            r2_bucket = titan_settings.R2_BUCKET
+
+            success = await r2_client.put_object(key=r2_key, body=response_json)
+            if success:
+                logger.info(
+                    f"R2 offload: {r2_key} ({response_size} bytes)"
+                )
+                # Set response_body to NULL (offloaded to R2)
+                response_json = None
+            else:
+                # R2 upload failed - fall back to DB storage
+                logger.warning(
+                    f"R2 offload failed for {r2_key}, storing in DB"
+                )
+                r2_bucket = None
+                r2_key = None
+
+        result_dict["response_body"] = response_json
+        result_dict["r2_bucket"] = r2_bucket
+        result_dict["r2_key"] = r2_key
+        result_dict["response_size_bytes"] = response_size
+
         query = text(f"""
             INSERT INTO {self.schema}.raw_extractions (
                 source_id, job_id, url, endpoint, params_hash, date_bucket,
                 response_type, response_body, http_status, response_time_ms,
-                captured_at, idempotency_key
+                captured_at, idempotency_key, r2_bucket, r2_key, response_size_bytes
             ) VALUES (
                 :source_id, :job_id, :url, :endpoint, :params_hash, :date_bucket,
                 :response_type, :response_body::jsonb, :http_status, :response_time_ms,
-                :captured_at, :idempotency_key
+                :captured_at, :idempotency_key, :r2_bucket, :r2_key, :response_size_bytes
             )
             ON CONFLICT (idempotency_key) DO NOTHING
             RETURNING extraction_id
         """)
-
-        import json
-        result_dict = result.to_dict()
-        # Convert response_body to JSON string for JSONB
-        if result_dict["response_body"] is not None:
-            result_dict["response_body"] = json.dumps(result_dict["response_body"])
 
         db_result = await self.session.execute(query, result_dict)
         await self.session.commit()
@@ -171,7 +217,6 @@ class TitanJobManager:
             delay_seconds = base_seconds
             next_retry = now + timedelta(seconds=delay_seconds)
 
-            import json
             # Store full replay info: endpoint, url, params_hash, date_bucket
             # This allows DLQ replay to reconstruct the exact request
             params_json = json.dumps({
@@ -348,4 +393,75 @@ class TitanJobManager:
             "oldest_pending": row[3].isoformat() if row[3] else None,
             "sources_affected": row[4] or 0,
             "error_breakdown": error_breakdown,
+        }
+
+    async def get_extraction_response(self, extraction_id: int) -> Optional[dict]:
+        """Get extraction response, fetching from R2 if offloaded.
+
+        Args:
+            extraction_id: ID of the extraction
+
+        Returns:
+            Parsed response body or None if not found
+        """
+        query = text(f"""
+            SELECT response_body, r2_bucket, r2_key
+            FROM {self.schema}.raw_extractions
+            WHERE extraction_id = :extraction_id
+        """)
+
+        result = await self.session.execute(query, {"extraction_id": extraction_id})
+        row = result.fetchone()
+
+        if not row:
+            return None
+
+        response_body, r2_bucket, r2_key = row
+
+        # If response is in DB
+        if response_body is not None:
+            return response_body  # Already parsed as JSONB
+
+        # If offloaded to R2
+        if r2_key is not None:
+            r2_client = get_r2_client()
+            if r2_client is None:
+                logger.error(f"R2 client not available for extraction {extraction_id}")
+                return None
+
+            response_json = await r2_client.get_object(key=r2_key)
+            if response_json is None:
+                logger.error(f"R2 object not found: {r2_key}")
+                return None
+
+            return json.loads(response_json)
+
+        # Neither DB nor R2 has the response
+        return None
+
+    async def get_r2_stats(self) -> dict:
+        """Get R2 offload statistics for dashboard.
+
+        Returns:
+            Dict with offload counts and total size.
+        """
+        query = text(f"""
+            SELECT
+                COUNT(*) FILTER (WHERE r2_key IS NOT NULL) as offloaded_count,
+                COUNT(*) FILTER (WHERE r2_key IS NULL AND response_body IS NOT NULL) as db_stored_count,
+                COALESCE(SUM(response_size_bytes) FILTER (WHERE r2_key IS NOT NULL), 0) as r2_total_bytes,
+                COALESCE(SUM(response_size_bytes) FILTER (WHERE r2_key IS NULL), 0) as db_total_bytes
+            FROM {self.schema}.raw_extractions
+        """)
+
+        result = await self.session.execute(query)
+        row = result.fetchone()
+
+        return {
+            "offloaded_count": row[0] or 0,
+            "db_stored_count": row[1] or 0,
+            "r2_total_bytes": row[2] or 0,
+            "db_total_bytes": row[3] or 0,
+            "r2_total_mb": round((row[2] or 0) / (1024 * 1024), 2),
+            "db_total_mb": round((row[3] or 0) / (1024 * 1024), 2),
         }

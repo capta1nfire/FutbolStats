@@ -16,6 +16,7 @@ from app.titan.materializers.feature_matrix import (
     OddsFeatures,
     FormFeatures,
     H2HFeatures,
+    XGFeatures,
     should_insert_feature_row,
     compute_pit_max,
     compute_implied_probabilities,
@@ -161,6 +162,46 @@ class TestComputePitMax:
 
         pit_max = compute_pit_max(odds=odds, form=form, h2h=h2h)
         assert pit_max == datetime(2026, 1, 25, 14, 0, 0)
+
+    def test_four_tiers_with_xg_takes_max(self):
+        """With xG (Tier 1b) included, pit_max = max of all including xG."""
+        odds = OddsFeatures(
+            odds_home_close=Decimal("2.10"),
+            odds_draw_close=Decimal("3.40"),
+            odds_away_close=Decimal("3.20"),
+            implied_prob_home=Decimal("0.4651"),
+            implied_prob_draw=Decimal("0.2874"),
+            implied_prob_away=Decimal("0.3053"),
+            captured_at=datetime(2026, 1, 25, 8, 0, 0),
+        )
+        form = FormFeatures(
+            form_last5="WWDLW",
+            goals_scored_last5=8,
+            goals_conceded_last5=4,
+            points_last5=10,
+            captured_at=datetime(2026, 1, 25, 10, 0, 0),
+        )
+        h2h = H2HFeatures(
+            h2h_total_matches=10,
+            h2h_home_wins=4,
+            h2h_draws=3,
+            h2h_away_wins=3,
+            h2h_home_goals=15,
+            h2h_away_goals=12,
+            captured_at=datetime(2026, 1, 25, 14, 0, 0),
+        )
+        xg = XGFeatures(
+            xg_home_last5=Decimal("1.85"),
+            xg_away_last5=Decimal("1.42"),
+            xga_home_last5=Decimal("0.95"),
+            xga_away_last5=Decimal("1.28"),
+            npxg_home_last5=Decimal("1.65"),
+            npxg_away_last5=Decimal("1.22"),
+            captured_at=datetime(2026, 1, 25, 16, 0, 0),  # Latest
+        )
+
+        pit_max = compute_pit_max(odds=odds, form=form, h2h=h2h, xg=xg)
+        assert pit_max == datetime(2026, 1, 25, 16, 0, 0)  # xG is latest
 
     def test_no_timestamps_raises_error(self):
         """Without any timestamps, raises ValueError."""

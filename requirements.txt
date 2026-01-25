@@ -18,6 +18,9 @@ optuna==3.5.0
 httpx==0.26.0
 aiohttp==3.9.1
 
+# Object Storage (R2/S3)
+aioboto3>=12.0.0
+
 # Utilities
 python-dotenv==1.0.0
 pydantic-settings==2.1.0

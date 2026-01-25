@@ -47,6 +47,7 @@ async def get_titan_status(session: AsyncSession) -> dict:
         "schema_exists": False,
         "tables": {},
         "extractions": {},
+        "r2_storage": {},
         "dlq": {},
         "feature_matrix": {},
         "pit_compliance": {},
@@ -115,10 +116,15 @@ async def get_titan_status(session: AsyncSession) -> dict:
                 row[0]: row[1] for row in source_breakdown.fetchall()
             }
 
-        # DLQ stats
+        # DLQ stats and R2 storage stats
         if status["tables"]["job_dlq"]:
             job_manager = TitanJobManager(session)
             status["dlq"] = await job_manager.get_dlq_stats()
+
+        # R2 storage stats
+        if status["tables"]["raw_extractions"]:
+            job_manager = TitanJobManager(session)
+            status["r2_storage"] = await job_manager.get_r2_stats()
 
         # Feature matrix stats
         if status["tables"]["feature_matrix"]:

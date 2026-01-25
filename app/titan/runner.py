@@ -91,6 +91,7 @@ class TitanRunner:
             "extracted_success": 0,
             "extracted_failed": 0,
             "materialized": 0,
+            "with_xg": 0,  # Tier 1b xG data found
             "pit_violations": 0,
             "skipped_no_odds": 0,
             "errors": [],
@@ -119,6 +120,8 @@ class TitanRunner:
                     stats["extracted_success"] += 1
                     if result.get("materialized"):
                         stats["materialized"] += 1
+                    if result.get("with_xg"):
+                        stats["with_xg"] += 1
                     if result.get("skipped_no_odds"):
                         stats["skipped_no_odds"] += 1
                 elif result["status"] == "failed":
@@ -280,6 +283,14 @@ class TitanRunner:
             kickoff_utc=kickoff_utc,
         )
 
+        # 8b. Compute xG (Tier 1b) - optional enrichment
+        # Uses existing data from public.match_understat_team
+        xg = await self.materializer.compute_xg_last5_features(
+            home_team_id=match["home_team_id"],
+            away_team_id=match["away_team_id"],
+            kickoff_utc=kickoff_utc,
+        )
+
         # 9. Materialize to feature_matrix
         if not dry_run:
             try:
@@ -294,8 +305,9 @@ class TitanRunner:
                     form_home=form_home,
                     form_away=form_away,
                     h2h=h2h,
+                    xg=xg,
                 )
-                return {"status": "extracted", "materialized": inserted}
+                return {"status": "extracted", "materialized": inserted, "with_xg": xg is not None}
 
             except PITViolationError as e:
                 logger.error(f"PIT violation for match {external_id}: {e}")
@@ -453,6 +465,7 @@ def main():
     print(f"  Extracted (new):    {stats['extracted_success']}")
     print(f"  Extraction failed:  {stats['extracted_failed']}")
     print(f"  Materialized:       {stats['materialized']}")
+    print(f"  With xG (Tier 1b):  {stats['with_xg']}")
     print(f"  Skipped (no odds):  {stats['skipped_no_odds']}")
     print(f"  PIT violations:     {stats['pit_violations']}")
 
