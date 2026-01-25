@@ -1813,32 +1813,76 @@ async def daily_save_predictions():
     """
     Daily job to save predictions for upcoming matches.
     Runs every day at 7:00 AM UTC (before audit).
+
+    AUDIT FIX (2026-01-25): Batching + time budget to prevent connection timeouts.
+    - Filters NS-only BEFORE predicting (reduces work)
+    - Commits every BATCH_SIZE matches (avoids long transactions)
+    - Time budget guardrail (exits cleanly if exceeded)
+    - Safe rollback on DB errors (no InterfaceError on closed connection)
     """
+    import numpy as np
+    from app.db_utils import upsert
+    from app.ml import XGBoostEngine
+    from app.models import Prediction, Match
+    from app.ml.shadow import is_shadow_enabled, log_shadow_prediction
+    from app.ml.sensor import log_sensor_prediction
+    from app.config import get_settings
+    from app.telemetry.metrics import record_job_run
+    from sqlalchemy import select, func
+    from sqlalchemy.exc import InterfaceError, DBAPIError
+
+    # Configuration
+    BATCH_SIZE = 200
+    TIME_BUDGET_MS = 120_000  # 2 minutes max
+
     start_time = time.time()
     logger.info("[DAILY-SAVE] Starting daily prediction save job...")
 
+    # Counters for observability
+    saved = 0
+    skipped_no_features = 0
+    errors = 0
+    batches_processed = 0
+    shadow_logged = 0
+    shadow_errors = 0
+    sensor_logged = 0
+    sensor_errors = 0
+    job_status = "ok"
+
+    async def safe_rollback(session):
+        """Safely attempt rollback without raising on closed connection."""
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+
+    def check_time_budget() -> bool:
+        """Returns True if time budget exceeded."""
+        elapsed_ms = (time.time() - start_time) * 1000
+        return elapsed_ms > TIME_BUDGET_MS
+
     try:
-        from app.db_utils import upsert
-        from app.ml import XGBoostEngine
-        from app.models import Prediction, Match
-        from sqlalchemy import select, func
+        # Load ML engine (outside session - doesn't need DB)
+        engine = XGBoostEngine()
+        if not engine.load_model():
+            logger.error("[DAILY-SAVE] Could not load ML model")
+            record_job_run(job="daily_save_predictions", status="error", duration_ms=0)
+            return
+
+        sensor_settings = get_settings()
 
         async with AsyncSessionLocal() as session:
-            # Load ML engine
-            engine = XGBoostEngine()
-            if not engine.load_model():
-                logger.error("Could not load ML model for prediction save")
-                return
-
             # Get upcoming matches features
             feature_engineer = FeatureEngineer(session=session)
             df = await feature_engineer.get_upcoming_matches_features()
 
-            # Enhanced logging: count NS matches and get next match date
-            total_matches = len(df)
-            ns_matches = len(df[df["status"] == "NS"]) if total_matches > 0 else 0
+            # P0 FIX: Filter to NS-only BEFORE predicting (reduces work significantly)
+            total_fetched = len(df)
+            if total_fetched > 0 and "status" in df.columns:
+                df = df[df["status"] == "NS"].reset_index(drop=True)
+            ns_total = len(df)
 
-            # Query next NS match date directly from DB for accurate logging
+            # Query next NS match date for logging
             next_ns_result = await session.execute(
                 select(func.min(Match.date))
                 .where(Match.status == "NS", Match.date > datetime.utcnow())
@@ -1846,128 +1890,148 @@ async def daily_save_predictions():
             next_ns_date = next_ns_result.scalar()
 
             logger.info(
-                f"daily_save_predictions: total_matches={total_matches}, "
-                f"ns_matches={ns_matches}, next_ns_utc={next_ns_date.isoformat() if next_ns_date else 'None'}"
+                f"[DAILY-SAVE] Fetched {total_fetched} matches, filtered to {ns_total} NS, "
+                f"next_ns_utc={next_ns_date.isoformat() if next_ns_date else 'None'}, "
+                f"batch_size={BATCH_SIZE}, time_budget_ms={TIME_BUDGET_MS}"
             )
 
-            if len(df) == 0:
-                logger.info("No upcoming matches to save predictions for (no scheduled matches in window)")
+            if ns_total == 0:
+                logger.info("[DAILY-SAVE] No NS matches to process")
+                record_job_run(job="daily_save_predictions", status="ok", duration_ms=0)
                 return
 
-            # Make predictions
+            # Time budget check BEFORE predict() (feature fetch can be slow)
+            if check_time_budget():
+                elapsed_ms = (time.time() - start_time) * 1000
+                logger.warning(
+                    f"[DAILY-SAVE] Time budget exceeded before predict (elapsed={elapsed_ms:.0f}ms), "
+                    f"exiting early with ns_total={ns_total}"
+                )
+                record_job_run(job="daily_save_predictions", status="partial", duration_ms=elapsed_ms)
+                return
+
+            # Make predictions for NS-only dataframe
             predictions = engine.predict(df)
 
-            # Shadow mode: log parallel predictions if enabled
-            from app.ml.shadow import is_shadow_enabled, log_shadow_prediction
-            shadow_logged = 0
-            shadow_errors = 0
-
-            # Sensor B: log A vs B predictions (internal diagnostics only)
-            from app.ml.sensor import log_sensor_prediction
-            from app.config import get_settings
-            sensor_settings = get_settings()
-            sensor_logged = 0
-            sensor_errors = 0
-
-            # Save to database using generic upsert (only NS matches)
-            saved = 0
-            skipped = 0
-            for idx, pred in enumerate(predictions):
-                match_id = pred.get("match_id")
-                if not match_id:
-                    continue
-
-                # Only save predictions for NS (not started) matches
-                match_status = pred.get("status", "")
-                if match_status != "NS":
-                    skipped += 1
-                    continue
-
-                probs = pred["probabilities"]
-                try:
-                    await upsert(
-                        session,
-                        Prediction,
-                        values={
-                            "match_id": match_id,
-                            "model_version": engine.model_version,
-                            "home_prob": probs["home"],
-                            "draw_prob": probs["draw"],
-                            "away_prob": probs["away"],
-                        },
-                        conflict_columns=["match_id", "model_version"],
-                        update_columns=["home_prob", "draw_prob", "away_prob"],
+            # Process in batches with commit per batch
+            for batch_start in range(0, len(predictions), BATCH_SIZE):
+                # Time budget check at start of each batch
+                if check_time_budget():
+                    remaining = len(predictions) - batch_start
+                    logger.warning(
+                        f"[DAILY-SAVE] Time budget reached, exiting early "
+                        f"(saved={saved}, remaining={remaining})"
                     )
-                    saved += 1
+                    job_status = "partial"
+                    break
 
-                    # Shadow prediction: log parallel two-stage prediction (never affects main flow)
-                    if is_shadow_enabled():
-                        try:
-                            match_df = df.iloc[[idx]]
-                            shadow_result = await log_shadow_prediction(
-                                session=session,
-                                match_id=match_id,
-                                df=match_df,
-                                baseline_engine=engine,
-                                skip_commit=True,
-                            )
-                            if shadow_result:
-                                shadow_logged += 1
-                        except Exception as shadow_err:
-                            shadow_errors += 1
-                            logger.warning(f"Shadow prediction failed for match {match_id}: {shadow_err}")
+                batch_end = min(batch_start + BATCH_SIZE, len(predictions))
+                batch_predictions = predictions[batch_start:batch_end]
 
-                    # Sensor B: log A vs B predictions (internal diagnostics, never affects main flow)
-                    if sensor_settings.SENSOR_ENABLED:
-                        try:
-                            import numpy as np
-                            match_df = df.iloc[[idx]]
-                            model_a_probs = np.array([probs["home"], probs["draw"], probs["away"]])
-                            sensor_result = await log_sensor_prediction(
-                                session=session,
-                                match_id=match_id,
-                                df=match_df,
-                                model_a_probs=model_a_probs,
-                                model_a_version=engine.model_version,
-                            )
-                            if sensor_result:
-                                sensor_logged += 1
-                        except Exception as sensor_err:
-                            sensor_errors += 1
-                            logger.warning(f"Sensor prediction failed for match {match_id}: {sensor_err}")
+                try:
+                    for idx, pred in enumerate(batch_predictions):
+                        global_idx = batch_start + idx
+                        match_id = pred.get("match_id")
+                        if not match_id:
+                            continue
 
-                except Exception as e:
-                    logger.warning(f"Error saving prediction: {e}")
+                        probs = pred.get("probabilities")
+                        if not probs:
+                            skipped_no_features += 1
+                            continue
 
-            await session.commit()
+                        # Upsert prediction
+                        await upsert(
+                            session,
+                            Prediction,
+                            values={
+                                "match_id": match_id,
+                                "model_version": engine.model_version,
+                                "home_prob": probs["home"],
+                                "draw_prob": probs["draw"],
+                                "away_prob": probs["away"],
+                            },
+                            conflict_columns=["match_id", "model_version"],
+                            update_columns=["home_prob", "draw_prob", "away_prob"],
+                        )
+                        saved += 1
 
-            # Telemetry: record batch counters for shadow/sensor
-            if is_shadow_enabled() and (shadow_logged > 0 or shadow_errors > 0):
-                record_shadow_predictions_batch(logged=shadow_logged, errors=shadow_errors)
-            if sensor_settings.SENSOR_ENABLED and (sensor_logged > 0 or sensor_errors > 0):
-                record_sensor_predictions_batch(logged=sensor_logged, errors=sensor_errors)
+                        # Shadow prediction (never affects main flow)
+                        if is_shadow_enabled():
+                            try:
+                                match_df = df.iloc[[global_idx]]
+                                shadow_result = await log_shadow_prediction(
+                                    session=session,
+                                    match_id=match_id,
+                                    df=match_df,
+                                    baseline_engine=engine,
+                                    skip_commit=True,
+                                )
+                                if shadow_result:
+                                    shadow_logged += 1
+                            except Exception:
+                                shadow_errors += 1
 
-            # Build log message with all stats for audit trail
-            duration_ms = (time.time() - start_time) * 1000
-            log_msg = (
-                f"[DAILY-SAVE] Complete: saved={saved}, skipped={skipped}, "
-                f"ns_matches={ns_matches}, model_version={engine.model_version}, "
-                f"duration_ms={duration_ms:.0f}"
-            )
-            if is_shadow_enabled():
-                log_msg += f", shadow={shadow_logged}/{shadow_errors}"
-            if sensor_settings.SENSOR_ENABLED:
-                log_msg += f", sensor={sensor_logged}/{sensor_errors}"
-            logger.info(log_msg)
+                        # Sensor B prediction (never affects main flow)
+                        if sensor_settings.SENSOR_ENABLED:
+                            try:
+                                match_df = df.iloc[[global_idx]]
+                                model_a_probs = np.array([probs["home"], probs["draw"], probs["away"]])
+                                sensor_result = await log_sensor_prediction(
+                                    session=session,
+                                    match_id=match_id,
+                                    df=match_df,
+                                    model_a_probs=model_a_probs,
+                                    model_a_version=engine.model_version,
+                                )
+                                if sensor_result:
+                                    sensor_logged += 1
+                            except Exception:
+                                sensor_errors += 1
 
-            # Record job run for monitoring
-            from app.telemetry.metrics import record_job_run
-            record_job_run(job="daily_save_predictions", status="ok", duration_ms=duration_ms)
+                    # Commit this batch
+                    await session.commit()
+                    batches_processed += 1
+
+                except (InterfaceError, DBAPIError) as db_err:
+                    # Connection lost - safe rollback and exit
+                    logger.error(f"[DAILY-SAVE] DB connection lost: {db_err}")
+                    await safe_rollback(session)
+                    job_status = "error"
+                    break
+
+                except Exception as batch_err:
+                    # Other error - try to rollback and continue with next batch
+                    logger.warning(f"[DAILY-SAVE] Batch error: {batch_err}")
+                    await safe_rollback(session)
+                    errors += 1
+
+        # Final telemetry
+        duration_ms = (time.time() - start_time) * 1000
+
+        # Record shadow/sensor batch counters
+        if is_shadow_enabled() and (shadow_logged > 0 or shadow_errors > 0):
+            record_shadow_predictions_batch(logged=shadow_logged, errors=shadow_errors)
+        if sensor_settings.SENSOR_ENABLED and (sensor_logged > 0 or sensor_errors > 0):
+            record_sensor_predictions_batch(logged=sensor_logged, errors=sensor_errors)
+
+        log_msg = (
+            f"[DAILY-SAVE] Complete: status={job_status}, saved={saved}, "
+            f"ns_total={ns_total}, batches={batches_processed}, "
+            f"skipped_no_features={skipped_no_features}, errors={errors}, "
+            f"model={engine.model_version}, duration_ms={duration_ms:.0f}"
+        )
+        if is_shadow_enabled():
+            log_msg += f", shadow={shadow_logged}/{shadow_errors}"
+        if sensor_settings.SENSOR_ENABLED:
+            log_msg += f", sensor={sensor_logged}/{sensor_errors}"
+        logger.info(log_msg)
+
+        record_job_run(job="daily_save_predictions", status=job_status, duration_ms=duration_ms)
 
     except Exception as e:
         duration_ms = (time.time() - start_time) * 1000
         logger.error(f"[DAILY-SAVE] Failed after {duration_ms:.0f}ms: {e}")
-        from app.telemetry.metrics import record_job_run
         record_job_run(job="daily_save_predictions", status="error", duration_ms=duration_ms)
 
 
