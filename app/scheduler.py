@@ -501,217 +501,274 @@ async def freeze_predictions_before_kickoff() -> dict:
     - Or match date is in the past (safety net)
 
     Once frozen, the prediction is immutable even if the model is retrained.
+
+    OPTIMIZATION (2026-01-25):
+    - Filter in SQL (not Python) to avoid loading thousands of rows
+    - Batch processing with LIMIT to prevent memory spikes
+    - Only fetch IDs first, then process in batches
     """
-    from datetime import timedelta
+    import time as time_module
     from app.models import Match, Prediction
     from app.database import get_session_with_retry
 
+    start_time = time_module.time()
     frozen_count = 0
     errors = []
+    batches_processed = 0
+    batch_size = 500  # Process up to 500 predictions per batch
 
     try:
         async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
-            # Find predictions that need freezing:
-            # 1. Prediction is not frozen yet
-            # 2. Match status is NOT 'NS' (match has started or finished)
-            # OR match date is in the past (safety net)
             now = datetime.utcnow()
 
-            result = await session.execute(
-                select(Prediction)
-                .options(selectinload(Prediction.match))
-                .where(
-                    and_(
-                        Prediction.is_frozen == False,  # noqa: E712
-                    )
-                )
+            # STEP 1: Count total not frozen (for observability only, lightweight)
+            count_result = await session.execute(
+                text("SELECT COUNT(*) FROM predictions WHERE is_frozen = FALSE")
             )
-            predictions = result.scalars().all()
+            not_frozen_total = count_result.scalar() or 0
 
-            for pred in predictions:
-                match = pred.match
-                if not match:
-                    continue
+            # STEP 2: Count eligible to freeze (for observability, before processing)
+            eligible_count_result = await session.execute(
+                text("""
+                    SELECT COUNT(*)
+                    FROM predictions p
+                    JOIN matches m ON m.id = p.match_id
+                    WHERE p.is_frozen = FALSE
+                      AND (m.status != 'NS' OR m.date < :now)
+                """),
+                {"now": now},
+            )
+            eligible_total = eligible_count_result.scalar() or 0
 
-                # Check if match has started or is in the past
-                should_freeze = (
-                    match.status != "NS" or  # Match has started/finished
-                    match.date < now  # Match date is in the past (safety net)
+            # Early return if nothing to freeze (avoid loading any objects)
+            if eligible_total == 0:
+                duration_ms = (time_module.time() - start_time) * 1000
+                logger.info(
+                    f"[FREEZE] Complete: not_frozen_total={not_frozen_total}, "
+                    f"eligible_total=0, frozen_count=0, batches=0, duration_ms={duration_ms:.0f}"
                 )
+                return {
+                    "frozen_count": 0,
+                    "not_frozen_total": not_frozen_total,
+                    "eligible_total": 0,
+                    "batches_processed": 0,
+                    "duration_ms": round(duration_ms),
+                }
 
-                if not should_freeze:
-                    continue
+            # STEP 3: Find predictions eligible to freeze using SQL filter
+            # Only fetch IDs to minimize memory, ordered by match date for determinism
+            eligible_query = text("""
+                SELECT p.id
+                FROM predictions p
+                JOIN matches m ON m.id = p.match_id
+                WHERE p.is_frozen = FALSE
+                  AND (m.status != 'NS' OR m.date < :now)
+                ORDER BY m.date ASC
+                LIMIT :limit
+            """)
 
-                try:
-                    # Freeze the prediction with current data
-                    pred.is_frozen = True
-                    pred.frozen_at = now
+            # Process in batches until no more eligible
+            while True:
+                result = await session.execute(
+                    eligible_query, {"now": now, "limit": batch_size}
+                )
+                prediction_ids = [row[0] for row in result.fetchall()]
 
-                    # Capture bookmaker odds at freeze time
-                    pred.frozen_odds_home = match.odds_home
-                    pred.frozen_odds_draw = match.odds_draw
-                    pred.frozen_odds_away = match.odds_away
+                if not prediction_ids:
+                    break  # No more to process
 
-                    # OPS Daily Comparison: persist a "market snapshot" row for this match.
-                    # This avoids a disconnect where odds_sync updates matches.odds_* but the
-                    # OPS dashboard reads from match_odds_snapshot.
-                    #
-                    # Source of truth for "market at freeze": predictions.frozen_odds_*
-                    # (these are copied from matches at freeze time).
+                batches_processed += 1
+
+                # Fetch full prediction+match objects for this batch only
+                batch_result = await session.execute(
+                    select(Prediction)
+                    .options(selectinload(Prediction.match))
+                    .where(Prediction.id.in_(prediction_ids))
+                )
+                predictions = batch_result.scalars().all()
+
+                for pred in predictions:
+                    match = pred.match
+                    if not match:
+                        continue
+
+                    # Double-check eligibility (idempotent guard)
+                    if pred.is_frozen:
+                        continue
+
                     try:
-                        if (
-                            pred.frozen_odds_home
-                            and pred.frozen_odds_draw
-                            and pred.frozen_odds_away
-                            and pred.frozen_odds_home > 1
-                            and pred.frozen_odds_draw > 1
-                            and pred.frozen_odds_away > 1
-                        ):
-                            # Resolve primary bookmaker for this league (default bet365)
-                            bookmaker_row = await session.execute(
-                                text("""
-                                    SELECT bookmaker
-                                    FROM league_bookmaker_config
-                                    WHERE league_id = :league_id AND is_primary = TRUE
-                                    LIMIT 1
-                                """),
-                                {"league_id": match.league_id},
-                            )
-                            bookmaker = (bookmaker_row.scalar() or "bet365").lower()
+                        # Freeze the prediction with current data
+                        pred.is_frozen = True
+                        pred.frozen_at = now
 
-                            # Compute implied probabilities (normalized, removes overround)
-                            raw_home = 1 / float(pred.frozen_odds_home)
-                            raw_draw = 1 / float(pred.frozen_odds_draw)
-                            raw_away = 1 / float(pred.frozen_odds_away)
-                            total = raw_home + raw_draw + raw_away
-                            implied_home = raw_home / total
-                            implied_draw = raw_draw / total
-                            implied_away = raw_away / total
-                            market_pick = max(
-                                {"home": implied_home, "draw": implied_draw, "away": implied_away},
-                                key=lambda k: {"home": implied_home, "draw": implied_draw, "away": implied_away}[k],
+                        # Capture bookmaker odds at freeze time
+                        pred.frozen_odds_home = match.odds_home
+                        pred.frozen_odds_draw = match.odds_draw
+                        pred.frozen_odds_away = match.odds_away
+
+                        # OPS Daily Comparison: persist a "market snapshot" row for this match
+                        try:
+                            if (
+                                pred.frozen_odds_home
+                                and pred.frozen_odds_draw
+                                and pred.frozen_odds_away
+                                and pred.frozen_odds_home > 1
+                                and pred.frozen_odds_draw > 1
+                                and pred.frozen_odds_away > 1
+                            ):
+                                # Resolve primary bookmaker for this league (default bet365)
+                                bookmaker_row = await session.execute(
+                                    text("""
+                                        SELECT bookmaker
+                                        FROM league_bookmaker_config
+                                        WHERE league_id = :league_id AND is_primary = TRUE
+                                        LIMIT 1
+                                    """),
+                                    {"league_id": match.league_id},
+                                )
+                                bookmaker = (bookmaker_row.scalar() or "bet365").lower()
+
+                                # Compute implied probabilities (normalized, removes overround)
+                                raw_home = 1 / float(pred.frozen_odds_home)
+                                raw_draw = 1 / float(pred.frozen_odds_draw)
+                                raw_away = 1 / float(pred.frozen_odds_away)
+                                total = raw_home + raw_draw + raw_away
+                                implied_home = raw_home / total
+                                implied_draw = raw_draw / total
+                                implied_away = raw_away / total
+                                market_pick = max(
+                                    {"home": implied_home, "draw": implied_draw, "away": implied_away},
+                                    key=lambda k: {"home": implied_home, "draw": implied_draw, "away": implied_away}[k],
+                                )
+
+                                await session.execute(
+                                    text("""
+                                        INSERT INTO match_odds_snapshot (
+                                            match_id, bookmaker,
+                                            odds_home, odds_draw, odds_away,
+                                            implied_home, implied_draw, implied_away,
+                                            market_pick, snapshot_at, is_primary
+                                        ) VALUES (
+                                            :match_id, :bookmaker,
+                                            :odds_home, :odds_draw, :odds_away,
+                                            :implied_home, :implied_draw, :implied_away,
+                                            :market_pick, :snapshot_at, TRUE
+                                        )
+                                        ON CONFLICT (match_id, bookmaker) DO UPDATE SET
+                                            odds_home = EXCLUDED.odds_home,
+                                            odds_draw = EXCLUDED.odds_draw,
+                                            odds_away = EXCLUDED.odds_away,
+                                            implied_home = EXCLUDED.implied_home,
+                                            implied_draw = EXCLUDED.implied_draw,
+                                            implied_away = EXCLUDED.implied_away,
+                                            market_pick = EXCLUDED.market_pick,
+                                            snapshot_at = EXCLUDED.snapshot_at,
+                                            is_primary = TRUE
+                                    """),
+                                    {
+                                        "match_id": match.id,
+                                        "bookmaker": bookmaker,
+                                        "odds_home": float(pred.frozen_odds_home),
+                                        "odds_draw": float(pred.frozen_odds_draw),
+                                        "odds_away": float(pred.frozen_odds_away),
+                                        "implied_home": float(round(implied_home, 6)),
+                                        "implied_draw": float(round(implied_draw, 6)),
+                                        "implied_away": float(round(implied_away, 6)),
+                                        "market_pick": market_pick,
+                                        "snapshot_at": pred.frozen_at or now,
+                                    },
+                                )
+                        except Exception as e:
+                            # Don't block freezing if OPS snapshot fails
+                            logger.warning(
+                                f"[FREEZE] Failed to upsert match_odds_snapshot for match_id={getattr(match, 'id', None)}: {e}"
                             )
 
-                            await session.execute(
-                                text("""
-                                    INSERT INTO match_odds_snapshot (
-                                        match_id, bookmaker,
-                                        odds_home, odds_draw, odds_away,
-                                        implied_home, implied_draw, implied_away,
-                                        market_pick, snapshot_at, is_primary
-                                    ) VALUES (
-                                        :match_id, :bookmaker,
-                                        :odds_home, :odds_draw, :odds_away,
-                                        :implied_home, :implied_draw, :implied_away,
-                                        :market_pick, :snapshot_at, TRUE
-                                    )
-                                    ON CONFLICT (match_id, bookmaker) DO UPDATE SET
-                                        odds_home = EXCLUDED.odds_home,
-                                        odds_draw = EXCLUDED.odds_draw,
-                                        odds_away = EXCLUDED.odds_away,
-                                        implied_home = EXCLUDED.implied_home,
-                                        implied_draw = EXCLUDED.implied_draw,
-                                        implied_away = EXCLUDED.implied_away,
-                                        market_pick = EXCLUDED.market_pick,
-                                        snapshot_at = EXCLUDED.snapshot_at,
-                                        is_primary = TRUE
-                                """),
-                                {
-                                    "match_id": match.id,
-                                    "bookmaker": bookmaker,
-                                    "odds_home": float(pred.frozen_odds_home),
-                                    "odds_draw": float(pred.frozen_odds_draw),
-                                    "odds_away": float(pred.frozen_odds_away),
-                                    "implied_home": float(round(implied_home, 6)),
-                                    "implied_draw": float(round(implied_draw, 6)),
-                                    "implied_away": float(round(implied_away, 6)),
-                                    "market_pick": market_pick,
-                                    "snapshot_at": pred.frozen_at or now,
-                                },
-                            )
+                        # Calculate and freeze EV values
+                        if match.odds_home and pred.home_prob > 0:
+                            pred.frozen_ev_home = (pred.home_prob * match.odds_home) - 1
+                        if match.odds_draw and pred.draw_prob > 0:
+                            pred.frozen_ev_draw = (pred.draw_prob * match.odds_draw) - 1
+                        if match.odds_away and pred.away_prob > 0:
+                            pred.frozen_ev_away = (pred.away_prob * match.odds_away) - 1
+
+                        # Calculate and freeze confidence tier
+                        max_prob = max(pred.home_prob, pred.draw_prob, pred.away_prob)
+                        if max_prob >= 0.50:
+                            pred.frozen_confidence_tier = "gold"
+                        elif max_prob >= 0.40:
+                            pred.frozen_confidence_tier = "silver"
+                        else:
+                            pred.frozen_confidence_tier = "copper"
+
+                        # Calculate and freeze value bets
+                        value_bets = []
+                        ev_threshold = 0.05  # 5% EV minimum for value bet
+
+                        def _build_value_bet(outcome: str, prob: float, odds: float, ev: float) -> dict:
+                            if not prob or not odds or odds <= 0:
+                                return None
+                            implied_prob = 1 / odds
+                            edge = prob - implied_prob
+                            return {
+                                "outcome": outcome,
+                                "our_probability": round(prob, 4),
+                                "implied_probability": round(implied_prob, 4),
+                                "edge": round(edge, 4),
+                                "edge_percentage": round(edge * 100, 1),
+                                "expected_value": round(ev, 4),
+                                "ev_percentage": round(ev * 100, 1),
+                                "market_odds": float(odds),
+                                "fair_odds": round(1 / prob, 2) if prob > 0 else None,
+                                "is_value_bet": True,
+                            }
+
+                        if pred.frozen_ev_home and pred.frozen_ev_home >= ev_threshold and match.odds_home:
+                            vb = _build_value_bet("home", pred.home_prob, match.odds_home, pred.frozen_ev_home)
+                            if vb:
+                                value_bets.append(vb)
+                        if pred.frozen_ev_draw and pred.frozen_ev_draw >= ev_threshold and match.odds_draw:
+                            vb = _build_value_bet("draw", pred.draw_prob, match.odds_draw, pred.frozen_ev_draw)
+                            if vb:
+                                value_bets.append(vb)
+                        if pred.frozen_ev_away and pred.frozen_ev_away >= ev_threshold and match.odds_away:
+                            vb = _build_value_bet("away", pred.away_prob, match.odds_away, pred.frozen_ev_away)
+                            if vb:
+                                value_bets.append(vb)
+
+                        pred.frozen_value_bets = value_bets if value_bets else None
+
+                        frozen_count += 1
+
                     except Exception as e:
-                        # Don't block freezing if OPS snapshot fails.
-                        logger.warning(
-                            f"[FREEZE] Failed to upsert match_odds_snapshot for match_id={getattr(match, 'id', None)}: {e}"
-                        )
+                        errors.append(f"Error freezing prediction {pred.id}: {e}")
+                        logger.warning(f"Error freezing prediction {pred.id}: {e}")
 
-                    # Calculate and freeze EV values
-                    if match.odds_home and pred.home_prob > 0:
-                        pred.frozen_ev_home = (pred.home_prob * match.odds_home) - 1
-                    if match.odds_draw and pred.draw_prob > 0:
-                        pred.frozen_ev_draw = (pred.draw_prob * match.odds_draw) - 1
-                    if match.odds_away and pred.away_prob > 0:
-                        pred.frozen_ev_away = (pred.away_prob * match.odds_away) - 1
+                # Commit after each batch
+                await session.commit()
 
-                    # Calculate and freeze confidence tier
-                    max_prob = max(pred.home_prob, pred.draw_prob, pred.away_prob)
-                    if max_prob >= 0.50:
-                        pred.frozen_confidence_tier = "gold"
-                    elif max_prob >= 0.40:
-                        pred.frozen_confidence_tier = "silver"
-                    else:
-                        pred.frozen_confidence_tier = "copper"
+            duration_ms = (time_module.time() - start_time) * 1000
 
-                    # Calculate and freeze value bets (normalized format matching engine.py)
-                    value_bets = []
-                    ev_threshold = 0.05  # 5% EV minimum for value bet
-
-                    def _build_value_bet(outcome: str, prob: float, odds: float, ev: float) -> dict:
-                        """Build a normalized value_bet dict matching engine.py format."""
-                        if not prob or not odds or odds <= 0:
-                            return None
-                        implied_prob = 1 / odds
-                        edge = prob - implied_prob
-                        return {
-                            "outcome": outcome,
-                            "our_probability": round(prob, 4),
-                            "implied_probability": round(implied_prob, 4),
-                            "edge": round(edge, 4),
-                            "edge_percentage": round(edge * 100, 1),
-                            "expected_value": round(ev, 4),
-                            "ev_percentage": round(ev * 100, 1),
-                            "market_odds": float(odds),
-                            "fair_odds": round(1 / prob, 2) if prob > 0 else None,
-                            "is_value_bet": True,
-                        }
-
-                    if pred.frozen_ev_home and pred.frozen_ev_home >= ev_threshold and match.odds_home:
-                        vb = _build_value_bet("home", pred.home_prob, match.odds_home, pred.frozen_ev_home)
-                        if vb:
-                            value_bets.append(vb)
-                    if pred.frozen_ev_draw and pred.frozen_ev_draw >= ev_threshold and match.odds_draw:
-                        vb = _build_value_bet("draw", pred.draw_prob, match.odds_draw, pred.frozen_ev_draw)
-                        if vb:
-                            value_bets.append(vb)
-                    if pred.frozen_ev_away and pred.frozen_ev_away >= ev_threshold and match.odds_away:
-                        vb = _build_value_bet("away", pred.away_prob, match.odds_away, pred.frozen_ev_away)
-                        if vb:
-                            value_bets.append(vb)
-
-                    pred.frozen_value_bets = value_bets if value_bets else None
-
-                    frozen_count += 1
-
-                except Exception as e:
-                    errors.append(f"Error freezing prediction {pred.id}: {e}")
-                    logger.warning(f"Error freezing prediction {pred.id}: {e}")
-
-            await session.commit()
-
-            if frozen_count > 0:
-                logger.info(f"Frozen {frozen_count} predictions")
+            # Observability: log metrics
+            logger.info(
+                f"[FREEZE] Complete: not_frozen_total={not_frozen_total}, "
+                f"eligible_total={eligible_total}, frozen_count={frozen_count}, "
+                f"batches={batches_processed}, duration_ms={duration_ms:.0f}"
+            )
 
             return {
                 "frozen_count": frozen_count,
-                "errors": errors[:10] if errors else None,  # Limit error count
+                "not_frozen_total": not_frozen_total,
+                "eligible_total": eligible_total,
+                "batches_processed": batches_processed,
+                "duration_ms": round(duration_ms),
+                "errors": errors[:10] if errors else None,
             }
 
     except Exception as e:
-        # Log full exception info to capture root cause (not just rollback failure)
         import traceback
         error_type = type(e).__name__
         error_msg = str(e)
-        # Check if this is a connection-related error
         is_connection_error = any(
             keyword in error_msg.lower()
             for keyword in ["connection", "closed", "terminated", "rollback", "interface"]
