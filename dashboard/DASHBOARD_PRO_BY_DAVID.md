@@ -15,10 +15,10 @@ Referencia: **UniFi Network Dashboard**.
 - **Icon Sidebar** (~48–56px): navegación primaria por íconos monocromáticos.
 - **Filter Panel** (~200–220px): **colapsable**; filtros con accordions, checkboxes y contadores.
 - **Main Content**: tabla (flexible) + paginación.
-- **Detail Drawer (overlay docked, NO modal)** (~400px): panel a la derecha que se **superpone** sobre columnas (sin reflow de tabla), sin backdrop, sin bloqueo de interacción. Tabs internos.
+- **Detail Drawer (inline, no modal)** (~300–320px): panel a la derecha que **empuja** la tabla (sin overlay), con tabs internos.
 
 ### 1.2 Patrones UX imprescindibles
-- Patrón **Master-Detail**: click en row → abre drawer overlay (sin reflow de tabla).
+- Patrón **Master-Detail**: click en row → abre drawer inline.
 - Tabla: **header sticky**, columnas sortables, row hover + selected (tinte azul + borde izq accent).
 - Filtros: accordions colapsables, checkboxes con contadores, search interno.
 - Tabs: estilo **pill/segmented** (rounded-full).
@@ -123,43 +123,16 @@ Referencia: **UniFi Network Dashboard**.
    - scroll interno, accordions, search interno, checkbox groups
 4. **Main content container**
    - tabla + paginación
-5. **Detail Drawer overlay docked (no modal)**
-   - panel derecho (~400px) que se superpone sobre columnas (sin reflow)
-   - sin backdrop, sin bloqueo de interacción
+5. **Detail Drawer inline (no modal)**
+   - panel derecho que empuja el contenido (sin overlay)
    - tabs internos (Info/Charts/Settings)
 
 ### 6.2 Tabla / filtros
 - **DataTable** (TanStack wrapper)
   - sticky header, sorting, row hover/selected, column width, empty/loading
-  - **columnVisibility** support (TanStack VisibilityState)
-- **Pagination** minimalista ("1–100 of 115", rows per page, prev/next)
+- **Pagination** minimalista (“1–100 of 115”, rows per page, prev/next)
 - **StatusBadge / Chips** (Excellent/Good/etc)
 - **SegmentedTabs** (pill)
-
-### 6.3 Left Rail: Customize Columns Panel (UniFi pattern)
-El **Left Rail** (columna 2) contiene:
-1. **FilterPanel** (existente): accordions, checkboxes, search
-2. **CustomizeColumnsPanel** (nuevo): control de visibilidad de columnas
-
-**Comportamiento:**
-- El toggle de colapso del Left Rail oculta BOTH (Filters + Customize Columns)
-- "Done" en CustomizeColumnsPanel colapsa todo el Left Rail
-- "Restore" vuelve a los defaults de columnas
-- Cambios aplican inmediatamente (no hay botón "Apply")
-- Persistencia en `localStorage` por tabla (keys: `columns:matches`, `columns:jobs`, etc.)
-
-**Implementación:**
-- `components/tables/CustomizeColumnsPanel.tsx`: UI del panel
-- `lib/hooks/use-column-visibility.ts`: hook con localStorage persistence
-- Cada tabla define `COLUMN_OPTIONS` y `DEFAULT_VISIBILITY`
-- FilterPanel acepta `children` para renderizar CustomizeColumnsPanel
-
-**UI del panel:**
-- Header "Customize Columns"
-- Checkbox "All" con estado indeterminado
-- Lista de checkboxes (~30 max) con scroll interno
-- Footer: "Restore" (defaults) + "Done" (colapsa Left Rail)
-- Columnas con `enableHiding: false` no aparecen en el panel (siempre visibles)
 
 ---
 
@@ -352,15 +325,6 @@ interface ActiveIncident {
   severity: "critical" | "warning" | "info";
   createdAt: string;
   type: string;
-}
-```
-
-### ✅ OverviewData (implementado)
-```typescript
-interface OverviewData {
-  health: HealthSummary;
-  upcomingMatches: UpcomingMatch[];
-  activeIncidents: ActiveIncident[];
 }
 ```
 
@@ -664,8 +628,8 @@ interface PredictionCoverage {
 ---
 
 ## 10) Criterios de aceptación (Fase 0)
-1. **Layout**: TopBar + IconSidebar + FilterPanel + Table + Drawer overlay funcional.
-2. **Drawer overlay docked**: abre/cierra sin reflow de tabla; se superpone (~400px); sin backdrop; tabla interactiva donde no está cubierta.
+1. **Layout**: TopBar + IconSidebar + FilterPanel + Table + Drawer inline funcional.
+2. **Drawer inline**: abre/cierra sin overlay; empuja contenido; mantiene interacción con tabla.
 3. **Tabla**: sorting visual, sticky header, row selected persistente mientras drawer abierto.
 4. **Filtros**: FilterPanel colapsable (sin perder estado) + accordions colapsables + checkbox counts + search input (aunque sin lógica real).
 5. **Navegación**: rutas de todas las secciones existen; estados activos en sidebar.
@@ -678,7 +642,7 @@ interface PredictionCoverage {
 ## 11) Riesgos y mitigaciones (UI)
 - Iconografía específica (UniFi) → mapping con fallback Lucide.
 - Tablas anchas → scroll horizontal + column visibility (fase posterior).
-- Responsive: en <1280px, drawer usa Sheet overlay modal; en desktop (>=1280px) drawer es overlay docked (no modal).
+- Responsive: en <1280px, drawer puede pasar a modo overlay (pero **mantener inline en desktop**).
 - Performance: preparar virtualización para listas grandes (posterior).
 
 ---
@@ -892,75 +856,11 @@ Todas las secciones muestran claramente que están en Phase 0 con mocks:
 - Data tables: Loading/error/empty states con datos mock
 - Overview cards: Datos calculados desde mocks
 
----
 
-## 15) Overview Drawer Routing (SSOT)
 
-El Overview page tiene tiles/cards clickeables que abren un drawer overlay con tabs.
-Las keys de panel y tab son canónicas y estables (no renombrar).
 
-### 15.1 Panel Keys
 
-| Key | Component | Description |
-|-----|-----------|-------------|
-| `overall` | OverallOpsBar | System-wide status rollup |
-| `jobs` | JobsCompactTile | Jobs health + runs |
-| `predictions` | PredictionsCompactTile | Predictions coverage + missing |
-| `fastpath` | FastpathCompactTile | Fastpath/narrative health |
-| `pit` | PitProgressCompactTile | PIT evaluation progress |
-| `movement` | MovementSummaryTile | Lineup/market movement |
-| `sota` | SotaEnrichmentSection | SOTA enrichment status |
-| `sentry` | SentryHealthCard | Sentry errors + issues |
-| `budget` | ApiBudgetCard | API-Football budget |
-| `llm` | LlmCostCard | LLM cost tracking |
-| `upcoming` | UpcomingMatchesList | Upcoming matches |
-| `incidents` | ActiveIncidentsList | Active incidents |
 
-### 15.2 Tab Keys
 
-| Key | Label | Usage |
-|-----|-------|-------|
-| `summary` | Summary | Default view from ops/rollup data |
-| `issues` | Issues | Sentry issues list (paginated) |
-| `timeline` | Timeline | Timeline/history view |
-| `missing` | Missing | Predictions missing list (paginated) |
-| `movers` | Top Movers | Movement top movers list |
-| `runs` | Runs | Job runs history |
-| `links` | Links | External links (runbooks, docs) |
 
-### 15.3 Tabs by Panel
 
-| Panel | Available Tabs |
-|-------|----------------|
-| `overall` | summary |
-| `jobs` | summary, runs, links |
-| `predictions` | summary, missing |
-| `fastpath` | summary, runs |
-| `pit` | summary, timeline |
-| `movement` | summary, movers |
-| `sota` | summary |
-| `sentry` | summary, issues |
-| `budget` | summary |
-| `llm` | summary |
-| `upcoming` | summary |
-| `incidents` | summary, timeline |
-
-### 15.4 URL Format
-
-```
-/overview?panel=<panel>&tab=<tab>
-```
-
-Examples:
-- `/overview?panel=sentry&tab=issues` - Sentry issues list
-- `/overview?panel=predictions&tab=missing` - Missing predictions
-- `/overview?panel=movement&tab=movers` - Top movers
-- `/overview?panel=jobs` - Jobs summary (tab defaults to summary)
-
-### 15.5 Implementation
-
-- SSOT: `lib/overview-drawer.ts`
-- Types: `OverviewPanel`, `OverviewTab`
-- Helpers: `parsePanel()`, `parseTab()`, `buildOverviewDrawerUrl()`
-- Default tab per panel: `DEFAULT_TAB_BY_PANEL`
-- Valid tabs per panel: `TABS_BY_PANEL`

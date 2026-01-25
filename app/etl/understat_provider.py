@@ -2,7 +2,7 @@
 Understat Provider for xG/xPTS data.
 
 Provides xG (expected goals) and xPTS (expected points) data from Understat.
-Understat embeds JSON data in their HTML pages, which we parse.
+Uses Understat's internal API endpoints (discovered Jan 2026).
 
 Usage:
     provider = UnderstatProvider()
@@ -17,9 +17,7 @@ Reference: docs/ARCHITECTURE_SOTA.md section 1.3 (match_understat_team)
 """
 
 import asyncio
-import json
 import logging
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
@@ -36,11 +34,6 @@ UNDERSTAT_MATCH_URL = f"{UNDERSTAT_BASE_URL}/match"
 MIN_REQUEST_INTERVAL = 1.0  # seconds between requests
 MAX_RETRIES = 3
 RETRY_DELAY_BASE = 2.0  # exponential backoff base
-
-# Regex to extract JSON from HTML script tags
-# Understat embeds data like: var matchData = JSON.parse('...');
-MATCH_DATA_PATTERN = re.compile(r"var\s+match_info\s*=\s*JSON\.parse\('(.+?)'\)")
-SHOTS_DATA_PATTERN = re.compile(r"var\s+shotsData\s*=\s*JSON\.parse\('(.+?)'\)")
 
 
 @dataclass
@@ -62,23 +55,13 @@ class UnderstatMatchData:
     captured_at: Optional[datetime] = None
 
 
-def _decode_understat_json(encoded: str) -> dict:
-    """
-    Decode Understat's encoded JSON string.
-
-    Understat escapes characters in their JSON, we need to unescape them.
-    """
-    # Unescape the string (Understat uses \\x hex escapes)
-    decoded = encoded.encode().decode('unicode_escape')
-    return json.loads(decoded)
-
-
 class UnderstatProvider:
     """
     Provider for Understat xG/xPTS data.
 
-    Fetches data by scraping Understat match pages. The xG data is embedded
-    as JSON in script tags within the HTML.
+    Uses Understat's internal API endpoints to fetch xG data.
+    - /getLeagueData/{league}/{season} - List of matches for a league
+    - /getMatchData/{match_id} - Shots data for a match (xG calculated from shots)
 
     Rate limiting: ~1 req/s with exponential backoff on errors.
     """
@@ -147,8 +130,8 @@ class UnderstatProvider:
         """
         Fetch xG/xPTS data directly from Understat by match ID.
 
-        This is the real implementation that scrapes Understat's match page.
-        The xG data is embedded as JSON in script tags.
+        Uses Understat's internal API endpoint /getMatchData/{id} which returns
+        shots data. xG is calculated by summing shot xG values.
 
         Args:
             understat_match_id: The Understat match ID.
@@ -156,14 +139,21 @@ class UnderstatProvider:
         Returns:
             UnderstatMatchData with xG metrics, or None if failed.
         """
-        url = f"{UNDERSTAT_MATCH_URL}/{understat_match_id}"
+        # Use internal API endpoint (discovered Jan 2026)
+        url = f"{UNDERSTAT_BASE_URL}/getMatchData/{understat_match_id}"
 
         for attempt in range(MAX_RETRIES):
             try:
                 await self._rate_limit()
                 client = await self._get_client()
 
-                response = await client.get(url)
+                # Required headers for the internal API
+                headers = {
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Referer": f"{UNDERSTAT_MATCH_URL}/{understat_match_id}",
+                }
+
+                response = await client.get(url, headers=headers)
 
                 # Handle rate limiting
                 if response.status_code == 429:
@@ -185,10 +175,10 @@ class UnderstatProvider:
                     return None
 
                 response.raise_for_status()
-                html = response.text
+                data = response.json()
 
-                # Parse the embedded JSON data
-                return self._parse_match_page(html, understat_match_id)
+                # Parse xG from shots data
+                return self._parse_match_api_response(data, understat_match_id)
 
             except httpx.TimeoutException:
                 logger.warning(f"Timeout fetching Understat match {understat_match_id}, attempt {attempt + 1}")
@@ -205,88 +195,63 @@ class UnderstatProvider:
         logger.error(f"Failed to fetch Understat match {understat_match_id} after {MAX_RETRIES} attempts")
         return None
 
-    def _parse_match_page(
+    def _parse_match_api_response(
         self,
-        html: str,
+        data: dict,
         understat_match_id: str,
     ) -> Optional[UnderstatMatchData]:
         """
-        Parse Understat match page HTML to extract xG data.
+        Parse xG data from Understat's getMatchData API response.
 
-        Understat embeds data in script tags like:
-            var match_info = JSON.parse('{"h":{"title":"Liverpool",...,"xG":"1.45"},...}');
-            var shotsData = JSON.parse('{"h":[...],"a":[...]}');
+        The API returns shots data, from which we calculate xG by summing.
 
         Args:
-            html: The HTML content of the match page.
+            data: JSON response from /getMatchData/{id}
             understat_match_id: Match ID for logging.
 
         Returns:
             UnderstatMatchData or None if parsing failed.
         """
         try:
-            # Extract match_info JSON
-            match_info_match = MATCH_DATA_PATTERN.search(html)
-            if not match_info_match:
-                logger.warning(f"Could not find match_info in Understat page {understat_match_id}")
+            shots = data.get("shots", {})
+            home_shots = shots.get("h", [])
+            away_shots = shots.get("a", [])
+
+            if not home_shots and not away_shots:
+                logger.debug(f"No shots data for Understat match {understat_match_id}")
                 return None
 
-            match_info = _decode_understat_json(match_info_match.group(1))
+            # Calculate xG by summing shot xG values
+            xg_home = sum(float(s.get("xG", 0)) for s in home_shots)
+            xg_away = sum(float(s.get("xG", 0)) for s in away_shots)
 
-            # Extract xG from match_info
-            # Structure: {"h": {"xG": "1.45", ...}, "a": {"xG": "0.87", ...}}
-            home_data = match_info.get("h", {})
-            away_data = match_info.get("a", {})
-
-            xg_home = float(home_data.get("xG", 0))
-            xg_away = float(away_data.get("xG", 0))
-
-            # Try to extract shots data for npxG calculation
-            npxg_home = None
-            npxg_away = None
-            shots_match = SHOTS_DATA_PATTERN.search(html)
-            if shots_match:
-                try:
-                    shots_data = _decode_understat_json(shots_match.group(1))
-                    # Calculate npxG by summing xG of non-penalty shots
-                    home_shots = shots_data.get("h", [])
-                    away_shots = shots_data.get("a", [])
-
-                    npxg_home = sum(
-                        float(s.get("xG", 0))
-                        for s in home_shots
-                        if s.get("situation") != "Penalty"
-                    )
-                    npxg_away = sum(
-                        float(s.get("xG", 0))
-                        for s in away_shots
-                        if s.get("situation") != "Penalty"
-                    )
-                except Exception as e:
-                    logger.debug(f"Could not parse shots data: {e}")
-
-            # Note: xPTS is not directly available on match pages
-            # It's calculated from match outcomes, so we leave it as None
-            # (could be derived from league standings page if needed)
+            # Calculate non-penalty xG
+            npxg_home = sum(
+                float(s.get("xG", 0))
+                for s in home_shots
+                if s.get("situation") != "Penalty"
+            )
+            npxg_away = sum(
+                float(s.get("xG", 0))
+                for s in away_shots
+                if s.get("situation") != "Penalty"
+            )
 
             return UnderstatMatchData(
                 xg_home=round(xg_home, 2),
                 xg_away=round(xg_away, 2),
-                xpts_home=None,  # Not available on match page
+                xpts_home=None,  # Not available from match API
                 xpts_away=None,
-                npxg_home=round(npxg_home, 2) if npxg_home is not None else None,
-                npxg_away=round(npxg_away, 2) if npxg_away is not None else None,
+                npxg_home=round(npxg_home, 2),
+                npxg_away=round(npxg_away, 2),
                 xga_home=round(xg_away, 2),  # xGA home = xG away
                 xga_away=round(xg_home, 2),  # xGA away = xG home
                 source_version=self.SOURCE_VERSION,
                 captured_at=datetime.utcnow(),
             )
 
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parse error for Understat match {understat_match_id}: {e}")
-            return None
         except Exception as e:
-            logger.error(f"Error parsing Understat match {understat_match_id}: {e}")
+            logger.error(f"Error parsing Understat match API {understat_match_id}: {e}")
             return None
 
     def _get_mock_data(self, source_match_id: str) -> UnderstatMatchData:

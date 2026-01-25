@@ -102,6 +102,31 @@ signal = (brier_uniform - brier_B) / (brier_uniform - brier_A)
 3. Si signal > 1.1 consistentemente: revisar Model A manualmente
 4. No tomar decisiones con < 100 samples evaluados
 
+### Semántica de b_* = NULL
+
+Cuando un registro en `sensor_predictions` tiene `b_home_prob IS NULL`:
+
+**Causa raíz**: El sensor estaba en estado LEARNING cuando se logueó la predicción:
+- El sensor no tenía suficientes samples para entrenar (< `SENSOR_WINDOW_SIZE`)
+- El sensor no estaba inicializado (cold start)
+- Hubo un error en el entrenamiento del sensor
+
+**Implicaciones**:
+- `a_*` campos siempre tienen valores (Model A siempre predice)
+- `b_*` campos son NULL → no hay predicción B que comparar
+- `sensor_state = 'LEARNING'` indica esta condición
+- Estos registros se **excluyen** del cálculo A vs B (`evaluated_with_b`)
+
+**Métricas en ops.json**:
+- `samples_evaluated`: Solo registros con B predictions (`evaluated_with_b`)
+- `missing_b_evaluated`: Registros evaluados sin B predictions
+- `missing_b_pending`: Registros pending sin B predictions
+
+**Guardrails implementados (2026-01-25)**:
+1. `ON CONFLICT` usa `COALESCE` para preservar B existente si nueva inserción tiene NULL
+2. `retry_missing_b_predictions` solo procesa partidos NS (nunca FT/AET/PEN)
+3. No se hace backfill de B para partidos terminados (evita time-travel leakage)
+
 ---
 
 ## Telemetría ML

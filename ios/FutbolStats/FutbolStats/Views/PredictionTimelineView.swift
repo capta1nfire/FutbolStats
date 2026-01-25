@@ -731,15 +731,9 @@ struct LiveTimelineData {
             guard event.isGoal else { return nil }
 
             // Determine team side (home/away) by comparing team_id
-            let team: String
-            if let teamId = event.teamId {
-                // We need to match by team ID - but we don't have team IDs in prediction
-                // Fallback: try to infer from score context or just mark as unknown
-                // For now, we'll use the player/team info we have
-                team = "home" // Default, will be overridden if we can determine
-            } else {
-                team = "home"
-            }
+            // Note: We don't have team IDs in prediction to match against,
+            // so we default to "home". Future: match event.teamId with prediction team IDs.
+            let team = event.teamId != nil ? "home" : "home"
 
             let isOwnGoal = event.detail.lowercased().contains("own goal")
             let isPenalty = event.detail.lowercased().contains("penalty")
