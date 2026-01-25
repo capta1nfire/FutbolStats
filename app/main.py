@@ -17582,17 +17582,42 @@ async def ops_alerts_webhook(
                 message = message[:997] + "..."
 
             # Timestamps (convert to naive UTC for DB compatibility)
-            starts_at = None
-            ends_at = None
-            try:
-                if alert.get("startsAt"):
-                    dt = datetime.fromisoformat(alert["startsAt"].replace("Z", "+00:00"))
-                    starts_at = dt.replace(tzinfo=None)  # Convert to naive UTC
-                if alert.get("endsAt") and alert.get("endsAt") != "0001-01-01T00:00:00Z":
-                    dt = datetime.fromisoformat(alert["endsAt"].replace("Z", "+00:00"))
-                    ends_at = dt.replace(tzinfo=None)  # Convert to naive UTC
-            except Exception:
-                pass
+            # Helper: normalize any timestamp to UTC naive (repo convention)
+            def _to_utc_naive(value: str | datetime | None) -> datetime | None:
+                """
+                Convert timestamp to UTC naive datetime.
+
+                - None -> None
+                - ISO string with tz -> parse, convert to UTC, strip tzinfo
+                - datetime aware -> convert to UTC, strip tzinfo
+                - datetime naive -> assume UTC, return as-is
+                """
+                from datetime import timezone
+
+                if value is None:
+                    return None
+
+                if isinstance(value, str):
+                    if not value or value == "0001-01-01T00:00:00Z":
+                        return None
+                    try:
+                        # Parse ISO format, handle Z suffix
+                        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                    except ValueError:
+                        logger.warning(f"[ALERTS] Invalid timestamp format: {value[:50]}")
+                        return None
+
+                if isinstance(value, datetime):
+                    if value.tzinfo is not None:
+                        # Convert to UTC then strip tzinfo
+                        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+                    # else: already naive, assume UTC
+                    return value
+
+                return None
+
+            starts_at = _to_utc_naive(alert.get("startsAt"))
+            ends_at = _to_utc_naive(alert.get("endsAt"))
 
             # Source URL (Grafana panel/alert link)
             source_url = (
@@ -17600,6 +17625,15 @@ async def ops_alerts_webhook(
                 or alert.get("silenceURL")
                 or annotations.get("runbook_url")
             )
+
+            # Guardrail: ensure timestamps are naive UTC before DB insert
+            # (asyncpg will reject aware datetimes for TIMESTAMP WITHOUT TIME ZONE)
+            if starts_at is not None and starts_at.tzinfo is not None:
+                logger.warning(f"[ALERTS] starts_at still has tzinfo after normalization, forcing naive: {fingerprint}")
+                starts_at = starts_at.replace(tzinfo=None)
+            if ends_at is not None and ends_at.tzinfo is not None:
+                logger.warning(f"[ALERTS] ends_at still has tzinfo after normalization, forcing naive: {fingerprint}")
+                ends_at = ends_at.replace(tzinfo=None)
 
             # Upsert into ops_alerts
             now = datetime.utcnow()
