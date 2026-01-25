@@ -4,8 +4,12 @@ Sistema de predicciones de fútbol con ML y narrativas LLM.
 
 ## Roles del Proyecto
 - **David**: Owner/Usuario del producto
-- **Auditor**: Director de Ingeniería - valida arquitectura, define requisitos/guardrails/criterios de aceptación, audita riesgos. No escribe código de producción.
-- **Claude (Master)**: Implementador - ejecuta código, deploys, debugging según instrucciones del Auditor
+- **ABE** (Auditor Backend): Director técnico del backend. No escribe código.
+- **ADB** (Auditor Dashboard): Director técnico del dashboard. No escribe código.
+- **Master**: Codificador backend - ejecuta código, deploys, debugging según instrucciones de ABE
+- **Claude**: Codificador dashboard - implementa UI según instrucciones de ADB
+
+> **Para auditores nuevos**: Ver `docs/AUDITOR_ONBOARDING.md` para contexto completo, roles, flujo de comunicación y estado del proyecto.
 
 ## Stack Tecnológico
 - **Backend**: Python 3.12, FastAPI, SQLAlchemy/SQLModel
