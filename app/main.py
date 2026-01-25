@@ -7172,8 +7172,10 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
         result["venue_geo"] = _unavailable(f"Query failed: {str(e)[:50]}")
 
     # 4) Team profiles coverage: teams with home city profiles
+    # ABE 2026-01-25: Report both "all teams" and "active teams (30d)" for clarity
     try:
-        res = await session.execute(
+        # Query 1: All teams (historical debt metric)
+        res_all = await session.execute(
             text("""
                 SELECT
                     COUNT(*) FILTER (WHERE thcp.team_id IS NOT NULL) AS with_profile,
@@ -7182,18 +7184,47 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
                 LEFT JOIN team_home_city_profile thcp ON t.id = thcp.team_id
             """)
         )
-        row = res.first()
-        with_data = int(row[0] or 0) if row else 0
-        total = int(row[1] or 0) if row else 0
-        coverage_pct = round(with_data / total * 100, 1) if total > 0 else 0.0
+        row_all = res_all.first()
+        with_data_all = int(row_all[0] or 0) if row_all else 0
+        total_all = int(row_all[1] or 0) if row_all else 0
+        coverage_pct_all = round(with_data_all / total_all * 100, 1) if total_all > 0 else 0.0
 
+        # Query 2: Active teams (last 30d) - operational metric for dashboard card
+        res_active = await session.execute(
+            text("""
+                SELECT
+                    COUNT(DISTINCT CASE WHEN thcp.team_id IS NOT NULL THEN t.id END) AS with_profile,
+                    COUNT(DISTINCT t.id) AS total_teams
+                FROM teams t
+                JOIN matches m ON t.id = m.home_team_id OR t.id = m.away_team_id
+                LEFT JOIN team_home_city_profile thcp ON t.id = thcp.team_id
+                WHERE m.date >= NOW() - INTERVAL '30 days'
+            """)
+        )
+        row_active = res_active.first()
+        with_data_active = int(row_active[0] or 0) if row_active else 0
+        total_active = int(row_active[1] or 0) if row_active else 0
+        coverage_pct_active = round(with_data_active / total_active * 100, 1) if total_active > 0 else 0.0
+
+        # Primary metric: active teams (better operational signal)
         result["team_profiles"] = {
-            "status": "ok" if coverage_pct >= 30 else ("warn" if coverage_pct >= 10 else "red"),
-            "coverage_pct": coverage_pct,
-            "total": total,
-            "with_data": with_data,
+            "status": "ok" if coverage_pct_active >= 30 else ("warn" if coverage_pct_active >= 10 else "red"),
+            "coverage_pct": coverage_pct_active,
+            "total": total_active,
+            "with_data": with_data_active,
             "staleness_hours": None,  # static data, no staleness
-            "note": "All teams in DB",
+            "note": f"Active teams (30d). All teams: {with_data_all}/{total_all} ({coverage_pct_all}%)",
+            # Detailed breakdown for audit
+            "all_teams": {
+                "with_data": with_data_all,
+                "total": total_all,
+                "coverage_pct": coverage_pct_all,
+            },
+            "active_teams_30d": {
+                "with_data": with_data_active,
+                "total": total_active,
+                "coverage_pct": coverage_pct_active,
+            },
         }
     except Exception as e:
         logger.debug(f"[SOTA] Team profiles metrics unavailable: {e}")
