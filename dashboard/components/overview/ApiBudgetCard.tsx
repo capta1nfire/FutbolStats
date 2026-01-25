@@ -282,9 +282,9 @@ export function ApiBudgetCard({ budget, className, isMockFallback = false, reque
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <button className="text-muted-foreground hover:text-foreground">
+                <span className="text-muted-foreground hover:text-foreground cursor-help">
                   <Info className="h-3.5 w-3.5" />
-                </button>
+                </span>
               </TooltipTrigger>
               <TooltipContent side="top">
                 <p>{budget.tokens_reset_note}</p>

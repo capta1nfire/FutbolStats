@@ -24,6 +24,7 @@ import {
   FastpathCompactTile,
   PitProgressCompactTile,
   MovementSummaryTile,
+  DiagnosticsTile,
   // Drawer
   OverviewDrawer,
 } from "@/components/overview";
@@ -62,12 +63,15 @@ function ClickableTile({
   const { openDrawer } = useOverviewDrawer();
 
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => openDrawer({ panel })}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openDrawer({ panel }); }}
       className={`w-full text-left cursor-pointer hover:ring-1 hover:ring-primary/50 rounded-lg transition-all ${className ?? ""}`}
     >
       {children}
-    </button>
+    </div>
   );
 }
 
@@ -94,6 +98,8 @@ export default function OverviewPage() {
     isPitActivityDegraded,
     isMovementDegraded,
     isSotaEnrichmentDegraded,
+    shadowMode,
+    sensorB,
     isDegraded,
     isLoading,
     error,
@@ -290,6 +296,12 @@ export default function OverviewPage() {
               />
             </ClickableTile>
           </div>
+
+          {/* Row 2b: Diagnostics (Shadow Mode + Sensor B) */}
+          <DiagnosticsTile
+            shadowMode={shadowMode}
+            sensorB={sensorB}
+          />
 
           {/* Row 3: SOTA Enrichment + Movement Summary (same row as last SOTA card) */}
           <ClickableTile panel="sota">
