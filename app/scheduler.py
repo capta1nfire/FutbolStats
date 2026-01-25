@@ -1872,9 +1872,14 @@ async def daily_save_predictions():
         sensor_settings = get_settings()
 
         async with AsyncSessionLocal() as session:
-            # Get upcoming matches features
-            feature_engineer = FeatureEngineer(session=session)
-            df = await feature_engineer.get_upcoming_matches_features()
+            # Get upcoming matches features (can be slow - wrap in try/except)
+            try:
+                feature_engineer = FeatureEngineer(session=session)
+                df = await feature_engineer.get_upcoming_matches_features()
+            except (InterfaceError, DBAPIError) as fetch_err:
+                logger.error(f"[DAILY-SAVE] DB connection lost during feature fetch: {fetch_err}")
+                record_job_run(job="daily_save_predictions", status="error", duration_ms=(time.time() - start_time) * 1000)
+                return
 
             # P0 FIX: Filter to NS-only BEFORE predicting (reduces work significantly)
             total_fetched = len(df)
