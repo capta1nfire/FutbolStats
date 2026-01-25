@@ -1,0 +1,63 @@
+{
+  "_comment": "Manual venue geocoding for cities that Open-Meteo cannot resolve",
+  "_updated": "2026-01-25",
+  "venues": [
+    {
+      "venue_city": "Stoke on Trent",
+      "country": "England",
+      "lat": 53.0027,
+      "lon": -2.1794,
+      "source": "manual"
+    },
+    {
+      "venue_city": "Villeneuve d'Ascq",
+      "country": "France",
+      "lat": 50.6219,
+      "lon": 3.1419,
+      "source": "manual"
+    },
+    {
+      "venue_city": "Vila das Aves",
+      "country": "Portugal",
+      "lat": 41.3636,
+      "lon": -8.3978,
+      "source": "manual"
+    },
+    {
+      "venue_city": "Santiago de Chile",
+      "country": "Chile",
+      "lat": -33.4489,
+      "lon": -70.6693,
+      "source": "manual"
+    },
+    {
+      "venue_city": "Buraydah (Buraidah)",
+      "country": "Saudi-Arabia",
+      "lat": 26.3260,
+      "lon": 43.9750,
+      "source": "manual"
+    },
+    {
+      "venue_city": "Santa Cruz",
+      "country": "Bolivia",
+      "lat": -17.7863,
+      "lon": -63.1812,
+      "source": "manual",
+      "_note": "Assuming Bolivia based on match context"
+    },
+    {
+      "venue_city": "San Luis de Potosi",
+      "country": "Mexico",
+      "lat": 22.1565,
+      "lon": -100.9855,
+      "source": "manual"
+    },
+    {
+      "venue_city": "Panama City",
+      "country": "Panama",
+      "lat": 8.9824,
+      "lon": -79.5199,
+      "source": "manual"
+    }
+  ]
+}
