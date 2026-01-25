@@ -6758,6 +6758,9 @@ async def _calculate_sensor_b_summary(session) -> dict:
         samples_evaluated_total = counts.get("evaluated_total", 0)
         samples_pending = counts.get("pending_with_b", 0)
         samples_pending_total = counts.get("pending_total", 0)
+        # AUDIT: Expose missing B predictions (sensor was LEARNING when logged)
+        missing_b_evaluated = counts.get("missing_b_evaluated", 0)
+        missing_b_pending = counts.get("missing_b_pending", 0)
         min_samples = gating.get("min_samples_required", 50)
         has_enough_samples = samples_evaluated >= min_samples
 
@@ -6782,6 +6785,17 @@ async def _calculate_sensor_b_summary(session) -> dict:
             "samples_evaluated_total": samples_evaluated_total,  # all evaluated
             "samples_pending": samples_pending,  # pending_with_b (will have B to compare)
             "samples_pending_total": samples_pending_total,  # all pending
+            # AUDIT: Expose missing B predictions (sensor was LEARNING when logged)
+            # These records are excluded from A vs B comparison metrics
+            "missing_b_evaluated": missing_b_evaluated,
+            "missing_b_pending": missing_b_pending,
+            "missing_b_total": missing_b_evaluated + missing_b_pending,
+            # Warning if sensor is ready but there are missing B predictions (needs retry)
+            "has_missing_b": (missing_b_evaluated + missing_b_pending) > 0,
+            "missing_b_warning": (
+                "retry needed" if sensor_info.get("is_ready") and (missing_b_evaluated + missing_b_pending) > 0
+                else None
+            ),
             "min_samples": min_samples,
             # Accuracy A vs B (Auditor card) - only present if samples >= min_samples
             "accuracy_a_pct": accuracy_a_pct,

@@ -2366,6 +2366,20 @@ async def retrain_sensor_model():
                     f"window={result.get('window_size')}, "
                     f"version={result.get('model_version')}"
                 )
+
+                # AUTO-HEALING: Retry missing B predictions now that sensor is ready
+                # This fills b_* for rows created when sensor was LEARNING
+                try:
+                    from app.ml.sensor import retry_missing_b_predictions
+                    retry_result = await retry_missing_b_predictions(session, include_ft=False)
+                    if retry_result.get("updated", 0) > 0:
+                        logger.info(
+                            f"[SENSOR] Auto-healing complete: updated={retry_result['updated']}, "
+                            f"checked={retry_result['checked']}"
+                        )
+                except Exception as retry_err:
+                    logger.warning(f"[SENSOR] Auto-healing failed: {retry_err}")
+
             elif status == "learning":
                 record_sensor_retrain("learning")
                 logger.info(f"[SENSOR] Still learning: {result.get('reason')}")

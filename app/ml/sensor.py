@@ -317,6 +317,9 @@ async def log_sensor_prediction(
                 sensor_state = "READY"
 
         # Insert into sensor_predictions
+        # AUDIT GUARDRAIL: Use COALESCE to preserve existing B predictions
+        # If row exists with b_home_prob NOT NULL, don't overwrite with NULL
+        # This prevents regression if sensor temporarily becomes not-ready
         insert_query = text("""
             INSERT INTO sensor_predictions (
                 match_id, window_size, model_a_version, model_b_version,
@@ -332,16 +335,21 @@ async def log_sensor_prediction(
             ON CONFLICT (match_id) DO UPDATE SET
                 window_size = EXCLUDED.window_size,
                 model_a_version = EXCLUDED.model_a_version,
-                model_b_version = EXCLUDED.model_b_version,
                 a_home_prob = EXCLUDED.a_home_prob,
                 a_draw_prob = EXCLUDED.a_draw_prob,
                 a_away_prob = EXCLUDED.a_away_prob,
                 a_pick = EXCLUDED.a_pick,
-                b_home_prob = EXCLUDED.b_home_prob,
-                b_draw_prob = EXCLUDED.b_draw_prob,
-                b_away_prob = EXCLUDED.b_away_prob,
-                b_pick = EXCLUDED.b_pick,
-                sensor_state = EXCLUDED.sensor_state
+                -- GUARDRAIL: Only update B fields if new value is NOT NULL (preserve existing)
+                model_b_version = COALESCE(EXCLUDED.model_b_version, sensor_predictions.model_b_version),
+                b_home_prob = COALESCE(EXCLUDED.b_home_prob, sensor_predictions.b_home_prob),
+                b_draw_prob = COALESCE(EXCLUDED.b_draw_prob, sensor_predictions.b_draw_prob),
+                b_away_prob = COALESCE(EXCLUDED.b_away_prob, sensor_predictions.b_away_prob),
+                b_pick = COALESCE(EXCLUDED.b_pick, sensor_predictions.b_pick),
+                sensor_state = CASE
+                    WHEN EXCLUDED.b_home_prob IS NOT NULL THEN EXCLUDED.sensor_state
+                    WHEN sensor_predictions.b_home_prob IS NOT NULL THEN sensor_predictions.sensor_state
+                    ELSE EXCLUDED.sensor_state
+                END
         """)
 
         await session.execute(insert_query, {
@@ -484,6 +492,205 @@ async def evaluate_sensor_predictions(session: AsyncSession) -> dict:
     }
 
 
+async def retry_missing_b_predictions(
+    session: AsyncSession,
+    include_ft: bool = False,
+    match_ids: list[int] = None,
+    limit: int = 100,
+) -> dict:
+    """
+    Auto-healing: Generate Sensor B predictions for rows with b_home_prob IS NULL.
+
+    Uses FeatureEngineer to reconstruct proper features for each match,
+    then generates B prediction using the sensor model.
+
+    AUDIT GUARDRAILS:
+    - Only updates rows where b_home_prob IS NULL (idempotent, never overwrites existing B)
+    - Requires sensor.is_ready = True to proceed
+    - Default: only NS matches (include_ft=False prevents time-travel for evaluation)
+    - Backfill mode: include_ft=True for one-time historical fill
+
+    Args:
+        session: Async database session
+        include_ft: If True, also process FT matches (for backfill). Default False (auto-healing).
+        match_ids: Optional list of specific match IDs to process (for targeted backfill)
+        limit: Max matches to process per call
+
+    Returns:
+        Dict with retry stats
+    """
+    from app.features.engineering import FeatureEngineer
+    from app.models import Match
+
+    sensor = get_sensor_engine()
+
+    # If sensor not ready, skip entirely
+    if sensor is None or not sensor.is_ready:
+        logger.info("[SENSOR_RETRY] Skipped: sensor not ready")
+        return {
+            "status": "skipped",
+            "reason": "sensor_not_ready",
+            "checked": 0,
+            "updated": 0,
+            "errors": 0,
+        }
+
+    # Build query based on mode
+    if match_ids:
+        # Targeted backfill: specific match IDs
+        placeholders = ",".join([f":id_{i}" for i in range(len(match_ids))])
+        query = text(f"""
+            SELECT sp.match_id
+            FROM sensor_predictions sp
+            WHERE sp.b_home_prob IS NULL
+              AND sp.match_id IN ({placeholders})
+            LIMIT :limit
+        """)
+        params = {f"id_{i}": mid for i, mid in enumerate(match_ids)}
+        params["limit"] = limit
+    elif include_ft:
+        # Backfill mode: include FT matches
+        query = text("""
+            SELECT sp.match_id
+            FROM sensor_predictions sp
+            JOIN matches m ON m.id = sp.match_id
+            WHERE sp.b_home_prob IS NULL
+              AND m.status IN ('NS', 'FT', 'AET', 'PEN')
+            ORDER BY m.date DESC
+            LIMIT :limit
+        """)
+        params = {"limit": limit}
+    else:
+        # Auto-healing mode: only future NS matches
+        query = text("""
+            SELECT sp.match_id
+            FROM sensor_predictions sp
+            JOIN matches m ON m.id = sp.match_id
+            WHERE sp.b_home_prob IS NULL
+              AND m.status = 'NS'
+              AND m.date > NOW()
+            LIMIT :limit
+        """)
+        params = {"limit": limit}
+
+    result = await session.execute(query, params)
+    rows = result.fetchall()
+
+    if not rows:
+        mode = "backfill" if include_ft else "auto-healing"
+        logger.info(f"[SENSOR_RETRY] No matches with missing B predictions found (mode={mode})")
+        return {
+            "status": "ok",
+            "checked": 0,
+            "updated": 0,
+            "errors": 0,
+        }
+
+    # Initialize feature engineer for computing features
+    feature_engineer = FeatureEngineer(session=session)
+
+    updated = 0
+    errors = 0
+    skipped_no_features = 0
+
+    for row in rows:
+        match_id = row.match_id
+        try:
+            # Get match object
+            match_result = await session.execute(
+                text("SELECT * FROM matches WHERE id = :match_id"),
+                {"match_id": match_id}
+            )
+            match_row = match_result.first()
+            if not match_row:
+                logger.warning(f"[SENSOR_RETRY] Match {match_id} not found")
+                errors += 1
+                continue
+
+            # Create Match object from row
+            match = Match(
+                id=match_row.id,
+                home_team_id=match_row.home_team_id,
+                away_team_id=match_row.away_team_id,
+                date=match_row.date,
+                status=match_row.status,
+                home_goals=match_row.home_goals,
+                away_goals=match_row.away_goals,
+            )
+
+            # Compute features using FeatureEngineer
+            features = await feature_engineer.get_match_features(match)
+            if not features or features.get("has_features") is False:
+                logger.debug(f"[SENSOR_RETRY] Skipped match {match_id}: no features available")
+                skipped_no_features += 1
+                continue
+
+            # Build DataFrame with sensor's expected columns
+            df = pd.DataFrame([features])
+
+            # Ensure all required columns exist
+            missing_cols = set(sensor.FEATURE_COLUMNS) - set(df.columns)
+            if missing_cols:
+                logger.debug(f"[SENSOR_RETRY] Skipped match {match_id}: missing columns {missing_cols}")
+                skipped_no_features += 1
+                continue
+
+            # Generate B prediction
+            b_probs = sensor.predict_proba(df)
+            if b_probs is None:
+                logger.debug(f"[SENSOR_RETRY] Skipped match {match_id}: sensor predict_proba returned None")
+                skipped_no_features += 1
+                continue
+
+            b_probs = b_probs[0]  # First row
+            b_pick = ["home", "draw", "away"][np.argmax(b_probs)]
+
+            # Update only B fields, preserve A fields
+            # GUARDRAIL: WHERE b_home_prob IS NULL ensures no overwrite
+            update_query = text("""
+                UPDATE sensor_predictions
+                SET b_home_prob = :b_home_prob,
+                    b_draw_prob = :b_draw_prob,
+                    b_away_prob = :b_away_prob,
+                    b_pick = :b_pick,
+                    model_b_version = :model_b_version,
+                    sensor_state = 'READY'
+                WHERE match_id = :match_id
+                  AND b_home_prob IS NULL
+            """)
+
+            await session.execute(update_query, {
+                "match_id": match_id,
+                "b_home_prob": float(b_probs[0]),
+                "b_draw_prob": float(b_probs[1]),
+                "b_away_prob": float(b_probs[2]),
+                "b_pick": b_pick,
+                "model_b_version": sensor.model_version,
+            })
+            updated += 1
+
+        except Exception as e:
+            logger.warning(f"[SENSOR_RETRY] Error updating match {match_id}: {e}")
+            errors += 1
+
+    await session.commit()
+
+    mode = "backfill" if include_ft else "auto-healing"
+    logger.info(
+        f"[SENSOR_RETRY] Complete (mode={mode}): checked={len(rows)}, "
+        f"updated={updated}, skipped_no_features={skipped_no_features}, errors={errors}"
+    )
+
+    return {
+        "status": "ok",
+        "mode": mode,
+        "checked": len(rows),
+        "updated": updated,
+        "skipped_no_features": skipped_no_features,
+        "errors": errors,
+    }
+
+
 async def get_sensor_report(session: AsyncSession) -> dict:
     """
     Generate comprehensive sensor evaluation report.
@@ -532,6 +739,9 @@ async def get_sensor_report(session: AsyncSession) -> dict:
     pending_with_b = int(counts_row.pending_with_b or 0)
     state_learning = int(counts_row.state_learning or 0)
     state_ready = int(counts_row.state_ready or 0)
+    # AUDIT: Expose missing B predictions (sensor was LEARNING when prediction was logged)
+    missing_b_evaluated = evaluated_total - evaluated_with_b
+    missing_b_pending = pending_total - pending_with_b
 
     # Gating uses evaluated_with_b (need sensor predictions to compare A vs B)
     if evaluated_with_b < min_samples:
@@ -556,6 +766,9 @@ async def get_sensor_report(session: AsyncSession) -> dict:
                 "evaluated_with_b": evaluated_with_b,
                 "pending_total": pending_total,
                 "pending_with_b": pending_with_b,
+                # AUDIT: Expose records missing B due to sensor LEARNING state
+                "missing_b_evaluated": missing_b_evaluated,
+                "missing_b_pending": missing_b_pending,
             },
             "state_distribution": {
                 "learning": state_learning,
@@ -640,6 +853,9 @@ async def get_sensor_report(session: AsyncSession) -> dict:
             "evaluated_with_b": evaluated_with_b,
             "pending_total": pending_total,
             "pending_with_b": pending_with_b,
+            # AUDIT: Expose records missing B due to sensor LEARNING state
+            "missing_b_evaluated": missing_b_evaluated,
+            "missing_b_pending": missing_b_pending,
         },
         "state_distribution": {
             "learning": state_learning,
