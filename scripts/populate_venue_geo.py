@@ -57,32 +57,45 @@ GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 async def get_unique_venues(
     session: AsyncSession,
     limit: Optional[int] = None,
+    recent_days: int = 30,
 ) -> list[dict]:
     """
     Get unique venues from matches that need geocoding.
 
     Joins with home team to get country if venue doesn't have one.
     Only returns venues not already in venue_geo.
+    Prioritizes by match_count (most used venues first).
+
+    Args:
+        session: Database session.
+        limit: Max venues to return.
+        recent_days: Only consider matches from last N days (default: 30).
     """
     limit_clause = f"LIMIT {limit}" if limit else ""
 
     query = text(f"""
-        SELECT DISTINCT ON (LOWER(TRIM(m.venue_city)), COALESCE(LOWER(TRIM(t.country)), 'unknown'))
-            m.venue_city,
-            t.country AS team_country,
-            COUNT(*) OVER (PARTITION BY LOWER(TRIM(m.venue_city))) AS match_count
-        FROM matches m
-        JOIN teams t ON m.home_team_id = t.id
-        LEFT JOIN venue_geo vg
-            ON LOWER(TRIM(m.venue_city)) = LOWER(TRIM(vg.venue_city))
-            AND (
-                LOWER(TRIM(COALESCE(t.country, 'unknown'))) = LOWER(TRIM(vg.country))
-                OR vg.country = 'unknown'
-            )
-        WHERE m.venue_city IS NOT NULL
-          AND m.venue_city != ''
-          AND vg.venue_city IS NULL
-        ORDER BY LOWER(TRIM(m.venue_city)), COALESCE(LOWER(TRIM(t.country)), 'unknown'), match_count DESC
+        WITH recent_venues AS (
+            SELECT
+                m.venue_city,
+                t.country AS team_country,
+                COUNT(*) AS match_count
+            FROM matches m
+            JOIN teams t ON m.home_team_id = t.id
+            LEFT JOIN venue_geo vg
+                ON LOWER(TRIM(m.venue_city)) = LOWER(TRIM(vg.venue_city))
+                AND (
+                    LOWER(TRIM(COALESCE(t.country, 'unknown'))) = LOWER(TRIM(vg.country))
+                    OR vg.country = 'unknown'
+                )
+            WHERE m.venue_city IS NOT NULL
+              AND m.venue_city != ''
+              AND vg.venue_city IS NULL
+              AND m.date >= NOW() - INTERVAL '{recent_days} days'
+            GROUP BY m.venue_city, t.country
+        )
+        SELECT venue_city, team_country, match_count
+        FROM recent_venues
+        ORDER BY match_count DESC
         {limit_clause}
     """)
 
@@ -116,15 +129,35 @@ async def geocode_with_open_meteo(
     Returns:
         Dict with lat, lon, confidence or None if not found.
     """
-    try:
-        # Build search query
-        query = city
-        if country and country != "unknown":
-            query = f"{city}, {country}"
+    # Country name mappings (Open-Meteo uses native names)
+    COUNTRY_ALIASES = {
+        "turkey": ["türkiye", "turkey"],
+        "saudi-arabia": ["saudi arabia", "saudi-arabia"],
+        "usa": ["united states", "usa", "us"],
+        "england": ["united kingdom", "england", "uk"],
+        "scotland": ["united kingdom", "scotland", "uk"],
+        "wales": ["united kingdom", "wales", "uk"],
+        "northern-ireland": ["united kingdom", "northern ireland", "uk"],
+    }
 
+    def country_matches(result_country: str, target_country: str) -> bool:
+        """Check if result country matches target, considering aliases."""
+        result_lower = result_country.lower()
+        target_lower = target_country.lower()
+
+        # Direct match
+        if target_lower in result_lower or result_lower in target_lower:
+            return True
+
+        # Check aliases
+        aliases = COUNTRY_ALIASES.get(target_lower, [])
+        return any(alias in result_lower for alias in aliases)
+
+    try:
+        # Search by city name only (Open-Meteo handles country names poorly)
         params = {
-            "name": query,
-            "count": 5,
+            "name": city,
+            "count": 10,  # Get more results to filter by country
             "language": "en",
             "format": "json",
         }
@@ -136,23 +169,31 @@ async def geocode_with_open_meteo(
         results = data.get("results", [])
 
         if not results:
-            logger.debug(f"No geocoding results for '{query}'")
+            logger.debug(f"No geocoding results for '{city}'")
             return None
 
-        # Find best match (first result is usually best)
-        best = results[0]
+        # Filter by country if provided
+        best = None
+        confidence = 0.9
 
-        # Calculate confidence based on match quality
-        confidence = 0.9  # Default high confidence for first result
-
-        # Lower confidence if country doesn't match
         if country and country != "unknown":
-            result_country = best.get("country", "").lower()
-            if country.lower() not in result_country and result_country not in country.lower():
-                confidence = 0.7
+            # Find first result matching country
+            for r in results:
+                result_country = r.get("country", "")
+                if country_matches(result_country, country):
+                    best = r
+                    break
+
+            # If no country match, use first result with lower confidence
+            if best is None:
+                best = results[0]
+                confidence = 0.6
+                logger.debug(f"No country match for '{city}' in {country}, using first result from {best.get('country')}")
+        else:
+            best = results[0]
 
         # Lower confidence for ambiguous cities
-        if len(results) > 3:
+        if len(results) > 5:
             confidence -= 0.1
 
         return {
@@ -268,10 +309,15 @@ async def main(
     use_mock: bool = False,
     limit: Optional[int] = None,
     verbose: bool = False,
+    dry_run: bool = False,
+    recent_days: int = 30,
 ):
     """Main population logic."""
     if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
+
+    mode = "DRY-RUN" if dry_run else "LIVE"
+    logger.info(f"Mode: {mode}, Scope: matches last {recent_days}d, Limit: {limit or 'none'}")
 
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
@@ -293,12 +339,15 @@ async def main(
         "errors": 0,
     }
 
+    # Track examples for dry-run reporting
+    examples = []
+
     source = "mock" if use_mock else "open-meteo-geocoding"
 
     try:
         async with async_session() as session:
             # Get unique venues needing geocoding
-            venues = await get_unique_venues(session, limit=limit)
+            venues = await get_unique_venues(session, limit=limit, recent_days=recent_days)
             stats["scanned"] = len(venues)
             logger.info(f"Found {len(venues)} unique venues to geocode")
 
@@ -311,6 +360,7 @@ async def main(
                 for venue in venues:
                     city = venue["venue_city"]
                     country = venue["country"]
+                    match_count = venue.get("match_count", 0)
 
                     try:
                         # Geocode
@@ -326,41 +376,54 @@ async def main(
                             logger.debug(f"Venue '{city}' ({country}): No geocoding result")
                             continue
 
-                        # Upsert to DB
-                        result = await upsert_venue_geo(
-                            session=session,
-                            venue_city=city,
-                            country=country,
-                            lat=geo["lat"],
-                            lon=geo["lon"],
-                            source=source,
-                            confidence=geo["confidence"],
-                        )
-                        stats[result] += 1
-                        logger.debug(
-                            f"Venue '{city}' ({country}): {result} "
-                            f"lat={geo['lat']:.4f} lon={geo['lon']:.4f}"
-                        )
+                        if dry_run:
+                            # Don't write to DB, just count
+                            stats["inserted"] += 1
+                            if len(examples) < 10:
+                                examples.append(f"  - {city} ({country}): lat={geo['lat']:.4f}, lon={geo['lon']:.4f}, matches={match_count}")
+                            logger.debug(f"Venue '{city}' ({country}): would insert lat={geo['lat']:.4f} lon={geo['lon']:.4f}")
+                        else:
+                            # Upsert to DB
+                            result = await upsert_venue_geo(
+                                session=session,
+                                venue_city=city,
+                                country=country,
+                                lat=geo["lat"],
+                                lon=geo["lon"],
+                                source=source,
+                                confidence=geo["confidence"],
+                            )
+                            stats[result] += 1
+                            logger.debug(
+                                f"Venue '{city}' ({country}): {result} "
+                                f"lat={geo['lat']:.4f} lon={geo['lon']:.4f}"
+                            )
 
                     except Exception as e:
                         stats["errors"] += 1
                         logger.error(f"Venue '{city}' ({country}): Error - {e}")
                         continue
 
-            await session.commit()
+            if not dry_run:
+                await session.commit()
 
     finally:
         await engine.dispose()
 
     # Print summary
     logger.info("=" * 60)
-    logger.info("VENUE GEO POPULATION SUMMARY:")
+    logger.info(f"VENUE GEO POPULATION SUMMARY ({mode}):")
     logger.info("=" * 60)
-    logger.info(f"  Scanned:           {stats['scanned']}")
-    logger.info(f"  Inserted:          {stats['inserted']}")
-    logger.info(f"  Updated:           {stats['updated']}")
+    logger.info(f"  Scanned:             {stats['scanned']}")
+    logger.info(f"  {'Would insert:' if dry_run else 'Inserted:'}        {stats['inserted']}")
+    logger.info(f"  Updated:             {stats['updated']}")
     logger.info(f"  Skipped (no result): {stats['skipped_no_result']}")
-    logger.info(f"  Errors:            {stats['errors']}")
+    logger.info(f"  Errors:              {stats['errors']}")
+    if dry_run and examples:
+        logger.info("")
+        logger.info("Examples:")
+        for ex in examples:
+            logger.info(ex)
     logger.info("=" * 60)
 
     return stats
@@ -375,8 +438,20 @@ if __name__ == "__main__":
         "--limit", type=int, default=None, help="Limit number of venues to process"
     )
     parser.add_argument(
+        "--days", type=int, default=30, help="Only consider matches from last N days (default: 30)"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Preview changes without writing to DB"
+    )
+    parser.add_argument(
         "-v", "--verbose", action="store_true", help="Verbose logging"
     )
     args = parser.parse_args()
 
-    asyncio.run(main(use_mock=args.mock, limit=args.limit, verbose=args.verbose))
+    asyncio.run(main(
+        use_mock=args.mock,
+        limit=args.limit,
+        verbose=args.verbose,
+        dry_run=args.dry_run,
+        recent_days=args.days,
+    ))
