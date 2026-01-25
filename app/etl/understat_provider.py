@@ -338,42 +338,80 @@ class UnderstatProvider:
         Returns:
             List of match dicts with id, datetime, home team, away team, score, xG.
         """
-        url = f"{UNDERSTAT_BASE_URL}/league/{league}/{season}"
+        # Use Understat's internal API endpoint (discovered Jan 2026)
+        # The old HTML scraping method (datesData regex) no longer works
+        url = f"{UNDERSTAT_BASE_URL}/getLeagueData/{league}/{season}"
 
-        try:
-            await self._rate_limit()
-            client = await self._get_client()
-            response = await client.get(url)
-            response.raise_for_status()
-            html = response.text
+        for attempt in range(MAX_RETRIES):
+            try:
+                await self._rate_limit()
+                client = await self._get_client()
 
-            # Extract datesData JSON
-            dates_pattern = re.compile(r"var\s+datesData\s*=\s*JSON\.parse\('(.+?)'\)")
-            dates_match = dates_pattern.search(html)
-            if not dates_match:
-                logger.warning(f"Could not find datesData for {league}/{season}")
-                return []
+                # Required headers for the internal API
+                headers = {
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Referer": f"{UNDERSTAT_BASE_URL}/league/{league}/{season}",
+                }
 
-            dates_data = _decode_understat_json(dates_match.group(1))
+                response = await client.get(url, headers=headers)
 
-            # Flatten all matches from all dates
-            matches = []
-            for date_matches in dates_data:
-                for match in date_matches:
+                # Handle rate limiting
+                if response.status_code == 429:
+                    delay = RETRY_DELAY_BASE * (2 ** attempt)
+                    logger.warning(f"Rate limited by Understat, waiting {delay}s...")
+                    await asyncio.sleep(delay)
+                    continue
+
+                # Handle server errors
+                if response.status_code >= 500:
+                    delay = RETRY_DELAY_BASE * (2 ** attempt)
+                    logger.warning(f"Understat server error {response.status_code}, retrying in {delay}s...")
+                    await asyncio.sleep(delay)
+                    continue
+
+                # Handle not found
+                if response.status_code == 404:
+                    logger.warning(f"Understat league {league}/{season} not found (404)")
+                    return []
+
+                response.raise_for_status()
+                data = response.json()
+
+                # Extract matches from "dates" key
+                dates_data = data.get("dates", [])
+                if not dates_data:
+                    logger.warning(f"No dates data in response for {league}/{season}")
+                    return []
+
+                # Parse matches from the API response
+                matches = []
+                for match in dates_data:
                     matches.append({
                         "id": match.get("id"),
                         "datetime": match.get("datetime"),
                         "home_team": match.get("h", {}).get("title"),
                         "away_team": match.get("a", {}).get("title"),
-                        "home_goals": match.get("h", {}).get("goals"),
-                        "away_goals": match.get("a", {}).get("goals"),
-                        "xg_home": match.get("h", {}).get("xG"),
-                        "xg_away": match.get("a", {}).get("xG"),
+                        "home_goals": match.get("goals", {}).get("h"),
+                        "away_goals": match.get("goals", {}).get("a"),
+                        "xg_home": match.get("xG", {}).get("h"),
+                        "xg_away": match.get("xG", {}).get("a"),
                         "is_result": match.get("isResult", False),
                     })
 
-            return matches
+                logger.info(f"Fetched {len(matches)} matches from Understat {league}/{season}")
+                return matches
 
-        except Exception as e:
-            logger.error(f"Error fetching league matches for {league}/{season}: {e}")
-            return []
+            except httpx.TimeoutException:
+                logger.warning(f"Timeout fetching Understat league {league}/{season}, attempt {attempt + 1}")
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(RETRY_DELAY_BASE * (2 ** attempt))
+                continue
+
+            except Exception as e:
+                logger.error(f"Error fetching league matches for {league}/{season}: {e}")
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(RETRY_DELAY_BASE * (2 ** attempt))
+                continue
+
+        logger.error(f"Failed to fetch Understat league {league}/{season} after {MAX_RETRIES} attempts")
+        return []
