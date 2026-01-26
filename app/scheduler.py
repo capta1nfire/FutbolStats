@@ -2267,7 +2267,8 @@ async def live_tick():
     job_name = "live_tick"
 
     try:
-        async with AsyncSessionLocal() as session:
+        # Use get_session_with_retry to handle Railway connection drops (InterfaceError fix)
+        async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
             # Find live matches (stuck guard: within 4h)
             result = await session.execute(
                 text("""
