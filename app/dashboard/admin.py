@@ -212,7 +212,7 @@ async def build_leagues_list(session: AsyncSession) -> dict:
                 "matches_25_26": obs.matches_25_26,
                 "with_stats_pct": round(100.0 * obs.with_stats / obs.total_matches, 1) if obs.total_matches else 0,
                 "unique_teams": obs.unique_teams,
-                "seasons": [obs.first_season, obs.last_season],
+                "seasons_range": [obs.first_season, obs.last_season],
                 "last_match": obs.last_match.isoformat() if obs.last_match else None,
             }
 
@@ -228,8 +228,18 @@ async def build_leagues_list(session: AsyncSession) -> dict:
         -(x.get("stats", {}).get("total_matches", 0))  # then by matches desc
     ))
 
-    # Unmapped observed (in DB but not in COMPETITIONS)
+    # Unmapped observed (in DB but not in COMPETITIONS) with details
     unmapped = [lid for lid in observed_ids if lid not in COMPETITIONS]
+    unmapped_details = []
+    for lid in sorted(unmapped):
+        obs = observed_data.get(lid)
+        if obs:
+            unmapped_details.append({
+                "league_id": lid,
+                "total_matches": obs.total_matches,
+                "matches_25_26": obs.matches_25_26,
+                "last_match": obs.last_match.isoformat() if obs.last_match else None,
+            })
 
     return {
         "leagues": leagues,
@@ -239,6 +249,7 @@ async def build_leagues_list(session: AsyncSession) -> dict:
             "with_titan_data": len(titan_data),
         },
         "unmapped_observed": sorted(unmapped),
+        "unmapped_observed_details": unmapped_details,
     }
 
 
@@ -342,7 +353,11 @@ async def build_league_detail(session: AsyncSession, league_id: int) -> Optional
             ht.name as home,
             at.name as away,
             m.status,
-            CASE WHEN m.stats IS NOT NULL AND m.stats::text != '{}' THEN true ELSE false END as has_stats,
+            CASE
+                WHEN m.status NOT IN ('FT', 'AET', 'PEN') THEN null
+                WHEN m.stats IS NOT NULL AND m.stats::text != '{}' AND (m.stats->>'_no_stats') IS NULL THEN true
+                ELSE false
+            END as has_stats,
             CASE WHEN p.id IS NOT NULL THEN true ELSE false END as has_prediction
         FROM matches m
         JOIN teams ht ON m.home_team_id = ht.id
@@ -515,7 +530,7 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
             "league_id": r.league_id,
             "name": info["name"],
             "matches": r.matches,
-            "seasons": [r.first_season, r.last_season],
+            "seasons_range": [r.first_season, r.last_season],
         })
 
     # Stats by season (wins/draws/losses)
