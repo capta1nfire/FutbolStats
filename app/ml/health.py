@@ -26,6 +26,15 @@ SEASONS = {
 # Top 5 European leagues
 TOP_LEAGUES = [140, 39, 135, 78, 61]  # La Liga, PL, Serie A, Bundesliga, Ligue 1
 
+# League name mapping (no leagues table exists)
+LEAGUE_NAMES = {
+    140: "La Liga",
+    39: "Premier League",
+    135: "Serie A",
+    78: "Bundesliga",
+    61: "Ligue 1",
+}
+
 
 async def build_ml_health_data(session: AsyncSession) -> dict:
     """
@@ -173,19 +182,17 @@ async def _query_sota_stats_coverage(session: AsyncSession) -> dict:
     # Coverage by league (current season only)
     league_query = text("""
         SELECT
-            m.league_id,
-            l.name,
+            league_id,
             ROUND(100.0 * COUNT(*) FILTER (
-                WHERE m.stats IS NOT NULL
-                AND m.stats::text != '{}'
-                AND (m.stats->>'_no_stats') IS NULL
+                WHERE stats IS NOT NULL
+                AND stats::text != '{}'
+                AND (stats->>'_no_stats') IS NULL
             ) / NULLIF(COUNT(*), 0), 1) as with_stats_pct
-        FROM matches m
-        LEFT JOIN leagues l ON m.league_id = l.external_id
-        WHERE m.status IN ('FT', 'AET', 'PEN')
-          AND m.date >= '2025-08-01'
-          AND m.league_id IN (140, 39, 135, 78, 61)
-        GROUP BY m.league_id, l.name
+        FROM matches
+        WHERE status IN ('FT', 'AET', 'PEN')
+          AND date >= '2025-08-01'
+          AND league_id IN (140, 39, 135, 78, 61)
+        GROUP BY league_id
         ORDER BY with_stats_pct DESC
     """)
 
@@ -196,7 +203,7 @@ async def _query_sota_stats_coverage(session: AsyncSession) -> dict:
     for row in league_rows:
         by_league.append({
             "league_id": row.league_id,
-            "name": row.name or f"League {row.league_id}",
+            "name": LEAGUE_NAMES.get(row.league_id, f"League {row.league_id}"),
             "with_stats_pct": float(row.with_stats_pct or 0),
         })
 
