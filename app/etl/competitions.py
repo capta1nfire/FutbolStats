@@ -193,6 +193,13 @@ PRIMEIRA_LIGA = Competition(
     priority=Priority.MEDIUM,
 )
 
+SUPER_LIG = Competition(
+    league_id=203,
+    name="Süper Lig",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
 # UEFA Club Competitions
 CHAMPIONS_LEAGUE = Competition(
     league_id=2,
@@ -381,6 +388,7 @@ COMPETITIONS: dict[int, Competition] = {
         EFL_CHAMPIONSHIP,
         EREDIVISIE,
         PRIMEIRA_LIGA,
+        SUPER_LIG,
         BELGIAN_PRO_LEAGUE,
         # North America
         MLS,
