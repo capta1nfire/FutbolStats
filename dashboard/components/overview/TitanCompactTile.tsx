@@ -69,9 +69,9 @@ export function TitanCompactTile({
   const gate = titan?.gate;
   const job = titan?.job;
 
-  const pctToPilot = gate?.pct_to_pilot ?? 0;
+  const pctToFormal = gate?.pct_to_formal ?? 0;
   const nCurrent = gate?.n_current ?? 0;
-  const nTarget = gate?.n_target_pilot ?? 50;
+  const nTarget = gate?.n_target_formal ?? 500;
 
   return (
     <div
@@ -102,7 +102,7 @@ export function TitanCompactTile({
         <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
           <div
             className={cn("h-full transition-all duration-500", progressBarColors[status])}
-            style={{ width: `${Math.min(pctToPilot, 100)}%` }}
+            style={{ width: `${Math.min(pctToFormal, 100)}%` }}
           />
         </div>
       </div>
@@ -113,14 +113,14 @@ export function TitanCompactTile({
           <Tooltip>
             <TooltipTrigger asChild>
               <div className="flex items-center justify-between text-xs cursor-default">
-                <span className="text-muted-foreground">Pilot Gate</span>
+                <span className="text-muted-foreground">Formal Gate</span>
                 <span className={cn("font-medium tabular-nums", statusColors[status])}>
                   {nCurrent}/{nTarget}
                 </span>
               </div>
             </TooltipTrigger>
             <TooltipContent side="bottom">
-              <p>Partidos evaluables para evaluación piloto (N=50)</p>
+              <p>Partidos evaluables para evaluación formal (N=500)</p>
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>

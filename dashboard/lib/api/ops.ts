@@ -1600,15 +1600,19 @@ export interface OpsTitanFeatureMatrix {
 }
 
 /**
- * TITAN gate (pilot readiness)
+ * TITAN gate (evaluation readiness)
  */
 export interface OpsTitanGate {
   n_current: number;
   n_target_pilot: number;
   n_target_prelim: number;
+  n_target_formal: number;
   ready_for_pilot: boolean;
   ready_for_prelim: boolean;
+  ready_for_formal: boolean;
   pct_to_pilot: number;
+  pct_to_prelim: number;
+  pct_to_formal: number;
 }
 
 /**
@@ -1702,16 +1706,24 @@ export function parseOpsTitan(ops: OpsResponse): OpsTitan | null {
     n_current: typeof g.n_current === "number" ? g.n_current : 0,
     n_target_pilot: typeof g.n_target_pilot === "number" ? g.n_target_pilot : 50,
     n_target_prelim: typeof g.n_target_prelim === "number" ? g.n_target_prelim : 200,
+    n_target_formal: typeof g.n_target_formal === "number" ? g.n_target_formal : 500,
     ready_for_pilot: typeof g.ready_for_pilot === "boolean" ? g.ready_for_pilot : false,
     ready_for_prelim: typeof g.ready_for_prelim === "boolean" ? g.ready_for_prelim : false,
+    ready_for_formal: typeof g.ready_for_formal === "boolean" ? g.ready_for_formal : false,
     pct_to_pilot: typeof g.pct_to_pilot === "number" ? g.pct_to_pilot : 0,
+    pct_to_prelim: typeof g.pct_to_prelim === "number" ? g.pct_to_prelim : 0,
+    pct_to_formal: typeof g.pct_to_formal === "number" ? g.pct_to_formal : 0,
   } : {
     n_current: 0,
     n_target_pilot: 50,
     n_target_prelim: 200,
+    n_target_formal: 500,
     ready_for_pilot: false,
     ready_for_prelim: false,
+    ready_for_formal: false,
     pct_to_pilot: 0,
+    pct_to_prelim: 0,
+    pct_to_formal: 0,
   };
 
   // Parse job
