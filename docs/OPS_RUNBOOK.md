@@ -403,3 +403,70 @@ curl -X POST "https://web-production-f2de9.up.railway.app/dashboard/ops/alerts/w
 curl -s -H "X-Dashboard-Token: $DASHBOARD_TOKEN" \
   "https://web-production-f2de9.up.railway.app/dashboard/ops/alerts.json" | jq
 ```
+
+---
+
+## TITAN: Reglas de Timezone (PostgreSQL + asyncpg)
+
+El sistema TITAN usa dos esquemas con diferentes tipos de timestamp:
+
+| Schema | Tipo Columna | Ejemplo | Formato Python |
+|--------|--------------|---------|----------------|
+| `public.*` | `TIMESTAMP` (naive) | `matches.date` | `datetime` sin tzinfo |
+| `titan.*` | `TIMESTAMPTZ` (aware) | `feature_matrix.kickoff_utc` | `datetime` con `tzinfo=timezone.utc` |
+
+### Regla General
+
+```python
+# Para queries contra public.* (TIMESTAMP naive)
+kickoff_naive = kickoff_utc.replace(tzinfo=None) if kickoff_utc.tzinfo else kickoff_utc
+
+# Para queries contra titan.* (TIMESTAMPTZ aware)
+kickoff_aware = kickoff_utc if kickoff_utc.tzinfo else kickoff_utc.replace(tzinfo=timezone.utc)
+```
+
+### Error Típico (asyncpg)
+
+```
+asyncpg.exceptions.DataError: invalid input for query argument $2:
+datetime.datetime(2026, 01, 26, 15, 20, tzinfo=datetime.timezone.utc)
+(can't subtract offset-naive and offset-aware datetimes)
+```
+
+**Causa**: Pasar `datetime` aware a una columna `TIMESTAMP` naive (o viceversa).
+
+**Fix**: Normalizar el datetime según el tipo de columna destino.
+
+### Archivos Afectados
+
+| Archivo | Columna | Tipo | Acción |
+|---------|---------|------|--------|
+| `app/titan/materializers/feature_matrix.py` | `public.matches.date` | TIMESTAMP | Strip tzinfo |
+| `app/titan/runner.py` | `public.matches.date` | TIMESTAMP | Usar naive |
+| `app/titan/jobs/job_manager.py` | `titan.raw_extractions.*` | TIMESTAMPTZ | Usar aware UTC |
+
+### SQL Syntax (asyncpg)
+
+asyncpg no soporta `::type` después de placeholders. Usar `CAST()`:
+
+```sql
+-- ❌ Error con asyncpg
+INSERT INTO tabla (col) VALUES (:value::jsonb)
+
+-- ✅ Correcto
+INSERT INTO tabla (col) VALUES (CAST(:value AS jsonb))
+```
+
+### Verificación
+
+```sql
+-- Columnas TIMESTAMP (naive) en public
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_schema = 'public' AND data_type = 'timestamp without time zone';
+
+-- Columnas TIMESTAMPTZ (aware) en titan
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_schema = 'titan' AND data_type = 'timestamp with time zone';
+```
