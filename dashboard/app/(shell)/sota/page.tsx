@@ -27,6 +27,7 @@ import {
   SotaSourceFilter,
   SotaViewTabs,
   FeatureCoverageMatrix,
+  CoverageRangeFilter,
   FeatureCoverageLeague,
   LeagueFilterPanel,
   SOTA_COLUMN_OPTIONS,
@@ -37,13 +38,7 @@ import {
   buildSearchParams,
 } from "@/lib/url-state";
 import { Loader } from "@/components/ui/loader";
-import { Database, Sparkles, ClipboardCheck } from "lucide-react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { ClipboardCheck } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 const BASE_PATH = "/sota";
@@ -117,6 +112,9 @@ function SotaPageContent() {
   // Available leagues from Feature Coverage data
   const [availableLeagues, setAvailableLeagues] = useState<FeatureCoverageLeague[]>([]);
 
+  // Coverage range filter for Features view
+  const [coverageRangeFilter, setCoverageRangeFilter] = useState<CoverageRangeFilter>("all");
+
   // Features pagination state (separate from enrichment view)
   const [featuresCurrentPage, setFeaturesCurrentPage] = useState(1);
   const { pageSize: featuresPageSize, setPageSize: setFeaturesPageSize } = usePageSize("sota-features");
@@ -156,12 +154,6 @@ function SotaPageContent() {
 
   // Drawer is open when there's a selected check
   const drawerOpen = selectedCheckId !== null;
-
-  // Combined loading state
-  const isLoading = isOpsLoading || isDqLoading;
-
-  // Any degradation (ops or data quality)
-  const isAnyDegraded = isSotaEnrichmentDegraded || isDqDegraded;
 
   // Build URL with current filters
   const buildUrl = useCallback(
@@ -293,6 +285,8 @@ function SotaPageContent() {
         activeView={activeView}
         enabledTiers={enabledTiers}
         onTierChange={handleTierChange}
+        coverageRangeFilter={coverageRangeFilter}
+        onCoverageRangeChange={setCoverageRangeFilter}
       />
 
       {/* Customize Columns Panel (Enrichment view) */}
@@ -324,31 +318,6 @@ function SotaPageContent() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
-        {/* Header */}
-        <div className="h-12 flex items-center justify-between px-6 border-b border-border shrink-0">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-primary" />
-            <h1 className="text-lg font-semibold text-foreground">SOTA</h1>
-          </div>
-          {isAnyDegraded && !isLoading && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-yellow-500/10 border border-yellow-500/20">
-                    <Database className="h-3.5 w-3.5 text-yellow-400" />
-                    <span className="text-[10px] text-yellow-400 font-medium">
-                      mock
-                    </span>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  <p>Using mock data - backend unavailable</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-        </div>
-
         {/* Content area - different layout per view */}
         {activeView === "enrichment" ? (
           /* Enrichment View - Scrollable content */
@@ -408,6 +377,7 @@ function SotaPageContent() {
               pageSize={featuresPageSize}
               onTotalFeaturesChange={handleTotalFeaturesChange}
               enabledTiers={enabledTiers}
+              coverageRangeFilter={coverageRangeFilter}
             />
             <Pagination
               currentPage={featuresCurrentPage}

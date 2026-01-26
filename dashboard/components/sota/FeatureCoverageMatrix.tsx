@@ -24,12 +24,12 @@ function formatPct(pct: number): string {
 }
 
 /**
- * Color thresholds for coverage cells
+ * Color thresholds for coverage cells (text only, no background)
  */
 function getCoverageColor(pct: number): string {
-  if (pct > 80) return "bg-green-500/20 text-green-400";
-  if (pct >= 50) return "bg-yellow-500/20 text-yellow-400";
-  return "bg-red-500/20 text-red-400";
+  if (pct > 80) return "text-green-400";
+  if (pct >= 50) return "text-yellow-400";
+  return "text-red-400";
 }
 
 /**
@@ -123,6 +123,11 @@ function NCell({ n }: { n: number }) {
   );
 }
 
+/**
+ * Coverage range filter options
+ */
+export type CoverageRangeFilter = "all" | "100" | "70-99" | "50-69" | "below50";
+
 interface FeatureCoverageMatrixProps {
   className?: string;
   /** Function to check if a league is visible (if not provided, all are visible) */
@@ -137,6 +142,8 @@ interface FeatureCoverageMatrixProps {
   onTotalFeaturesChange?: (total: number) => void;
   /** Enabled tiers (if not provided, all are enabled) */
   enabledTiers?: Set<string>;
+  /** Coverage range filter */
+  coverageRangeFilter?: CoverageRangeFilter;
 }
 
 /**
@@ -152,6 +159,26 @@ interface FeatureCoverageMatrixProps {
 // Default enabled tiers
 const DEFAULT_ENABLED_TIERS = new Set(["tier1", "tier1b", "tier1c", "tier1d"]);
 
+/**
+ * Check if a league's coverage matches the selected range filter
+ */
+function matchesCoverageRange(avgPct: number, filter: CoverageRangeFilter): boolean {
+  switch (filter) {
+    case "all":
+      return true;
+    case "100":
+      return avgPct >= 100;
+    case "70-99":
+      return avgPct >= 70 && avgPct < 100;
+    case "50-69":
+      return avgPct >= 50 && avgPct < 70;
+    case "below50":
+      return avgPct < 50;
+    default:
+      return true;
+  }
+}
+
 export function FeatureCoverageMatrix({
   className,
   isLeagueVisible,
@@ -160,6 +187,7 @@ export function FeatureCoverageMatrix({
   pageSize = 25,
   onTotalFeaturesChange,
   enabledTiers = DEFAULT_ENABLED_TIERS,
+  coverageRangeFilter = "all",
 }: FeatureCoverageMatrixProps) {
   const { data, isLoading, error, refetch } = useFeatureCoverage();
 
@@ -193,9 +221,17 @@ export function FeatureCoverageMatrix({
       );
 
       // Filter leagues by visibility (if filter function provided)
-      const visibleLeagues = isLeagueVisible
+      let visibleLeagues = isLeagueVisible
         ? leagues.filter((l) => isLeagueVisible(l.league_id))
         : leagues;
+
+      // Filter leagues by coverage range
+      if (coverageRangeFilter !== "all") {
+        visibleLeagues = visibleLeagues.filter((l) => {
+          const avgPct = league_summaries[String(l.league_id)]?.total?.avg_pct ?? 0;
+          return matchesCoverageRange(avgPct, coverageRangeFilter);
+        });
+      }
 
       // Sort leagues by total avg_pct (descending - highest first)
       const sortedLeagues = [...visibleLeagues].sort((a, b) => {
@@ -212,7 +248,7 @@ export function FeatureCoverageMatrix({
         coverage,
         leagueSummaries: league_summaries,
       };
-    }, [data, enabledTiers, isLeagueVisible]);
+    }, [data, enabledTiers, isLeagueVisible, coverageRangeFilter]);
 
   // Notify parent of total features count for pagination
   useEffect(() => {
@@ -266,16 +302,24 @@ export function FeatureCoverageMatrix({
     <div className={cn("flex-1 flex flex-col overflow-hidden", className)}>
       {/* Single scroll container for both header and body - syncs horizontal scroll */}
       <div className="flex-1 overflow-auto">
-        <table className="w-full border-collapse text-sm">
+        <table className="border-collapse text-sm">
           {/* Sticky header - position:sticky with top:0 keeps it in sync with horizontal scroll */}
           <thead className="sticky top-0 z-20 bg-background">
             {/* Header row 1: League names */}
             <tr className="border-b border-border">
+              {/* Row number column header - no border-r, fixed width */}
+              <th
+                className="sticky left-0 z-30 px-2 pt-3 pb-2 text-center font-semibold text-muted-foreground text-xs align-bottom bg-background"
+                rowSpan={2}
+                style={{ width: "40px", minWidth: "40px", maxWidth: "40px" }}
+              >
+                #
+              </th>
               {/* Sticky Feature column header - both left and top sticky */}
               <th
-                className="sticky left-0 z-30 px-3 pt-3 pb-2 text-left font-semibold text-muted-foreground text-sm align-bottom bg-background border-r border-border relative after:absolute after:top-0 after:right-0 after:bottom-0 after:w-4 after:translate-x-full after:bg-gradient-to-r after:from-black/20 after:to-transparent after:pointer-events-none"
+                className="sticky z-30 px-3 pt-3 pb-2 text-left font-semibold text-muted-foreground text-sm align-bottom bg-background border-r border-border relative after:absolute after:top-0 after:right-0 after:bottom-0 after:w-4 after:translate-x-full after:bg-gradient-to-r after:from-black/20 after:to-transparent after:pointer-events-none"
                 rowSpan={2}
-                style={{ minWidth: "220px" }}
+                style={{ left: "40px", minWidth: "220px" }}
               >
                 Feature
               </th>
@@ -314,20 +358,20 @@ export function FeatureCoverageMatrix({
                 ...windows.map((window) => (
                   <th
                     key={`${league.league_id}-${window.key}`}
-                    className="px-3 pb-2 text-center text-xs font-medium text-muted-foreground border-r border-border bg-background"
+                    className="px-3 py-2 text-center align-middle text-xs font-medium text-muted-foreground border-r border-border bg-background"
                   >
                     {window.key}
                   </th>
                 )),
                 <th
                   key={`${league.league_id}-total`}
-                  className="px-3 pb-2 text-center text-xs font-medium text-muted-foreground border-r border-border bg-background"
+                  className="px-3 py-2 text-center align-middle text-xs font-medium text-muted-foreground border-r border-border bg-background"
                 >
                   Total
                 </th>,
                 <th
                   key={`${league.league_id}-n`}
-                  className="px-3 pb-2 text-center text-xs font-medium text-muted-foreground border-r border-border bg-background"
+                  className="px-3 py-2 text-center align-middle text-xs font-medium text-muted-foreground border-r border-border bg-background"
                 >
                   N
                 </th>,
@@ -337,15 +381,22 @@ export function FeatureCoverageMatrix({
 
           {/* Body */}
           <tbody>
-            {paginatedFeatures.map((feature) => (
+            {paginatedFeatures.map((feature, idx) => (
               <tr
                 key={feature.key}
                 className="border-b border-border transition-colors hover:bg-accent/50"
               >
+                {/* Row number cell - no border-r, fixed width */}
+                <td
+                  className="sticky left-0 z-10 px-2 py-2.5 text-center text-xs tabular-nums text-muted-foreground/50 bg-background"
+                  style={{ width: "40px", minWidth: "40px" }}
+                >
+                  {(currentPage - 1) * pageSize + idx + 1}
+                </td>
                 {/* Sticky Feature cell */}
                 <td
-                  className="sticky left-0 z-10 px-3 py-2.5 bg-background border-r border-border relative after:absolute after:top-0 after:right-0 after:bottom-0 after:w-4 after:translate-x-full after:bg-gradient-to-r after:from-black/20 after:to-transparent after:pointer-events-none"
-                  style={{ minWidth: "220px" }}
+                  className="sticky z-10 px-3 py-2.5 bg-background border-r border-border relative after:absolute after:top-0 after:right-0 after:bottom-0 after:w-4 after:translate-x-full after:bg-gradient-to-r after:from-black/20 after:to-transparent after:pointer-events-none"
+                  style={{ left: "40px", minWidth: "220px" }}
                 >
                   <div className="flex items-center gap-2">
                     <TierBadge badge={feature.badge} />
@@ -440,17 +491,6 @@ export function FeatureCoverageMatrix({
         </table>
       </div>
 
-      {/* Footer info */}
-      {data?.generated_at && (
-        <div className="flex-shrink-0 flex items-center justify-end gap-2 px-3 py-2 text-[10px] text-muted-foreground border-t border-border">
-          <span>
-            Generated: {new Date(data.generated_at).toLocaleString()}
-          </span>
-          {data.cached && data.cache_age_seconds !== null && (
-            <span>· Cached {Math.round(data.cache_age_seconds / 60)}m ago</span>
-          )}
-        </div>
-      )}
     </div>
   );
 }

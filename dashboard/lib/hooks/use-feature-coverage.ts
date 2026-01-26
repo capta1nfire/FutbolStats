@@ -44,6 +44,13 @@ export interface FeatureCoverageLeague {
 }
 
 /**
+ * League with coverage summary (for UI filtering)
+ */
+export interface FeatureCoverageLeagueWithSummary extends FeatureCoverageLeague {
+  avg_pct: number; // total average coverage %
+}
+
+/**
  * Coverage cell data
  */
 export interface FeatureCoverageCell {

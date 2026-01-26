@@ -3,6 +3,7 @@ export type { SotaStatusFilter, SotaSourceFilter } from "./SotaFilterPanel";
 export { SotaViewTabs } from "./SotaViewTabs";
 export type { SotaView } from "./SotaViewTabs";
 export { FeatureCoverageMatrix } from "./FeatureCoverageMatrix";
+export type { CoverageRangeFilter } from "./FeatureCoverageMatrix";
 export type { FeatureCoverageLeague } from "@/lib/hooks/use-feature-coverage";
 export { LeagueFilterPanel } from "./LeagueFilterPanel";
 export type { LeagueOption } from "./LeagueFilterPanel";
@@ -11,6 +12,8 @@ export {
   SOTA_SOURCE_FILTERS,
   SOTA_STATUS_LABELS,
   SOTA_SOURCE_LABELS,
+  COVERAGE_RANGE_FILTERS,
+  COVERAGE_RANGE_LABELS,
 } from "./SotaFilterPanel";
 
 // Column options for CustomizeColumnsPanel

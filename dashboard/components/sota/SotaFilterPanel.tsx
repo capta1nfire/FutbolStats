@@ -2,7 +2,8 @@
 
 import { ReactNode } from "react";
 import { FilterPanel, FilterGroup } from "@/components/shell";
-import { Activity, Database, Layers } from "lucide-react";
+import { Activity, Database, Layers, BarChart3 } from "lucide-react";
+import { CoverageRangeFilter } from "./FeatureCoverageMatrix";
 
 export type SotaStatusFilter = "ok" | "warning" | "critical";
 export type SotaSourceFilter = "understat" | "weather" | "sofascore" | "venue_geo" | "team_profile";
@@ -33,6 +34,16 @@ export const SOTA_TIER_LABELS: Record<SotaTierId, string> = {
   tier1d: "XI Depth (TITAN)",
 };
 
+export const COVERAGE_RANGE_FILTERS: CoverageRangeFilter[] = ["all", "100", "70-99", "50-69", "below50"];
+
+export const COVERAGE_RANGE_LABELS: Record<CoverageRangeFilter, string> = {
+  all: "All",
+  "100": "100%",
+  "70-99": "70% - 99%",
+  "50-69": "50% - 69%",
+  below50: "< 50%",
+};
+
 interface SotaFilterPanelProps {
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -56,6 +67,10 @@ interface SotaFilterPanelProps {
   enabledTiers?: Set<string>;
   /** Callback for tier toggle */
   onTierChange?: (tierId: string, checked: boolean) => void;
+  /** Selected coverage range filter for Features view */
+  coverageRangeFilter?: CoverageRangeFilter;
+  /** Callback for coverage range filter change */
+  onCoverageRangeChange?: (range: CoverageRangeFilter) => void;
 }
 
 const statusOptions: { id: SotaStatusFilter; label: string }[] =
@@ -76,6 +91,12 @@ const tierOptions: { id: SotaTierId; label: string }[] =
     label: SOTA_TIER_LABELS[tier],
   }));
 
+const coverageRangeOptions: { id: CoverageRangeFilter; label: string }[] =
+  COVERAGE_RANGE_FILTERS.map((range) => ({
+    id: range,
+    label: COVERAGE_RANGE_LABELS[range],
+  }));
+
 export function SotaFilterPanel({
   collapsed,
   onToggleCollapse,
@@ -92,6 +113,8 @@ export function SotaFilterPanel({
   activeView = "enrichment",
   enabledTiers,
   onTierChange,
+  coverageRangeFilter = "all",
+  onCoverageRangeChange,
 }: SotaFilterPanelProps) {
   // Build filter groups based on active view
   const filterGroups: FilterGroup[] = activeView === "enrichment"
@@ -128,6 +151,17 @@ export function SotaFilterPanel({
             checked: enabledTiers?.has(opt.id) ?? true,
           })),
         },
+        {
+          id: "coverage",
+          label: "Coverage",
+          icon: <BarChart3 className="h-4 w-4" strokeWidth={1.5} />,
+          options: coverageRangeOptions.map((opt) => ({
+            id: opt.id,
+            label: opt.label,
+            checked: coverageRangeFilter === opt.id,
+          })),
+          singleSelect: true,
+        },
       ];
 
   const handleFilterChange = (
@@ -141,6 +175,9 @@ export function SotaFilterPanel({
       onSourceChange(optionId as SotaSourceFilter, checked);
     } else if (groupId === "tier" && onTierChange) {
       onTierChange(optionId, checked);
+    } else if (groupId === "coverage" && onCoverageRangeChange && checked) {
+      // Single select - only trigger when checked
+      onCoverageRangeChange(optionId as CoverageRangeFilter);
     }
   };
 

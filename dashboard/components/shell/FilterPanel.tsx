@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode } from "react";
+import { ReactNode, useState, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Filter } from "lucide-react";
 import { useHasMounted } from "@/lib/hooks";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -33,6 +33,8 @@ export interface FilterGroup {
   label: string;
   icon?: ReactNode;
   options: FilterOption[];
+  /** If true, only one option can be selected at a time (radio behavior) */
+  singleSelect?: boolean;
 }
 
 interface FilterPanelProps {
@@ -73,6 +75,14 @@ export function FilterPanel({
   // Track client-side mount to avoid Radix Accordion hydration mismatch
   // Uses useSyncExternalStore instead of useState+useEffect to avoid lint error
   const mounted = useHasMounted();
+
+  // Controlled accordion state - all groups expanded by default
+  const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
+
+  // Update expanded groups when groups change (e.g., switching views)
+  useEffect(() => {
+    setExpandedGroups(groups.map((g) => g.id));
+  }, [groups]);
 
   // Collapsed state: show rail with icon + tooltips
   if (collapsed) {
@@ -177,8 +187,8 @@ export function FilterPanel({
             ))}
           </div>
         ) : (
-          // Client: render actual Accordion
-          <Accordion type="multiple" defaultValue={groups.map((g) => g.id)} className="px-3">
+          // Client: render actual Accordion with controlled state
+          <Accordion type="multiple" value={expandedGroups} onValueChange={setExpandedGroups} className="px-3">
             {groups.map((group) => (
               <AccordionItem key={group.id} value={group.id} className="border-b-0">
                 <AccordionTrigger className="py-3 text-sm hover:no-underline">
@@ -194,14 +204,32 @@ export function FilterPanel({
                         key={option.id}
                         className="flex items-center gap-2 cursor-pointer group"
                       >
-                        <Checkbox
-                          id={`${group.id}-${option.id}`}
-                          checked={option.checked}
-                          onCheckedChange={(checked) =>
-                            onFilterChange?.(group.id, option.id, checked === true)
-                          }
-                        />
-                        <span className="text-sm text-muted-foreground group-hover:text-foreground flex-1">
+                        {group.singleSelect ? (
+                          <span
+                            className={`h-4 w-4 rounded-full border flex items-center justify-center transition-colors ${
+                              option.checked
+                                ? "border-primary bg-primary"
+                                : "border-muted-foreground"
+                            }`}
+                            onClick={() => onFilterChange?.(group.id, option.id, true)}
+                          >
+                            {option.checked && (
+                              <span className="h-1.5 w-1.5 rounded-full bg-primary-foreground" />
+                            )}
+                          </span>
+                        ) : (
+                          <Checkbox
+                            id={`${group.id}-${option.id}`}
+                            checked={option.checked}
+                            onCheckedChange={(checked) =>
+                              onFilterChange?.(group.id, option.id, checked === true)
+                            }
+                          />
+                        )}
+                        <span
+                          className="text-sm text-muted-foreground group-hover:text-foreground flex-1"
+                          onClick={() => group.singleSelect && onFilterChange?.(group.id, option.id, true)}
+                        >
                           {option.label}
                         </span>
                         {option.count !== undefined && (
