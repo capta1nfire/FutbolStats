@@ -524,13 +524,13 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
             m.season,
             COUNT(*) as matches,
             COUNT(*) FILTER (WHERE
-                (m.home_team_id = :tid AND m.home_score > m.away_score) OR
-                (m.away_team_id = :tid AND m.away_score > m.home_score)
+                (m.home_team_id = :tid AND m.home_goals > m.away_goals) OR
+                (m.away_team_id = :tid AND m.away_goals > m.home_goals)
             ) as wins,
-            COUNT(*) FILTER (WHERE m.home_score = m.away_score AND m.status IN ('FT', 'AET', 'PEN')) as draws,
+            COUNT(*) FILTER (WHERE m.home_goals = m.away_goals AND m.status IN ('FT', 'AET', 'PEN')) as draws,
             COUNT(*) FILTER (WHERE
-                (m.home_team_id = :tid AND m.home_score < m.away_score) OR
-                (m.away_team_id = :tid AND m.away_score < m.home_score)
+                (m.home_team_id = :tid AND m.home_goals < m.away_goals) OR
+                (m.away_team_id = :tid AND m.away_goals < m.home_goals)
             ) as losses
         FROM matches m
         WHERE (m.home_team_id = :tid OR m.away_team_id = :tid)
@@ -559,7 +559,7 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
             m.league_id,
             CASE WHEN m.home_team_id = :tid THEN at.name ELSE ht.name END as opponent,
             CASE WHEN m.home_team_id = :tid THEN 'home' ELSE 'away' END as home_away,
-            CONCAT(m.home_score, '-', m.away_score) as result,
+            CONCAT(m.home_goals, '-', m.away_goals) as result,
             m.status
         FROM matches m
         JOIN teams ht ON m.home_team_id = ht.id
