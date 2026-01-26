@@ -5229,6 +5229,114 @@ async def sota_sofascore_xi_capture() -> dict:
         return {"status": "error", "error": str(e), "duration_ms": duration_ms}
 
 
+async def titan_feature_matrix_runner() -> dict:
+    """
+    TITAN Feature Matrix Runner - materializes features for upcoming matches.
+
+    Runs the TITAN pipeline to extract API-Football data and materialize
+    feature_matrix rows with Tier 1/1b/1c/1d/2/3 features.
+
+    Frequency: Every 2 hours
+    Guardrail: TITAN_RUNNER_ENABLED env var (default: true)
+
+    Processes:
+    - Today's matches (pre-kickoff for betting)
+    - Tomorrow's matches (lookahead for early signals)
+
+    PIT safety: Only materializes data with captured_at < kickoff_utc.
+    """
+    import time as _time
+    from datetime import datetime, date, timedelta
+
+    start_time = _time.time()
+    started_at = datetime.utcnow()
+    job_name = "titan_feature_matrix_runner"
+
+    # Check if enabled (default ON for TITAN)
+    if os.environ.get("TITAN_RUNNER_ENABLED", "true").lower() in ("false", "0", "no"):
+        logger.debug(f"[{job_name}] Disabled via env var (set TITAN_RUNNER_ENABLED=true to enable)")
+        return {"status": "disabled"}
+
+    metrics = {
+        "today_processed": 0,
+        "tomorrow_processed": 0,
+        "total_extracted": 0,
+        "total_failed": 0,
+        "errors": [],
+        "started_at": started_at.isoformat(),
+    }
+
+    try:
+        from app.titan.runner import run_titan_pipeline
+        from app.jobs.tracking import record_job_run as record_job_run_db
+
+        # Process today's matches
+        today = date.today()
+        try:
+            today_result = await run_titan_pipeline(
+                target_date=today,
+                limit=50,
+                dry_run=False,
+            )
+            metrics["today_processed"] = today_result.get("matches_found", 0)
+            metrics["total_extracted"] += today_result.get("extracted_success", 0)
+            metrics["total_failed"] += today_result.get("extracted_failed", 0)
+            if today_result.get("errors"):
+                metrics["errors"].extend(today_result["errors"][:5])  # Max 5 errors
+        except Exception as e:
+            logger.error(f"[{job_name}] Error processing today: {e}")
+            metrics["errors"].append(f"today: {str(e)[:100]}")
+
+        # Process tomorrow's matches (lookahead)
+        tomorrow = today + timedelta(days=1)
+        try:
+            tomorrow_result = await run_titan_pipeline(
+                target_date=tomorrow,
+                limit=50,
+                dry_run=False,
+            )
+            metrics["tomorrow_processed"] = tomorrow_result.get("matches_found", 0)
+            metrics["total_extracted"] += tomorrow_result.get("extracted_success", 0)
+            metrics["total_failed"] += tomorrow_result.get("extracted_failed", 0)
+            if tomorrow_result.get("errors"):
+                metrics["errors"].extend(tomorrow_result["errors"][:5])
+        except Exception as e:
+            logger.error(f"[{job_name}] Error processing tomorrow: {e}")
+            metrics["errors"].append(f"tomorrow: {str(e)[:100]}")
+
+        duration_ms = (_time.time() - start_time) * 1000
+        status = "ok" if not metrics["errors"] else "partial"
+
+        # Record in DB for ops dashboard
+        async with AsyncSessionLocal() as session:
+            await record_job_run_db(session, job_name, status, started_at, metrics=metrics)
+
+        # Record in Prometheus
+        record_job_run(job=job_name, status=status, duration_ms=duration_ms)
+
+        logger.info(
+            f"[{job_name}] Completed: today={metrics['today_processed']}, "
+            f"tomorrow={metrics['tomorrow_processed']}, extracted={metrics['total_extracted']}, "
+            f"failed={metrics['total_failed']}, duration={duration_ms:.0f}ms"
+        )
+
+        return {"status": status, "metrics": metrics, "duration_ms": duration_ms}
+
+    except Exception as e:
+        duration_ms = (_time.time() - start_time) * 1000
+        logger.error(f"[{job_name}] Fatal error: {e}")
+        sentry_capture_exception(e, job_id=job_name)
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        # Try to record error in DB too
+        try:
+            from app.jobs.tracking import record_job_run as record_job_run_db
+            async with AsyncSessionLocal() as session:
+                await record_job_run_db(session, job_name, "error", started_at, error=str(e))
+        except Exception:
+            pass  # Best-effort DB recording
+        return {"status": "error", "error": str(e), "duration_ms": duration_ms}
+
+
 def start_scheduler(ml_engine):
     """
     Start the background scheduler.
@@ -5681,6 +5789,20 @@ def start_scheduler(ml_engine):
         misfire_grace_time=1800,  # 30min grace for 30min interval
     )
 
+    # TITAN: Feature Matrix Runner - every 2 hours
+    # Materializes feature_matrix rows for upcoming matches (enabled by default)
+    scheduler.add_job(
+        titan_feature_matrix_runner,
+        trigger=IntervalTrigger(hours=2),
+        id="titan_feature_matrix_runner",
+        name="TITAN Feature Matrix Runner (every 2h)",
+        replace_existing=True,
+        next_run_time=datetime.utcnow() + timedelta(seconds=60),  # Offset: +60s (run soon after start)
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=2 * 3600,  # 2h grace for 2h interval
+    )
+
     scheduler.start()
     _scheduler_started = True
 
@@ -5711,7 +5833,8 @@ def start_scheduler(ml_engine):
         f"  - SOTA Understat xG backfill: Every 6h\n"
         f"  - SOTA Weather capture: Every 60 min (disabled by default)\n"
         f"  - SOTA Venue geo expand: Daily 03:00 UTC (disabled by default)\n"
-        f"  - SOTA Sofascore XI capture: Every 30 min (disabled by default)"
+        f"  - SOTA Sofascore XI capture: Every 30 min (disabled by default)\n"
+        f"  - TITAN Feature Matrix Runner: Every 2h (enabled by default)"
     )
 
 

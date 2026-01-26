@@ -7337,6 +7337,123 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
     return result
 
 
+async def _calculate_titan_summary(session) -> dict:
+    """
+    Calculate TITAN OMNISCIENCE summary for OPS dashboard.
+
+    Reports:
+    - feature_matrix row count and tier coverage
+    - Job status (last run, success/fail)
+    - Progress toward N=50/200 gate
+
+    Lightweight query for ops.json inclusion.
+    """
+    now = datetime.utcnow()
+    result = {
+        "status": "ok",
+        "generated_at": now.isoformat(),
+        "feature_matrix": {},
+        "job": {},
+        "gate": {},
+    }
+
+    try:
+        # Check if titan schema exists
+        schema_check = await session.execute(text("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.schemata
+                WHERE schema_name = 'titan'
+            )
+        """))
+        schema_exists = schema_check.scalar()
+
+        if not schema_exists:
+            result["status"] = "unavailable"
+            result["note"] = "TITAN schema not deployed"
+            return result
+
+        # Feature matrix stats
+        fm_stats = await session.execute(text("""
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE tier1_complete = TRUE) as tier1,
+                COUNT(*) FILTER (WHERE tier1b_complete = TRUE) as tier1b,
+                COUNT(*) FILTER (WHERE tier1c_complete = TRUE) as tier1c,
+                COUNT(*) FILTER (WHERE tier1d_complete = TRUE) as tier1d,
+                COUNT(*) FILTER (WHERE outcome IS NOT NULL) as with_outcome
+            FROM titan.feature_matrix
+        """))
+        row = fm_stats.first()
+        if row:
+            total = int(row[0] or 0)
+            tier1 = int(row[1] or 0)
+            tier1b = int(row[2] or 0)
+            tier1c = int(row[3] or 0)
+            tier1d = int(row[4] or 0)
+            with_outcome = int(row[5] or 0)
+
+            result["feature_matrix"] = {
+                "total_rows": total,
+                "tier1_complete": tier1,
+                "tier1b_complete": tier1b,
+                "tier1c_complete": tier1c,
+                "tier1d_complete": tier1d,
+                "with_outcome": with_outcome,
+                "tier1b_pct": round(tier1b / total * 100, 1) if total > 0 else 0,
+                "tier1c_pct": round(tier1c / total * 100, 1) if total > 0 else 0,
+            }
+
+            # Gate progress
+            result["gate"] = {
+                "n_current": with_outcome,
+                "n_target_pilot": 50,
+                "n_target_prelim": 200,
+                "ready_for_pilot": with_outcome >= 50,
+                "ready_for_prelim": with_outcome >= 200,
+                "pct_to_pilot": round(min(100, with_outcome / 50 * 100), 1),
+            }
+
+        # Job status (last TITAN runner run)
+        job_stats = await session.execute(text("""
+            SELECT status, started_at, metrics
+            FROM job_runs
+            WHERE job_name = 'titan_feature_matrix_runner'
+            ORDER BY started_at DESC
+            LIMIT 1
+        """))
+        job_row = job_stats.first()
+        if job_row:
+            result["job"] = {
+                "last_status": job_row[0],
+                "last_run_at": job_row[1].isoformat() if job_row[1] else None,
+                "last_metrics": job_row[2] if job_row[2] else {},
+            }
+        else:
+            result["job"] = {
+                "last_status": "never_run",
+                "last_run_at": None,
+                "note": "Job has not run yet - will start on next 2h interval",
+            }
+
+        # Determine overall status
+        if result["feature_matrix"].get("total_rows", 0) == 0:
+            result["status"] = "warn"
+            result["note"] = "No data in feature_matrix yet"
+        elif result["gate"].get("ready_for_pilot"):
+            result["status"] = "ok"
+            result["note"] = f"Ready for pilot eval (N={with_outcome})"
+        else:
+            result["status"] = "building"
+            result["note"] = f"Accumulating data: {with_outcome}/50 for pilot gate"
+
+    except Exception as e:
+        logger.warning(f"[TITAN] Summary calculation failed: {e}")
+        result["status"] = "error"
+        result["error"] = str(e)[:100]
+
+    return result
+
+
 async def _calculate_rerun_serving_summary(session) -> dict:
     """
     Calculate rerun serving metrics for OPS dashboard.
@@ -9707,6 +9824,7 @@ async def _load_ops_data() -> dict:
         "rerun_serving": rerun_serving_data,
         "jobs_health": jobs_health_data,
         "sota_enrichment": sota_enrichment_data,
+        "titan": await _calculate_titan_summary(session),
         "coverage_by_league": coverage_by_league,
         "ml_model": ml_model_info,
         "live_summary": live_summary_stats,

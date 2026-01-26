@@ -273,46 +273,64 @@ class TitanRunner:
             captured_at=extraction.captured_at,
         )
 
-        # 7. Compute form (Tier 2) - optional
-        form_home = await self.materializer.compute_form_features(
-            team_id=match["home_team_id"],
-            kickoff_utc=kickoff_utc,
-        )
-        form_away = await self.materializer.compute_form_features(
-            team_id=match["away_team_id"],
-            kickoff_utc=kickoff_utc,
-        )
+        # 7. Compute form (Tier 2) - optional, fail-open
+        form_home = None
+        form_away = None
+        try:
+            form_home = await self.materializer.compute_form_features(
+                team_id=match["home_team_id"],
+                kickoff_utc=kickoff_utc,
+            )
+            form_away = await self.materializer.compute_form_features(
+                team_id=match["away_team_id"],
+                kickoff_utc=kickoff_utc,
+            )
+        except Exception as e:
+            logger.warning(f"Form computation failed for match {external_id}: {e}")
 
-        # 8. Compute H2H (Tier 3) - optional
-        h2h = await self.materializer.compute_h2h_features(
-            home_team_id=match["home_team_id"],
-            away_team_id=match["away_team_id"],
-            kickoff_utc=kickoff_utc,
-        )
+        # 8. Compute H2H (Tier 3) - optional, fail-open
+        h2h = None
+        try:
+            h2h = await self.materializer.compute_h2h_features(
+                home_team_id=match["home_team_id"],
+                away_team_id=match["away_team_id"],
+                kickoff_utc=kickoff_utc,
+            )
+        except Exception as e:
+            logger.warning(f"H2H computation failed for match {external_id}: {e}")
 
-        # 8b. Compute xG (Tier 1b) - optional enrichment
-        # Uses existing data from public.match_understat_team
-        xg = await self.materializer.compute_xg_last5_features(
-            home_team_id=match["home_team_id"],
-            away_team_id=match["away_team_id"],
-            kickoff_utc=kickoff_utc,
-        )
+        # 8b. Compute xG (Tier 1b) - optional enrichment, fail-open
+        xg = None
+        try:
+            xg = await self.materializer.compute_xg_last5_features(
+                home_team_id=match["home_team_id"],
+                away_team_id=match["away_team_id"],
+                kickoff_utc=kickoff_utc,
+            )
+        except Exception as e:
+            logger.warning(f"xG computation failed for match {external_id}: {e}")
 
-        # 8c. Compute SofaScore Lineup (Tier 1c) - optional enrichment
-        # Reads from public.match_sofascore_lineup (SOTA tables)
-        lineup = await self.materializer.compute_lineup_features(
-            match_id=match["id"],  # internal ID (public.matches.id), not external_id
-            kickoff_utc=kickoff_utc,
-        )
+        # 8c. Compute SofaScore Lineup (Tier 1c) - optional enrichment, fail-open
+        lineup = None
+        try:
+            lineup = await self.materializer.compute_lineup_features(
+                match_id=match["id"],  # internal ID (public.matches.id), not external_id
+                kickoff_utc=kickoff_utc,
+            )
+        except Exception as e:
+            logger.warning(f"Lineup computation failed for match {external_id}: {e}")
 
-        # 8d. Compute XI Depth (Tier 1d) - optional enrichment
-        # Reads from public.match_sofascore_player (SOTA tables)
-        xi_depth = await self.materializer.compute_xi_depth_features(
-            match_id=match["id"],  # internal ID (public.matches.id)
-            kickoff_utc=kickoff_utc,
-            home_formation=lineup.sofascore_home_formation if lineup else None,
-            away_formation=lineup.sofascore_away_formation if lineup else None,
-        )
+        # 8d. Compute XI Depth (Tier 1d) - optional enrichment, fail-open
+        xi_depth = None
+        try:
+            xi_depth = await self.materializer.compute_xi_depth_features(
+                match_id=match["id"],  # internal ID (public.matches.id)
+                kickoff_utc=kickoff_utc,
+                home_formation=lineup.sofascore_home_formation if lineup else None,
+                away_formation=lineup.sofascore_away_formation if lineup else None,
+            )
+        except Exception as e:
+            logger.warning(f"XI Depth computation failed for match {external_id}: {e}")
 
         # 9. Materialize to feature_matrix
         if not dry_run:

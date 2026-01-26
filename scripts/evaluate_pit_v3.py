@@ -9,8 +9,20 @@ Implements PIT Evaluation Protocol v3 with:
 - CLV (Closing Line Value) using T5 as closing line
 - Betting audit: by pick, by odds range, by edge decile
 
+FASE 3C (ABE 2026-01-25):
+- --devig: De-vig method (proportional=baseline, power=alternative)
+- --calibrator: Calibration method (none=baseline, isotonic, temperature)
+- --calib-train-end: Date to split calibration train/test (CRITICAL: no leakage)
+
 Usage:
-    DATABASE_URL=... python3 scripts/evaluate_pit_v3.py
+    # Baseline (default)
+    DATABASE_URL=... python3 scripts/evaluate_pit_v3.py --min-snapshot-date 2026-01-07
+
+    # With power de-vig
+    DATABASE_URL=... python3 scripts/evaluate_pit_v3.py --devig power
+
+    # With isotonic calibration (requires --calib-train-end)
+    DATABASE_URL=... python3 scripts/evaluate_pit_v3.py --calibrator isotonic --calib-train-end 2026-01-06
 
 Output:
     logs/pit_evaluation_v3_YYYYMMDD_HHMMSS.json
@@ -459,12 +471,19 @@ def calculate_clv(bet_prob_devigged: float, close_prob_devigged: float) -> float
 
 
 def calculate_betting_metrics(bets: list[dict]) -> dict:
-    """Calculate ROI, EV from list of bets."""
+    """
+    Calculate ROI and observable metrics from list of bets.
+
+    FASE 3C.0 (ABE revised):
+    - ev_model is NOT a GO/NO-GO metric (it's model's belief, not observable)
+    - Observable metrics: ROI, CLV, skill_vs_market
+    - Gate 3C.0 checks: PIT integrity, n_bets >= 30 for CI, CLV availability
+    """
     if not bets:
         return {
             'n_bets': 0,
             'roi': None,
-            'ev': None,
+            'ev_model': None,  # Renamed: model's expected value (NOT observable)
             'total_staked': 0,
             'total_returns': 0,
         }
@@ -473,12 +492,17 @@ def calculate_betting_metrics(bets: list[dict]) -> dict:
     total_returns = sum(b['returns'] for b in bets)
 
     roi = (total_returns - total_staked) / total_staked if total_staked > 0 else 0
-    ev = np.mean([b['ev'] for b in bets]) if bets else 0
+
+    # ev_model: model's projected EV (p_model * odds - 1)
+    # NOTE: This is NOT an observable metric. It reflects model's belief.
+    # With miscalibrated model, ev_model can be high while profit is negative.
+    # Kept for diagnostic purposes only, NOT for GO/NO-GO decisions.
+    ev_model = np.mean([b['ev'] for b in bets]) if bets else 0
 
     return {
         'n_bets': len(bets),
         'roi': roi,
-        'ev': ev,
+        'ev_model': round(ev_model, 4),  # Diagnostic only, not GO/NO-GO
         'total_staked': total_staked,
         'total_returns': total_returns,
     }
@@ -565,15 +589,42 @@ def generate_interpretation(phase: str, brier: dict, betting: dict) -> dict:
     }
 
 
-async def run_evaluation(min_snapshot_date: str | None = None, edge_threshold: float | None = None) -> dict:
+async def run_evaluation(
+    min_snapshot_date: str | None = None,
+    edge_threshold: float | None = None,
+    devig_method: str = "proportional",
+    calibrator_method: str = "none",
+    calib_train_end: str | None = None,
+) -> dict:
     """Main evaluation logic.
 
     Args:
         min_snapshot_date: Optional ISO date string (e.g., '2026-01-13') to filter snapshots
         edge_threshold: Optional edge threshold override (default: EDGE_THRESHOLD constant)
+        devig_method: De-vig method ("proportional"=baseline, "power"=alternative)
+        calibrator_method: Calibration method ("none"=baseline, "isotonic", "temperature")
+        calib_train_end: Date to split calibration train/test (required if calibrator != none)
+
+    FASE 3C (ABE): Calibration requires --calib-train-end to prevent data leakage.
     """
     # Use custom threshold if provided
     threshold = edge_threshold if edge_threshold is not None else EDGE_THRESHOLD
+
+    # FASE 3C: Import de-vig and calibration modules
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from app.ml.devig import get_devig_function
+    from app.ml.calibration import get_calibrator
+
+    devig_fn = get_devig_function(devig_method)
+    calibrator = get_calibrator(calibrator_method)
+
+    # Validate calibration params
+    if calibrator is not None and calib_train_end is None:
+        return {
+            'error': 'Calibration requires --calib-train-end to prevent data leakage',
+            'generated_at': datetime.now().isoformat(),
+        }
     database_url = os.environ.get('DATABASE_URL', '')
     if not database_url:
         return {
@@ -672,22 +723,71 @@ async def run_evaluation(min_snapshot_date: str | None = None, edge_threshold: f
         # Brier calculation (for snapshots with PIT-safe model predictions)
         pit_with_preds = [s for s in valid_pit if s['match_id'] in pit_safe_predictions]
 
+        # FASE 3C: Split data for calibration if needed
+        calib_train_data = None
+        calib_test_data = pit_with_preds
+        n_calib_train = 0
+        n_calib_test = len(pit_with_preds)
+
+        if calibrator is not None and calib_train_end:
+            # Split: train on data < calib_train_end, test on data >= min_snapshot_date
+            calib_train_data = []
+            calib_test_data = []
+
+            for s in pit_with_preds:
+                snapshot_date = s.get('snapshot_at')
+                if snapshot_date:
+                    snapshot_date_str = snapshot_date.strftime('%Y-%m-%d') if hasattr(snapshot_date, 'strftime') else str(snapshot_date)[:10]
+                    if snapshot_date_str < calib_train_end:
+                        calib_train_data.append(s)
+                    else:
+                        calib_test_data.append(s)
+                else:
+                    calib_test_data.append(s)
+
+            n_calib_train = len(calib_train_data)
+            n_calib_test = len(calib_test_data)
+
+            # Train calibrator if we have enough training data
+            if n_calib_train >= 30:
+                train_probs = []
+                train_outcomes = []
+                for s in calib_train_data:
+                    pred = pit_safe_predictions[s['match_id']]
+                    raw_probs = (
+                        to_float(pred.get('home_prob', 1/3)),
+                        to_float(pred.get('draw_prob', 1/3)),
+                        to_float(pred.get('away_prob', 1/3)),
+                    )
+                    train_probs.append(normalize_probs(*raw_probs))
+                    train_outcomes.append(get_result(s))
+
+                calibrator.fit(np.array(train_probs), np.array(train_outcomes))
+            else:
+                # Not enough training data, disable calibrator
+                calibrator = None
+
         brier_results = {
-            'n_with_predictions': len(pit_with_preds),
+            'n_with_predictions': len(calib_test_data),
             'brier_model': None,
             'brier_uniform': None,
             'brier_market': None,
             'skill_vs_uniform': None,
             'skill_vs_market': None,
+            # FASE 3C: Calibration metadata
+            'n_calib_train': n_calib_train,
+            'n_calib_test': n_calib_test,
+            'calibrator_used': calibrator_method if calibrator is not None else 'none',
+            'devig_method': devig_method,
         }
 
-        if pit_with_preds:
+        if calib_test_data:
             y_true = []
             y_proba_model = []
             y_proba_market = []
             y_proba_uniform = []
 
-            for s in pit_with_preds:
+            for s in calib_test_data:
                 pred = pit_safe_predictions[s['match_id']]
                 result = get_result(s)
                 y_true.append(result)
@@ -698,10 +798,21 @@ async def run_evaluation(min_snapshot_date: str | None = None, edge_threshold: f
                     to_float(pred.get('draw_prob', 1/3)),
                     to_float(pred.get('away_prob', 1/3)),
                 )
-                y_proba_model.append(normalize_probs(*raw_probs))
+                model_probs = normalize_probs(*raw_probs)
 
-                # Market probabilities (de-vigged)
-                mkt_probs = odds_to_probs_devig(s['odds_home'], s['odds_draw'], s['odds_away'])
+                # FASE 3C: Apply calibration if fitted
+                if calibrator is not None and calibrator.is_fitted:
+                    calibrated = calibrator.transform(np.array([model_probs]))
+                    model_probs = tuple(calibrated[0])
+
+                y_proba_model.append(model_probs)
+
+                # Market probabilities (using selected de-vig method)
+                mkt_probs = devig_fn(
+                    to_float(s['odds_home']),
+                    to_float(s['odds_draw']),
+                    to_float(s['odds_away'])
+                )
                 y_proba_market.append(mkt_probs)
 
                 # Uniform
@@ -748,7 +859,7 @@ async def run_evaluation(min_snapshot_date: str | None = None, edge_threshold: f
             result = get_result(s)
             raw_probs = (to_float(pred.get('home_prob', 1/3)), to_float(pred.get('draw_prob', 1/3)), to_float(pred.get('away_prob', 1/3)))
             model_probs = normalize_probs(*raw_probs)
-            market_probs = odds_to_probs_devig(s['odds_home'], s['odds_draw'], s['odds_away'])
+            market_probs = devig_fn(to_float(s['odds_home']), to_float(s['odds_draw']), to_float(s['odds_away']))
 
             bucket_metrics[bucket]['y_true'].append(result)
             bucket_metrics[bucket]['y_model'].append(model_probs)
@@ -777,12 +888,12 @@ async def run_evaluation(min_snapshot_date: str | None = None, edge_threshold: f
             })
 
         # Fetch closing odds for CLV
-        match_ids_for_clv = [s['match_id'] for s in pit_with_preds]
+        match_ids_for_clv = [s['match_id'] for s in calib_test_data]
         closing_odds = await fetch_closing_odds(conn, match_ids_for_clv)
 
-        # Betting simulation
+        # Betting simulation (FASE 3C: use calib_test_data, not pit_with_preds)
         bets = []
-        for s in pit_with_preds:
+        for s in calib_test_data:
             # Use PIT-safe prediction selected above
             pred = pit_safe_predictions[s['match_id']]
             odds = [to_float(s['odds_home']), to_float(s['odds_draw']), to_float(s['odds_away'])]
@@ -793,8 +904,17 @@ async def run_evaluation(min_snapshot_date: str | None = None, edge_threshold: f
                 to_float(pred.get('draw_prob', 0)),
                 to_float(pred.get('away_prob', 0)),
             )
-            probs_model = list(normalize_probs(*raw_probs))
-            probs_market = odds_to_probs_devig(*odds)
+            model_probs = list(normalize_probs(*raw_probs))
+
+            # FASE 3C: Apply calibration if fitted
+            if calibrator is not None and calibrator.is_fitted:
+                calibrated = calibrator.transform(np.array([model_probs]))
+                model_probs = list(calibrated[0])
+
+            probs_model = model_probs
+
+            # FASE 3C: Use selected de-vig method
+            probs_market = devig_fn(odds[0], odds[1], odds[2])
 
             # Calculate edges
             edges = [probs_model[i] - probs_market[i] for i in range(3)]
@@ -810,16 +930,21 @@ async def run_evaluation(min_snapshot_date: str | None = None, edge_threshold: f
                 won = (result == best_idx)
                 returns = odds[best_idx] if won else 0
 
-                # CLV calculation (both sides must be de-vigged for fair comparison)
+                # CLV calculation (CRITICAL: both sides must use SAME devig method)
+                # ABE fix: recalculate close_probs with devig_fn, don't use stored prob_*
                 clv = None
                 match_close = closing_odds.get(s['match_id'])
                 if match_close:
-                    close_probs = [match_close['prob_home'], match_close['prob_draw'], match_close['prob_away']]
-                    # probs_market is already de-vigged (from odds_to_probs_devig above)
-                    bet_prob_devigged = probs_market[best_idx]
-                    close_prob_devigged = close_probs[best_idx]
-                    if close_prob_devigged and bet_prob_devigged:
-                        clv = calculate_clv(bet_prob_devigged, close_prob_devigged)
+                    # Use odds from closing snapshot and apply SAME devig_fn
+                    close_odds_h = match_close.get('odds_home')
+                    close_odds_d = match_close.get('odds_draw')
+                    close_odds_a = match_close.get('odds_away')
+                    if close_odds_h and close_odds_d and close_odds_a:
+                        close_probs = devig_fn(close_odds_h, close_odds_d, close_odds_a)
+                        bet_prob_devigged = probs_market[best_idx]
+                        close_prob_devigged = close_probs[best_idx]
+                        if close_prob_devigged and bet_prob_devigged:
+                            clv = calculate_clv(bet_prob_devigged, close_prob_devigged)
 
                 bets.append({
                     'match_id': s['match_id'],
@@ -836,34 +961,38 @@ async def run_evaluation(min_snapshot_date: str | None = None, edge_threshold: f
 
         betting_metrics = calculate_betting_metrics(bets)
 
-        # Bootstrap CI for ROI and EV
+        # Bootstrap CI for ROI (observable) and ev_model (diagnostic only)
         if bets:
             roi_values = [(b['returns'] - 1) for b in bets]  # P&L per bet
-            ev_values = [b['ev'] for b in bets]
 
             roi_ci_low, roi_ci_high, roi_ci_status = bootstrap_ci(roi_values)
-            ev_ci_low, ev_ci_high, ev_ci_status = bootstrap_ci(ev_values)
 
             betting_metrics['roi_ci95_low'] = roi_ci_low
             betting_metrics['roi_ci95_high'] = roi_ci_high
             betting_metrics['roi_ci_status'] = roi_ci_status
-            betting_metrics['ev_ci95_low'] = ev_ci_low
-            betting_metrics['ev_ci95_high'] = ev_ci_high
-            betting_metrics['ev_ci_status'] = ev_ci_status
+            # Note: ev_model CI removed from main output (not GO/NO-GO metric per ABE)
 
             # Win rate
             betting_metrics['win_rate'] = sum(1 for b in bets if b['won']) / len(bets)
 
-            # CLV metrics
+            # CLV metrics (FASE 3C.0 ABE: CLV is observable, use for GO/NO-GO)
             clv_values = [b['clv'] for b in bets if b['clv'] is not None]
             if clv_values:
                 betting_metrics['clv_mean'] = round(np.mean(clv_values), 4)
                 betting_metrics['clv_median'] = round(np.median(clv_values), 4)
                 betting_metrics['clv_positive_pct'] = round(sum(1 for c in clv_values if c > 0) / len(clv_values), 4)
                 betting_metrics['clv_n'] = len(clv_values)
+                # CLV CI95 bootstrap (ABE: observable metric for GO/NO-GO)
+                clv_ci_low, clv_ci_high, clv_ci_status = bootstrap_ci(clv_values)
+                betting_metrics['clv_ci95_low'] = clv_ci_low
+                betting_metrics['clv_ci95_high'] = clv_ci_high
+                betting_metrics['clv_ci_status'] = clv_ci_status
             else:
                 betting_metrics['clv_mean'] = None
                 betting_metrics['clv_n'] = 0
+                betting_metrics['clv_ci95_low'] = None
+                betting_metrics['clv_ci95_high'] = None
+                betting_metrics['clv_ci_status'] = 'no_clv_data'
 
             # Betting audit: by pick
             pick_dist = {'home': 0, 'draw': 0, 'away': 0}
@@ -899,7 +1028,7 @@ async def run_evaluation(min_snapshot_date: str | None = None, edge_threshold: f
                 bucket_roi[bkt].append(b['returns'] - 1)
             betting_metrics['roi_by_bucket'] = {k: {'n': len(v), 'roi': round(np.mean(v), 4) if v else None} for k, v in bucket_roi.items()}
 
-            # By edge decile
+            # By edge decile (ABE: include CLV for observable monotonicidad)
             bets_sorted = sorted(bets, key=lambda x: x['edge'])
             n_bets = len(bets_sorted)
             decile_size = max(1, n_bets // 10)
@@ -909,10 +1038,13 @@ async def run_evaluation(min_snapshot_date: str | None = None, edge_threshold: f
                 end = (i + 1) * decile_size if i < 9 else n_bets
                 db = bets_sorted[start:end]
                 if db:
+                    decile_clv = [b['clv'] for b in db if b['clv'] is not None]
                     edge_deciles.append({
                         'decile': i + 1, 'n': len(db),
                         'edge_range': [round(db[0]['edge'], 4), round(db[-1]['edge'], 4)],
                         'roi': round(np.mean([b['returns'] - 1 for b in db]), 4),
+                        'clv_mean': round(np.mean(decile_clv), 4) if decile_clv else None,
+                        'clv_n': len(decile_clv),
                     })
             betting_metrics['roi_by_edge_decile'] = edge_deciles
 
@@ -920,10 +1052,10 @@ async def run_evaluation(min_snapshot_date: str | None = None, edge_threshold: f
             betting_metrics['roi_ci95_low'] = None
             betting_metrics['roi_ci95_high'] = None
             betting_metrics['roi_ci_status'] = 'no_bets'
-            betting_metrics['ev_ci95_low'] = None
-            betting_metrics['ev_ci95_high'] = None
-            betting_metrics['ev_ci_status'] = 'no_bets'
             betting_metrics['win_rate'] = None
+            betting_metrics['clv_ci95_low'] = None
+            betting_metrics['clv_ci95_high'] = None
+            betting_metrics['clv_ci_status'] = 'no_bets'
 
         # Determine phase first (needed for interpretation)
         phase = (
@@ -1000,6 +1132,15 @@ def print_summary(report: dict):
     print(f"  PIT integrity:       {pred_integrity.get('pit_prediction_integrity', 'unknown')}")
 
     brier = report.get('brier', {})
+    # FASE 3C: Show calibration config
+    if brier.get('calibrator_used') or brier.get('devig_method'):
+        print(f"\nFASE 3C Config:")
+        print(f"  De-vig method:       {brier.get('devig_method', 'proportional')}")
+        print(f"  Calibrator:          {brier.get('calibrator_used', 'none')}")
+        if brier.get('n_calib_train', 0) > 0:
+            print(f"  N train (calib):     {brier.get('n_calib_train', 0)}")
+        print(f"  N test (eval):       {brier.get('n_calib_test', brier.get('n_with_predictions', 0))}")
+
     if brier.get('brier_model') is not None:
         print(f"\nBrier (calibration):")
         print(f"  Model:               {brier['brier_model']:.4f}")
@@ -1009,14 +1150,28 @@ def print_summary(report: dict):
         print(f"  Skill vs market:     {brier.get('skill_vs_market', 0):.2%}")
 
     betting = report.get('betting', {})
-    print(f"\nBetting (primary):")
+    print(f"\nBetting (primary - observable metrics):")
     print(f"  N bets:              {betting.get('n_bets', 0)}")
     if betting.get('roi') is not None:
         print(f"  ROI:                 {betting['roi']:.2%}")
         if betting.get('roi_ci95_low') is not None:
             print(f"  ROI CI95%:           [{betting['roi_ci95_low']:.2%}, {betting['roi_ci95_high']:.2%}]")
-        print(f"  EV:                  {betting.get('ev', 0):.4f}")
         print(f"  Win rate:            {betting.get('win_rate', 0):.2%}")
+
+    # CLV metrics (ABE: observable, use for GO/NO-GO)
+    if betting.get('clv_n', 0) > 0:
+        print(f"\nCLV (Closing Line Value - observable):")
+        print(f"  CLV mean:            {betting.get('clv_mean', 0):.4f}")
+        print(f"  CLV median:          {betting.get('clv_median', 0):.4f}")
+        if betting.get('clv_ci95_low') is not None:
+            print(f"  CLV CI95%:           [{betting['clv_ci95_low']:.4f}, {betting['clv_ci95_high']:.4f}]")
+        print(f"  CLV positive %:      {betting.get('clv_positive_pct', 0):.2%}")
+        print(f"  CLV n:               {betting.get('clv_n', 0)}")
+
+    # ev_model (diagnostic only, NOT GO/NO-GO)
+    if betting.get('ev_model') is not None:
+        print(f"\nEV Model (diagnostic only - NOT observable):")
+        print(f"  ev_model:            {betting.get('ev_model', 0):.4f}  (model's belief, not real profit)")
 
     print(f"\nPhase: {report.get('phase', 'unknown')}")
 
@@ -1044,14 +1199,48 @@ async def main():
         default=None,
         help='Edge threshold for betting (e.g., 0.10 for 10%%). Overrides default 5%%.'
     )
+    # FASE 3C: De-vig and calibration flags
+    parser.add_argument(
+        '--devig',
+        type=str,
+        choices=['proportional', 'power'],
+        default='proportional',
+        help='De-vig method: proportional (baseline) or power (alternative)'
+    )
+    parser.add_argument(
+        '--calibrator',
+        type=str,
+        choices=['none', 'isotonic', 'temperature'],
+        default='none',
+        help='Calibration method: none (baseline), isotonic, or temperature'
+    )
+    parser.add_argument(
+        '--calib-train-end',
+        type=str,
+        default=None,
+        help='Date to split calibration train/test (ISO format). REQUIRED if --calibrator != none'
+    )
     args = parser.parse_args()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # FASE 3C: Validate calibration params
+    if args.calibrator != 'none' and args.calib_train_end is None:
+        print("ERROR: --calib-train-end is REQUIRED when using --calibrator")
+        print("       This prevents data leakage in calibration.")
+        return 1
 
     if args.min_snapshot_date:
         print(f"Running PIT evaluation (live odds only, snapshot >= {args.min_snapshot_date})...")
     else:
         print("Running PIT evaluation (live odds only)...")
+
+    # Print FASE 3C config
+    print(f"Config: devig={args.devig}, calibrator={args.calibrator}", end="")
+    if args.calib_train_end:
+        print(f", calib_train_end={args.calib_train_end}")
+    else:
+        print()
 
     if args.edge_threshold:
         print(f"Using custom edge threshold: {args.edge_threshold:.0%}")
@@ -1059,7 +1248,10 @@ async def main():
     try:
         report = await run_evaluation(
             min_snapshot_date=args.min_snapshot_date,
-            edge_threshold=args.edge_threshold
+            edge_threshold=args.edge_threshold,
+            devig_method=args.devig,
+            calibrator_method=args.calibrator,
+            calib_train_end=args.calib_train_end,
         )
     except Exception as e:
         report = {
