@@ -28,6 +28,14 @@ function getPctColor(pct: number | undefined): string {
 }
 
 /**
+ * Check if league name is unmapped (backend returns "League <id>" pattern)
+ */
+function isUnmappedLeague(name: string | undefined, leagueId: number): boolean {
+  if (!name) return true;
+  return name === `League ${leagueId}`;
+}
+
+/**
  * TITAN Coverage Card
  *
  * Shows feature_matrix materialization:
@@ -144,10 +152,19 @@ export function TitanCoverageCard({ data }: TitanCoverageCardProps) {
                   </td>
                 </tr>
               ) : (
-                leagues.map((league) => (
+                leagues.map((league) => {
+                  const unmapped = isUnmappedLeague(league.name, league.league_id);
+                  return (
                   <tr key={league.league_id} className="border-b border-border/50">
                     <td className="py-2 pr-4 text-foreground truncate max-w-[120px]">
-                      {league.name || `ID ${league.league_id}`}
+                      <span className="flex items-center gap-1.5">
+                        {league.name || `ID ${league.league_id}`}
+                        {unmapped && (
+                          <span className="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground rounded">
+                            unmapped
+                          </span>
+                        )}
+                      </span>
                     </td>
                     <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">
                       {league.league_id}
@@ -159,7 +176,8 @@ export function TitanCoverageCard({ data }: TitanCoverageCardProps) {
                       {formatPct(league.tier1b_pct)}
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>
