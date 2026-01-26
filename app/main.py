@@ -5789,6 +5789,231 @@ async def dashboard_ml_health_json(request: Request):
     }
 
 
+# =============================================================================
+# Admin Panel P0 (Read-only)
+# =============================================================================
+# Cache for admin endpoints (120s for lists, 60s for details)
+_admin_cache = {
+    "overview": {"data": None, "timestamp": 0, "ttl": 120},
+    "leagues": {"data": None, "timestamp": 0, "ttl": 120},
+    "league_detail": {},  # keyed by league_id
+    "teams": {},  # keyed by filter params
+    "team_detail": {},  # keyed by team_id
+}
+
+
+@app.get("/dashboard/admin/overview.json")
+async def dashboard_admin_overview(request: Request):
+    """Admin Panel - System overview with counts and coverage summary."""
+    import time
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    now = time.time()
+    cache = _admin_cache["overview"]
+
+    if cache["data"] and (now - cache["timestamp"]) < cache["ttl"]:
+        return {
+            "generated_at": cache["data"]["generated_at"],
+            "cached": True,
+            "cache_age_seconds": round(now - cache["timestamp"], 1),
+            "data": cache["data"]["data"],
+        }
+
+    from app.dashboard.admin import build_overview
+
+    async with AsyncSessionLocal() as session:
+        data = await build_overview(session)
+
+    result = {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "data": data,
+    }
+    cache["data"] = result
+    cache["timestamp"] = now
+
+    return {
+        "generated_at": result["generated_at"],
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
+@app.get("/dashboard/admin/leagues.json")
+async def dashboard_admin_leagues(request: Request):
+    """Admin Panel - List all leagues with configured vs observed distinction."""
+    import time
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    now = time.time()
+    cache = _admin_cache["leagues"]
+
+    if cache["data"] and (now - cache["timestamp"]) < cache["ttl"]:
+        return {
+            "generated_at": cache["data"]["generated_at"],
+            "cached": True,
+            "cache_age_seconds": round(now - cache["timestamp"], 1),
+            "data": cache["data"]["data"],
+        }
+
+    from app.dashboard.admin import build_leagues_list
+
+    async with AsyncSessionLocal() as session:
+        data = await build_leagues_list(session)
+
+    result = {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "data": data,
+    }
+    cache["data"] = result
+    cache["timestamp"] = now
+
+    return {
+        "generated_at": result["generated_at"],
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
+@app.get("/dashboard/admin/league/{league_id}.json")
+async def dashboard_admin_league_detail(request: Request, league_id: int):
+    """Admin Panel - Detail for a specific league."""
+    import time
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    now = time.time()
+    cache_key = str(league_id)
+    cache = _admin_cache["league_detail"]
+
+    if cache_key in cache and cache[cache_key]["data"] and (now - cache[cache_key]["timestamp"]) < 60:
+        cached = cache[cache_key]
+        return {
+            "generated_at": cached["data"]["generated_at"],
+            "cached": True,
+            "cache_age_seconds": round(now - cached["timestamp"], 1),
+            "data": cached["data"]["data"],
+        }
+
+    from app.dashboard.admin import build_league_detail
+
+    async with AsyncSessionLocal() as session:
+        data = await build_league_detail(session, league_id)
+
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"League {league_id} not found.")
+
+    result = {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "data": data,
+    }
+    cache[cache_key] = {"data": result, "timestamp": now}
+
+    return {
+        "generated_at": result["generated_at"],
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
+@app.get("/dashboard/admin/teams.json")
+async def dashboard_admin_teams(
+    request: Request,
+    type: str = "all",
+    country: str = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """Admin Panel - List teams with optional filters and pagination."""
+    import time
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    now = time.time()
+    cache_key = f"{type}:{country}:{limit}:{offset}"
+    cache = _admin_cache["teams"]
+
+    if cache_key in cache and cache[cache_key]["data"] and (now - cache[cache_key]["timestamp"]) < 120:
+        cached = cache[cache_key]
+        return {
+            "generated_at": cached["data"]["generated_at"],
+            "cached": True,
+            "cache_age_seconds": round(now - cached["timestamp"], 1),
+            "data": cached["data"]["data"],
+        }
+
+    from app.dashboard.admin import build_teams_list
+
+    team_type = type if type != "all" else None
+
+    async with AsyncSessionLocal() as session:
+        data = await build_teams_list(session, team_type=team_type, country=country, limit=limit, offset=offset)
+
+    result = {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "data": data,
+    }
+    cache[cache_key] = {"data": result, "timestamp": now}
+
+    return {
+        "generated_at": result["generated_at"],
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
+@app.get("/dashboard/admin/team/{team_id}.json")
+async def dashboard_admin_team_detail(request: Request, team_id: int):
+    """Admin Panel - Detail for a specific team."""
+    import time
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    now = time.time()
+    cache_key = str(team_id)
+    cache = _admin_cache["team_detail"]
+
+    if cache_key in cache and cache[cache_key]["data"] and (now - cache[cache_key]["timestamp"]) < 60:
+        cached = cache[cache_key]
+        return {
+            "generated_at": cached["data"]["generated_at"],
+            "cached": True,
+            "cache_age_seconds": round(now - cached["timestamp"], 1),
+            "data": cached["data"]["data"],
+        }
+
+    from app.dashboard.admin import build_team_detail
+
+    async with AsyncSessionLocal() as session:
+        data = await build_team_detail(session, team_id)
+
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"Team {team_id} not found.")
+
+    result = {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "data": data,
+    }
+    cache[cache_key] = {"data": result, "timestamp": now}
+
+    return {
+        "generated_at": result["generated_at"],
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
 @app.get("/dashboard/pit/debug")
 async def pit_dashboard_debug(request: Request):
     """
