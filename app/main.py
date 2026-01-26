@@ -15157,203 +15157,30 @@ async def trigger_stats_backfill(request: Request):
 
 
 @app.post("/dashboard/ops/historical_stats_backfill")
-async def trigger_historical_stats_backfill(
-    request: Request,
-    limit: int = 200,
-    dry_run: bool = False,
-):
+async def trigger_historical_stats_backfill(request: Request):
     """
-    Trigger historical stats backfill for matches since 2023-08-01.
+    Trigger historical stats backfill job for matches since 2023-08-01.
 
-    This endpoint addresses the data gap from stats_backfill job being added
-    late (2026-01-09) with only 72h lookback. ~23,000 FT matches need stats.
+    This endpoint calls the scheduler job which:
+    - Processes 500 matches per run (configurable via HISTORICAL_STATS_BACKFILL_BATCH_SIZE)
+    - Marks matches without stats as {"_no_stats": true} to skip on future runs
+    - Auto-advances through all leagues
 
     Protected by dashboard token.
-
-    Args:
-        limit: Max matches to process this call (default 200, max 7500)
-        dry_run: If True, don't write to DB (for testing)
     """
     if not _verify_dashboard_token(request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
-    # Import the backfill logic inline to avoid circular imports
-    import asyncio
-    import json
-    import httpx
-    from datetime import datetime, date
-
-    # Configuration
-    CUTOFF_DATE = date(2023, 8, 1)
-    MAX_LIMIT = 7500
-    BATCH_SIZE = 100
-    REQUEST_DELAY = 0.5
-
-    # Clamp limit
-    effective_limit = min(limit, MAX_LIMIT)
-
-    # All leagues from competitions.py
-    ALL_LEAGUES = [
-        1, 34, 32, 31, 30, 29, 33, 37,  # World Cup & Qualifiers
-        39, 140, 135, 78, 61,  # Top 5
-        2, 13,  # UCL, Libertadores
-        9, 4, 5, 22, 6, 7,  # International
-        40, 88, 94, 144,  # Secondary
-        253, 307,  # MLS, Saudi
-        3, 848,  # Europa, Conference
-        71, 262, 128,  # LATAM Pack1
-        239, 242, 250, 265, 268, 281, 299, 344,  # LATAM Pack2
-        11,  # Sudamericana
-        143, 45,  # Domestic Cups
-        10,  # Friendlies
-    ]
-
-    metrics = {
-        "fetched": 0,
-        "updated": 0,
-        "skipped_no_stats": 0,
-        "errors": 0,
-        "api_calls": 0,
-    }
+    from app.scheduler import historical_stats_backfill
 
     start_time = time.time()
-
-    async with AsyncSessionLocal() as session:
-        # Get remaining count
-        result = await session.execute(text("""
-            SELECT COUNT(*) as cnt
-            FROM matches
-            WHERE status IN ('FT', 'AET', 'PEN')
-              AND date >= :cutoff_date
-              AND league_id = ANY(:leagues)
-              AND external_id IS NOT NULL
-              AND (stats IS NULL OR stats::text = '{}' OR stats::text = 'null')
-        """), {"cutoff_date": CUTOFF_DATE, "leagues": ALL_LEAGUES})
-        remaining_before = result.scalar() or 0
-
-        if remaining_before == 0:
-            return {
-                "status": "complete",
-                "remaining": 0,
-                "message": "All matches already have stats!",
-            }
-
-        # Get matches needing stats
-        result = await session.execute(text("""
-            SELECT id, external_id
-            FROM matches
-            WHERE status IN ('FT', 'AET', 'PEN')
-              AND date >= :cutoff_date
-              AND league_id = ANY(:leagues)
-              AND external_id IS NOT NULL
-              AND (stats IS NULL OR stats::text = '{}' OR stats::text = 'null')
-            ORDER BY id ASC
-            LIMIT :limit
-        """), {"cutoff_date": CUTOFF_DATE, "leagues": ALL_LEAGUES, "limit": effective_limit})
-        matches = result.fetchall()
-
-        if not matches:
-            return {
-                "status": "complete",
-                "remaining": remaining_before,
-                "message": "No matches to process",
-            }
-
-        batch_count = 0
-        api_key = settings.RAPIDAPI_KEY
-
-        async with httpx.AsyncClient() as client:
-            for match in matches:
-                match_id, external_id = match
-
-                try:
-                    # Fetch stats from API-Football
-                    url = "https://v3.football.api-sports.io/fixtures/statistics"
-                    headers = {"x-apisports-key": api_key}
-                    params = {"fixture": external_id}
-
-                    response = await client.get(url, headers=headers, params=params, timeout=30)
-                    metrics["api_calls"] += 1
-
-                    if response.status_code == 429:
-                        logger.warning("Historical backfill: 429 rate limit, stopping")
-                        break
-
-                    if response.status_code != 200:
-                        metrics["errors"] += 1
-                        continue
-
-                    data = response.json()
-                    results = data.get("response", [])
-
-                    if not results or len(results) < 2:
-                        metrics["skipped_no_stats"] += 1
-                        continue
-
-                    # Parse stats
-                    stats = {"home": {}, "away": {}}
-                    for i, team_stats in enumerate(results):
-                        statistics = team_stats.get("statistics", [])
-                        side = "home" if i == 0 else "away"
-                        for stat in statistics:
-                            stat_type = stat.get("type", "").lower().replace(" ", "_")
-                            value = stat.get("value")
-                            if value and isinstance(value, str) and value.endswith("%"):
-                                try:
-                                    value = float(value.rstrip("%"))
-                                except ValueError:
-                                    pass
-                            stats[side][stat_type] = value
-
-                    if stats["home"] or stats["away"]:
-                        metrics["fetched"] += 1
-                        if not dry_run:
-                            await session.execute(text("""
-                                UPDATE matches
-                                SET stats = CAST(:stats_json AS JSON)
-                                WHERE id = :match_id
-                            """), {"match_id": match_id, "stats_json": json.dumps(stats)})
-                            metrics["updated"] += 1
-
-                    # Batch commit
-                    batch_count += 1
-                    if batch_count >= BATCH_SIZE and not dry_run:
-                        await session.commit()
-                        batch_count = 0
-
-                    # Rate limiting
-                    await asyncio.sleep(REQUEST_DELAY)
-
-                except Exception as e:
-                    metrics["errors"] += 1
-                    logger.warning(f"Historical backfill error for match {match_id}: {e}")
-
-        # Final commit
-        if not dry_run:
-            await session.commit()
-
-        # Get remaining count after
-        result = await session.execute(text("""
-            SELECT COUNT(*) as cnt
-            FROM matches
-            WHERE status IN ('FT', 'AET', 'PEN')
-              AND date >= :cutoff_date
-              AND league_id = ANY(:leagues)
-              AND external_id IS NOT NULL
-              AND (stats IS NULL OR stats::text = '{}' OR stats::text = 'null')
-        """), {"cutoff_date": CUTOFF_DATE, "leagues": ALL_LEAGUES})
-        remaining_after = result.scalar() or 0
-
+    result = await historical_stats_backfill()
     duration_ms = int((time.time() - start_time) * 1000)
 
     return {
-        "status": "ok",
-        "dry_run": dry_run,
+        "status": "executed",
         "duration_ms": duration_ms,
-        "metrics": metrics,
-        "remaining_before": remaining_before,
-        "remaining_after": remaining_after,
-        "progress": remaining_before - remaining_after,
+        "result": result,
     }
 
 
