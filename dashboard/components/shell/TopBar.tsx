@@ -1,8 +1,34 @@
 "use client";
 
-import { ChevronDown, User } from "lucide-react";
+import { ChevronDown, User, Circle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AlertsBell } from "./AlertsBell";
+
+/**
+ * Soccer ball icon (simple filled circle with pentagon pattern suggestion)
+ */
+function SoccerBallIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      className={className}
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="10" fill="currentColor" />
+      <path
+        d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z"
+        fill="currentColor"
+        opacity="0.2"
+      />
+      <path
+        d="M12 7l1.5 2.5h3l-1.5 2.5 1.5 2.5h-3L12 17l-1.5-2.5h-3l1.5-2.5-1.5-2.5h3z"
+        fill="white"
+        opacity="0.9"
+      />
+    </svg>
+  );
+}
 
 export function TopBar() {
   return (
@@ -11,7 +37,7 @@ export function TopBar() {
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-            <span className="text-primary-foreground font-bold text-sm">FS</span>
+            <SoccerBallIcon className="w-5 h-5 text-primary-foreground" />
           </div>
           <span className="font-semibold text-foreground">FutbolStats</span>
         </div>
@@ -22,7 +48,7 @@ export function TopBar() {
           size="sm"
           className="text-muted-foreground hover:text-foreground gap-1"
         >
-          Production
+          Football
           <ChevronDown className="h-4 w-4" strokeWidth={1.5} />
         </Button>
       </div>
