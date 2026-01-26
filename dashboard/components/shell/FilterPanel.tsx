@@ -220,8 +220,9 @@ export function FilterPanel({
       </ScrollArea>
 
       {/* Footer with Customize Columns link - same height as table pagination (py-4 + h-8 content) */}
+      {/* Shadow uses ::before pseudo-element with gradient to render above ScrollArea content */}
       {showCustomizeColumns && (
-        <div className="px-4 py-4 flex items-center shadow-elevation-up bg-sidebar shrink-0 relative z-10">
+        <div className="px-4 py-4 flex items-center bg-sidebar shrink-0 relative z-10 before:absolute before:left-0 before:right-0 before:bottom-full before:h-4 before:bg-gradient-to-t before:from-black/30 before:to-transparent before:pointer-events-none">
           <div className="h-8 flex items-center">
             <button
               onClick={onCustomizeColumnsClick}

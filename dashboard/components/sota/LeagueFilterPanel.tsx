@@ -1,34 +1,32 @@
 "use client";
 
 import { useMemo, useCallback } from "react";
-import { VisibilityState } from "@tanstack/react-table";
 import { ChevronLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { LeagueVisibilityState } from "@/lib/hooks/use-league-visibility";
 
 /**
- * Column definition for the customize panel
+ * League option for the filter panel
  */
-export interface ColumnOption {
-  /** Column ID (matches TanStack column id) */
-  id: string;
-  /** Display label for the column */
-  label: string;
-  /** Whether this column can be hidden (false = always visible) */
-  enableHiding?: boolean;
+export interface LeagueOption {
+  league_id: number;
+  name: string;
 }
 
-interface CustomizeColumnsPanelProps {
+interface LeagueFilterPanelProps {
   /** Whether the panel is visible */
   open: boolean;
-  /** Available columns to customize */
-  columns: ColumnOption[];
+  /** Available leagues to filter */
+  leagues: LeagueOption[];
   /** Current visibility state */
-  columnVisibility: VisibilityState;
-  /** Called when a column's visibility changes */
-  onColumnVisibilityChange: (columnId: string, visible: boolean) => void;
+  leagueVisibility: LeagueVisibilityState;
+  /** Called when a league's visibility changes */
+  onLeagueVisibilityChange: (leagueId: number, visible: boolean) => void;
+  /** Called when "All" is toggled */
+  onAllLeaguesChange: (visible: boolean, leagueIds: number[]) => void;
   /** Called when "Restore" is clicked */
   onRestore: () => void;
   /** Called when "Done" is clicked (closes panel) */
@@ -40,73 +38,56 @@ interface CustomizeColumnsPanelProps {
 }
 
 /**
- * Customize Columns Panel (UniFi style)
+ * League Filter Panel for Feature Coverage Matrix
  *
- * A separate column that appears between Filters and the table.
- * Triggered by "Customize Columns" link in FilterPanel footer.
- *
- * Layout (UniFi reference):
- * - Col 1: Filters (Status, League, etc.)
- * - Col 2: Customize Columns (this component) - appears when open=true
- * - Col 3: Table
- *
- * UI:
- * - Header "Customize Columns"
- * - "All" checkbox with indeterminate state
- * - List of column checkboxes with scroll
- * - Footer: "Restore" (defaults) + "Done" (closes panel)
- *
- * Changes apply immediately (no confirmation).
+ * Similar to CustomizeColumnsPanel but for filtering leagues/competitions.
+ * Appears in the 3rd column when Features view is active.
  */
-export function CustomizeColumnsPanel({
+export function LeagueFilterPanel({
   open,
-  columns,
-  columnVisibility,
-  onColumnVisibilityChange,
+  leagues,
+  leagueVisibility,
+  onLeagueVisibilityChange,
+  onAllLeaguesChange,
   onRestore,
   onDone,
   onCollapse,
   className,
-}: CustomizeColumnsPanelProps) {
-  // Filter to only hideable columns
-  const hideableColumns = useMemo(
-    () => columns.filter((col) => col.enableHiding !== false),
-    [columns]
-  );
-
+}: LeagueFilterPanelProps) {
   // Calculate "All" checkbox state
   const { allChecked, allIndeterminate } = useMemo(() => {
-    const visibleCount = hideableColumns.filter(
-      (col) => columnVisibility[col.id] !== false
+    const visibleCount = leagues.filter(
+      (league) => leagueVisibility[String(league.league_id)] !== false
     ).length;
-    const total = hideableColumns.length;
+    const total = leagues.length;
 
     return {
       allChecked: visibleCount === total,
       allIndeterminate: visibleCount > 0 && visibleCount < total,
     };
-  }, [hideableColumns, columnVisibility]);
+  }, [leagues, leagueVisibility]);
 
   // Handle "All" checkbox
   const handleAllChange = useCallback(
     (checked: boolean) => {
-      hideableColumns.forEach((col) => {
-        onColumnVisibilityChange(col.id, checked);
-      });
+      onAllLeaguesChange(
+        checked,
+        leagues.map((l) => l.league_id)
+      );
     },
-    [hideableColumns, onColumnVisibilityChange]
+    [leagues, onAllLeaguesChange]
   );
 
-  // Handle individual column checkbox
-  const handleColumnChange = useCallback(
-    (columnId: string, checked: boolean) => {
-      onColumnVisibilityChange(columnId, checked);
+  // Handle individual league checkbox
+  const handleLeagueChange = useCallback(
+    (leagueId: number, checked: boolean) => {
+      onLeagueVisibilityChange(leagueId, checked);
     },
-    [onColumnVisibilityChange]
+    [onLeagueVisibilityChange]
   );
 
-  // Don't render if not open
-  if (!open) {
+  // Don't render if not open or no leagues
+  if (!open || leagues.length === 0) {
     return null;
   }
 
@@ -117,10 +98,10 @@ export function CustomizeColumnsPanel({
         className
       )}
     >
-      {/* Header - same height as FilterPanel header, with collapse button */}
+      {/* Header */}
       <div className="h-12 flex items-center justify-between px-3">
         <h3 className="text-sm font-medium text-foreground">
-          Customize Columns
+          Filter Leagues
         </h3>
         {onCollapse && (
           <Button
@@ -141,33 +122,33 @@ export function CustomizeColumnsPanel({
           <Checkbox
             checked={allIndeterminate ? "indeterminate" : allChecked}
             onCheckedChange={(checked) => handleAllChange(checked === true)}
-            aria-label="Toggle all columns"
+            aria-label="Toggle all leagues"
           />
           <span className="text-sm text-foreground">All</span>
+          <span className="text-xs text-muted-foreground">({leagues.length})</span>
         </label>
       </div>
 
-      {/* Column list with scroll */}
-      {/* min-h-0 is the flexbox trick to allow shrinking below content size */}
+      {/* League list with scroll */}
       <ScrollArea className="flex-1 min-h-0">
         <div className="px-3 py-2 space-y-0.5">
-          {hideableColumns.map((column) => {
-            const isVisible = columnVisibility[column.id] !== false;
+          {leagues.map((league) => {
+            const isVisible = leagueVisibility[String(league.league_id)] !== false;
 
             return (
               <label
-                key={column.id}
+                key={league.league_id}
                 className="flex items-center gap-2 py-1.5 cursor-pointer hover:bg-accent/30 rounded px-1 -mx-1"
               >
                 <Checkbox
                   checked={isVisible}
                   onCheckedChange={(checked) =>
-                    handleColumnChange(column.id, checked === true)
+                    handleLeagueChange(league.league_id, checked === true)
                   }
-                  aria-label={`Show ${column.label} column`}
+                  aria-label={`Show ${league.name}`}
                 />
-                <span className="text-sm text-foreground truncate">
-                  {column.label}
+                <span className="text-sm text-foreground truncate" title={league.name}>
+                  {league.name}
                 </span>
               </label>
             );
@@ -175,7 +156,7 @@ export function CustomizeColumnsPanel({
         </div>
       </ScrollArea>
 
-      {/* Footer: Restore + Done - same height as table pagination (py-4 + h-8 content) */}
+      {/* Footer: Restore + Done */}
       {/* Shadow uses ::before pseudo-element with gradient to render above ScrollArea content */}
       <div className="px-4 py-4 flex items-center justify-between bg-sidebar shrink-0 relative z-10 before:absolute before:left-0 before:right-0 before:bottom-full before:h-4 before:bg-gradient-to-t before:from-black/30 before:to-transparent before:pointer-events-none">
         <div className="h-8 flex items-center">

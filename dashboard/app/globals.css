@@ -215,6 +215,9 @@
   .shadow-elevation-left {
     box-shadow: -8px 0 16px rgba(0, 0, 0, 0.28);
   }
+  .shadow-elevation-right {
+    box-shadow: 8px 0 16px rgba(0, 0, 0, 0.28);
+  }
 }
 
 /* Three-dot bounce loader */

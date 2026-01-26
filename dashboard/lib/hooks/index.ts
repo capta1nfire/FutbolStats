@@ -21,3 +21,9 @@ export * from "./use-predictions-missing";
 export * from "./use-overview-rollup";
 // Alerts
 export * from "./use-alerts";
+// SOTA Feature Coverage
+export * from "./use-feature-coverage";
+// SOTA View persistence
+export * from "./use-sota-view";
+// League visibility for Feature Coverage Matrix
+export * from "./use-league-visibility";

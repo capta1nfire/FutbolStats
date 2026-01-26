@@ -2,7 +2,15 @@
 
 import { Suspense, useState, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useDataQualityChecksApi, useDataQualityCheckApi, useOpsOverview } from "@/lib/hooks";
+import {
+  useDataQualityChecksApi,
+  useDataQualityCheckApi,
+  useOpsOverview,
+  useColumnVisibility,
+  usePageSize,
+  useSotaView,
+  useLeagueVisibility,
+} from "@/lib/hooks";
 import {
   DataQualityCheck,
   DataQualityFilters,
@@ -12,7 +20,18 @@ import {
   DataQualityDetailDrawer,
 } from "@/components/data-quality";
 import { SotaEnrichmentSection } from "@/components/overview";
-import { Pagination } from "@/components/tables";
+import { CustomizeColumnsPanel, Pagination } from "@/components/tables";
+import {
+  SotaFilterPanel,
+  SotaStatusFilter,
+  SotaSourceFilter,
+  SotaViewTabs,
+  FeatureCoverageMatrix,
+  FeatureCoverageLeague,
+  LeagueFilterPanel,
+  SOTA_COLUMN_OPTIONS,
+  SOTA_DEFAULT_VISIBILITY,
+} from "@/components/sota";
 import {
   parseStringId,
   buildSearchParams,
@@ -43,20 +62,6 @@ const SOTA_CHECK_IDS = new Set([
 ]);
 
 /**
- * Default column visibility for SOTA table
- * (simpler than Data Quality - hide some columns)
- */
-const SOTA_COLUMN_VISIBILITY: Record<string, boolean> = {
-  status: true,
-  name: true,
-  category: false, // Always coverage, no need to show
-  current: true,
-  threshold: true,
-  affected: true,
-  lastRun: true,
-};
-
-/**
  * SOTA Hub Page Content
  *
  * Two sections:
@@ -73,9 +78,44 @@ function SotaPageContent() {
     [searchParams]
   );
 
-  // Pagination state
+  // UI state (non-URL)
+  const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
+  const [customizeColumnsOpen, setCustomizeColumnsOpen] = useState(false);
+
+  // View state with localStorage persistence
+  const { activeView, setActiveView } = useSotaView();
+
+  // Filter state (local, not URL-synced for simplicity)
+  const [selectedStatuses, setSelectedStatuses] = useState<SotaStatusFilter[]>([]);
+  const [selectedSources, setSelectedSources] = useState<SotaSourceFilter[]>([]);
+  const [searchValue, setSearchValue] = useState("");
+
+  // Pagination state with localStorage persistence
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
+  const { pageSize, setPageSize } = usePageSize("sota");
+
+  // Column visibility with localStorage persistence
+  const { columnVisibility, setColumnVisibility, setColumnVisible, resetToDefault } = useColumnVisibility(
+    "sota",
+    SOTA_DEFAULT_VISIBILITY
+  );
+
+  // League visibility for Feature Coverage Matrix with localStorage persistence
+  const {
+    leagueVisibility,
+    isLeagueVisible,
+    setLeagueVisible,
+    setAllLeaguesVisible,
+    resetToDefault: resetLeaguesToDefault,
+  } = useLeagueVisibility();
+
+  // Available leagues from Feature Coverage data
+  const [availableLeagues, setAvailableLeagues] = useState<FeatureCoverageLeague[]>([]);
+
+  // Features pagination state (separate from enrichment view)
+  const [featuresCurrentPage, setFeaturesCurrentPage] = useState(1);
+  const { pageSize: featuresPageSize, setPageSize: setFeaturesPageSize } = usePageSize("sota-features");
+  const [totalFeatures, setTotalFeatures] = useState(0);
 
   // Fetch SOTA enrichment data from ops.json (same source as Overview)
   const {
@@ -143,14 +183,123 @@ function SotaPageContent() {
     router.replace(buildUrl({ id: null }), { scroll: false });
   }, [router, buildUrl]);
 
+  // Handlers for Customize Columns
+  const handleCustomizeColumnsClick = useCallback(() => {
+    setCustomizeColumnsOpen(true);
+  }, []);
+
+  // Done only closes Customize Columns panel (keeps FilterPanel visible)
+  const handleCustomizeColumnsDone = useCallback(() => {
+    setCustomizeColumnsOpen(false);
+  }, []);
+
+  const handleLeftRailToggle = useCallback(() => {
+    setLeftRailCollapsed((prev) => !prev);
+    if (!leftRailCollapsed) {
+      setCustomizeColumnsOpen(false);
+    }
+  }, [leftRailCollapsed]);
+
+  // Filter handlers
+  const handleStatusChange = useCallback((status: SotaStatusFilter, checked: boolean) => {
+    setSelectedStatuses((prev) =>
+      checked ? [...prev, status] : prev.filter((s) => s !== status)
+    );
+    setCurrentPage(1);
+  }, []);
+
+  const handleSourceChange = useCallback((source: SotaSourceFilter, checked: boolean) => {
+    setSelectedSources((prev) =>
+      checked ? [...prev, source] : prev.filter((s) => s !== source)
+    );
+    setCurrentPage(1);
+  }, []);
+
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchValue(value);
+    setCurrentPage(1);
+  }, []);
+
+  // League filter handlers
+  const handleLeagueVisibilityChange = useCallback(
+    (leagueId: number, visible: boolean) => {
+      setLeagueVisible(leagueId, visible);
+    },
+    [setLeagueVisible]
+  );
+
+  const handleAllLeaguesChange = useCallback(
+    (visible: boolean, leagueIds: number[]) => {
+      setAllLeaguesVisible(visible, leagueIds);
+    },
+    [setAllLeaguesVisible]
+  );
+
+  const handleLeaguesLoaded = useCallback((leagues: FeatureCoverageLeague[]) => {
+    setAvailableLeagues(leagues);
+  }, []);
+
+  // Features total count handler (for pagination)
+  const handleTotalFeaturesChange = useCallback((total: number) => {
+    setTotalFeatures(total);
+  }, []);
+
   // Pagination - client-side since we're filtering
   const paginatedChecks = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
     return checks.slice(start, start + pageSize);
   }, [checks, currentPage, pageSize]);
 
+  // Header content with view tabs
+  const headerContent = (
+    <SotaViewTabs activeView={activeView} onViewChange={setActiveView} />
+  );
+
   return (
     <div className="h-full flex overflow-hidden relative">
+      {/* FilterPanel */}
+      <SotaFilterPanel
+        collapsed={leftRailCollapsed}
+        onToggleCollapse={handleLeftRailToggle}
+        headerContent={headerContent}
+        selectedStatuses={selectedStatuses}
+        selectedSources={selectedSources}
+        searchValue={searchValue}
+        onStatusChange={handleStatusChange}
+        onSourceChange={handleSourceChange}
+        onSearchChange={handleSearchChange}
+        showCustomizeColumns={true}
+        onCustomizeColumnsClick={handleCustomizeColumnsClick}
+        customizeColumnsOpen={customizeColumnsOpen}
+      />
+
+      {/* Customize Columns Panel (Enrichment view) */}
+      {activeView === "enrichment" && (
+        <CustomizeColumnsPanel
+          open={customizeColumnsOpen && !leftRailCollapsed}
+          columns={SOTA_COLUMN_OPTIONS}
+          columnVisibility={columnVisibility}
+          onColumnVisibilityChange={setColumnVisible}
+          onRestore={resetToDefault}
+          onDone={handleCustomizeColumnsDone}
+          onCollapse={handleLeftRailToggle}
+        />
+      )}
+
+      {/* League Filter Panel (Features view) */}
+      {activeView === "features" && (
+        <LeagueFilterPanel
+          open={customizeColumnsOpen && !leftRailCollapsed}
+          leagues={availableLeagues}
+          leagueVisibility={leagueVisibility}
+          onLeagueVisibilityChange={handleLeagueVisibilityChange}
+          onAllLeaguesChange={handleAllLeaguesChange}
+          onRestore={resetLeaguesToDefault}
+          onDone={handleCustomizeColumnsDone}
+          onCollapse={handleLeftRailToggle}
+        />
+      )}
+
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
         {/* Header */}
@@ -179,51 +328,77 @@ function SotaPageContent() {
         </div>
 
         {/* Scrollable content area */}
-        <ScrollArea className="flex-1">
+        <ScrollArea className="flex-1 min-h-0">
           <div className="p-6 space-y-6">
-            {/* SOTA Enrichment Section (cards) */}
-            <SotaEnrichmentSection
-              data={sotaEnrichment}
-              isMockFallback={isSotaEnrichmentDegraded}
-            />
-
-            {/* Data Quality Section */}
-            <div className="space-y-3">
-              {/* Section header */}
-              <div className="flex items-center gap-2">
-                <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
-                <h2 className="text-sm font-semibold text-foreground">Data Quality Checks</h2>
-                <span className="text-xs text-muted-foreground">
-                  ({checks.length} checks)
-                </span>
-              </div>
-
-              {/* Table container */}
-              <div className="border border-border rounded-lg overflow-hidden">
-                <DataQualityTable
-                  data={paginatedChecks}
-                  isLoading={isDqLoading}
-                  error={error}
-                  onRetry={() => refetch()}
-                  selectedCheckId={selectedCheckId}
-                  onRowClick={handleRowClick}
-                  columnVisibility={SOTA_COLUMN_VISIBILITY}
+            {activeView === "enrichment" ? (
+              <>
+                {/* SOTA Enrichment Section (cards) */}
+                <SotaEnrichmentSection
+                  data={sotaEnrichment}
+                  isMockFallback={isSotaEnrichmentDegraded}
                 />
-              </div>
 
-              {/* Pagination */}
-              {checks.length > 0 && (
-                <Pagination
-                  currentPage={currentPage}
-                  totalItems={checks.length}
-                  pageSize={pageSize}
-                  onPageChange={setCurrentPage}
-                  onPageSizeChange={setPageSize}
-                />
-              )}
-            </div>
+                {/* Data Quality Section */}
+                <div className="space-y-3">
+                  {/* Section header */}
+                  <div className="flex items-center gap-2">
+                    <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
+                    <h2 className="text-sm font-semibold text-foreground">Data Quality Checks</h2>
+                    <span className="text-xs text-muted-foreground">
+                      ({checks.length} checks)
+                    </span>
+                  </div>
+
+                  {/* Table container */}
+                  <div className="border border-border rounded-lg overflow-hidden">
+                    <DataQualityTable
+                      data={paginatedChecks}
+                      isLoading={isDqLoading}
+                      error={error}
+                      onRetry={() => refetch()}
+                      selectedCheckId={selectedCheckId}
+                      onRowClick={handleRowClick}
+                      columnVisibility={columnVisibility}
+                      onColumnVisibilityChange={setColumnVisibility}
+                    />
+                  </div>
+
+                  {/* Pagination */}
+                  {checks.length > 0 && (
+                    <Pagination
+                      currentPage={currentPage}
+                      totalItems={checks.length}
+                      pageSize={pageSize}
+                      onPageChange={setCurrentPage}
+                      onPageSizeChange={setPageSize}
+                    />
+                  )}
+                </div>
+              </>
+            ) : (
+              /* Features View - Feature Coverage Matrix */
+              <FeatureCoverageMatrix
+                isLeagueVisible={isLeagueVisible}
+                onLeaguesLoaded={handleLeaguesLoaded}
+                currentPage={featuresCurrentPage}
+                pageSize={featuresPageSize}
+                onTotalFeaturesChange={handleTotalFeaturesChange}
+              />
+            )}
           </div>
         </ScrollArea>
+
+        {/* Features Pagination - outside ScrollArea for fixed footer */}
+        {activeView === "features" && (
+          <Pagination
+            currentPage={featuresCurrentPage}
+            totalItems={totalFeatures}
+            pageSize={featuresPageSize}
+            onPageChange={setFeaturesCurrentPage}
+            onPageSizeChange={setFeaturesPageSize}
+            pageSizeOptions={[25, 50, 100]}
+          />
+        )}
       </div>
 
       {/* Detail Drawer (inline on desktop, sheet on mobile) */}
