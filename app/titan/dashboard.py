@@ -52,6 +52,7 @@ async def get_titan_status(session: AsyncSession) -> dict:
         "feature_matrix": {},
         "pit_compliance": {},
         "sofascore": {},
+        "xi_depth": {},
     }
 
     try:
@@ -143,6 +144,9 @@ async def get_titan_status(session: AsyncSession) -> dict:
             # SofaScore lineup metrics (Tier 1c)
             status["sofascore"] = await _get_sofascore_metrics(session, schema, now)
 
+            # XI Depth metrics (Tier 1d)
+            status["xi_depth"] = await _get_xi_depth_metrics(session, schema, now)
+
         # Overall health
         status["health"] = _compute_health(status)
 
@@ -226,6 +230,44 @@ async def _get_sofascore_metrics(session: AsyncSession, schema: str, now: dateti
 
     except Exception as e:
         logger.warning(f"Error getting SofaScore metrics: {e}")
+        metrics["error"] = str(e)
+
+    return metrics
+
+
+async def _get_xi_depth_metrics(session: AsyncSession, schema: str, now: datetime) -> dict:
+    """Get XI Depth metrics for Tier 1d.
+
+    Args:
+        session: Database session
+        schema: TITAN schema name
+        now: Current UTC timestamp
+
+    Returns:
+        Dict with XI depth metrics
+    """
+    metrics = {
+        "formation_mismatch_rate_pct": 0.0,
+    }
+
+    try:
+        # Formation mismatch rate (mismatches / tier1d_complete rows)
+        mismatch_query = await session.execute(text(f"""
+            SELECT
+                COUNT(*) FILTER (WHERE xi_formation_mismatch_flag = TRUE) as mismatches,
+                COUNT(*) FILTER (WHERE tier1d_complete = TRUE) as total
+            FROM {schema}.feature_matrix
+            WHERE kickoff_utc > NOW() - INTERVAL '7 days'
+        """))
+        row = mismatch_query.fetchone()
+        mismatches = row[0] or 0
+        total = row[1] or 0
+        metrics["formation_mismatch_rate_pct"] = round(
+            (mismatches / total * 100) if total > 0 else 0, 1
+        )
+
+    except Exception as e:
+        logger.warning(f"Error getting XI depth metrics: {e}")
         metrics["error"] = str(e)
 
     return metrics

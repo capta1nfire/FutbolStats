@@ -116,18 +116,84 @@ class SofaScoreLineupFeatures:
     captured_at: Optional[datetime]
 
 
+@dataclass
+class XIDepthFeatures:
+    """Tier 1d: XI depth features derived from lineup positions.
+
+    FASE 3B-1: Read from public.match_sofascore_player.
+    Position counts for DEF/MID/FWD per team (starters only).
+    """
+
+    xi_home_def_count: int
+    xi_home_mid_count: int
+    xi_home_fwd_count: int
+    xi_away_def_count: int
+    xi_away_mid_count: int
+    xi_away_fwd_count: int
+    xi_formation_mismatch_flag: bool
+    captured_at: Optional[datetime]  # PIT timestamp, None if no player data
+
+
+def detect_formation_mismatch(
+    formation: Optional[str],
+    def_count: int,
+    mid_count: int,
+    fwd_count: int,
+) -> bool:
+    """
+    Detect if XI position counts differ from declared formation.
+
+    Example: formation="4-3-3" expects DEF=4, MID=3, FWD=3
+    If actual XI has DEF=5, MID=4, FWD=1 → mismatch=TRUE
+
+    Tolerance: ±1 per line (hybrid formations like 4-2-3-1 can vary).
+
+    Args:
+        formation: Declared formation string (e.g., "4-3-3", "4-2-3-1")
+        def_count: Actual defender starters count
+        mid_count: Actual midfielder starters count
+        fwd_count: Actual forward starters count
+
+    Returns:
+        True if mismatch detected, False otherwise (including when no formation)
+    """
+    if not formation:
+        return False  # No formation → no mismatch detectable
+
+    # Parse formation (e.g., "4-3-3" → [4, 3, 3], "4-2-3-1" → [4, 2, 3, 1])
+    parts = formation.replace("-", "").strip()
+    if len(parts) < 3:
+        return False  # Invalid formation format
+
+    try:
+        expected_def = int(parts[0])
+        # Middle sections are midfielders (can be multiple in formations like 4-2-3-1)
+        expected_mid = sum(int(p) for p in parts[1:-1]) if len(parts) > 3 else int(parts[1])
+        expected_fwd = int(parts[-1])
+    except (ValueError, IndexError):
+        return False  # Can't parse → no mismatch detectable
+
+    # Check with tolerance of ±1 per line
+    def_ok = abs(def_count - expected_def) <= 1
+    mid_ok = abs(mid_count - expected_mid) <= 1
+    fwd_ok = abs(fwd_count - expected_fwd) <= 1
+
+    return not (def_ok and mid_ok and fwd_ok)
+
+
 def should_insert_feature_row(
     odds: Optional[OddsFeatures],
     form: Optional[FormFeatures],
     h2h: Optional[H2HFeatures],
     xg: Optional[XGFeatures] = None,
     lineup: Optional["SofaScoreLineupFeatures"] = None,
+    xi_depth: Optional["XIDepthFeatures"] = None,
 ) -> tuple[bool, str]:
     """
     Insertion policy for feature_matrix.
 
     RULE 1: No odds -> DON'T insert (Tier 1 is mandatory gate)
-    RULE 2: With odds, missing Tier 1b/1c/2/3 -> DO insert with NULLs
+    RULE 2: With odds, missing Tier 1b/1c/1d/2/3 -> DO insert with NULLs
 
     Args:
         odds: Tier 1 odds features (or None)
@@ -135,6 +201,7 @@ def should_insert_feature_row(
         h2h: Tier 3 H2H features (or None)
         xg: Tier 1b xG features (or None) - optional enrichment
         lineup: Tier 1c SofaScore lineup features (or None) - optional enrichment
+        xi_depth: Tier 1d XI depth features (or None) - optional enrichment
 
     Returns:
         (should_insert, reason)
@@ -143,8 +210,8 @@ def should_insert_feature_row(
     if odds is None:
         return False, "Missing Tier 1 (odds) - skipping"
 
-    # RULE 2: With odds, missing Tier 1b/1c/2/3 -> YES insert with NULLs
-    return True, "Tier 1 complete, inserting (Tier 1b/1c/2/3 may be NULL)"
+    # RULE 2: With odds, missing Tier 1b/1c/1d/2/3 -> YES insert with NULLs
+    return True, "Tier 1 complete, inserting (Tier 1b/1c/1d/2/3 may be NULL)"
 
 
 def compute_pit_max(
@@ -153,6 +220,7 @@ def compute_pit_max(
     h2h: Optional[H2HFeatures],
     xg: Optional[XGFeatures] = None,
     lineup: Optional["SofaScoreLineupFeatures"] = None,
+    xi_depth: Optional["XIDepthFeatures"] = None,
 ) -> datetime:
     """
     Compute pit_max_captured_at.
@@ -166,6 +234,7 @@ def compute_pit_max(
         h2h: Tier 3 features (optional)
         xg: Tier 1b xG features (optional)
         lineup: Tier 1c SofaScore lineup features (optional)
+        xi_depth: Tier 1d XI depth features (optional)
 
     Returns:
         Maximum captured_at timestamp
@@ -185,6 +254,8 @@ def compute_pit_max(
         timestamps.append(xg.captured_at)
     if lineup and lineup.captured_at:
         timestamps.append(lineup.captured_at)
+    if xi_depth and xi_depth.captured_at:
+        timestamps.append(xi_depth.captured_at)
 
     if not timestamps:
         raise ValueError("No captured_at timestamps available")
@@ -662,6 +733,92 @@ class FeatureMatrixMaterializer:
             captured_at=captured_at_aware,
         )
 
+    async def compute_xi_depth_features(
+        self,
+        match_id: int,
+        kickoff_utc: datetime,
+        home_formation: Optional[str] = None,
+        away_formation: Optional[str] = None,
+    ) -> Optional[XIDepthFeatures]:
+        """Compute Tier 1d XI depth features from SOTA player positions.
+
+        Reads from public.match_sofascore_player.
+        PIT-safe: Only uses data where captured_at < kickoff_utc.
+        Fail-open: Returns None if no player data found.
+
+        Args:
+            match_id: Internal match ID (public.matches.id)
+            kickoff_utc: Match kickoff time (aware UTC)
+            home_formation: Home formation from Tier 1c (optional, for mismatch detection)
+            away_formation: Away formation from Tier 1c (optional)
+
+        Returns:
+            XIDepthFeatures if found and PIT-compliant, None otherwise.
+        """
+        # public.* tables use TIMESTAMP (naive) - apply timezone normalization
+        kickoff_naive = kickoff_utc.replace(tzinfo=None) if kickoff_utc.tzinfo else kickoff_utc
+
+        query = text("""
+            SELECT
+                team_side,
+                position,
+                COUNT(*) as count,
+                MAX(captured_at) as captured_at
+            FROM public.match_sofascore_player
+            WHERE match_id = :match_id
+              AND is_starter = TRUE
+              AND captured_at < :kickoff
+            GROUP BY team_side, position
+        """)
+
+        result = await self.session.execute(query, {
+            "match_id": match_id,
+            "kickoff": kickoff_naive,
+        })
+        rows = result.fetchall()
+
+        if not rows:
+            return None  # Fail-open: no player data
+
+        # Aggregate counts by team and position
+        counts = {"home": {"DEF": 0, "MID": 0, "FWD": 0}, "away": {"DEF": 0, "MID": 0, "FWD": 0}}
+        latest_captured = None
+
+        for row in rows:
+            team_side, position, count, captured_at = row
+            if team_side in counts and position in counts[team_side]:
+                counts[team_side][position] = count
+            if captured_at and (latest_captured is None or captured_at > latest_captured):
+                latest_captured = captured_at
+
+        # Detect formation mismatch
+        home_mismatch = detect_formation_mismatch(
+            home_formation,
+            counts["home"]["DEF"],
+            counts["home"]["MID"],
+            counts["home"]["FWD"],
+        )
+        away_mismatch = detect_formation_mismatch(
+            away_formation,
+            counts["away"]["DEF"],
+            counts["away"]["MID"],
+            counts["away"]["FWD"],
+        )
+
+        # Convert captured_at to aware (for titan.* storage)
+        captured_aware = latest_captured.replace(tzinfo=timezone.utc) if latest_captured else None
+
+        return XIDepthFeatures(
+            xi_home_def_count=counts["home"]["DEF"],
+            xi_home_mid_count=counts["home"]["MID"],
+            xi_home_fwd_count=counts["home"]["FWD"],
+            xi_away_def_count=counts["away"]["DEF"],
+            xi_away_mid_count=counts["away"]["MID"],
+            xi_away_fwd_count=counts["away"]["FWD"],
+            xi_formation_mismatch_flag=home_mismatch or away_mismatch,
+            captured_at=captured_aware,
+        )
+
     async def insert_row(
         self,
         match_id: int,
@@ -676,6 +833,7 @@ class FeatureMatrixMaterializer:
         h2h: Optional[H2HFeatures] = None,
         xg: Optional[XGFeatures] = None,
         lineup: Optional[SofaScoreLineupFeatures] = None,
+        xi_depth: Optional[XIDepthFeatures] = None,
     ) -> bool:
         """Insert or update feature_matrix row with policy enforcement.
 
@@ -692,6 +850,7 @@ class FeatureMatrixMaterializer:
             h2h: Tier 3 H2H features
             xg: Tier 1b xG features (optional enrichment)
             lineup: Tier 1c SofaScore lineup features (optional enrichment)
+            xi_depth: Tier 1d XI depth features (optional enrichment)
 
         Returns:
             True if inserted, False if skipped
@@ -701,13 +860,13 @@ class FeatureMatrixMaterializer:
             InsertionPolicyViolation: If policy requirements not met
         """
         # Check insertion policy
-        should_insert, reason = should_insert_feature_row(odds, form_home, h2h, xg, lineup)
+        should_insert, reason = should_insert_feature_row(odds, form_home, h2h, xg, lineup, xi_depth)
         if not should_insert:
             logger.info(f"Skipping match {match_id}: {reason}")
             return False
 
         # Compute pit_max_captured_at
-        pit_max = compute_pit_max(odds, form_home, h2h, xg, lineup)
+        pit_max = compute_pit_max(odds, form_home, h2h, xg, lineup, xi_depth)
 
         # Validate PIT constraint
         if pit_max >= kickoff_utc:
@@ -728,6 +887,7 @@ class FeatureMatrixMaterializer:
             "tier1_complete": odds is not None,
             "tier1b_complete": xg is not None,
             "tier1c_complete": lineup is not None and lineup.captured_at is not None,
+            "tier1d_complete": xi_depth is not None and xi_depth.captured_at is not None,
             "tier2_complete": form_home is not None and form_away is not None,
             "tier3_complete": h2h is not None,
         }
@@ -778,6 +938,30 @@ class FeatureMatrixMaterializer:
                 "sofascore_lineup_captured_at": None,
             })
 
+        # Tier 1d: XI Depth (via SOTA)
+        if xi_depth:
+            values.update({
+                "xi_home_def_count": xi_depth.xi_home_def_count,
+                "xi_home_mid_count": xi_depth.xi_home_mid_count,
+                "xi_home_fwd_count": xi_depth.xi_home_fwd_count,
+                "xi_away_def_count": xi_depth.xi_away_def_count,
+                "xi_away_mid_count": xi_depth.xi_away_mid_count,
+                "xi_away_fwd_count": xi_depth.xi_away_fwd_count,
+                "xi_formation_mismatch_flag": xi_depth.xi_formation_mismatch_flag,
+                "xi_depth_captured_at": xi_depth.captured_at,
+            })
+        else:
+            values.update({
+                "xi_home_def_count": None,
+                "xi_home_mid_count": None,
+                "xi_home_fwd_count": None,
+                "xi_away_def_count": None,
+                "xi_away_mid_count": None,
+                "xi_away_fwd_count": None,
+                "xi_formation_mismatch_flag": False,
+                "xi_depth_captured_at": None,
+            })
+
         # Tier 2: Form (form_home = home team's form, form_away = away team's form)
         if form_home and form_away:
             values.update({
@@ -815,12 +999,15 @@ class FeatureMatrixMaterializer:
                 sofascore_lineup_available, sofascore_home_formation, sofascore_away_formation,
                 lineup_home_starters_count, lineup_away_starters_count,
                 sofascore_lineup_integrity_score, sofascore_lineup_captured_at,
+                xi_home_def_count, xi_home_mid_count, xi_home_fwd_count,
+                xi_away_def_count, xi_away_mid_count, xi_away_fwd_count,
+                xi_formation_mismatch_flag, xi_depth_captured_at,
                 form_home_last5, form_away_last5, goals_home_last5, goals_away_last5,
                 goals_against_home_last5, goals_against_away_last5,
                 points_home_last5, points_away_last5, form_captured_at,
                 h2h_total_matches, h2h_home_wins, h2h_draws, h2h_away_wins,
                 h2h_home_goals, h2h_away_goals, h2h_captured_at,
-                pit_max_captured_at, tier1_complete, tier1b_complete, tier1c_complete, tier2_complete, tier3_complete
+                pit_max_captured_at, tier1_complete, tier1b_complete, tier1c_complete, tier1d_complete, tier2_complete, tier3_complete
             ) VALUES (
                 :match_id, :kickoff_utc, :competition_id, :season, :home_team_id, :away_team_id,
                 :odds_home_close, :odds_draw_close, :odds_away_close,
@@ -830,12 +1017,15 @@ class FeatureMatrixMaterializer:
                 :sofascore_lineup_available, :sofascore_home_formation, :sofascore_away_formation,
                 :lineup_home_starters_count, :lineup_away_starters_count,
                 :sofascore_lineup_integrity_score, :sofascore_lineup_captured_at,
+                :xi_home_def_count, :xi_home_mid_count, :xi_home_fwd_count,
+                :xi_away_def_count, :xi_away_mid_count, :xi_away_fwd_count,
+                :xi_formation_mismatch_flag, :xi_depth_captured_at,
                 :form_home_last5, :form_away_last5, :goals_home_last5, :goals_away_last5,
                 :goals_against_home_last5, :goals_against_away_last5,
                 :points_home_last5, :points_away_last5, :form_captured_at,
                 :h2h_total_matches, :h2h_home_wins, :h2h_draws, :h2h_away_wins,
                 :h2h_home_goals, :h2h_away_goals, :h2h_captured_at,
-                :pit_max_captured_at, :tier1_complete, :tier1b_complete, :tier1c_complete, :tier2_complete, :tier3_complete
+                :pit_max_captured_at, :tier1_complete, :tier1b_complete, :tier1c_complete, :tier1d_complete, :tier2_complete, :tier3_complete
             )
             ON CONFLICT (match_id) DO UPDATE SET
                 odds_home_close = COALESCE(EXCLUDED.odds_home_close, {self.schema}.feature_matrix.odds_home_close),
@@ -859,6 +1049,14 @@ class FeatureMatrixMaterializer:
                 lineup_away_starters_count = COALESCE(EXCLUDED.lineup_away_starters_count, {self.schema}.feature_matrix.lineup_away_starters_count),
                 sofascore_lineup_integrity_score = COALESCE(EXCLUDED.sofascore_lineup_integrity_score, {self.schema}.feature_matrix.sofascore_lineup_integrity_score),
                 sofascore_lineup_captured_at = COALESCE(EXCLUDED.sofascore_lineup_captured_at, {self.schema}.feature_matrix.sofascore_lineup_captured_at),
+                xi_home_def_count = COALESCE(EXCLUDED.xi_home_def_count, {self.schema}.feature_matrix.xi_home_def_count),
+                xi_home_mid_count = COALESCE(EXCLUDED.xi_home_mid_count, {self.schema}.feature_matrix.xi_home_mid_count),
+                xi_home_fwd_count = COALESCE(EXCLUDED.xi_home_fwd_count, {self.schema}.feature_matrix.xi_home_fwd_count),
+                xi_away_def_count = COALESCE(EXCLUDED.xi_away_def_count, {self.schema}.feature_matrix.xi_away_def_count),
+                xi_away_mid_count = COALESCE(EXCLUDED.xi_away_mid_count, {self.schema}.feature_matrix.xi_away_mid_count),
+                xi_away_fwd_count = COALESCE(EXCLUDED.xi_away_fwd_count, {self.schema}.feature_matrix.xi_away_fwd_count),
+                xi_formation_mismatch_flag = COALESCE(EXCLUDED.xi_formation_mismatch_flag, {self.schema}.feature_matrix.xi_formation_mismatch_flag),
+                xi_depth_captured_at = COALESCE(EXCLUDED.xi_depth_captured_at, {self.schema}.feature_matrix.xi_depth_captured_at),
                 form_home_last5 = COALESCE(EXCLUDED.form_home_last5, {self.schema}.feature_matrix.form_home_last5),
                 form_away_last5 = COALESCE(EXCLUDED.form_away_last5, {self.schema}.feature_matrix.form_away_last5),
                 goals_home_last5 = COALESCE(EXCLUDED.goals_home_last5, {self.schema}.feature_matrix.goals_home_last5),
@@ -879,6 +1077,7 @@ class FeatureMatrixMaterializer:
                 tier1_complete = EXCLUDED.tier1_complete OR {self.schema}.feature_matrix.tier1_complete,
                 tier1b_complete = EXCLUDED.tier1b_complete OR {self.schema}.feature_matrix.tier1b_complete,
                 tier1c_complete = EXCLUDED.tier1c_complete OR {self.schema}.feature_matrix.tier1c_complete,
+                tier1d_complete = EXCLUDED.tier1d_complete OR {self.schema}.feature_matrix.tier1d_complete,
                 tier2_complete = EXCLUDED.tier2_complete OR {self.schema}.feature_matrix.tier2_complete,
                 tier3_complete = EXCLUDED.tier3_complete OR {self.schema}.feature_matrix.tier3_complete
         """)
@@ -889,14 +1088,17 @@ class FeatureMatrixMaterializer:
                     "odds_captured_at",
                     "xg_home_last5", "xg_away_last5", "xga_home_last5", "xga_away_last5",
                     "npxg_home_last5", "npxg_away_last5", "xg_captured_at",
+                    "sofascore_home_formation", "sofascore_away_formation",
+                    "lineup_home_starters_count", "lineup_away_starters_count",
+                    "sofascore_lineup_integrity_score", "sofascore_lineup_captured_at",
+                    "xi_home_def_count", "xi_home_mid_count", "xi_home_fwd_count",
+                    "xi_away_def_count", "xi_away_mid_count", "xi_away_fwd_count",
+                    "xi_formation_mismatch_flag", "xi_depth_captured_at",
                     "form_home_last5", "form_away_last5",
                     "goals_home_last5", "goals_away_last5", "goals_against_home_last5",
                     "goals_against_away_last5", "points_home_last5", "points_away_last5",
                     "form_captured_at", "h2h_total_matches", "h2h_home_wins", "h2h_draws",
-                    "h2h_away_wins", "h2h_home_goals", "h2h_away_goals", "h2h_captured_at",
-                    "sofascore_home_formation", "sofascore_away_formation",
-                    "lineup_home_starters_count", "lineup_away_starters_count",
-                    "sofascore_lineup_integrity_score", "sofascore_lineup_captured_at"]:
+                    "h2h_away_wins", "h2h_home_goals", "h2h_away_goals", "h2h_captured_at"]:
             if key not in values:
                 values[key] = None
 
@@ -918,6 +1120,7 @@ class FeatureMatrixMaterializer:
                 COUNT(*) FILTER (WHERE tier1_complete) as tier1_count,
                 COUNT(*) FILTER (WHERE tier1b_complete) as tier1b_count,
                 COUNT(*) FILTER (WHERE tier1c_complete) as tier1c_count,
+                COUNT(*) FILTER (WHERE tier1d_complete) as tier1d_count,
                 COUNT(*) FILTER (WHERE tier2_complete) as tier2_count,
                 COUNT(*) FILTER (WHERE tier3_complete) as tier3_count,
                 COUNT(*) FILTER (WHERE pit_max_captured_at >= kickoff_utc) as pit_violations,
@@ -936,15 +1139,17 @@ class FeatureMatrixMaterializer:
             "tier1_complete": row[1] or 0,
             "tier1b_complete": row[2] or 0,
             "tier1c_complete": row[3] or 0,
-            "tier2_complete": row[4] or 0,
-            "tier3_complete": row[5] or 0,
-            "pit_violations": row[6] or 0,
-            "with_outcome": row[7] or 0,
-            "earliest_match": row[8].isoformat() if row[8] else None,
-            "latest_match": row[9].isoformat() if row[9] else None,
+            "tier1d_complete": row[4] or 0,
+            "tier2_complete": row[5] or 0,
+            "tier3_complete": row[6] or 0,
+            "pit_violations": row[7] or 0,
+            "with_outcome": row[8] or 0,
+            "earliest_match": row[9].isoformat() if row[9] else None,
+            "latest_match": row[10].isoformat() if row[10] else None,
             "tier1_coverage_pct": round((row[1] or 0) / total * 100, 1) if total else 0,
             "tier1b_coverage_pct": round((row[2] or 0) / total * 100, 1) if total else 0,
             "tier1c_coverage_pct": round((row[3] or 0) / total * 100, 1) if total else 0,
-            "tier2_coverage_pct": round((row[4] or 0) / total * 100, 1) if total else 0,
-            "tier3_coverage_pct": round((row[5] or 0) / total * 100, 1) if total else 0,
+            "tier1d_coverage_pct": round((row[4] or 0) / total * 100, 1) if total else 0,
+            "tier2_coverage_pct": round((row[5] or 0) / total * 100, 1) if total else 0,
+            "tier3_coverage_pct": round((row[6] or 0) / total * 100, 1) if total else 0,
         }
