@@ -39,11 +39,13 @@ LEAGUE_NAMES = {
     78: "Bundesliga",
     61: "Ligue 1",
     # Other European Leagues
+    40: "Championship",
     94: "Primeira Liga",
     88: "Eredivisie",
     203: "Super Lig",
     45: "FA Cup",
     143: "Copa del Rey",
+    307: "Saudi Pro League",
     # South America
     71: "Brasil Serie A",
     128: "Argentina Primera",
