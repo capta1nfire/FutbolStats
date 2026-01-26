@@ -3063,6 +3063,237 @@ async def capture_finished_match_stats() -> dict:
 
 
 # =============================================================================
+# HISTORICAL STATS BACKFILL JOB
+# =============================================================================
+# Backfills stats for matches from 2023-08-01 onwards that have NULL stats.
+# This addresses the gap from stats_backfill being added late (2026-01-09)
+# with only 72h lookback, leaving ~23,000 historical matches without stats.
+#
+# Runs every hour with a small batch (500) to avoid timeouts and stay within budget.
+# Stateless design: always picks first N matches with NULL stats, ordered by ID.
+
+
+async def historical_stats_backfill() -> dict:
+    """
+    Backfill historical match stats for training data quality.
+
+    This job fills stats for matches since 2023-08-01 that have NULL stats.
+    Unlike the regular stats_backfill (72h lookback), this covers all historical data.
+
+    Guardrails:
+    - HISTORICAL_STATS_BACKFILL_ENABLED: If false, job returns immediately
+    - HISTORICAL_STATS_BACKFILL_BATCH_SIZE: Max matches per run (default 500)
+    - Rate limiting: 0.5s between API calls
+    - Stops on 429 or budget exceeded
+
+    Design:
+    - Stateless: queries matches with NULL stats ordered by ID
+    - Idempotent: safe to run multiple times, naturally advances
+    - Auto-completes: returns early when no matches left
+    """
+    import asyncio
+    import json
+    import os
+    import time
+    from datetime import date
+
+    import httpx
+    from app.config import get_settings
+
+    settings = get_settings()
+    start_time = time.time()
+
+    # Check if job is enabled
+    enabled = os.environ.get("HISTORICAL_STATS_BACKFILL_ENABLED", "true").lower()
+    if enabled in ("false", "0", "no"):
+        logger.info("Historical stats backfill job disabled")
+        return {"status": "disabled"}
+
+    # Configuration
+    CUTOFF_DATE = date(2023, 8, 1)
+    BATCH_SIZE = int(os.environ.get("HISTORICAL_STATS_BACKFILL_BATCH_SIZE", "500"))
+    REQUEST_DELAY = 0.5
+
+    # All leagues from competitions.py
+    ALL_LEAGUES = [
+        1, 34, 32, 31, 30, 29, 33, 37,  # World Cup & Qualifiers
+        39, 140, 135, 78, 61,  # Top 5
+        2, 13,  # UCL, Libertadores
+        9, 4, 5, 22, 6, 7,  # International
+        40, 88, 94, 144,  # Secondary
+        253, 307,  # MLS, Saudi
+        3, 848,  # Europa, Conference
+        71, 262, 128,  # LATAM Pack1
+        239, 242, 250, 265, 268, 281, 299, 344,  # LATAM Pack2
+        11,  # Sudamericana
+        143, 45,  # Domestic Cups
+        10,  # Friendlies
+    ]
+
+    metrics = {
+        "fetched": 0,
+        "updated": 0,
+        "skipped_no_stats": 0,
+        "errors": 0,
+        "api_calls": 0,
+        "started_at": datetime.utcnow().isoformat(),
+    }
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Get remaining count
+            result = await session.execute(text("""
+                SELECT COUNT(*) as cnt
+                FROM matches
+                WHERE status IN ('FT', 'AET', 'PEN')
+                  AND date >= :cutoff_date
+                  AND league_id = ANY(:leagues)
+                  AND external_id IS NOT NULL
+                  AND (stats IS NULL OR stats::text = '{}' OR stats::text = 'null')
+            """), {"cutoff_date": CUTOFF_DATE, "leagues": ALL_LEAGUES})
+            remaining_before = result.scalar() or 0
+
+            if remaining_before == 0:
+                logger.info("Historical stats backfill: COMPLETE - all matches have stats!")
+                record_job_run(job="historical_stats_backfill", status="complete", duration_ms=0)
+                return {"status": "complete", "remaining": 0}
+
+            # Get matches needing stats
+            result = await session.execute(text("""
+                SELECT id, external_id
+                FROM matches
+                WHERE status IN ('FT', 'AET', 'PEN')
+                  AND date >= :cutoff_date
+                  AND league_id = ANY(:leagues)
+                  AND external_id IS NOT NULL
+                  AND (stats IS NULL OR stats::text = '{}' OR stats::text = 'null')
+                ORDER BY id ASC
+                LIMIT :limit
+            """), {"cutoff_date": CUTOFF_DATE, "leagues": ALL_LEAGUES, "limit": BATCH_SIZE})
+            matches = result.fetchall()
+
+            if not matches:
+                logger.info("Historical stats backfill: no matches to process")
+                return {"status": "complete", "remaining": remaining_before}
+
+            logger.info(f"Historical stats backfill: processing {len(matches)} matches (remaining: {remaining_before})")
+
+            api_key = settings.RAPIDAPI_KEY
+            batch_count = 0
+            COMMIT_BATCH = 100
+
+            async with httpx.AsyncClient() as client:
+                for match in matches:
+                    match_id, external_id = match
+
+                    try:
+                        # Fetch stats from API-Football
+                        url = "https://v3.football.api-sports.io/fixtures/statistics"
+                        headers = {"x-apisports-key": api_key}
+                        params = {"fixture": external_id}
+
+                        response = await client.get(url, headers=headers, params=params, timeout=30)
+                        metrics["api_calls"] += 1
+
+                        if response.status_code == 429:
+                            logger.warning("Historical stats backfill: 429 rate limit, stopping")
+                            break
+
+                        if response.status_code != 200:
+                            metrics["errors"] += 1
+                            continue
+
+                        data = response.json()
+                        results = data.get("response", [])
+
+                        if not results or len(results) < 2:
+                            metrics["skipped_no_stats"] += 1
+                            continue
+
+                        # Parse stats
+                        stats = {"home": {}, "away": {}}
+                        for i, team_stats in enumerate(results):
+                            statistics = team_stats.get("statistics", [])
+                            side = "home" if i == 0 else "away"
+                            for stat in statistics:
+                                stat_type = stat.get("type", "").lower().replace(" ", "_")
+                                value = stat.get("value")
+                                if value and isinstance(value, str) and value.endswith("%"):
+                                    try:
+                                        value = float(value.rstrip("%"))
+                                    except ValueError:
+                                        pass
+                                stats[side][stat_type] = value
+
+                        if stats["home"] or stats["away"]:
+                            metrics["fetched"] += 1
+                            await session.execute(text("""
+                                UPDATE matches
+                                SET stats = CAST(:stats_json AS JSON)
+                                WHERE id = :match_id
+                            """), {"match_id": match_id, "stats_json": json.dumps(stats)})
+                            metrics["updated"] += 1
+
+                        # Batch commit
+                        batch_count += 1
+                        if batch_count >= COMMIT_BATCH:
+                            await session.commit()
+                            batch_count = 0
+
+                        # Rate limiting
+                        await asyncio.sleep(REQUEST_DELAY)
+
+                    except Exception as e:
+                        metrics["errors"] += 1
+                        logger.warning(f"Historical stats backfill error for match {match_id}: {e}")
+
+            # Final commit
+            await session.commit()
+
+            # Get remaining count after
+            result = await session.execute(text("""
+                SELECT COUNT(*) as cnt
+                FROM matches
+                WHERE status IN ('FT', 'AET', 'PEN')
+                  AND date >= :cutoff_date
+                  AND league_id = ANY(:leagues)
+                  AND external_id IS NOT NULL
+                  AND (stats IS NULL OR stats::text = '{}' OR stats::text = 'null')
+            """), {"cutoff_date": CUTOFF_DATE, "leagues": ALL_LEAGUES})
+            remaining_after = result.scalar() or 0
+
+        # Log summary
+        duration_ms = (time.time() - start_time) * 1000
+        progress = remaining_before - remaining_after
+        pct_complete = round((1 - remaining_after / max(remaining_before, 1)) * 100, 1)
+
+        logger.info(
+            f"Historical stats backfill: "
+            f"api_calls={metrics['api_calls']}, updated={metrics['updated']}, "
+            f"skipped={metrics['skipped_no_stats']}, errors={metrics['errors']}, "
+            f"progress={progress}, remaining={remaining_after} ({pct_complete}% total complete)"
+        )
+
+        record_job_run(job="historical_stats_backfill", status="ok", duration_ms=duration_ms)
+
+        return {
+            "status": "ok",
+            "metrics": metrics,
+            "remaining_before": remaining_before,
+            "remaining_after": remaining_after,
+            "progress": progress,
+            "duration_ms": round(duration_ms, 1),
+        }
+
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(f"Historical stats backfill failed: {e}")
+        sentry_capture_exception(e, job_id="historical_stats_backfill", metrics=metrics)
+        record_job_run(job="historical_stats_backfill", status="error", duration_ms=duration_ms)
+        return {"status": "error", "error": str(e), "metrics": metrics}
+
+
+# =============================================================================
 # STATS REFRESH JOB (Fix: late events like red cards)
 # =============================================================================
 # Re-fetches stats for recently finished matches even if they already have stats.
@@ -5580,6 +5811,23 @@ def start_scheduler(ml_engine):
         id="finished_match_stats_backfill",
         name="Finished Match Stats Backfill (every 60 min)",
         replace_existing=True,
+    )
+
+    # Historical Stats Backfill: Every 60 minutes
+    # Backfills stats for matches since 2023-08-01 that have NULL stats.
+    # Addresses gap from stats_backfill being added late (2026-01-09) with 72h lookback.
+    # Guardrails: HISTORICAL_STATS_BACKFILL_ENABLED, batch 500/run (~12,000/day)
+    # Auto-disables when complete (returns early if no matches left)
+    scheduler.add_job(
+        historical_stats_backfill,
+        trigger=IntervalTrigger(minutes=60),
+        id="historical_stats_backfill",
+        name="Historical Stats Backfill (every 60 min)",
+        replace_existing=True,
+        next_run_time=datetime.utcnow() + timedelta(seconds=120),  # Offset: +120s (after regular backfill)
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,  # 1h grace
     )
 
     # Stats Refresh: Every 2 hours, re-fetch stats for recently finished matches
