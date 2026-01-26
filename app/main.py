@@ -7405,14 +7405,18 @@ async def _calculate_titan_summary() -> dict:
                     "tier1c_pct": round(tier1c / total * 100, 1) if total > 0 else 0,
                 }
 
-                # Gate progress
+                # Gate progress (ABE-defined thresholds)
                 result["gate"] = {
                     "n_current": with_outcome,
                     "n_target_pilot": 50,
                     "n_target_prelim": 200,
+                    "n_target_formal": 500,
                     "ready_for_pilot": with_outcome >= 50,
                     "ready_for_prelim": with_outcome >= 200,
+                    "ready_for_formal": with_outcome >= 500,
                     "pct_to_pilot": round(min(100, with_outcome / 50 * 100), 1),
+                    "pct_to_prelim": round(min(100, with_outcome / 200 * 100), 1),
+                    "pct_to_formal": round(min(100, with_outcome / 500 * 100), 1),
                 }
 
             # Job status (last TITAN runner run)
