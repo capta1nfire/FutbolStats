@@ -1878,7 +1878,8 @@ async def daily_save_predictions():
         ns_total = 0
         next_ns_date = None
 
-        async with AsyncSessionLocal() as session:
+        # Use get_session_with_retry to handle Railway connection drops (InterfaceError fix)
+        async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
             # Get upcoming matches features (can be slow - wrap in try/except)
             try:
                 feature_engineer = FeatureEngineer(session=session)
@@ -1931,7 +1932,8 @@ async def daily_save_predictions():
         # =================================================================
         # PHASE 3: Save predictions (new session, fresh connection)
         # =================================================================
-        async with AsyncSessionLocal() as session:
+        # Use get_session_with_retry to handle Railway connection drops (InterfaceError fix)
+        async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
             # Process in batches with commit per batch
             for batch_start in range(0, len(predictions), BATCH_SIZE):
                 # Time budget check at start of each batch
