@@ -9275,9 +9275,10 @@ async def _load_ops_data() -> dict:
         # PROGRESS METRICS (for re-test / Alpha readiness)
         # =============================================================
         # Configurable targets via env vars
-        # Per PIT Protocol v2: Piloto=50 (done), Preliminar=200, Formal=500
-        TARGET_PIT_SNAPSHOTS_30D = int(os.environ.get("TARGET_PIT_SNAPSHOTS_30D", "200"))
-        TARGET_PIT_BETS_30D = int(os.environ.get("TARGET_PIT_BETS_30D", "200"))
+        # Per PIT Protocol v2: Piloto=50, Preliminar=200, Formal=500
+        # Aligned with TITAN formal gate for consistency
+        TARGET_PIT_SNAPSHOTS_30D = int(os.environ.get("TARGET_PIT_SNAPSHOTS_30D", "500"))
+        TARGET_PIT_BETS_30D = int(os.environ.get("TARGET_PIT_BETS_30D", "500"))
         TARGET_BASELINE_COVERAGE_PCT = int(os.environ.get("TARGET_BASELINE_COVERAGE_PCT", "60"))
 
         # 1) PIT snapshots (30 days) - lineup_confirmed with live odds
