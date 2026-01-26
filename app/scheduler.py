@@ -5601,6 +5601,69 @@ async def titan_feature_matrix_runner() -> dict:
         return {"status": "error", "error": str(e), "duration_ms": duration_ms}
 
 
+async def titan_outcome_sync() -> dict:
+    """
+    TITAN Outcome Sync - updates outcome column for finished matches.
+
+    Syncs outcome ('home', 'draw', 'away') from public.matches to titan.feature_matrix
+    for matches that have finished (FT/AET/PEN) but don't have outcome set yet.
+
+    This enables the TITAN gate metrics (with_outcome count) to progress.
+
+    Runs every 30 minutes.
+    """
+    import time as _time
+    from sqlalchemy import text
+
+    job_name = "titan_outcome_sync"
+    start_time = _time.time()
+
+    try:
+        async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
+            # Batch update: join titan.feature_matrix with public.matches
+            # and set outcome based on final score
+            result = await session.execute(text("""
+                UPDATE titan.feature_matrix fm
+                SET
+                    outcome = CASE
+                        WHEN m.home_goals > m.away_goals THEN 'home'
+                        WHEN m.home_goals = m.away_goals THEN 'draw'
+                        WHEN m.home_goals < m.away_goals THEN 'away'
+                    END,
+                    updated_at = NOW()
+                FROM matches m
+                WHERE m.external_id = fm.match_id
+                  AND fm.outcome IS NULL
+                  AND m.status IN ('FT', 'AET', 'PEN')
+                  AND m.home_goals IS NOT NULL
+                  AND m.away_goals IS NOT NULL
+            """))
+
+            updated_count = result.rowcount
+            await session.commit()
+
+            duration_ms = (_time.time() - start_time) * 1000
+
+            if updated_count > 0:
+                logger.info(f"[{job_name}] Updated {updated_count} outcomes in {duration_ms:.0f}ms")
+            else:
+                logger.debug(f"[{job_name}] No pending outcomes to sync")
+
+            record_job_run(job=job_name, status="ok", duration_ms=duration_ms)
+
+            return {
+                "status": "ok",
+                "updated": updated_count,
+                "duration_ms": duration_ms,
+            }
+
+    except Exception as e:
+        duration_ms = (_time.time() - start_time) * 1000
+        logger.error(f"[{job_name}] Failed: {e}")
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        return {"status": "error", "error": str(e), "duration_ms": duration_ms}
+
+
 def start_scheduler(ml_engine):
     """
     Start the background scheduler.
@@ -6082,6 +6145,20 @@ def start_scheduler(ml_engine):
         max_instances=1,
         coalesce=True,
         misfire_grace_time=2 * 3600,  # 2h grace for 2h interval
+    )
+
+    # TITAN: Outcome Sync - every 30 minutes
+    # Updates outcome column for finished matches (enables gate metrics)
+    scheduler.add_job(
+        titan_outcome_sync,
+        trigger=IntervalTrigger(minutes=30),
+        id="titan_outcome_sync",
+        name="TITAN Outcome Sync (every 30 min)",
+        replace_existing=True,
+        next_run_time=datetime.utcnow() + timedelta(seconds=90),  # Offset: +90s
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=1800,  # 30min grace
     )
 
     scheduler.start()
