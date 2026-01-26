@@ -5713,6 +5713,82 @@ async def _calculate_feature_coverage(session) -> dict:
     }
 
 
+# =============================================================================
+# ML Health Dashboard (ATI v1.1)
+# =============================================================================
+# Cache for ML health (60s TTL - early warning for pipeline issues)
+_ml_health_cache = {
+    "data": None,
+    "timestamp": 0,
+    "ttl": 60,  # 60 seconds
+    "previous_snapshot": None,  # For future top_regressions calculation
+    "previous_snapshot_at": None,
+}
+
+
+@app.get("/dashboard/ml_health.json")
+async def dashboard_ml_health_json(request: Request):
+    """
+    ML Health Dashboard - Comprehensive ML pipeline health metrics.
+
+    ATI v1.1 - Addresses "vuelo a ciegas" finding where XGBoost ran
+    with 0% coverage for shots/corners in 23/24 season.
+
+    Returns:
+    - fuel_gauge: Overall health status (ok/warn/error) with reasons
+    - sota_stats_coverage: Stats coverage by season and league (P0 - root cause)
+    - titan_coverage: TITAN feature_matrix coverage by tier
+    - pit_compliance: Point-in-Time violations
+    - freshness: Data staleness (age_hours_now for early warning)
+    - prediction_confidence: Entropy and tier distribution
+    - top_regressions: Not implemented yet (requires baseline)
+
+    Fail-soft: If any section fails, returns partial data with health="partial"
+
+    Auth: X-Dashboard-Token header.
+    """
+    import time
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(
+            status_code=401,
+            detail="Dashboard access requires valid token.",
+        )
+
+    now = time.time()
+
+    # Check cache
+    if _ml_health_cache["data"] and (now - _ml_health_cache["timestamp"]) < _ml_health_cache["ttl"]:
+        cached_data = _ml_health_cache["data"]
+        return {
+            "generated_at": cached_data["generated_at"],
+            "cached": True,
+            "cache_age_seconds": round(now - _ml_health_cache["timestamp"], 1),
+            "health": cached_data["health"],
+            "data": cached_data["data"],
+        }
+
+    # Build fresh data
+    from app.ml.health import build_ml_health_data
+
+    async with AsyncSessionLocal() as session:
+        result = await build_ml_health_data(session)
+
+    # Update cache + snapshot for future regressions
+    _ml_health_cache["previous_snapshot"] = _ml_health_cache["data"]
+    _ml_health_cache["previous_snapshot_at"] = _ml_health_cache["timestamp"]
+    _ml_health_cache["data"] = result
+    _ml_health_cache["timestamp"] = now
+
+    return {
+        "generated_at": result["generated_at"],
+        "cached": False,
+        "cache_age_seconds": None,
+        "health": result["health"],
+        "data": result["data"],
+    }
+
+
 @app.get("/dashboard/pit/debug")
 async def pit_dashboard_debug(request: Request):
     """
