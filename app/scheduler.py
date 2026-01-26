@@ -3071,6 +3071,10 @@ async def capture_finished_match_stats() -> dict:
 #
 # Runs every hour with a small batch (500) to avoid timeouts and stay within budget.
 # Stateless design: always picks first N matches with NULL stats, ordered by ID.
+#
+# IMPORTANT: When API returns no stats for a match, we mark it with
+# {"_no_stats": true} so we don't retry it. This avoids wasting API calls
+# on matches that will never have stats (friendlies, old matches, etc.)
 
 
 async def historical_stats_backfill() -> dict:
@@ -3090,6 +3094,7 @@ async def historical_stats_backfill() -> dict:
     - Stateless: queries matches with NULL stats ordered by ID
     - Idempotent: safe to run multiple times, naturally advances
     - Auto-completes: returns early when no matches left
+    - Marks matches without stats as {"_no_stats": true} to skip on future runs
     """
     import asyncio
     import json
@@ -3133,7 +3138,7 @@ async def historical_stats_backfill() -> dict:
     metrics = {
         "fetched": 0,
         "updated": 0,
-        "skipped_no_stats": 0,
+        "marked_no_stats": 0,
         "errors": 0,
         "api_calls": 0,
         "started_at": datetime.utcnow().isoformat(),
@@ -3141,7 +3146,7 @@ async def historical_stats_backfill() -> dict:
 
     try:
         async with AsyncSessionLocal() as session:
-            # Get remaining count
+            # Get remaining count (exclude already marked as no_stats)
             result = await session.execute(text("""
                 SELECT COUNT(*) as cnt
                 FROM matches
@@ -3154,11 +3159,11 @@ async def historical_stats_backfill() -> dict:
             remaining_before = result.scalar() or 0
 
             if remaining_before == 0:
-                logger.info("Historical stats backfill: COMPLETE - all matches have stats!")
+                logger.info("Historical stats backfill: COMPLETE - all matches processed!")
                 record_job_run(job="historical_stats_backfill", status="complete", duration_ms=0)
                 return {"status": "complete", "remaining": 0}
 
-            # Get matches needing stats
+            # Get matches needing stats (exclude already marked)
             result = await session.execute(text("""
                 SELECT id, external_id
                 FROM matches
@@ -3207,7 +3212,18 @@ async def historical_stats_backfill() -> dict:
                         results = data.get("response", [])
 
                         if not results or len(results) < 2:
-                            metrics["skipped_no_stats"] += 1
+                            # Mark as no_stats so we don't retry this match
+                            metrics["marked_no_stats"] += 1
+                            await session.execute(text("""
+                                UPDATE matches
+                                SET stats = CAST(:stats_json AS JSON)
+                                WHERE id = :match_id
+                            """), {"match_id": match_id, "stats_json": json.dumps({"_no_stats": True})})
+                            batch_count += 1
+                            if batch_count >= COMMIT_BATCH:
+                                await session.commit()
+                                batch_count = 0
+                            await asyncio.sleep(REQUEST_DELAY)
                             continue
 
                         # Parse stats
@@ -3270,7 +3286,7 @@ async def historical_stats_backfill() -> dict:
         logger.info(
             f"Historical stats backfill: "
             f"api_calls={metrics['api_calls']}, updated={metrics['updated']}, "
-            f"skipped={metrics['skipped_no_stats']}, errors={metrics['errors']}, "
+            f"marked_no_stats={metrics['marked_no_stats']}, errors={metrics['errors']}, "
             f"progress={progress}, remaining={remaining_after} ({pct_complete}% total complete)"
         )
 
