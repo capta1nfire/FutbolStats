@@ -25,10 +25,13 @@ function formatPct(pct: number): string {
 
 /**
  * Color thresholds for coverage cells (text only, no background)
+ * - Green: 100%
+ * - Yellow: 70% - 99%
+ * - Red: < 70%
  */
 function getCoverageColor(pct: number): string {
-  if (pct > 80) return "text-green-400";
-  if (pct >= 50) return "text-yellow-400";
+  if (pct >= 100) return "text-green-400";
+  if (pct >= 70) return "text-yellow-400";
   return "text-red-400";
 }
 
