@@ -1570,3 +1570,170 @@ export function parseOpsSotaEnrichment(ops: OpsResponse): SotaEnrichmentNormaliz
   if (!rawSota) return null;
   return normalizeSotaEnrichment(rawSota);
 }
+
+// ============================================================================
+// TITAN OMNISCIENCE Extraction
+// ============================================================================
+
+/**
+ * TITAN status type
+ */
+export type TitanStatus = "ok" | "building" | "warn" | "error" | "unavailable";
+
+/**
+ * TITAN job status type
+ */
+export type TitanJobStatus = "success" | "failed" | "never_run";
+
+/**
+ * TITAN feature matrix
+ */
+export interface OpsTitanFeatureMatrix {
+  total_rows: number;
+  tier1_complete: number;
+  tier1b_complete: number;
+  tier1c_complete: number;
+  tier1d_complete: number;
+  with_outcome: number;
+  tier1b_pct: number;
+  tier1c_pct: number;
+}
+
+/**
+ * TITAN gate (pilot readiness)
+ */
+export interface OpsTitanGate {
+  n_current: number;
+  n_target_pilot: number;
+  n_target_prelim: number;
+  ready_for_pilot: boolean;
+  ready_for_prelim: boolean;
+  pct_to_pilot: number;
+}
+
+/**
+ * TITAN job status
+ */
+export interface OpsTitanJob {
+  last_status: TitanJobStatus;
+  last_run_at: string | null;
+  last_metrics: Record<string, unknown>;
+  note: string | null;
+}
+
+/**
+ * TITAN OMNISCIENCE summary from ops.json
+ */
+export interface OpsTitan {
+  status: TitanStatus;
+  generated_at: string | null;
+  note: string | null;
+  feature_matrix: OpsTitanFeatureMatrix;
+  gate: OpsTitanGate;
+  job: OpsTitanJob;
+}
+
+/**
+ * Normalize TITAN status from backend
+ */
+function normalizeTitanStatus(status: unknown): TitanStatus {
+  if (typeof status !== "string") return "unavailable";
+
+  const normalized = status.toLowerCase();
+  if (normalized === "ok" || normalized === "green") return "ok";
+  if (normalized === "building") return "building";
+  if (normalized === "warn" || normalized === "warning" || normalized === "yellow") return "warn";
+  if (normalized === "error" || normalized === "red" || normalized === "critical") return "error";
+
+  return "unavailable";
+}
+
+/**
+ * Normalize TITAN job status from backend
+ */
+function normalizeTitanJobStatus(status: unknown): TitanJobStatus {
+  if (typeof status !== "string") return "never_run";
+
+  const normalized = status.toLowerCase();
+  if (normalized === "success" || normalized === "ok") return "success";
+  if (normalized === "failed" || normalized === "error") return "failed";
+
+  return "never_run";
+}
+
+/**
+ * Parse TITAN from ops response
+ *
+ * Expected structure: { data: { titan: {...} } }
+ */
+export function parseOpsTitan(ops: OpsResponse): OpsTitan | null {
+  const titan = getNestedValue(ops, "data", "titan");
+  if (!isObject(titan)) return null;
+
+  const status = normalizeTitanStatus(titan.status);
+  const generated_at = typeof titan.generated_at === "string" ? titan.generated_at : null;
+  const note = typeof titan.note === "string" ? titan.note : null;
+
+  // Parse feature_matrix
+  const fm = titan.feature_matrix;
+  const feature_matrix: OpsTitanFeatureMatrix = isObject(fm) ? {
+    total_rows: typeof fm.total_rows === "number" ? fm.total_rows : 0,
+    tier1_complete: typeof fm.tier1_complete === "number" ? fm.tier1_complete : 0,
+    tier1b_complete: typeof fm.tier1b_complete === "number" ? fm.tier1b_complete : 0,
+    tier1c_complete: typeof fm.tier1c_complete === "number" ? fm.tier1c_complete : 0,
+    tier1d_complete: typeof fm.tier1d_complete === "number" ? fm.tier1d_complete : 0,
+    with_outcome: typeof fm.with_outcome === "number" ? fm.with_outcome : 0,
+    tier1b_pct: typeof fm.tier1b_pct === "number" ? fm.tier1b_pct : 0,
+    tier1c_pct: typeof fm.tier1c_pct === "number" ? fm.tier1c_pct : 0,
+  } : {
+    total_rows: 0,
+    tier1_complete: 0,
+    tier1b_complete: 0,
+    tier1c_complete: 0,
+    tier1d_complete: 0,
+    with_outcome: 0,
+    tier1b_pct: 0,
+    tier1c_pct: 0,
+  };
+
+  // Parse gate
+  const g = titan.gate;
+  const gate: OpsTitanGate = isObject(g) ? {
+    n_current: typeof g.n_current === "number" ? g.n_current : 0,
+    n_target_pilot: typeof g.n_target_pilot === "number" ? g.n_target_pilot : 50,
+    n_target_prelim: typeof g.n_target_prelim === "number" ? g.n_target_prelim : 200,
+    ready_for_pilot: typeof g.ready_for_pilot === "boolean" ? g.ready_for_pilot : false,
+    ready_for_prelim: typeof g.ready_for_prelim === "boolean" ? g.ready_for_prelim : false,
+    pct_to_pilot: typeof g.pct_to_pilot === "number" ? g.pct_to_pilot : 0,
+  } : {
+    n_current: 0,
+    n_target_pilot: 50,
+    n_target_prelim: 200,
+    ready_for_pilot: false,
+    ready_for_prelim: false,
+    pct_to_pilot: 0,
+  };
+
+  // Parse job
+  const j = titan.job;
+  const job: OpsTitanJob = isObject(j) ? {
+    last_status: normalizeTitanJobStatus(j.last_status),
+    last_run_at: typeof j.last_run_at === "string" ? j.last_run_at : null,
+    last_metrics: isObject(j.last_metrics) ? j.last_metrics as Record<string, unknown> : {},
+    note: typeof j.note === "string" ? j.note : null,
+  } : {
+    last_status: "never_run",
+    last_run_at: null,
+    last_metrics: {},
+    note: null,
+  };
+
+  return {
+    status,
+    generated_at,
+    note,
+    feature_matrix,
+    gate,
+    job,
+  };
+}

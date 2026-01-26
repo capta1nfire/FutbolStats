@@ -18,6 +18,7 @@ import {
   parseOpsPitActivity,
   parseOpsMovement,
   parseOpsSotaEnrichment,
+  parseOpsTitan,
   OpsSentrySummary,
   OpsJobsHealth,
   OpsFastpathHealth,
@@ -31,6 +32,7 @@ import {
   OpsPitActivity,
   OpsMovement,
   SotaEnrichmentNormalized,
+  OpsTitan,
 } from "@/lib/api/ops";
 
 /**
@@ -70,6 +72,7 @@ interface OpsData {
   pitActivity: OpsPitActivity | null;
   movement: OpsMovement | null;
   sotaEnrichment: SotaEnrichmentNormalized | null;
+  titan: OpsTitan | null;
   requestId?: string;
 }
 
@@ -108,6 +111,7 @@ async function fetchOpsData(): Promise<OpsData> {
       pitActivity: null,
       movement: null,
       sotaEnrichment: null,
+      titan: null,
       requestId,
     };
   }
@@ -128,6 +132,7 @@ async function fetchOpsData(): Promise<OpsData> {
   const pitActivity = parseOpsPitActivity(data);
   const movement = parseOpsMovement(data);
   const sotaEnrichment = parseOpsSotaEnrichment(data);
+  const titan = parseOpsTitan(data);
 
   return {
     budget,
@@ -145,6 +150,7 @@ async function fetchOpsData(): Promise<OpsData> {
     pitActivity,
     movement,
     sotaEnrichment,
+    titan,
     requestId,
   };
 }
@@ -235,6 +241,8 @@ export interface UseOpsOverviewResult {
   movement: OpsMovement | null;
   /** Parsed SOTA enrichment, null if unavailable */
   sotaEnrichment: SotaEnrichmentNormalized | null;
+  /** Parsed TITAN OMNISCIENCE, null if unavailable */
+  titan: OpsTitan | null;
   /** True if data fetch failed or all parsing failed */
   isDegraded: boolean;
   /** True if budget specifically is degraded */
@@ -265,6 +273,8 @@ export interface UseOpsOverviewResult {
   isMovementDegraded: boolean;
   /** True if SOTA enrichment specifically is degraded */
   isSotaEnrichmentDegraded: boolean;
+  /** True if TITAN specifically is degraded */
+  isTitanDegraded: boolean;
   /** Request ID for debugging (from response header) */
   requestId?: string;
   /** Loading state */
@@ -314,6 +324,7 @@ export function useOpsOverview(): UseOpsOverviewResult {
   const pitActivity = data?.pitActivity ?? null;
   const movement = data?.movement ?? null;
   const sotaEnrichment = data?.sotaEnrichment ?? null;
+  const titan = data?.titan ?? null;
   const requestId = data?.requestId;
 
   const isBudgetDegraded = !!error || budget === null;
@@ -330,6 +341,7 @@ export function useOpsOverview(): UseOpsOverviewResult {
   const isPitActivityDegraded = !!error || pitActivity === null;
   const isMovementDegraded = !!error || movement === null;
   const isSotaEnrichmentDegraded = !!error || sotaEnrichment === null;
+  const isTitanDegraded = !!error || titan === null;
   // isDegraded = ALL core blocks failed (not diagnostics)
   const isDegraded = isBudgetDegraded && isHealthDegraded && isJobsDegraded && isPredictionsDegraded;
 
@@ -349,6 +361,7 @@ export function useOpsOverview(): UseOpsOverviewResult {
     pitActivity,
     movement,
     sotaEnrichment,
+    titan,
     isDegraded,
     isBudgetDegraded,
     isHealthDegraded,
@@ -364,6 +377,7 @@ export function useOpsOverview(): UseOpsOverviewResult {
     isPitActivityDegraded,
     isMovementDegraded,
     isSotaEnrichmentDegraded,
+    isTitanDegraded,
     requestId,
     isLoading,
     error: error as Error | null,

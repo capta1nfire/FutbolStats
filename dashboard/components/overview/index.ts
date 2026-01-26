@@ -19,5 +19,6 @@ export { JobsCompactTile } from "./JobsCompactTile";
 export { FastpathCompactTile } from "./FastpathCompactTile";
 export { PitProgressCompactTile } from "./PitProgressCompactTile";
 export { MovementSummaryTile } from "./MovementSummaryTile";
+export { TitanCompactTile } from "./TitanCompactTile";
 // Overview Drawer
 export { OverviewDrawer } from "./OverviewDrawer";

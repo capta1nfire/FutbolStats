@@ -25,6 +25,7 @@ import {
   PitProgressCompactTile,
   MovementSummaryTile,
   DiagnosticsTile,
+  TitanCompactTile,
   // Drawer
   OverviewDrawer,
 } from "@/components/overview";
@@ -100,6 +101,8 @@ export default function OverviewPage() {
     isSotaEnrichmentDegraded,
     shadowMode,
     sensorB,
+    titan,
+    isTitanDegraded,
     isDegraded,
     isLoading,
     error,
@@ -298,10 +301,17 @@ export default function OverviewPage() {
           </div>
 
           {/* Row 2b: Diagnostics (Shadow Mode + Sensor B) */}
-          <DiagnosticsTile
-            shadowMode={shadowMode}
-            sensorB={sensorB}
-          />
+          {/* Row 2b: Diagnostics (Shadow Mode + Sensor B) + TITAN */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+            <DiagnosticsTile
+              shadowMode={shadowMode}
+              sensorB={sensorB}
+            />
+            <TitanCompactTile
+              titan={titan}
+              isMockFallback={isTitanDegraded}
+            />
+          </div>
 
           {/* Row 3: SOTA Enrichment + Movement Summary (same row as last SOTA card) */}
           <ClickableTile panel="sota">
