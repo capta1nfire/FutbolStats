@@ -4,10 +4,10 @@
 
 | Metadata | Valor |
 |----------|-------|
-| Version | 2.0 DRAFT |
-| Fecha | 2026-01-25 |
+| Version | 2.1 |
+| Fecha | 2026-01-26 |
 | Autor | Claude Code (para revision ABE) |
-| Estado | FASE 3A COMPLETADA (producción) - SofaScore Lineups (Tier 1c) operacional |
+| Estado | **PAUSADO** - Esperando N≥500 partidos para evaluación formal (ver Sección 13) |
 
 ---
 
@@ -1130,7 +1130,41 @@ SOTA_SOFASCORE_REFS_ENABLED=true
 SOTA_SOFASCORE_ENABLED=true
 ```
 
-### FASE 3B: Entity Resolution + LLM Extraction (Pendiente)
+### FASE 3B-1: XI Depth Features (COMPLETADA ✅)
+
+**Fecha**: 2026-01-26
+**Scope**: Tier 1d - Features derivadas de posiciones de titulares (SOTA→TITAN)
+
+**Entregables**:
+- [x] Migration `titan_008_add_xi_depth_columns.sql` (9 columnas)
+- [x] `XIDepthFeatures` dataclass
+- [x] `compute_xi_depth_features()` en materializer
+- [x] `detect_formation_mismatch()` función auxiliar
+- [x] Runner: integración `with_xi_depth` stat
+- [x] Dashboard: `formation_mismatch_rate_pct` métrica
+- [x] 27 tests (todos con mocks, sin calls reales)
+
+**Columnas Tier 1d**:
+```
+xi_home_def_count, xi_home_mid_count, xi_home_fwd_count
+xi_away_def_count, xi_away_mid_count, xi_away_fwd_count
+xi_formation_mismatch_flag, xi_depth_captured_at, tier1d_complete
+```
+
+**PIT Compliance**: `xi_depth_captured_at < kickoff_utc` siempre (0 violations)
+
+**GATE PENDIENTE PARA FASE 3B-2**:
+> Ejecutar la evaluación PIT comparativa para medir impacto real en XGBoost:
+> - Baseline (Tier1 + Tier2/3)
+> - \+ Tier1b (xG)
+> - \+ Tier1c (lineups)
+> - \+ Tier1d (XI depth)
+>
+> La decisión de continuar con FASE 3B-2 (Entity Resolution) depende de los resultados del lift medido.
+
+---
+
+### FASE 3B-2: Entity Resolution + LLM Extraction (Pendiente)
 - [ ] Implementar fuzzy matching (equipos, jugadores, ligas)
 - [ ] Crear tablas de aliases (team_aliases, player_aliases)
 - [ ] Integrar Gemini para extraccion de texto no estructurado
@@ -2874,6 +2908,18 @@ psql $DATABASE_URL -c "SELECT conname, pg_get_constraintdef(oid) FROM pg_constra
 | Auditor 2 | - | 2026-01-25 | APROBADO (FASE 2 COMPLETADA) |
 | Owner | David | 2026-01-25 | APROBADO (FASE 2) |
 | **Auditor Backend** | **ABE** | **2026-01-26** | **APROBADO (FASE 3A COMPLETADA)** |
+| **Auditor Backend** | **ABE** | **2026-01-26** | **APROBADO (FASE 3B-1 COMPLETADA)** |
+
+### Condiciones ABE FASE 3B-1 (2026-01-26):
+- ✅ Arquitectura SOTA→public.*→TITAN (reutilización 100% infraestructura existente)
+- ✅ DDL titan_008 con 9 columnas exactas (xi_*_def/mid/fwd_count, mismatch_flag, captured_at, tier1d_complete)
+- ✅ detect_formation_mismatch() con tolerancia ±1
+- ✅ PIT enforced: xi_depth_captured_at < kickoff_utc
+- ✅ Fail-open (sin player data → None, no crash)
+- ✅ Dashboard: formation_mismatch_rate_pct
+- ✅ 27 tests con mocks (sin calls reales a SofaScore)
+- ✅ Validación operacional: 9 columnas, PIT=0, dashboard reportando
+- ⏳ GATE: Evaluación PIT comparativa pendiente (Baseline vs +T1b vs +T1c vs +T1d)
 
 ### Condiciones ABE FASE 3A (2026-01-26):
 - ✅ Arquitectura SOTA→public.*→TITAN (sin extractor nuevo)
@@ -2905,9 +2951,78 @@ psql $DATABASE_URL -c "SELECT conname, pg_get_constraintdef(oid) FROM pg_constra
 
 ### Pendiente:
 - [x] ~~Definir y auditar plan FASE 3A~~ → COMPLETADO 2026-01-26
-- [ ] Definir y auditar plan FASE 3B (Entity Resolution) si aplica
+- [x] ~~Definir y auditar plan FASE 3B-1 (XI Depth)~~ → COMPLETADO 2026-01-26
+- [x] ~~FASE 3C (Calibration + Devig)~~ → COMPLETADO 2026-01-26
+- [ ] **Ejecutar evaluación PIT comparativa** (GATE para continuar)
+- [ ] Definir y auditar plan FASE 3B-2 (Entity Resolution) si aplica
 
 ---
 
-**Estado actual**: FASE 3A (SofaScore Lineups Tier 1c) completada y operacional.
-**Siguiente paso**: Evaluar valor incremental de FASE 3B (Entity Resolution + LLM Extraction).
+## 13. Estado Actual y Pausa (2026-01-26)
+
+### Estado: PAUSADO - Esperando Acumulación de Datos
+
+**Última fase completada**: FASE 3C (Calibration + De-vig Methods)
+
+### Razón de la Pausa
+
+Durante la evaluación PIT de FASE 3C, se identificó que el modelo XGBoost actual tiene **rendimiento inferior al mercado**:
+
+| Métrica | Valor | Interpretación |
+|---------|-------|----------------|
+| `skill_vs_market` | **-5.84%** | Modelo peor que simplemente apostar con las cuotas del mercado |
+| `brier_model` | 0.6052 | Error cuadrático del modelo |
+| `brier_market` | 0.5718 | Error cuadrático del mercado (mejor) |
+| `CLV` | +0.0008 | Prácticamente neutro (sin edge real) |
+
+**Conclusión ABE**: No tiene sentido continuar agregando features (Entity Resolution, más fuentes) hasta que:
+1. Tengamos suficiente data de TITAN para evaluar si los nuevos Tiers (1b, 1c, 1d) mejoran el modelo
+2. Confirmemos con N≥500 partidos que hay lift real
+
+### Gates de Evaluación (ABE-Defined)
+
+| Gate | N Requerido | Propósito | Tiempo Estimado |
+|------|-------------|-----------|-----------------|
+| **Pilot** | N ≥ 50 | Sanity check del pipeline | ~3 días |
+| **Preliminary** | N ≥ 200 | Decisiones de roadmap | ~9 días |
+| **Formal** | N ≥ 500 | Alta confianza para producción | ~3 semanas |
+
+Con ~160 partidos/semana en las 36 ligas trackead.
+
+### Monitoreo
+
+Dashboard TITAN agregado a `/dashboard/ops.json` con:
+- `gate.n_current`: Partidos con outcome (evaluables)
+- `gate.pct_to_formal`: Progreso hacia N=500
+- `gate.ready_for_pilot/prelim/formal`: Flags de gate cumplido
+- Job `titan_feature_matrix_runner` corriendo cada 2h
+
+### Qué Hacer Cuando se Cumpla el Gate
+
+1. **N ≥ 50 (Pilot)**: Ejecutar evaluación PIT comparativa (sanity check)
+2. **N ≥ 200 (Preliminary)**: Evaluar lift de Tier 1b/1c/1d vs baseline
+3. **N ≥ 500 (Formal)**: Decisión final sobre:
+   - Si TITAN aporta valor → Continuar con FASE 3B-2 (Entity Resolution)
+   - Si no hay lift → Revisar arquitectura del modelo o pausar TITAN
+
+### Trabajo Completado Pre-Pausa
+
+| Fase | Entregables | Estado |
+|------|-------------|--------|
+| FASE 1 | Schema titan.*, raw_extractions, job_dlq, feature_matrix, API-Football extractor | ✅ Producción |
+| FASE 2 | xG (Tier 1b), R2 storage, 81 tests | ✅ Producción |
+| FASE 3A | SofaScore lineups (Tier 1c), integrity score | ✅ Producción |
+| FASE 3B-1 | XI Depth Features (Tier 1d), formation mismatch | ✅ Producción |
+| FASE 3C | Calibration (isotonic/temperature), De-vig (proportional/power) | ✅ Producción |
+
+### Siguiente Paso
+
+Esperar a que `gate.ready_for_pilot = true` en el dashboard, luego ejecutar:
+
+```bash
+python scripts/evaluate_pit_v3.py --min-snapshot-date 2026-01-20 --devig proportional
+```
+
+Comparar baseline vs +T1b vs +T1c vs +T1d para decidir roadmap.
+
+---
