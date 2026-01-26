@@ -7445,12 +7445,18 @@ async def _calculate_titan_summary() -> dict:
             if result["feature_matrix"].get("total_rows", 0) == 0:
                 result["status"] = "warn"
                 result["note"] = "No data in feature_matrix yet"
+            elif result["gate"].get("ready_for_formal"):
+                result["status"] = "ok"
+                result["note"] = f"Ready for formal eval (N={with_outcome})"
+            elif result["gate"].get("ready_for_prelim"):
+                result["status"] = "ok"
+                result["note"] = f"Ready for preliminary eval (N={with_outcome}/500)"
             elif result["gate"].get("ready_for_pilot"):
                 result["status"] = "ok"
-                result["note"] = f"Ready for pilot eval (N={with_outcome})"
+                result["note"] = f"Ready for pilot eval (N={with_outcome}/500)"
             else:
                 result["status"] = "building"
-                result["note"] = f"Accumulating data: {with_outcome}/50 for pilot gate"
+                result["note"] = f"Accumulating data: {with_outcome}/500 for formal gate"
 
     except Exception as e:
         logger.warning(f"[TITAN] Summary calculation failed: {e}")
