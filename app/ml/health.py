@@ -260,15 +260,15 @@ async def _query_titan_coverage(session: AsyncSession) -> dict:
                 "tier1d": {"complete": row.tier1d_count, "total": row.total, "pct": float(row.tier1d_pct or 0)},
             }
 
-    # Coverage by league (current season)
+    # Coverage by league (current season) - uses competition_id, not league_id
     league_query = text("""
         SELECT
-            fm.league_id,
+            competition_id as league_id,
             ROUND(100.0 * COUNT(*) FILTER (WHERE tier1_complete = true) / NULLIF(COUNT(*), 0), 1) as tier1_pct,
             ROUND(100.0 * COUNT(*) FILTER (WHERE tier1b_complete = true) / NULLIF(COUNT(*), 0), 1) as tier1b_pct
-        FROM titan.feature_matrix fm
-        WHERE fm.kickoff_utc >= '2025-08-01'
-        GROUP BY fm.league_id
+        FROM titan.feature_matrix
+        WHERE kickoff_utc >= '2025-08-01'
+        GROUP BY competition_id
         ORDER BY tier1_pct DESC
     """)
 
