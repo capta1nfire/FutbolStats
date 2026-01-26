@@ -1,16 +1,14 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useMemo, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import {
   useFeatureCoverage,
-  FeatureCoverageResponse,
-  FeatureCoverageTier,
   FeatureCoverageLeague,
 } from "@/lib/hooks/use-feature-coverage";
 import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, ArrowUpDown, ChevronDown, ChevronUp, Grid3X3 } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -164,7 +162,7 @@ export function FeatureCoverageMatrix({
   pageSize = 25,
   onTotalFeaturesChange,
 }: FeatureCoverageMatrixProps) {
-  const { data, isLoading, error, refetch, isRefetching } = useFeatureCoverage();
+  const { data, isLoading, error, refetch } = useFeatureCoverage();
 
   // Notify parent when leagues are available
   useEffect(() => {
@@ -173,29 +171,8 @@ export function FeatureCoverageMatrix({
     }
   }, [data?.data?.leagues, onLeaguesLoaded]);
 
-  // UI state
-  const [enabledTiers, setEnabledTiers] = useState<Set<string>>(
-    new Set(["tier1", "tier1b", "tier1c", "tier1d"])
-  );
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
-
-  // Toggle tier visibility
-  const toggleTier = (tierId: string) => {
-    setEnabledTiers((prev) => {
-      const next = new Set(prev);
-      if (next.has(tierId)) {
-        next.delete(tierId);
-      } else {
-        next.add(tierId);
-      }
-      return next;
-    });
-  };
-
-  // Toggle sort direction
-  const toggleSort = () => {
-    setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
-  };
+  // All tiers enabled by default
+  const enabledTiers = new Set(["tier1", "tier1b", "tier1c", "tier1d"]);
 
   // Process data
   const { sortedLeagues, filteredFeatures, windows, tiers, coverage, leagueSummaries } =
@@ -224,11 +201,11 @@ export function FeatureCoverageMatrix({
         ? leagues.filter((l) => isLeagueVisible(l.league_id))
         : leagues;
 
-      // Sort leagues by total avg_pct
+      // Sort leagues by total avg_pct (descending - highest first)
       const sortedLeagues = [...visibleLeagues].sort((a, b) => {
         const aAvg = league_summaries[String(a.league_id)]?.total?.avg_pct ?? 0;
         const bAvg = league_summaries[String(b.league_id)]?.total?.avg_pct ?? 0;
-        return sortDirection === "asc" ? aAvg - bAvg : bAvg - aAvg;
+        return bAvg - aAvg;
       });
 
       return {
@@ -239,7 +216,7 @@ export function FeatureCoverageMatrix({
         coverage,
         leagueSummaries: league_summaries,
       };
-    }, [data, enabledTiers, sortDirection, isLeagueVisible]);
+    }, [data, enabledTiers, isLeagueVisible]);
 
   // Notify parent of total features count for pagination
   useEffect(() => {
@@ -292,74 +269,6 @@ export function FeatureCoverageMatrix({
 
   return (
     <div className={cn("space-y-4", className)}>
-      {/* Header with controls */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Grid3X3 className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold text-foreground">Feature Coverage Matrix</h2>
-          <span className="text-xs text-muted-foreground">
-            ({filteredFeatures.length} features · {sortedLeagues.length} leagues)
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* Sort button */}
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={toggleSort}
-                  className="h-8 px-2"
-                >
-                  <ArrowUpDown className="h-4 w-4 mr-1" />
-                  {sortDirection === "desc" ? (
-                    <ChevronDown className="h-3 w-3" />
-                  ) : (
-                    <ChevronUp className="h-3 w-3" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                Sort leagues by avg coverage ({sortDirection === "desc" ? "high to low" : "low to high"})
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-
-          {/* Refresh button */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => refetch()}
-            disabled={isRefetching}
-            className="h-8 px-2"
-          >
-            <RefreshCw className={cn("h-4 w-4", isRefetching && "animate-spin")} />
-          </Button>
-        </div>
-      </div>
-
-      {/* Tier toggles */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-muted-foreground">Tiers:</span>
-        {tiers.map((tier) => (
-          <button
-            key={tier.id}
-            onClick={() => toggleTier(tier.id)}
-            className={cn(
-              "px-2 py-1 text-xs rounded-md border transition-colors",
-              enabledTiers.has(tier.id)
-                ? "bg-primary/20 text-primary border-primary/30"
-                : "bg-muted/30 text-muted-foreground border-border hover:bg-muted/50"
-            )}
-          >
-            <TierBadge badge={tier.badge} />
-            <span className="ml-1.5">{tier.label.split(" - ")[1] || tier.label}</span>
-          </button>
-        ))}
-      </div>
-
       {/* Matrix table */}
       <div className="border border-border rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
