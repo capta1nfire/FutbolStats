@@ -1871,6 +1871,13 @@ async def daily_save_predictions():
 
         sensor_settings = get_settings()
 
+        # =================================================================
+        # PHASE 1: Fetch features (separate session to avoid idle timeout)
+        # =================================================================
+        df = None
+        ns_total = 0
+        next_ns_date = None
+
         async with AsyncSessionLocal() as session:
             # Get upcoming matches features (can be slow - wrap in try/except)
             try:
@@ -1893,31 +1900,38 @@ async def daily_save_predictions():
                 .where(Match.status == "NS", Match.date > datetime.utcnow())
             )
             next_ns_date = next_ns_result.scalar()
+        # Session closed here - connection returned to pool
 
-            logger.info(
-                f"[DAILY-SAVE] Fetched {total_fetched} matches, filtered to {ns_total} NS, "
-                f"next_ns_utc={next_ns_date.isoformat() if next_ns_date else 'None'}, "
-                f"batch_size={BATCH_SIZE}, time_budget_ms={TIME_BUDGET_MS}"
+        logger.info(
+            f"[DAILY-SAVE] Fetched {total_fetched} matches, filtered to {ns_total} NS, "
+            f"next_ns_utc={next_ns_date.isoformat() if next_ns_date else 'None'}, "
+            f"batch_size={BATCH_SIZE}, time_budget_ms={TIME_BUDGET_MS}"
+        )
+
+        if ns_total == 0:
+            logger.info("[DAILY-SAVE] No NS matches to process")
+            record_job_run(job="daily_save_predictions", status="ok", duration_ms=0)
+            return
+
+        # Time budget check BEFORE predict() (feature fetch can be slow)
+        if check_time_budget():
+            elapsed_ms = (time.time() - start_time) * 1000
+            logger.warning(
+                f"[DAILY-SAVE] Time budget exceeded before predict (elapsed={elapsed_ms:.0f}ms), "
+                f"exiting early with ns_total={ns_total}"
             )
+            record_job_run(job="daily_save_predictions", status="partial", duration_ms=elapsed_ms)
+            return
 
-            if ns_total == 0:
-                logger.info("[DAILY-SAVE] No NS matches to process")
-                record_job_run(job="daily_save_predictions", status="ok", duration_ms=0)
-                return
+        # =================================================================
+        # PHASE 2: Make predictions (CPU-bound, no DB connection needed)
+        # =================================================================
+        predictions = engine.predict(df)
 
-            # Time budget check BEFORE predict() (feature fetch can be slow)
-            if check_time_budget():
-                elapsed_ms = (time.time() - start_time) * 1000
-                logger.warning(
-                    f"[DAILY-SAVE] Time budget exceeded before predict (elapsed={elapsed_ms:.0f}ms), "
-                    f"exiting early with ns_total={ns_total}"
-                )
-                record_job_run(job="daily_save_predictions", status="partial", duration_ms=elapsed_ms)
-                return
-
-            # Make predictions for NS-only dataframe
-            predictions = engine.predict(df)
-
+        # =================================================================
+        # PHASE 3: Save predictions (new session, fresh connection)
+        # =================================================================
+        async with AsyncSessionLocal() as session:
             # Process in batches with commit per batch
             for batch_start in range(0, len(predictions), BATCH_SIZE):
                 # Time budget check at start of each batch
