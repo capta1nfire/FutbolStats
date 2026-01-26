@@ -293,9 +293,16 @@ ECUADOR_LIGA_PRO = Competition(
     priority=Priority.MEDIUM,
 )
 
-PARAGUAY_PRIMERA = Competition(
-    league_id=250,  # Apertura - API-Football uses same ID for both tournaments
-    name="Paraguay Primera División",
+PARAGUAY_PRIMERA_APERTURA = Competition(
+    league_id=250,
+    name="Paraguay Primera División - Apertura",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
+PARAGUAY_PRIMERA_CLAUSURA = Competition(
+    league_id=252,  # Paired with 250 (Apertura)
+    name="Paraguay Primera División - Clausura",
     match_type="official",
     priority=Priority.MEDIUM,
 )
@@ -307,9 +314,16 @@ CHILE_PRIMERA = Competition(
     priority=Priority.MEDIUM,
 )
 
-URUGUAY_PRIMERA = Competition(
-    league_id=268,  # Apertura - API-Football uses same ID for both tournaments
-    name="Uruguay Primera División",
+URUGUAY_PRIMERA_APERTURA = Competition(
+    league_id=268,
+    name="Uruguay Primera División - Apertura",
+    match_type="official",
+    priority=Priority.MEDIUM,
+)
+
+URUGUAY_PRIMERA_CLAUSURA = Competition(
+    league_id=270,  # Paired with 268 (Apertura)
+    name="Uruguay Primera División - Clausura",
     match_type="official",
     priority=Priority.MEDIUM,
 )
@@ -404,9 +418,11 @@ COMPETITIONS: dict[int, Competition] = {
         ARGENTINA_PRIMERA,
         COLOMBIA_PRIMERA_A,
         ECUADOR_LIGA_PRO,
-        PARAGUAY_PRIMERA,
+        PARAGUAY_PRIMERA_APERTURA,
+        PARAGUAY_PRIMERA_CLAUSURA,
         CHILE_PRIMERA,
-        URUGUAY_PRIMERA,
+        URUGUAY_PRIMERA_APERTURA,
+        URUGUAY_PRIMERA_CLAUSURA,
         PERU_PRIMERA,
         VENEZUELA_PRIMERA,
         BOLIVIA_PRIMERA,

@@ -16,6 +16,11 @@ from app.ml.health import LEAGUE_NAMES
 
 logger = logging.getLogger(__name__)
 
+# Leagues to ignore in unmapped_observed (historical/noise)
+IGNORED_OBSERVED = {
+    28,  # Historical data only (last match 2023-07-04, 26 total matches)
+}
+
 
 def get_league_info(league_id: int) -> dict:
     """Get league info from COMPETITIONS dict or fallback to LEAGUE_NAMES."""
@@ -228,8 +233,8 @@ async def build_leagues_list(session: AsyncSession) -> dict:
         -(x.get("stats", {}).get("total_matches", 0))  # then by matches desc
     ))
 
-    # Unmapped observed (in DB but not in COMPETITIONS) with details
-    unmapped = [lid for lid in observed_ids if lid not in COMPETITIONS]
+    # Unmapped observed (in DB but not in COMPETITIONS, excluding ignored)
+    unmapped = [lid for lid in observed_ids if lid not in COMPETITIONS and lid not in IGNORED_OBSERVED]
     unmapped_details = []
     for lid in sorted(unmapped):
         obs = observed_data.get(lid)
@@ -247,9 +252,11 @@ async def build_leagues_list(session: AsyncSession) -> dict:
             "configured": len(COMPETITIONS),
             "observed_in_db": len(observed_ids),
             "with_titan_data": len(titan_data),
+            "ignored": len(IGNORED_OBSERVED),
         },
         "unmapped_observed": sorted(unmapped),
         "unmapped_observed_details": unmapped_details,
+        "ignored_observed": sorted(IGNORED_OBSERVED),
     }
 
 
