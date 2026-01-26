@@ -15178,6 +15178,7 @@ async def trigger_historical_stats_backfill(
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
     # Import the backfill logic inline to avoid circular imports
+    import asyncio
     import json
     import httpx
     from datetime import datetime, date
