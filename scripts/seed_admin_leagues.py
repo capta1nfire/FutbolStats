@@ -22,11 +22,12 @@ from app.dashboard.admin_seed import full_sync, get_sync_status
 async def main():
     dry_run = "--dry-run" in sys.argv
 
-    # Get database URL
+    # Get database URL (required)
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
-        # Fallback to Railway public URL
-        database_url = "postgresql://postgres:heFyxqRYCUMNkVSCgcpXHprpjAPcfJAQ@maglev.proxy.rlwy.net:24997/railway"
+        print("ERROR: DATABASE_URL environment variable is required.")
+        print("Set it before running: export DATABASE_URL='postgresql://...'")
+        sys.exit(1)
 
     # Convert to async URL
     if database_url.startswith("postgresql://"):
