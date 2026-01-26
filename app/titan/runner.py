@@ -92,6 +92,7 @@ class TitanRunner:
             "extracted_failed": 0,
             "materialized": 0,
             "with_xg": 0,  # Tier 1b xG data found
+            "with_lineup": 0,  # Tier 1c SofaScore lineup found
             "pit_violations": 0,
             "skipped_no_odds": 0,
             "errors": [],
@@ -122,6 +123,8 @@ class TitanRunner:
                         stats["materialized"] += 1
                     if result.get("with_xg"):
                         stats["with_xg"] += 1
+                    if result.get("with_lineup"):
+                        stats["with_lineup"] += 1
                     if result.get("skipped_no_odds"):
                         stats["skipped_no_odds"] += 1
                 elif result["status"] == "failed":
@@ -292,6 +295,13 @@ class TitanRunner:
             kickoff_utc=kickoff_utc,
         )
 
+        # 8c. Compute SofaScore Lineup (Tier 1c) - optional enrichment
+        # Reads from public.match_sofascore_lineup (SOTA tables)
+        lineup = await self.materializer.compute_lineup_features(
+            match_id=match["id"],  # internal ID (public.matches.id), not external_id
+            kickoff_utc=kickoff_utc,
+        )
+
         # 9. Materialize to feature_matrix
         if not dry_run:
             try:
@@ -307,8 +317,14 @@ class TitanRunner:
                     form_away=form_away,
                     h2h=h2h,
                     xg=xg,
+                    lineup=lineup,
                 )
-                return {"status": "extracted", "materialized": inserted, "with_xg": xg is not None}
+                return {
+                    "status": "extracted",
+                    "materialized": inserted,
+                    "with_xg": xg is not None,
+                    "with_lineup": lineup is not None,
+                }
 
             except PITViolationError as e:
                 logger.error(f"PIT violation for match {external_id}: {e}")
@@ -467,6 +483,7 @@ def main():
     print(f"  Extraction failed:  {stats['extracted_failed']}")
     print(f"  Materialized:       {stats['materialized']}")
     print(f"  With xG (Tier 1b):  {stats['with_xg']}")
+    print(f"  With lineup (1c):   {stats['with_lineup']}")
     print(f"  Skipped (no odds):  {stats['skipped_no_odds']}")
     print(f"  PIT violations:     {stats['pit_violations']}")
 

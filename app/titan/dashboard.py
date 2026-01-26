@@ -51,6 +51,7 @@ async def get_titan_status(session: AsyncSession) -> dict:
         "dlq": {},
         "feature_matrix": {},
         "pit_compliance": {},
+        "sofascore": {},
     }
 
     try:
@@ -139,6 +140,9 @@ async def get_titan_status(session: AsyncSession) -> dict:
                 "total_rows": fm_stats["total_rows"],
             }
 
+            # SofaScore lineup metrics (Tier 1c)
+            status["sofascore"] = await _get_sofascore_metrics(session, schema, now)
+
         # Overall health
         status["health"] = _compute_health(status)
 
@@ -148,6 +152,83 @@ async def get_titan_status(session: AsyncSession) -> dict:
         status["health"] = "error"
 
     return status
+
+
+async def _get_sofascore_metrics(session: AsyncSession, schema: str, now: datetime) -> dict:
+    """Get SofaScore lineup metrics for Tier 1c.
+
+    Args:
+        session: Database session
+        schema: TITAN schema name
+        now: Current UTC timestamp
+
+    Returns:
+        Dict with SofaScore lineup metrics
+    """
+    metrics = {
+        "ref_coverage_pct": 0.0,
+        "lineup_coverage_pct_given_ref": 0.0,
+        "lineup_freshness_hours": None,
+    }
+
+    try:
+        # 1. ref_coverage_pct: refs / matches in target window (MVP leagues)
+        ref_coverage_query = await session.execute(text("""
+            SELECT
+                COUNT(DISTINCT m.id) as total_matches,
+                COUNT(DISTINCT mer.match_id) as matches_with_ref
+            FROM matches m
+            LEFT JOIN match_external_refs mer
+                ON m.id = mer.match_id AND mer.source = 'sofascore'
+            WHERE m.date > NOW() - INTERVAL '7 days'
+              AND m.date < NOW() + INTERVAL '7 days'
+              AND m.league_id IN (140, 39, 135)
+        """))
+        ref_row = ref_coverage_query.fetchone()
+        total_matches = ref_row[0] or 0
+        matches_with_ref = ref_row[1] or 0
+        metrics["ref_coverage_pct"] = round(
+            (matches_with_ref / total_matches * 100) if total_matches > 0 else 0, 1
+        )
+
+        # 2. lineup_coverage_pct_given_ref: lineups / refs (last 7 days)
+        lineup_given_ref_query = await session.execute(text("""
+            SELECT
+                COUNT(DISTINCT mer.match_id) as matches_with_ref,
+                COUNT(DISTINCT msl.match_id) as matches_with_lineup
+            FROM match_external_refs mer
+            LEFT JOIN match_sofascore_lineup msl
+                ON mer.match_id = msl.match_id
+            WHERE mer.source = 'sofascore'
+              AND mer.created_at > NOW() - INTERVAL '7 days'
+        """))
+        lineup_row = lineup_given_ref_query.fetchone()
+        refs_count = lineup_row[0] or 0
+        lineups_count = lineup_row[1] or 0
+        metrics["lineup_coverage_pct_given_ref"] = round(
+            (lineups_count / refs_count * 100) if refs_count > 0 else 0, 1
+        )
+
+        # 3. lineup_freshness_hours: time since last lineup capture in titan.feature_matrix
+        freshness_query = await session.execute(text(f"""
+            SELECT MAX(sofascore_lineup_captured_at) as latest
+            FROM {schema}.feature_matrix
+            WHERE tier1c_complete = TRUE
+        """))
+        freshness_row = freshness_query.fetchone()
+        if freshness_row and freshness_row[0]:
+            latest = freshness_row[0]
+            # Ensure latest is timezone-aware
+            if latest.tzinfo is None:
+                latest = latest.replace(tzinfo=timezone.utc)
+            age_hours = (now - latest).total_seconds() / 3600
+            metrics["lineup_freshness_hours"] = round(age_hours, 1)
+
+    except Exception as e:
+        logger.warning(f"Error getting SofaScore metrics: {e}")
+        metrics["error"] = str(e)
+
+    return metrics
 
 
 def _compute_health(status: dict) -> str:

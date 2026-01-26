@@ -99,23 +99,42 @@ class H2HFeatures:
     captured_at: datetime
 
 
+@dataclass
+class SofaScoreLineupFeatures:
+    """Tier 1c: SofaScore lineup features (via SOTA tables).
+
+    FASE 3A: Read from public.match_sofascore_lineup and match_sofascore_player.
+    Integrity score is derived from: formation_present + starters==11.
+    """
+
+    sofascore_lineup_available: bool
+    sofascore_home_formation: Optional[str]
+    sofascore_away_formation: Optional[str]
+    lineup_home_starters_count: Optional[int]
+    lineup_away_starters_count: Optional[int]
+    sofascore_lineup_integrity_score: Optional[Decimal]
+    captured_at: Optional[datetime]
+
+
 def should_insert_feature_row(
     odds: Optional[OddsFeatures],
     form: Optional[FormFeatures],
     h2h: Optional[H2HFeatures],
     xg: Optional[XGFeatures] = None,
+    lineup: Optional["SofaScoreLineupFeatures"] = None,
 ) -> tuple[bool, str]:
     """
     Insertion policy for feature_matrix.
 
     RULE 1: No odds -> DON'T insert (Tier 1 is mandatory gate)
-    RULE 2: With odds, missing Tier 1b/2/3 -> DO insert with NULLs
+    RULE 2: With odds, missing Tier 1b/1c/2/3 -> DO insert with NULLs
 
     Args:
         odds: Tier 1 odds features (or None)
         form: Tier 2 form features (or None)
         h2h: Tier 3 H2H features (or None)
         xg: Tier 1b xG features (or None) - optional enrichment
+        lineup: Tier 1c SofaScore lineup features (or None) - optional enrichment
 
     Returns:
         (should_insert, reason)
@@ -124,8 +143,8 @@ def should_insert_feature_row(
     if odds is None:
         return False, "Missing Tier 1 (odds) - skipping"
 
-    # RULE 2: With odds, missing Tier 1b/2/3 -> YES insert with NULLs
-    return True, "Tier 1 complete, inserting (Tier 1b/2/3 may be NULL)"
+    # RULE 2: With odds, missing Tier 1b/1c/2/3 -> YES insert with NULLs
+    return True, "Tier 1 complete, inserting (Tier 1b/1c/2/3 may be NULL)"
 
 
 def compute_pit_max(
@@ -133,6 +152,7 @@ def compute_pit_max(
     form: Optional[FormFeatures],
     h2h: Optional[H2HFeatures],
     xg: Optional[XGFeatures] = None,
+    lineup: Optional["SofaScoreLineupFeatures"] = None,
 ) -> datetime:
     """
     Compute pit_max_captured_at.
@@ -145,6 +165,7 @@ def compute_pit_max(
         form: Tier 2 features (optional)
         h2h: Tier 3 features (optional)
         xg: Tier 1b xG features (optional)
+        lineup: Tier 1c SofaScore lineup features (optional)
 
     Returns:
         Maximum captured_at timestamp
@@ -162,6 +183,8 @@ def compute_pit_max(
         timestamps.append(h2h.captured_at)
     if xg and xg.captured_at:
         timestamps.append(xg.captured_at)
+    if lineup and lineup.captured_at:
+        timestamps.append(lineup.captured_at)
 
     if not timestamps:
         raise ValueError("No captured_at timestamps available")
@@ -546,6 +569,99 @@ class FeatureMatrixMaterializer:
             captured_at=_utc_now(),
         )
 
+    async def compute_lineup_features(
+        self,
+        match_id: int,
+        kickoff_utc: datetime,
+    ) -> Optional[SofaScoreLineupFeatures]:
+        """Compute Tier 1c SofaScore lineup features from SOTA tables.
+
+        Reads from public.match_sofascore_lineup and public.match_sofascore_player.
+        PIT-safe: Only returns data where captured_at < kickoff_utc.
+        Fail-open: Returns None if no lineup found (normal pre-KO).
+
+        Integrity score calculation:
+        - formation_present: 1.0 if both formations exist, 0.0 otherwise
+        - starters_complete: (home_starters==11 + away_starters==11) / 2
+        - integrity_score = (formation_present + starters_complete) / 2
+
+        Args:
+            match_id: Internal match ID (public.matches.id, NOT external_id)
+            kickoff_utc: Match kickoff time (aware UTC)
+
+        Returns:
+            SofaScoreLineupFeatures if found and PIT-compliant, None otherwise.
+        """
+        # public.* tables use TIMESTAMP (naive) - apply timezone normalization
+        kickoff_naive = kickoff_utc.replace(tzinfo=None) if kickoff_utc.tzinfo else kickoff_utc
+
+        # Query lineup + player counts in single query
+        query = text("""
+            WITH lineup_data AS (
+                SELECT
+                    msl.team_side,
+                    msl.formation,
+                    msl.captured_at,
+                    COUNT(*) FILTER (WHERE msp.is_starter = TRUE) as starters_count
+                FROM public.match_sofascore_lineup msl
+                LEFT JOIN public.match_sofascore_player msp
+                    ON msl.match_id = msp.match_id
+                   AND msl.team_side = msp.team_side
+                WHERE msl.match_id = :match_id
+                  AND msl.captured_at < :kickoff
+                GROUP BY msl.match_id, msl.team_side, msl.formation, msl.captured_at
+            )
+            SELECT
+                home.formation as home_formation,
+                away.formation as away_formation,
+                home.starters_count as home_starters,
+                away.starters_count as away_starters,
+                GREATEST(home.captured_at, away.captured_at) as captured_at
+            FROM lineup_data home
+            JOIN lineup_data away ON TRUE
+            WHERE home.team_side = 'home'
+              AND away.team_side = 'away'
+            LIMIT 1
+        """)
+
+        result = await self.session.execute(query, {
+            "match_id": match_id,
+            "kickoff": kickoff_naive,
+        })
+        row = result.fetchone()
+
+        if not row:
+            return None  # Fail-open: no lineup yet (normal pre-KO)
+
+        home_formation, away_formation, home_starters, away_starters, captured_at = row
+
+        # Calculate integrity score (0.000-1.000)
+        # Component 1: formation_present (both formations exist)
+        formation_present = 1.0 if (home_formation and away_formation) else 0.0
+
+        # Component 2: starters_complete (both have 11 starters)
+        home_complete = 1.0 if home_starters == 11 else 0.0
+        away_complete = 1.0 if away_starters == 11 else 0.0
+        starters_complete = (home_complete + away_complete) / 2
+
+        # Final score: average of both components
+        integrity_score = Decimal(str((formation_present + starters_complete) / 2)).quantize(
+            Decimal("0.001")
+        )
+
+        # Convert captured_at to aware (for titan.* storage)
+        captured_at_aware = captured_at.replace(tzinfo=timezone.utc) if captured_at else None
+
+        return SofaScoreLineupFeatures(
+            sofascore_lineup_available=True,
+            sofascore_home_formation=home_formation,
+            sofascore_away_formation=away_formation,
+            lineup_home_starters_count=home_starters,
+            lineup_away_starters_count=away_starters,
+            sofascore_lineup_integrity_score=integrity_score,
+            captured_at=captured_at_aware,
+        )
+
     async def insert_row(
         self,
         match_id: int,
@@ -559,6 +675,7 @@ class FeatureMatrixMaterializer:
         form_away: Optional[FormFeatures] = None,
         h2h: Optional[H2HFeatures] = None,
         xg: Optional[XGFeatures] = None,
+        lineup: Optional[SofaScoreLineupFeatures] = None,
     ) -> bool:
         """Insert or update feature_matrix row with policy enforcement.
 
@@ -574,6 +691,7 @@ class FeatureMatrixMaterializer:
             form_away: Tier 2 form for away team
             h2h: Tier 3 H2H features
             xg: Tier 1b xG features (optional enrichment)
+            lineup: Tier 1c SofaScore lineup features (optional enrichment)
 
         Returns:
             True if inserted, False if skipped
@@ -583,13 +701,13 @@ class FeatureMatrixMaterializer:
             InsertionPolicyViolation: If policy requirements not met
         """
         # Check insertion policy
-        should_insert, reason = should_insert_feature_row(odds, form_home, h2h, xg)
+        should_insert, reason = should_insert_feature_row(odds, form_home, h2h, xg, lineup)
         if not should_insert:
             logger.info(f"Skipping match {match_id}: {reason}")
             return False
 
         # Compute pit_max_captured_at
-        pit_max = compute_pit_max(odds, form_home, h2h, xg)
+        pit_max = compute_pit_max(odds, form_home, h2h, xg, lineup)
 
         # Validate PIT constraint
         if pit_max >= kickoff_utc:
@@ -609,6 +727,7 @@ class FeatureMatrixMaterializer:
             "pit_max_captured_at": pit_max,
             "tier1_complete": odds is not None,
             "tier1b_complete": xg is not None,
+            "tier1c_complete": lineup is not None and lineup.captured_at is not None,
             "tier2_complete": form_home is not None and form_away is not None,
             "tier3_complete": h2h is not None,
         }
@@ -635,6 +754,28 @@ class FeatureMatrixMaterializer:
                 "npxg_home_last5": xg.npxg_home_last5,
                 "npxg_away_last5": xg.npxg_away_last5,
                 "xg_captured_at": xg.captured_at,
+            })
+
+        # Tier 1c: SofaScore Lineup (via SOTA)
+        if lineup:
+            values.update({
+                "sofascore_lineup_available": lineup.sofascore_lineup_available,
+                "sofascore_home_formation": lineup.sofascore_home_formation,
+                "sofascore_away_formation": lineup.sofascore_away_formation,
+                "lineup_home_starters_count": lineup.lineup_home_starters_count,
+                "lineup_away_starters_count": lineup.lineup_away_starters_count,
+                "sofascore_lineup_integrity_score": lineup.sofascore_lineup_integrity_score,
+                "sofascore_lineup_captured_at": lineup.captured_at,
+            })
+        else:
+            values.update({
+                "sofascore_lineup_available": False,
+                "sofascore_home_formation": None,
+                "sofascore_away_formation": None,
+                "lineup_home_starters_count": None,
+                "lineup_away_starters_count": None,
+                "sofascore_lineup_integrity_score": None,
+                "sofascore_lineup_captured_at": None,
             })
 
         # Tier 2: Form (form_home = home team's form, form_away = away team's form)
@@ -671,24 +812,30 @@ class FeatureMatrixMaterializer:
                 implied_prob_home, implied_prob_draw, implied_prob_away, odds_captured_at,
                 xg_home_last5, xg_away_last5, xga_home_last5, xga_away_last5,
                 npxg_home_last5, npxg_away_last5, xg_captured_at,
+                sofascore_lineup_available, sofascore_home_formation, sofascore_away_formation,
+                lineup_home_starters_count, lineup_away_starters_count,
+                sofascore_lineup_integrity_score, sofascore_lineup_captured_at,
                 form_home_last5, form_away_last5, goals_home_last5, goals_away_last5,
                 goals_against_home_last5, goals_against_away_last5,
                 points_home_last5, points_away_last5, form_captured_at,
                 h2h_total_matches, h2h_home_wins, h2h_draws, h2h_away_wins,
                 h2h_home_goals, h2h_away_goals, h2h_captured_at,
-                pit_max_captured_at, tier1_complete, tier1b_complete, tier2_complete, tier3_complete
+                pit_max_captured_at, tier1_complete, tier1b_complete, tier1c_complete, tier2_complete, tier3_complete
             ) VALUES (
                 :match_id, :kickoff_utc, :competition_id, :season, :home_team_id, :away_team_id,
                 :odds_home_close, :odds_draw_close, :odds_away_close,
                 :implied_prob_home, :implied_prob_draw, :implied_prob_away, :odds_captured_at,
                 :xg_home_last5, :xg_away_last5, :xga_home_last5, :xga_away_last5,
                 :npxg_home_last5, :npxg_away_last5, :xg_captured_at,
+                :sofascore_lineup_available, :sofascore_home_formation, :sofascore_away_formation,
+                :lineup_home_starters_count, :lineup_away_starters_count,
+                :sofascore_lineup_integrity_score, :sofascore_lineup_captured_at,
                 :form_home_last5, :form_away_last5, :goals_home_last5, :goals_away_last5,
                 :goals_against_home_last5, :goals_against_away_last5,
                 :points_home_last5, :points_away_last5, :form_captured_at,
                 :h2h_total_matches, :h2h_home_wins, :h2h_draws, :h2h_away_wins,
                 :h2h_home_goals, :h2h_away_goals, :h2h_captured_at,
-                :pit_max_captured_at, :tier1_complete, :tier1b_complete, :tier2_complete, :tier3_complete
+                :pit_max_captured_at, :tier1_complete, :tier1b_complete, :tier1c_complete, :tier2_complete, :tier3_complete
             )
             ON CONFLICT (match_id) DO UPDATE SET
                 odds_home_close = COALESCE(EXCLUDED.odds_home_close, {self.schema}.feature_matrix.odds_home_close),
@@ -705,6 +852,13 @@ class FeatureMatrixMaterializer:
                 npxg_home_last5 = COALESCE(EXCLUDED.npxg_home_last5, {self.schema}.feature_matrix.npxg_home_last5),
                 npxg_away_last5 = COALESCE(EXCLUDED.npxg_away_last5, {self.schema}.feature_matrix.npxg_away_last5),
                 xg_captured_at = COALESCE(EXCLUDED.xg_captured_at, {self.schema}.feature_matrix.xg_captured_at),
+                sofascore_lineup_available = COALESCE(EXCLUDED.sofascore_lineup_available, {self.schema}.feature_matrix.sofascore_lineup_available),
+                sofascore_home_formation = COALESCE(EXCLUDED.sofascore_home_formation, {self.schema}.feature_matrix.sofascore_home_formation),
+                sofascore_away_formation = COALESCE(EXCLUDED.sofascore_away_formation, {self.schema}.feature_matrix.sofascore_away_formation),
+                lineup_home_starters_count = COALESCE(EXCLUDED.lineup_home_starters_count, {self.schema}.feature_matrix.lineup_home_starters_count),
+                lineup_away_starters_count = COALESCE(EXCLUDED.lineup_away_starters_count, {self.schema}.feature_matrix.lineup_away_starters_count),
+                sofascore_lineup_integrity_score = COALESCE(EXCLUDED.sofascore_lineup_integrity_score, {self.schema}.feature_matrix.sofascore_lineup_integrity_score),
+                sofascore_lineup_captured_at = COALESCE(EXCLUDED.sofascore_lineup_captured_at, {self.schema}.feature_matrix.sofascore_lineup_captured_at),
                 form_home_last5 = COALESCE(EXCLUDED.form_home_last5, {self.schema}.feature_matrix.form_home_last5),
                 form_away_last5 = COALESCE(EXCLUDED.form_away_last5, {self.schema}.feature_matrix.form_away_last5),
                 goals_home_last5 = COALESCE(EXCLUDED.goals_home_last5, {self.schema}.feature_matrix.goals_home_last5),
@@ -724,6 +878,7 @@ class FeatureMatrixMaterializer:
                 pit_max_captured_at = GREATEST(EXCLUDED.pit_max_captured_at, {self.schema}.feature_matrix.pit_max_captured_at),
                 tier1_complete = EXCLUDED.tier1_complete OR {self.schema}.feature_matrix.tier1_complete,
                 tier1b_complete = EXCLUDED.tier1b_complete OR {self.schema}.feature_matrix.tier1b_complete,
+                tier1c_complete = EXCLUDED.tier1c_complete OR {self.schema}.feature_matrix.tier1c_complete,
                 tier2_complete = EXCLUDED.tier2_complete OR {self.schema}.feature_matrix.tier2_complete,
                 tier3_complete = EXCLUDED.tier3_complete OR {self.schema}.feature_matrix.tier3_complete
         """)
@@ -738,7 +893,10 @@ class FeatureMatrixMaterializer:
                     "goals_home_last5", "goals_away_last5", "goals_against_home_last5",
                     "goals_against_away_last5", "points_home_last5", "points_away_last5",
                     "form_captured_at", "h2h_total_matches", "h2h_home_wins", "h2h_draws",
-                    "h2h_away_wins", "h2h_home_goals", "h2h_away_goals", "h2h_captured_at"]:
+                    "h2h_away_wins", "h2h_home_goals", "h2h_away_goals", "h2h_captured_at",
+                    "sofascore_home_formation", "sofascore_away_formation",
+                    "lineup_home_starters_count", "lineup_away_starters_count",
+                    "sofascore_lineup_integrity_score", "sofascore_lineup_captured_at"]:
             if key not in values:
                 values[key] = None
 
@@ -759,6 +917,7 @@ class FeatureMatrixMaterializer:
                 COUNT(*) as total_rows,
                 COUNT(*) FILTER (WHERE tier1_complete) as tier1_count,
                 COUNT(*) FILTER (WHERE tier1b_complete) as tier1b_count,
+                COUNT(*) FILTER (WHERE tier1c_complete) as tier1c_count,
                 COUNT(*) FILTER (WHERE tier2_complete) as tier2_count,
                 COUNT(*) FILTER (WHERE tier3_complete) as tier3_count,
                 COUNT(*) FILTER (WHERE pit_max_captured_at >= kickoff_utc) as pit_violations,
@@ -776,14 +935,16 @@ class FeatureMatrixMaterializer:
             "total_rows": total,
             "tier1_complete": row[1] or 0,
             "tier1b_complete": row[2] or 0,
-            "tier2_complete": row[3] or 0,
-            "tier3_complete": row[4] or 0,
-            "pit_violations": row[5] or 0,
-            "with_outcome": row[6] or 0,
-            "earliest_match": row[7].isoformat() if row[7] else None,
-            "latest_match": row[8].isoformat() if row[8] else None,
+            "tier1c_complete": row[3] or 0,
+            "tier2_complete": row[4] or 0,
+            "tier3_complete": row[5] or 0,
+            "pit_violations": row[6] or 0,
+            "with_outcome": row[7] or 0,
+            "earliest_match": row[8].isoformat() if row[8] else None,
+            "latest_match": row[9].isoformat() if row[9] else None,
             "tier1_coverage_pct": round((row[1] or 0) / total * 100, 1) if total else 0,
             "tier1b_coverage_pct": round((row[2] or 0) / total * 100, 1) if total else 0,
-            "tier2_coverage_pct": round((row[3] or 0) / total * 100, 1) if total else 0,
-            "tier3_coverage_pct": round((row[4] or 0) / total * 100, 1) if total else 0,
+            "tier1c_coverage_pct": round((row[3] or 0) / total * 100, 1) if total else 0,
+            "tier2_coverage_pct": round((row[4] or 0) / total * 100, 1) if total else 0,
+            "tier3_coverage_pct": round((row[5] or 0) / total * 100, 1) if total else 0,
         }
