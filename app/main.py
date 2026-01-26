@@ -15180,10 +15180,10 @@ async def trigger_historical_stats_backfill(
     # Import the backfill logic inline to avoid circular imports
     import json
     import httpx
-    from datetime import datetime
+    from datetime import datetime, date
 
     # Configuration
-    CUTOFF_DATE = "2023-08-01"
+    CUTOFF_DATE = date(2023, 8, 1)
     MAX_LIMIT = 7500
     BATCH_SIZE = 100
     REQUEST_DELAY = 0.5
