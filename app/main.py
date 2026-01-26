@@ -5650,18 +5650,30 @@ async def _calculate_feature_coverage(session) -> dict:
                 coverage[fkey][str(lid)][win] = {"pct": pct, "n": n}
                 feature_pcts.append(pct)
 
+            # Get titan total for this window (for transparency in league_summaries)
+            titan_win = titan_data.get(lid, {}).get(win, {})
+            titan_total = titan_win.get("total", 0)
+
             # Calculate league summary (avg across all 30 features)
             avg_pct = round(sum(feature_pcts) / len(feature_pcts), 1) if feature_pcts else 0.0
             league_summaries[str(lid)][win] = {
-                "matches_total": matches_total,
+                "matches_total_ft": matches_total,
+                "matches_total_titan": titan_total,
                 "avg_pct": avg_pct,
             }
 
-        # Calculate total (combined windows)
-        total_matches = sum(
-            league_summaries[str(lid)].get(w["key"], {}).get("matches_total", 0)
+        # Calculate total (combined windows) with correct denominators per tier
+        # Tier 1: uses FT matches as denominator
+        total_matches_ft = sum(
+            league_summaries[str(lid)].get(w["key"], {}).get("matches_total_ft", 0)
             for w in windows
         )
+        # TITAN tiers: uses titan.feature_matrix rows as denominator
+        total_matches_titan = sum(
+            titan_data.get(lid, {}).get(w["key"], {}).get("total", 0)
+            for w in windows
+        )
+
         total_pcts = []
         for feat in features:
             fkey = feat["key"]
@@ -5669,12 +5681,20 @@ async def _calculate_feature_coverage(session) -> dict:
                 coverage[fkey].get(str(lid), {}).get(w["key"], {}).get("n", 0)
                 for w in windows
             )
-            total_pct = round(100.0 * total_n / total_matches, 1) if total_matches > 0 else 0.0
+
+            # Use correct denominator based on tier (ABE fix: avoid mixing denominators)
+            if feat["tier_id"] == "tier1":
+                denominator = total_matches_ft
+            else:
+                denominator = total_matches_titan
+
+            total_pct = round(100.0 * total_n / denominator, 1) if denominator > 0 else 0.0
             coverage[fkey][str(lid)]["total"] = {"pct": total_pct, "n": total_n}
             total_pcts.append(total_pct)
 
         league_summaries[str(lid)]["total"] = {
-            "matches_total": total_matches,
+            "matches_total_ft": total_matches_ft,
+            "matches_total_titan": total_matches_titan,
             "avg_pct": round(sum(total_pcts) / len(total_pcts), 1) if total_pcts else 0.0,
         }
 
