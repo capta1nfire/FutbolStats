@@ -349,78 +349,75 @@ function SotaPageContent() {
           )}
         </div>
 
-        {/* Scrollable content area */}
-        <ScrollArea className="flex-1 min-h-0">
-          <div className="p-6 space-y-6">
-            {activeView === "enrichment" ? (
-              <>
-                {/* SOTA Enrichment Section (cards) */}
-                <SotaEnrichmentSection
-                  data={sotaEnrichment}
-                  isMockFallback={isSotaEnrichmentDegraded}
-                />
-
-                {/* Data Quality Section */}
-                <div className="space-y-3">
-                  {/* Section header */}
-                  <div className="flex items-center gap-2">
-                    <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
-                    <h2 className="text-sm font-semibold text-foreground">Data Quality Checks</h2>
-                    <span className="text-xs text-muted-foreground">
-                      ({checks.length} checks)
-                    </span>
-                  </div>
-
-                  {/* Table container */}
-                  <div className="border border-border rounded-lg overflow-hidden">
-                    <DataQualityTable
-                      data={paginatedChecks}
-                      isLoading={isDqLoading}
-                      error={error}
-                      onRetry={() => refetch()}
-                      selectedCheckId={selectedCheckId}
-                      onRowClick={handleRowClick}
-                      columnVisibility={columnVisibility}
-                      onColumnVisibilityChange={setColumnVisibility}
-                    />
-                  </div>
-
-                  {/* Pagination */}
-                  {checks.length > 0 && (
-                    <Pagination
-                      currentPage={currentPage}
-                      totalItems={checks.length}
-                      pageSize={pageSize}
-                      onPageChange={setCurrentPage}
-                      onPageSizeChange={setPageSize}
-                    />
-                  )}
-                </div>
-              </>
-            ) : (
-              /* Features View - Feature Coverage Matrix */
-              <FeatureCoverageMatrix
-                isLeagueVisible={isLeagueVisible}
-                onLeaguesLoaded={handleLeaguesLoaded}
-                currentPage={featuresCurrentPage}
-                pageSize={featuresPageSize}
-                onTotalFeaturesChange={handleTotalFeaturesChange}
-                enabledTiers={enabledTiers}
+        {/* Content area - different layout per view */}
+        {activeView === "enrichment" ? (
+          /* Enrichment View - Scrollable content */
+          <ScrollArea className="flex-1 min-h-0">
+            <div className="p-6 space-y-6">
+              {/* SOTA Enrichment Section (cards) */}
+              <SotaEnrichmentSection
+                data={sotaEnrichment}
+                isMockFallback={isSotaEnrichmentDegraded}
               />
-            )}
-          </div>
-        </ScrollArea>
 
-        {/* Features Pagination - outside ScrollArea for fixed footer */}
-        {activeView === "features" && (
-          <Pagination
-            currentPage={featuresCurrentPage}
-            totalItems={totalFeatures}
-            pageSize={featuresPageSize}
-            onPageChange={setFeaturesCurrentPage}
-            onPageSizeChange={setFeaturesPageSize}
-            pageSizeOptions={[25, 50, 100]}
-          />
+              {/* Data Quality Section */}
+              <div className="space-y-3">
+                {/* Section header */}
+                <div className="flex items-center gap-2">
+                  <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
+                  <h2 className="text-sm font-semibold text-foreground">Data Quality Checks</h2>
+                  <span className="text-xs text-muted-foreground">
+                    ({checks.length} checks)
+                  </span>
+                </div>
+
+                {/* Table container */}
+                <div className="border border-border rounded-lg overflow-hidden">
+                  <DataQualityTable
+                    data={paginatedChecks}
+                    isLoading={isDqLoading}
+                    error={error}
+                    onRetry={() => refetch()}
+                    selectedCheckId={selectedCheckId}
+                    onRowClick={handleRowClick}
+                    columnVisibility={columnVisibility}
+                    onColumnVisibilityChange={setColumnVisibility}
+                  />
+                </div>
+
+                {/* Pagination */}
+                {checks.length > 0 && (
+                  <Pagination
+                    currentPage={currentPage}
+                    totalItems={checks.length}
+                    pageSize={pageSize}
+                    onPageChange={setCurrentPage}
+                    onPageSizeChange={setPageSize}
+                  />
+                )}
+              </div>
+            </div>
+          </ScrollArea>
+        ) : (
+          /* Features View - Full height with fixed header/footer */
+          <>
+            <FeatureCoverageMatrix
+              isLeagueVisible={isLeagueVisible}
+              onLeaguesLoaded={handleLeaguesLoaded}
+              currentPage={featuresCurrentPage}
+              pageSize={featuresPageSize}
+              onTotalFeaturesChange={handleTotalFeaturesChange}
+              enabledTiers={enabledTiers}
+            />
+            <Pagination
+              currentPage={featuresCurrentPage}
+              totalItems={totalFeatures}
+              pageSize={featuresPageSize}
+              onPageChange={setFeaturesCurrentPage}
+              onPageSizeChange={setFeaturesPageSize}
+              pageSizeOptions={[25, 50, 100]}
+            />
+          </>
         )}
       </div>
 

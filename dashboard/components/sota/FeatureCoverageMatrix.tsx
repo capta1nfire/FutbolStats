@@ -8,7 +8,6 @@ import {
 } from "@/lib/hooks/use-feature-coverage";
 import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
-import { RefreshCw } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -31,12 +30,6 @@ function getCoverageColor(pct: number): string {
   if (pct > 80) return "bg-green-500/20 text-green-400";
   if (pct >= 50) return "bg-yellow-500/20 text-yellow-400";
   return "bg-red-500/20 text-red-400";
-}
-
-function getCoverageColorBg(pct: number): string {
-  if (pct > 80) return "bg-green-500/30";
-  if (pct >= 50) return "bg-yellow-500/30";
-  return "bg-red-500/30";
 }
 
 /**
@@ -91,7 +84,7 @@ function CoverageCell({
         <TooltipTrigger asChild>
           <div
             className={cn(
-              "px-2 py-1 text-center text-xs tabular-nums cursor-default",
+              "text-center text-sm tabular-nums cursor-default",
               getCoverageColor(pct)
             )}
           >
@@ -124,7 +117,7 @@ function CoverageCell({
  */
 function NCell({ n }: { n: number }) {
   return (
-    <div className="px-2 py-1 text-center text-xs tabular-nums text-muted-foreground">
+    <div className="text-center text-sm tabular-nums text-muted-foreground">
       {n.toLocaleString()}
     </div>
   );
@@ -234,34 +227,33 @@ export function FeatureCoverageMatrix({
     return filteredFeatures.slice(start, start + pageSize);
   }, [filteredFeatures, currentPage, pageSize]);
 
-  // Loading state
+  // Loading state - matches DataTable style
   if (isLoading) {
     return (
-      <div className={cn("flex items-center justify-center py-12", className)}>
+      <div className={cn("flex-1 flex items-center justify-center", className)}>
         <Loader size="md" />
       </div>
     );
   }
 
-  // Error state
+  // Error state - matches DataTable style
   if (error) {
     return (
-      <div className={cn("flex flex-col items-center justify-center py-12 gap-4", className)}>
-        <p className="text-sm text-muted-foreground">
-          Failed to load feature coverage data
-        </p>
-        <Button variant="outline" size="sm" onClick={() => refetch()}>
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Retry
-        </Button>
+      <div className={cn("flex-1 flex items-center justify-center", className)}>
+        <div className="flex flex-col items-center gap-3 text-center">
+          <p className="text-sm text-error">Failed to load feature coverage data</p>
+          <Button variant="secondary" size="sm" onClick={() => refetch()}>
+            Retry
+          </Button>
+        </div>
       </div>
     );
   }
 
-  // Empty state
+  // Empty state - matches DataTable style
   if (!data?.data || sortedLeagues.length === 0) {
     return (
-      <div className={cn("flex items-center justify-center py-12", className)}>
+      <div className={cn("flex-1 flex items-center justify-center", className)}>
         <p className="text-sm text-muted-foreground">No coverage data available</p>
       </div>
     );
@@ -271,197 +263,186 @@ export function FeatureCoverageMatrix({
   const columnsPerLeague = windows.length + 2; // windows + Total + N
 
   return (
-    <div className={cn("space-y-4", className)}>
-      {/* Matrix table */}
-      <div className="border border-border rounded-lg overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
+    <div className={cn("flex-1 flex flex-col overflow-hidden", className)}>
+      {/* Single scroll container for both header and body - syncs horizontal scroll */}
+      <div className="flex-1 overflow-auto">
+        <table className="w-full border-collapse text-sm">
+          {/* Sticky header - position:sticky with top:0 keeps it in sync with horizontal scroll */}
+          <thead className="sticky top-0 z-20 bg-background">
             {/* Header row 1: League names */}
-            <thead>
-              <tr className="bg-muted/30">
-                {/* Sticky Feature column header - solid background to cover scrolling content */}
-                {/* Shadow uses ::after pseudo-element to render above adjacent cells */}
-                <th
-                  className="sticky left-0 z-20 border-b border-r border-border px-3 py-2 text-left text-xs font-medium text-muted-foreground relative after:absolute after:top-0 after:right-0 after:bottom-0 after:w-4 after:translate-x-full after:bg-gradient-to-r after:from-black/30 after:to-transparent after:pointer-events-none"
-                  rowSpan={2}
-                  style={{ backgroundColor: "#1a1c1f" }}
-                >
-                  Feature
-                </th>
-                {/* League group headers */}
-                {sortedLeagues.map((league) => {
-                  const summary = leagueSummaries[String(league.league_id)]?.total;
-                  return (
-                    <th
-                      key={league.league_id}
-                      colSpan={columnsPerLeague}
-                      className="border-b border-r border-border px-2 py-2 text-center text-xs font-medium"
-                    >
-                      <div className="flex flex-col items-center gap-0.5">
-                        <span className="text-foreground whitespace-nowrap">
-                          {league.name}
-                        </span>
-                        {summary && (
-                          <span
-                            className={cn(
-                              "text-[10px] tabular-nums",
-                              getCoverageColor(summary.avg_pct)
-                            )}
-                          >
-                            {formatPct(summary.avg_pct)}
-                          </span>
-                        )}
-                      </div>
-                    </th>
-                  );
-                })}
-              </tr>
-
-              {/* Header row 2: Window subcolumns */}
-              <tr className="bg-muted/20">
-                {sortedLeagues.flatMap((league) => [
-                  ...windows.map((window) => (
-                    <th
-                      key={`${league.league_id}-${window.key}`}
-                      className="border-b border-r border-border px-2 py-1 text-center text-[10px] font-medium text-muted-foreground"
-                    >
-                      {window.key}
-                    </th>
-                  )),
-                  <th
-                    key={`${league.league_id}-total`}
-                    className="border-b border-r border-border px-2 py-1 text-center text-[10px] font-medium text-muted-foreground"
-                  >
-                    Total
-                  </th>,
-                  <th
-                    key={`${league.league_id}-n`}
-                    className="border-b border-r border-border px-2 py-1 text-center text-[10px] font-medium text-muted-foreground"
-                  >
-                    N
-                  </th>,
-                ])}
-              </tr>
-            </thead>
-
-            {/* Body rows: Features (paginated) */}
-            <tbody>
-              {paginatedFeatures.map((feature, idx) => {
-                // Alternating row colors - need solid colors for sticky column
-                const isEven = idx % 2 === 0;
-
+            <tr className="border-b border-border">
+              {/* Sticky Feature column header - both left and top sticky */}
+              <th
+                className="sticky left-0 z-30 px-3 pt-3 pb-2 text-left font-semibold text-muted-foreground text-sm align-bottom bg-background border-r border-border relative after:absolute after:top-0 after:right-0 after:bottom-0 after:w-4 after:translate-x-full after:bg-gradient-to-r after:from-black/20 after:to-transparent after:pointer-events-none"
+                rowSpan={2}
+                style={{ minWidth: "220px" }}
+              >
+                Feature
+              </th>
+              {/* League group headers */}
+              {sortedLeagues.map((league) => {
+                const summary = leagueSummaries[String(league.league_id)]?.total;
                 return (
-                <tr
-                  key={feature.key}
-                  className={cn(
-                    "hover:bg-muted/20 transition-colors",
-                    isEven ? "bg-background" : "bg-muted/5"
-                  )}
-                >
-                  {/* Sticky Feature cell - needs solid background to cover scrolling content */}
-                  {/* Shadow uses ::after pseudo-element with gradient to simulate shadow above adjacent cells */}
-                  <td
-                    className="sticky left-0 z-10 border-b border-r border-border px-3 py-1.5 relative after:absolute after:top-0 after:right-0 after:bottom-0 after:w-4 after:translate-x-full after:bg-gradient-to-r after:from-black/30 after:to-transparent after:pointer-events-none"
-                    style={{ backgroundColor: isEven ? "#131416" : "#151719" }}
+                  <th
+                    key={league.league_id}
+                    colSpan={columnsPerLeague}
+                    className="px-3 pt-3 pb-1 text-center font-semibold text-sm border-r border-border"
                   >
-                    <div className="flex items-center gap-2">
-                      <TierBadge badge={feature.badge} />
-                      <span className="text-xs text-foreground truncate max-w-[180px]">
-                        {feature.key}
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="text-foreground whitespace-nowrap">
+                        {league.name}
                       </span>
+                      {summary && (
+                        <span
+                          className={cn(
+                            "text-xs tabular-nums font-normal",
+                            getCoverageColor(summary.avg_pct)
+                          )}
+                        >
+                          {formatPct(summary.avg_pct)}
+                        </span>
+                      )}
                     </div>
-                  </td>
+                  </th>
+                );
+              })}
+            </tr>
 
-                  {/* Coverage cells per league */}
-                  {sortedLeagues.flatMap((league) => {
-                    const leagueId = String(league.league_id);
-                    const featureCoverage = coverage[feature.key]?.[leagueId];
-                    const leagueSummary = leagueSummaries[leagueId];
-                    // tier1 = PROD (uses FT matches), tier1b/1c/1d = TITAN (uses feature_matrix rows)
-                    const isProd = feature.tier_id === "tier1";
+            {/* Header row 2: Window subcolumns */}
+            <tr className="border-b border-border">
+              {sortedLeagues.flatMap((league) => [
+                ...windows.map((window) => (
+                  <th
+                    key={`${league.league_id}-${window.key}`}
+                    className="px-3 pb-2 text-center text-xs font-medium text-muted-foreground border-r border-border bg-background"
+                  >
+                    {window.key}
+                  </th>
+                )),
+                <th
+                  key={`${league.league_id}-total`}
+                  className="px-3 pb-2 text-center text-xs font-medium text-muted-foreground border-r border-border bg-background"
+                >
+                  Total
+                </th>,
+                <th
+                  key={`${league.league_id}-n`}
+                  className="px-3 pb-2 text-center text-xs font-medium text-muted-foreground border-r border-border bg-background"
+                >
+                  N
+                </th>,
+              ])}
+            </tr>
+          </thead>
 
-                    return [
-                      ...windows.map((window) => {
-                        const cell = featureCoverage?.[window.key];
-                        const summaryForWindow = leagueSummary?.[window.key];
-                        // Use correct denominator based on tier
-                        const matchesTotal = isProd
-                          ? (summaryForWindow?.matches_total_ft ?? 0)
-                          : (summaryForWindow?.matches_total_titan ?? 0);
+          {/* Body */}
+          <tbody>
+            {paginatedFeatures.map((feature) => (
+              <tr
+                key={feature.key}
+                className="border-b border-border transition-colors hover:bg-accent/50"
+              >
+                {/* Sticky Feature cell */}
+                <td
+                  className="sticky left-0 z-10 px-3 py-2.5 bg-background border-r border-border relative after:absolute after:top-0 after:right-0 after:bottom-0 after:w-4 after:translate-x-full after:bg-gradient-to-r after:from-black/20 after:to-transparent after:pointer-events-none"
+                  style={{ minWidth: "220px" }}
+                >
+                  <div className="flex items-center gap-2">
+                    <TierBadge badge={feature.badge} />
+                    <span className="text-sm text-foreground truncate max-w-[160px]">
+                      {feature.key}
+                    </span>
+                  </div>
+                </td>
 
-                        if (!cell) {
-                          return (
-                            <td
-                              key={`${feature.key}-${leagueId}-${window.key}`}
-                              className="border-b border-r border-border px-2 py-1 text-center text-xs text-muted-foreground"
-                            >
-                              -
-                            </td>
-                          );
-                        }
+                {/* Coverage cells per league */}
+                {sortedLeagues.flatMap((league) => {
+                  const leagueId = String(league.league_id);
+                  const featureCoverage = coverage[feature.key]?.[leagueId];
+                  const leagueSummary = leagueSummaries[leagueId];
+                  // tier1 = PROD (uses FT matches), tier1b/1c/1d = TITAN (uses feature_matrix rows)
+                  const isProd = feature.tier_id === "tier1";
 
+                  return [
+                    ...windows.map((window) => {
+                      const cell = featureCoverage?.[window.key];
+                      const summaryForWindow = leagueSummary?.[window.key];
+                      // Use correct denominator based on tier
+                      const matchesTotal = isProd
+                        ? (summaryForWindow?.matches_total_ft ?? 0)
+                        : (summaryForWindow?.matches_total_titan ?? 0);
+
+                      if (!cell) {
                         return (
                           <td
                             key={`${feature.key}-${leagueId}-${window.key}`}
-                            className="border-b border-r border-border"
+                            className="px-3 py-2.5 text-center text-sm text-muted-foreground border-r border-border"
                           >
-                            <CoverageCell
-                              pct={cell.pct}
-                              n={cell.n}
-                              matchesTotal={matchesTotal}
-                              windowKey={window.key}
-                              leagueName={league.name}
-                              featureKey={feature.key}
-                              isProd={isProd}
-                            />
+                            -
                           </td>
                         );
-                      }),
-                      /* Total column */
-                      <td
-                        key={`${feature.key}-${leagueId}-total`}
-                        className="border-b border-r border-border"
-                      >
-                        {featureCoverage?.total ? (
+                      }
+
+                      return (
+                        <td
+                          key={`${feature.key}-${leagueId}-${window.key}`}
+                          className="px-3 py-2.5 border-r border-border"
+                        >
                           <CoverageCell
-                            pct={featureCoverage.total.pct}
-                            n={featureCoverage.total.n}
-                            matchesTotal={
-                              isProd
-                                ? (leagueSummary?.total?.matches_total_ft ?? 0)
-                                : (leagueSummary?.total?.matches_total_titan ?? 0)
-                            }
-                            windowKey="Total"
+                            pct={cell.pct}
+                            n={cell.n}
+                            matchesTotal={matchesTotal}
+                            windowKey={window.key}
                             leagueName={league.name}
                             featureKey={feature.key}
                             isProd={isProd}
                           />
-                        ) : (
-                          <div className="px-2 py-1 text-center text-xs text-muted-foreground">
-                            -
-                          </div>
-                        )}
-                      </td>,
-                      /* N column */
-                      <td
-                        key={`${feature.key}-${leagueId}-n`}
-                        className="border-b border-r border-border"
-                      >
-                        <NCell n={featureCoverage?.total?.n ?? 0} />
-                      </td>,
-                    ];
-                  })}
-                </tr>
-              );
-              })}
-            </tbody>
-          </table>
-        </div>
+                        </td>
+                      );
+                    }),
+                    /* Total column */
+                    <td
+                      key={`${feature.key}-${leagueId}-total`}
+                      className="px-3 py-2.5 border-r border-border"
+                    >
+                      {featureCoverage?.total ? (
+                        <CoverageCell
+                          pct={featureCoverage.total.pct}
+                          n={featureCoverage.total.n}
+                          matchesTotal={
+                            isProd
+                              ? (leagueSummary?.total?.matches_total_ft ?? 0)
+                              : (leagueSummary?.total?.matches_total_titan ?? 0)
+                          }
+                          windowKey="Total"
+                          leagueName={league.name}
+                          featureKey={feature.key}
+                          isProd={isProd}
+                        />
+                      ) : (
+                        <div className="text-center text-sm text-muted-foreground">
+                          -
+                        </div>
+                      )}
+                    </td>,
+                    /* N column */
+                    <td
+                      key={`${feature.key}-${leagueId}-n`}
+                      className="px-3 py-2.5 border-r border-border"
+                    >
+                      <NCell n={featureCoverage?.total?.n ?? 0} />
+                    </td>,
+                  ];
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {/* Footer info */}
       {data?.generated_at && (
-        <div className="flex items-center justify-end gap-2 text-[10px] text-muted-foreground">
+        <div className="flex-shrink-0 flex items-center justify-end gap-2 px-3 py-2 text-[10px] text-muted-foreground border-t border-border">
           <span>
             Generated: {new Date(data.generated_at).toLocaleString()}
           </span>
