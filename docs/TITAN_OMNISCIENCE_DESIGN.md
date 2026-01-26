@@ -7,7 +7,7 @@
 | Version | 2.0 DRAFT |
 | Fecha | 2026-01-25 |
 | Autor | Claude Code (para revision ABE) |
-| Estado | FASE 1 COMPLETADA (implementación) - Pendiente deploy Railway + aprobación Owner |
+| Estado | FASE 3A COMPLETADA (producción) - SofaScore Lineups (Tier 1c) operacional |
 
 ---
 
@@ -1037,16 +1037,101 @@ from titan.extractors.api_football import Extractor   # new
 - Proxies / Playwright / casas de apuestas / redes sociales
 - Completar 41 tablas (solo las mínimas del slice)
 
-### FASE 2: Crawler Engine (20 fuentes iniciales)
-- [ ] Implementar base crawler (Scrapy + Playwright)
-- [ ] Rate limiter adaptativo por dominio
-- [ ] User-Agent rotator + stealth mode
-- [ ] Migrar 4 providers existentes (API-Football, Understat, SofaScore, Open-Meteo)
-- [ ] Agregar 16 fuentes nuevas de casas de apuestas
-- [ ] Tests de integracion por fuente
+### FASE 2: Understat xG (Tier 1b) + R2 Storage ✅ COMPLETADA (producción)
+- [x] Migración `titan_005_add_xg_columns.sql` (xG rolling `*_last5`, `xg_captured_at`, `tier1b_complete`)
+- [x] Migración `titan_006_raw_extractions_r2.sql` (R2 offload cols + constraint integridad)
+- [x] `TitanUnderstatExtractor` (PIT + idempotencia + persistencia a `titan.raw_extractions`)
+- [x] Materializer: `compute_xg_last5_features()` PIT-safe desde `public.match_understat_team` (subquery con `ORDER BY/LIMIT`)
+- [x] Runner: integración xG (Tier 1b opcional) + métricas `with_xg`
+- [x] R2 offload en `save_extraction()` para payloads grandes (threshold configurable)
+- [x] Dashboard: `tier1b_coverage_pct` + `r2_storage` métricas visibles en `/dashboard/titan.json`
+- [x] Tests ampliados (xG + PIT + R2 con mocks) passing
 
-### FASE 3: Entity Resolution + LLM Extraction
-- [ ] Implementar fuzzy matching (equipos, jugadores)
+**Ajustes no planificados (descubiertos en piloto prod)**:
+- `public.matches.date` es `TIMESTAMP` (naive). Para queries PIT-safe contra `public.matches`, se usa `kickoff_naive = kickoff_utc.replace(tzinfo=None)` antes de bindear parámetros.
+- AsyncPG no soporta `:param::jsonb` con placeholders; usar `CAST(:param AS jsonb)`.
+- Documentación: Sección "TITAN: Reglas de Timezone" agregada a `docs/OPS_RUNBOOK.md`.
+- Tests de regresión: `tests/titan/test_timezone_regression.py` (14 tests) para prevenir recurrencia.
+
+### FASE 3A: SofaScore Lineups (Tier 1c) ✅ COMPLETADA (producción)
+
+**Fecha**: 2026-01-26
+**Aprobado por**: ABE
+
+**Arquitectura final** (decisión ABE): NO crear TitanSofaScoreExtractor nuevo.
+Reusar infraestructura SOTA existente: `SofascoreProvider` + jobs `sota_sofascore_refs_sync` y `sota_sofascore_xi_capture`.
+TITAN solo LEE de `public.match_sofascore_lineup` y `public.match_sofascore_player`.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    ARQUITECTURA FASE 3A                                  │
+├─────────────────────────────────────────────────────────────────────────┤
+│  Jobs SOTA existentes                                                    │
+│  ┌─────────────────────────┐    ┌─────────────────────────┐            │
+│  │ sota_sofascore_refs_sync│    │ sota_sofascore_xi_capture│            │
+│  │ (cada 6h)               │    │ (cada 30 min)            │            │
+│  └───────────┬─────────────┘    └───────────┬─────────────┘            │
+│              │                              │                           │
+│              ▼                              ▼                           │
+│  ┌─────────────────────────────────────────────────────────┐           │
+│  │              public.match_sofascore_lineup               │           │
+│  │              public.match_sofascore_player               │           │
+│  │              public.match_external_refs (source=sofascore)│          │
+│  └───────────────────────────┬─────────────────────────────┘           │
+│                              │ TITAN Materializer LEE                   │
+│                              ▼                                          │
+│  ┌─────────────────────────────────────────────────────────┐           │
+│  │              titan.feature_matrix                        │           │
+│  │              + columnas sofascore_* (Tier 1c)            │           │
+│  └─────────────────────────────────────────────────────────┘           │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Entregables**:
+- [x] Migración `titan_007_add_sofascore_lineup_columns.sql` (8 columnas Tier 1c)
+- [x] `SofaScoreLineupFeatures` dataclass con integrity score derivado
+- [x] `compute_lineup_features()` PIT-safe desde `public.match_sofascore_*` (join por `match_id, team_side`)
+- [x] Runner: integración lineup (Tier 1c opcional) + métricas `with_lineup`
+- [x] Dashboard: 5 métricas SofaScore (`ref_coverage_pct`, `lineup_coverage_pct_given_ref`, `lineup_freshness_hours`, `tier1c_complete`, `tier1c_coverage_pct`)
+- [x] Tests: 27+ tests con mocks (sin calls reales a SofaScore)
+
+**Columnas DDL titan_007**:
+```sql
+sofascore_lineup_available BOOLEAN NOT NULL DEFAULT FALSE
+sofascore_home_formation VARCHAR(20)
+sofascore_away_formation VARCHAR(20)
+sofascore_lineup_captured_at TIMESTAMPTZ
+lineup_home_starters_count SMALLINT
+lineup_away_starters_count SMALLINT
+sofascore_lineup_integrity_score DECIMAL(4,3)
+tier1c_complete BOOLEAN NOT NULL DEFAULT FALSE
+```
+
+**Integrity score** (derivado):
+- `formation_present`: 1.0 si ambas formaciones existen, 0.0 si no
+- `starters_complete`: (home==11 + away==11) / 2
+- `integrity_score = (formation_present + starters_complete) / 2`
+
+**Políticas**:
+- Tier 1 gate sin cambios: sin odds → no insert
+- Tier 1c es opcional (fail-open): sin lineup → insert con NULLs
+- PIT enforced: `sofascore_lineup_captured_at < kickoff_utc`
+- Timezone: `public.*` usa TIMESTAMP naive, `titan.*` usa TIMESTAMPTZ aware
+
+**Checklist validación operacional** (mínimo para "done"):
+- [x] `tier1c_complete > 0` en dashboard
+- [x] `tier1c_coverage_pct > 0` en dashboard
+- [x] `lineup_freshness_hours != null` en dashboard
+- [x] `pit_violations = 0`
+
+**Env vars requeridas (Railway)**:
+```bash
+SOTA_SOFASCORE_REFS_ENABLED=true
+SOTA_SOFASCORE_ENABLED=true
+```
+
+### FASE 3B: Entity Resolution + LLM Extraction (Pendiente)
+- [ ] Implementar fuzzy matching (equipos, jugadores, ligas)
 - [ ] Crear tablas de aliases (team_aliases, player_aliases)
 - [ ] Integrar Gemini para extraccion de texto no estructurado
 - [ ] Cola de revision manual para entidades ambiguas
@@ -2749,16 +2834,17 @@ async def titan_dashboard():
 
 ```bash
 # 0. Ejecutar una corrida pequeña (evidencia end-to-end)
-python -m app.titan.runner --date 2026-01-26 --league 140 --limit 5
+python -m app.titan.runner --date 2026-01-26 --league 140 --limit 10 -v
 
-# 1. Verificar tablas creadas (FASE 1)
+# 1. Verificar tablas creadas (FASE 1/2)
 psql $DATABASE_URL -c "\dt titan.*"
 # Esperado FASE 1: 3 tablas (raw_extractions, job_dlq, feature_matrix)
 
-# 2. Verificar coverage tier 1-2
+# 2. Verificar coverage Tier 1 y Tier 1b (xG)
 SELECT
   COUNT(*) as total_matches,
-  AVG(CASE WHEN odds_home_close IS NOT NULL THEN 1 ELSE 0 END) as tier1_coverage
+  AVG(CASE WHEN odds_home_close IS NOT NULL THEN 1 ELSE 0 END) as tier1_coverage,
+  AVG(CASE WHEN tier1b_complete = TRUE THEN 1 ELSE 0 END) as tier1b_coverage
 FROM titan.feature_matrix;
 # Esperado: tier1_coverage > 0.95
 
@@ -2769,8 +2855,13 @@ WHERE pit_max_captured_at >= kickoff_utc;
 
 # 4. Verificar dashboard TITAN (protegido)
 curl -s -H "X-Dashboard-Token: $TOKEN" \
-  "$API_URL/dashboard/titan.json" | jq '.pit_compliance, .dlq, .extractions, .feature_matrix'
+  "$API_URL/dashboard/titan.json" | jq '.pit_compliance, .dlq, .extractions, .feature_matrix, .r2_storage'
 # Esperado: pit_compliance.compliant = true, y métricas presentes
+
+# 5. Verificar columnas FASE 2 (xG + R2 + constraint)
+psql $DATABASE_URL -c "SELECT column_name FROM information_schema.columns WHERE table_schema='titan' AND table_name='feature_matrix' AND (column_name LIKE 'xg%' OR column_name='tier1b_complete');"
+psql $DATABASE_URL -c "SELECT column_name FROM information_schema.columns WHERE table_schema='titan' AND table_name='raw_extractions' AND column_name IN ('r2_bucket','r2_key','response_size_bytes');"
+psql $DATABASE_URL -c "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='chk_r2_offload_integrity' AND conrelid='titan.raw_extractions'::regclass;"
 ```
 
 ---
@@ -2780,8 +2871,19 @@ curl -s -H "X-Dashboard-Token: $TOKEN" \
 | Rol | Nombre | Fecha | Estado |
 |-----|--------|-------|--------|
 | Auditor Backend | ABE | 2026-01-25 | CONDICIONES INCORPORADAS |
-| Auditor 2 | - | 2026-01-25 | APROBADO (FASE 1 COMPLETADA) |
-| Owner | David | - | PENDIENTE |
+| Auditor 2 | - | 2026-01-25 | APROBADO (FASE 2 COMPLETADA) |
+| Owner | David | 2026-01-25 | APROBADO (FASE 2) |
+| **Auditor Backend** | **ABE** | **2026-01-26** | **APROBADO (FASE 3A COMPLETADA)** |
+
+### Condiciones ABE FASE 3A (2026-01-26):
+- ✅ Arquitectura SOTA→public.*→TITAN (sin extractor nuevo)
+- ✅ DDL titan_007 con 8 columnas exactas
+- ✅ Integrity score derivado (formation_present + starters==11)
+- ✅ PIT enforced + timezone normalizado
+- ✅ Fail-open (sin lineup → NULL, no crash)
+- ✅ Dashboard con 5 métricas SofaScore
+- ✅ Tests con mocks (sin calls reales a SofaScore)
+- ✅ Validación operacional: tier1c_complete>0, freshness!=null, PIT=0
 
 ### Condiciones ABE (incorporadas en Sección 10):
 - ✅ 10.A: Estrategia de Mantenimiento Pareto (80/20)
@@ -2802,9 +2904,10 @@ curl -s -H "X-Dashboard-Token: $TOKEN" \
 - ✅ 10.I: Checklist Operacional (alertas Critical/Warning, queries diagnóstico)
 
 ### Pendiente:
-- [ ] Deploy migraciones en Railway + corrida piloto (evidencia en DB)
-- [ ] Aprobación Owner
+- [x] ~~Definir y auditar plan FASE 3A~~ → COMPLETADO 2026-01-26
+- [ ] Definir y auditar plan FASE 3B (Entity Resolution) si aplica
 
 ---
 
-**Siguiente paso**: Deploy de migraciones en Railway, corrida piloto con `app/titan/runner.py`, y luego plan detallado para FASE 2+ con tickets.
+**Estado actual**: FASE 3A (SofaScore Lineups Tier 1c) completada y operacional.
+**Siguiente paso**: Evaluar valor incremental de FASE 3B (Entity Resolution + LLM Extraction).
