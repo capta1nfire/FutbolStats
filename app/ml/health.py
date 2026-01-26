@@ -279,6 +279,7 @@ async def _query_titan_coverage(session: AsyncSession) -> dict:
     for row in league_rows:
         by_league.append({
             "league_id": row.league_id,
+            "name": LEAGUE_NAMES.get(row.league_id, f"League {row.league_id}"),
             "tier1_pct": float(row.tier1_pct or 0),
             "tier1b_pct": float(row.tier1b_pct or 0),
         })
