@@ -1055,6 +1055,10 @@ async def patch_league(
 # P2B - Audit Log
 # =============================================================================
 
+# Allowlist of valid entity types for audit queries (security hardening)
+VALID_AUDIT_ENTITY_TYPES = {"admin_leagues", "admin_league_groups"}
+
+
 async def get_audit_log(
     session: AsyncSession,
     entity_type: Optional[str] = None,
@@ -1074,7 +1078,16 @@ async def get_audit_log(
 
     Returns:
         Dict with entries list and pagination info
+
+    Raises:
+        ValidationError: If entity_type is not in allowlist
     """
+    # Validate entity_type against allowlist (security hardening)
+    if entity_type and entity_type not in VALID_AUDIT_ENTITY_TYPES:
+        raise ValidationError(
+            f"invalid entity_type: must be one of {sorted(VALID_AUDIT_ENTITY_TYPES)}"
+        )
+
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)
 

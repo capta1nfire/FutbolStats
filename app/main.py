@@ -6070,20 +6070,24 @@ async def dashboard_admin_audit(
 
     P2B: Audit trail for mutations.
     Optional filters: entity_type, entity_id
+    Supported entity_types: admin_leagues, admin_league_groups
     """
     if not _verify_dashboard_token(request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
-    from app.dashboard.admin import get_audit_log
+    from app.dashboard.admin import get_audit_log, ValidationError
 
-    async with AsyncSessionLocal() as session:
-        data = await get_audit_log(
-            session,
-            entity_type=entity_type,
-            entity_id=entity_id,
-            limit=limit,
-            offset=offset
-        )
+    try:
+        async with AsyncSessionLocal() as session:
+            data = await get_audit_log(
+                session,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                limit=limit,
+                offset=offset
+            )
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     return {
         "generated_at": datetime.utcnow().isoformat() + "Z",
