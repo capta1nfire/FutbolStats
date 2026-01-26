@@ -5363,6 +5363,7 @@ async def dashboard_feature_coverage_json(request: Request):
     Windows:
     - 23/24: 2023-08-01 to 2024-07-31
     - 24/25: 2024-08-01 to 2025-07-31
+    - 25/26: 2025-08-01 to 2026-07-31 (current season)
 
     Features (30 total):
     - Tier 1 (14): Core features from public.matches [PROD]
@@ -5425,6 +5426,7 @@ async def _calculate_feature_coverage(session) -> dict:
     windows = [
         {"key": "23/24", "from": "2023-08-01", "to": "2024-07-31"},
         {"key": "24/25", "from": "2024-08-01", "to": "2025-07-31"},
+        {"key": "25/26", "from": "2025-08-01", "to": "2026-07-31"},
     ]
 
     # Define tiers
@@ -5489,6 +5491,7 @@ async def _calculate_feature_coverage(session) -> dict:
                 CASE
                     WHEN date >= '2023-08-01' AND date < '2024-08-01' THEN '23/24'
                     WHEN date >= '2024-08-01' AND date < '2025-08-01' THEN '24/25'
+                    WHEN date >= '2025-08-01' AND date < '2026-08-01' THEN '25/26'
                 END as time_window,
                 COUNT(*) as total,
                 -- Goals are always available for FT matches
@@ -5502,7 +5505,7 @@ async def _calculate_feature_coverage(session) -> dict:
             FROM matches
             WHERE status = 'FT'
               AND date >= '2023-08-01'
-              AND date < '2025-08-01'
+              AND date < '2026-08-01'
             GROUP BY league_id, time_window
         )
         SELECT * FROM match_counts WHERE time_window IS NOT NULL
@@ -5534,6 +5537,7 @@ async def _calculate_feature_coverage(session) -> dict:
             CASE
                 WHEN kickoff_utc >= '2023-08-01' AND kickoff_utc < '2024-08-01' THEN '23/24'
                 WHEN kickoff_utc >= '2024-08-01' AND kickoff_utc < '2025-08-01' THEN '24/25'
+                WHEN kickoff_utc >= '2025-08-01' AND kickoff_utc < '2026-08-01' THEN '25/26'
             END as time_window,
             COUNT(*) as total,
             -- Tier 1b: xG features
@@ -5556,11 +5560,12 @@ async def _calculate_feature_coverage(session) -> dict:
             COUNT(*) FILTER (WHERE xi_away_mid_count IS NOT NULL) as xi_away_mid_count,
             COUNT(*) FILTER (WHERE xi_away_fwd_count IS NOT NULL) as xi_away_fwd_count
         FROM titan.feature_matrix
-        WHERE kickoff_utc >= '2023-08-01' AND kickoff_utc < '2025-08-01'
+        WHERE kickoff_utc >= '2023-08-01' AND kickoff_utc < '2026-08-01'
         GROUP BY competition_id, time_window
         HAVING CASE
             WHEN kickoff_utc >= '2023-08-01' AND kickoff_utc < '2024-08-01' THEN '23/24'
             WHEN kickoff_utc >= '2024-08-01' AND kickoff_utc < '2025-08-01' THEN '24/25'
+            WHEN kickoff_utc >= '2025-08-01' AND kickoff_utc < '2026-08-01' THEN '25/26'
         END IS NOT NULL
         ORDER BY competition_id, time_window
     """)
