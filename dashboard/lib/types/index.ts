@@ -7,3 +7,4 @@ export * from "./analytics";
 export * from "./audit";
 export * from "./settings";
 export * from "./predictions";
+export * from "./ml-health";

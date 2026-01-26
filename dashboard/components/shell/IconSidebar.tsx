@@ -13,6 +13,7 @@ import {
   FileText,
   Settings,
   Sparkles,
+  Activity,
   LucideIcon,
 } from "lucide-react";
 import {
@@ -37,6 +38,7 @@ const navItems: NavItem[] = [
   { icon: AlertTriangle, label: "Incidents", href: "/incidents" },
   { icon: BarChart3, label: "Analytics", href: "/analytics" },
   { icon: Sparkles, label: "SOTA", href: "/sota" },
+  { icon: Activity, label: "ML Health", href: "/ml-health" },
   { icon: Database, label: "Data Quality", href: "/data-quality" },
   { icon: FileText, label: "Audit", href: "/audit" },
   { icon: Settings, label: "Settings", href: "/settings" },
