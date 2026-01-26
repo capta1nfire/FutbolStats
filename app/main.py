@@ -6014,6 +6014,84 @@ async def dashboard_admin_team_detail(request: Request, team_id: int):
     }
 
 
+# =============================================================================
+# P2B - Admin Mutations
+# =============================================================================
+
+@app.patch("/dashboard/admin/leagues/{league_id}.json")
+async def dashboard_admin_patch_league(request: Request, league_id: int):
+    """
+    Admin Panel - Update a league configuration.
+
+    P2B: PATCH mutations with audit trail.
+    Whitelist: is_active, country, kind, priority, match_type, match_weight,
+               display_order, tags, rules_json, group_id, name
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    from app.dashboard.admin import patch_league, ValidationError
+
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await patch_league(session, league_id, body, actor="dashboard")
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    # Invalidate caches
+    _admin_cache["overview"]["data"] = None
+    _admin_cache["leagues"]["data"] = None
+    if str(league_id) in _admin_cache["league_detail"]:
+        del _admin_cache["league_detail"][str(league_id)]
+
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "data": result,
+    }
+
+
+@app.get("/dashboard/admin/audit.json")
+async def dashboard_admin_audit(
+    request: Request,
+    entity_type: str = None,
+    entity_id: str = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """
+    Admin Panel - View audit log entries.
+
+    P2B: Audit trail for mutations.
+    Optional filters: entity_type, entity_id
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from app.dashboard.admin import get_audit_log
+
+    async with AsyncSessionLocal() as session:
+        data = await get_audit_log(
+            session,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            limit=limit,
+            offset=offset
+        )
+
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "cached": False,
+        "data": data,
+    }
+
+
 @app.get("/dashboard/pit/debug")
 async def pit_dashboard_debug(request: Request):
     """

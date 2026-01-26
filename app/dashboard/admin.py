@@ -1,13 +1,15 @@
 """
-Admin Panel P0 - Read-only endpoints for leagues/teams visibility.
+Admin Panel - Read/write endpoints for leagues/teams management.
 
-P2A: Now reads from admin_leagues table (DB-first).
+P2A: DB-first reads from admin_leagues table.
+P2B: PATCH mutations with audit trail.
 All functions return data dicts (no cache handling - that's in main.py).
 """
 
+import json
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -765,4 +767,374 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
         "stats_by_season": stats_by_season,
         "recent_matches": recent_matches,
         "predictions_stats": predictions_stats,
+    }
+
+
+# =============================================================================
+# P2B - Mutations
+# =============================================================================
+
+# Whitelist of fields allowed in PATCH
+PATCH_ALLOWED_FIELDS = {
+    "is_active", "country", "kind", "priority", "match_type", "match_weight",
+    "display_order", "tags", "rules_json", "group_id", "name"
+}
+
+# Valid values for enums
+VALID_KINDS = {"league", "cup", "international", "friendly"}
+VALID_PRIORITIES = {"high", "medium", "low", None}
+VALID_MATCH_TYPES = {"official", "friendly", None}
+VALID_CHANNELS = {"ios", "android", "web"}
+
+
+class ValidationError(Exception):
+    """Raised when patch validation fails."""
+    pass
+
+
+def _validate_patch(patch: dict) -> dict:
+    """
+    Validate and sanitize patch data.
+    Returns sanitized patch dict.
+    Raises ValidationError on invalid data.
+    """
+    sanitized = {}
+
+    for key, value in patch.items():
+        if key not in PATCH_ALLOWED_FIELDS:
+            continue  # Silently ignore unknown fields
+
+        if key == "kind":
+            if value not in VALID_KINDS:
+                raise ValidationError(f"kind must be one of: {VALID_KINDS}")
+            sanitized[key] = value
+
+        elif key == "priority":
+            if value is not None and value not in VALID_PRIORITIES:
+                raise ValidationError(f"priority must be one of: {VALID_PRIORITIES}")
+            sanitized[key] = value
+
+        elif key == "match_type":
+            if value is not None and value not in VALID_MATCH_TYPES:
+                raise ValidationError(f"match_type must be one of: {VALID_MATCH_TYPES}")
+            sanitized[key] = value
+
+        elif key == "match_weight":
+            if value is not None:
+                try:
+                    weight = float(value)
+                    if weight < 0 or weight > 1:
+                        raise ValidationError("match_weight must be between 0 and 1")
+                    sanitized[key] = weight
+                except (TypeError, ValueError):
+                    raise ValidationError("match_weight must be a number")
+            else:
+                sanitized[key] = None
+
+        elif key == "is_active":
+            if not isinstance(value, bool):
+                raise ValidationError("is_active must be a boolean")
+            sanitized[key] = value
+
+        elif key == "display_order":
+            if value is not None:
+                try:
+                    sanitized[key] = int(value)
+                except (TypeError, ValueError):
+                    raise ValidationError("display_order must be an integer")
+            else:
+                sanitized[key] = None
+
+        elif key == "group_id":
+            if value is not None:
+                try:
+                    sanitized[key] = int(value)
+                except (TypeError, ValueError):
+                    raise ValidationError("group_id must be an integer")
+            else:
+                sanitized[key] = None
+
+        elif key == "tags":
+            if not isinstance(value, dict):
+                raise ValidationError("tags must be a JSON object")
+            # Validate channels if present
+            if "channels" in value:
+                channels = value["channels"]
+                if not isinstance(channels, list):
+                    raise ValidationError("tags.channels must be an array")
+                invalid = set(channels) - VALID_CHANNELS
+                if invalid:
+                    raise ValidationError(f"tags.channels contains invalid values: {invalid}")
+            sanitized[key] = value
+
+        elif key == "rules_json":
+            if not isinstance(value, dict):
+                raise ValidationError("rules_json must be a JSON object")
+            sanitized[key] = value
+
+        elif key == "name":
+            if value is not None and not isinstance(value, str):
+                raise ValidationError("name must be a string")
+            if value is not None and len(value.strip()) == 0:
+                raise ValidationError("name cannot be empty")
+            sanitized[key] = value.strip() if value else None
+
+        elif key == "country":
+            if value is not None and not isinstance(value, str):
+                raise ValidationError("country must be a string")
+            sanitized[key] = value.strip() if value else None
+
+    return sanitized
+
+
+async def _write_audit_log(
+    session: AsyncSession,
+    entity_type: str,
+    entity_id: str,
+    action: str,
+    before_json: Optional[dict],
+    after_json: Optional[dict],
+    actor: str = "dashboard"
+) -> int:
+    """Write an audit log entry. Returns the audit log id."""
+    result = await session.execute(
+        text("""
+            INSERT INTO admin_audit_log (entity_type, entity_id, action, actor, before_json, after_json)
+            VALUES (:entity_type, :entity_id, :action, :actor, :before_json, :after_json)
+            RETURNING id
+        """),
+        {
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "action": action,
+            "actor": actor,
+            "before_json": json.dumps(before_json) if before_json else None,
+            "after_json": json.dumps(after_json) if after_json else None,
+        }
+    )
+    row = result.fetchone()
+    return row[0]
+
+
+async def patch_league(
+    session: AsyncSession,
+    league_id: int,
+    patch_data: dict,
+    actor: str = "dashboard"
+) -> dict:
+    """
+    Apply a patch to an admin_leagues row.
+
+    Args:
+        session: Database session
+        league_id: The league to update
+        patch_data: Dict of fields to update (whitelist enforced)
+        actor: Who is making the change
+
+    Returns:
+        Dict with updated league and audit_id
+
+    Raises:
+        ValidationError: If patch data is invalid
+        ValueError: If league not found
+    """
+    # Validate patch
+    sanitized = _validate_patch(patch_data)
+
+    if not sanitized:
+        raise ValidationError("No valid fields to update")
+
+    # Get current state
+    current_query = text("""
+        SELECT
+            league_id, sport, name, country, kind, is_active,
+            priority, match_type, match_weight, display_order,
+            group_id, tags, rules_json, source, created_at, updated_at
+        FROM admin_leagues
+        WHERE league_id = :lid
+    """)
+    result = await session.execute(current_query, {"lid": league_id})
+    row = result.fetchone()
+
+    if not row:
+        raise ValueError(f"League {league_id} not found")
+
+    # Build before state
+    before_state = {
+        "league_id": row.league_id,
+        "sport": row.sport,
+        "name": row.name,
+        "country": row.country,
+        "kind": row.kind,
+        "is_active": row.is_active,
+        "priority": row.priority,
+        "match_type": row.match_type,
+        "match_weight": row.match_weight,
+        "display_order": row.display_order,
+        "group_id": row.group_id,
+        "tags": row.tags if isinstance(row.tags, dict) else {},
+        "rules_json": row.rules_json if isinstance(row.rules_json, dict) else {},
+        "source": row.source,
+    }
+
+    # Build SET clause dynamically
+    set_parts = []
+    params = {"lid": league_id}
+
+    for key, value in sanitized.items():
+        if key in ("tags", "rules_json"):
+            set_parts.append(f"{key} = :{key}::jsonb")
+            params[key] = json.dumps(value)
+        else:
+            set_parts.append(f"{key} = :{key}")
+            params[key] = value
+
+    # Update source to 'override' if it was 'seed'
+    if before_state["source"] == "seed":
+        set_parts.append("source = 'override'")
+
+    set_clause = ", ".join(set_parts)
+
+    # Execute update
+    update_query = text(f"""
+        UPDATE admin_leagues
+        SET {set_clause}
+        WHERE league_id = :lid
+        RETURNING
+            league_id, sport, name, country, kind, is_active,
+            priority, match_type, match_weight, display_order,
+            group_id, tags, rules_json, source, created_at, updated_at
+    """)
+
+    result = await session.execute(update_query, params)
+    updated_row = result.fetchone()
+
+    # Build after state
+    after_state = {
+        "league_id": updated_row.league_id,
+        "sport": updated_row.sport,
+        "name": updated_row.name,
+        "country": updated_row.country,
+        "kind": updated_row.kind,
+        "is_active": updated_row.is_active,
+        "priority": updated_row.priority,
+        "match_type": updated_row.match_type,
+        "match_weight": updated_row.match_weight,
+        "display_order": updated_row.display_order,
+        "group_id": updated_row.group_id,
+        "tags": updated_row.tags if isinstance(updated_row.tags, dict) else {},
+        "rules_json": updated_row.rules_json if isinstance(updated_row.rules_json, dict) else {},
+        "source": updated_row.source,
+    }
+
+    # Write audit log
+    audit_id = await _write_audit_log(
+        session,
+        entity_type="admin_leagues",
+        entity_id=str(league_id),
+        action="update",
+        before_json=before_state,
+        after_json=after_state,
+        actor=actor
+    )
+
+    await session.commit()
+
+    # Invalidate cache
+    global _league_cache
+    _league_cache = {}
+
+    return {
+        "league": after_state,
+        "audit_id": audit_id,
+        "changes_applied": list(sanitized.keys()),
+    }
+
+
+# =============================================================================
+# P2B - Audit Log
+# =============================================================================
+
+async def get_audit_log(
+    session: AsyncSession,
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """
+    Get audit log entries with optional filters.
+
+    Args:
+        session: Database session
+        entity_type: Filter by entity type (e.g., 'admin_leagues')
+        entity_id: Filter by entity ID
+        limit: Max entries to return (default 50, max 200)
+        offset: Pagination offset
+
+    Returns:
+        Dict with entries list and pagination info
+    """
+    limit = min(max(limit, 1), 200)
+    offset = max(offset, 0)
+
+    where_parts = []
+    params = {"limit": limit, "offset": offset}
+
+    if entity_type:
+        where_parts.append("entity_type = :entity_type")
+        params["entity_type"] = entity_type
+
+    if entity_id:
+        where_parts.append("entity_id = :entity_id")
+        params["entity_id"] = entity_id
+
+    where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
+
+    # Count total
+    count_query = text(f"""
+        SELECT COUNT(*) as total
+        FROM admin_audit_log
+        {where_clause}
+    """)
+    count_result = await session.execute(count_query, params)
+    total = count_result.fetchone().total
+
+    # Get entries
+    entries_query = text(f"""
+        SELECT
+            id, entity_type, entity_id, action, actor,
+            before_json, after_json, created_at
+        FROM admin_audit_log
+        {where_clause}
+        ORDER BY created_at DESC
+        LIMIT :limit OFFSET :offset
+    """)
+    result = await session.execute(entries_query, params)
+
+    entries = []
+    for row in result.fetchall():
+        entries.append({
+            "id": row.id,
+            "entity_type": row.entity_type,
+            "entity_id": row.entity_id,
+            "action": row.action,
+            "actor": row.actor,
+            "before": row.before_json if isinstance(row.before_json, dict) else None,
+            "after": row.after_json if isinstance(row.after_json, dict) else None,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        })
+
+    return {
+        "entries": entries,
+        "pagination": {
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + limit < total,
+        },
+        "filters": {
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+        },
     }
