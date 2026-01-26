@@ -28,11 +28,51 @@ TOP_LEAGUES = [140, 39, 135, 78, 61]  # La Liga, PL, Serie A, Bundesliga, Ligue 
 
 # League name mapping (no leagues table exists)
 LEAGUE_NAMES = {
-    140: "La Liga",
+    # UEFA Competitions
+    2: "Champions League",
+    3: "Europa League",
+    848: "Conference League",
+    # Top 5 European Leagues
     39: "Premier League",
+    140: "La Liga",
     135: "Serie A",
     78: "Bundesliga",
     61: "Ligue 1",
+    # Other European Leagues
+    94: "Primeira Liga",
+    88: "Eredivisie",
+    203: "Super Lig",
+    45: "FA Cup",
+    143: "Copa del Rey",
+    # South America
+    71: "Brasil Serie A",
+    128: "Argentina Primera",
+    239: "Colombia Primera A",
+    242: "Ecuador Liga Pro",
+    250: "Paraguay Primera - Apertura",
+    252: "Paraguay Primera - Clausura",
+    253: "MLS",
+    262: "Liga MX",
+    265: "Chile Primera División",
+    268: "Uruguay Primera - Apertura",
+    270: "Uruguay Primera - Clausura",
+    281: "Peru Primera División",
+    299: "Venezuela Primera División",
+    344: "Bolivia Primera División",
+    # World Cup Qualifiers
+    10: "Amistosos",
+    29: "WCQ CAF",
+    30: "WCQ AFC",
+    31: "WCQ CONCACAF",
+    32: "WCQ UEFA",
+    33: "WCQ OFC",
+    34: "WCQ CONMEBOL",
+    37: "WCQ Intercontinental Play-offs",
+    # Other
+    1: "World Cup",
+    4: "Euro",
+    11: "Copa America",
+    13: "Nations League",
 }
 
 
