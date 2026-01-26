@@ -50,6 +50,28 @@ scripts/                 # Scripts de evaluación y utilidades
 |--------|-------------|-----|
 | `railway-postgres` | Queries read-only a PostgreSQL | `mcp__railway-postgres__query` con SQL |
 
+### Regla Obligatoria: Verificar Schema antes de SQL
+
+**ANTES de escribir cualquier query SQL nueva**, consultar el schema real:
+
+```sql
+-- Columnas de una tabla
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_name = 'matches' AND table_schema = 'public'
+ORDER BY ordinal_position;
+
+-- Para tablas en schema titan
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_name = 'feature_matrix' AND table_schema = 'titan'
+ORDER BY ordinal_position;
+```
+
+**Tablas principales**: `matches`, `teams`, `predictions`, `titan.feature_matrix`
+
+No asumir nombres de columnas (ej: usar `home_goals` no `home_score`).
+
 ### Commands (`.cursor/commands/`)
 Invocables con `/nombre` en chat.
 
