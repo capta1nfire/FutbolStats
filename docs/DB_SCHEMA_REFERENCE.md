@@ -265,6 +265,72 @@ GROUP BY competition_id
 
 ---
 
+## public.admin_leagues (15 columnas)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `league_id` | integer | NO | - |
+| `sport` | text | NO | 'football' |
+| `name` | text | NO | - |
+| `country` | text | YES | - |
+| `kind` | text | NO | 'league' |
+| `is_active` | boolean | NO | true |
+| `priority` | text | YES | - |
+| `match_type` | text | YES | - |
+| `match_weight` | double precision | YES | - |
+| `display_order` | integer | YES | - |
+| `group_id` | integer | YES | - |
+| `tags` | jsonb | NO | '{}' |
+| `rules_json` | jsonb | NO | '{}' |
+| `source` | text | NO | 'seed' |
+| `created_at` | timestamptz | NO | now() |
+| `updated_at` | timestamptz | NO | now() |
+
+### Notas importantes - admin_leagues
+
+- **is_active**: `TRUE` = liga servida a end-users (decisión de producto, todas las plataformas)
+- **source**: `'seed'` (from COMPETITIONS), `'override'` (manual), `'observed'` (auto-discovered)
+- **kind**: `'league'`, `'cup'`, `'international'`, `'friendly'`
+- **configured**: `source IN ('seed', 'override')` en queries
+- **tags.channels**: Opcional. Array de plataformas: `["ios","android","web"]`. Si no existe y is_active=true, se asume todas.
+- **group_id**: FK a `admin_league_groups` para ligas pareadas (Apertura/Clausura)
+
+### Ejemplo de control por plataforma
+
+```sql
+-- Liga activa solo en iOS y Android (no web)
+UPDATE admin_leagues
+SET tags = jsonb_set(tags, '{channels}', '["ios","android"]')
+WHERE league_id = 39;
+
+-- Liga activa en todas las plataformas (default)
+UPDATE admin_leagues
+SET tags = tags - 'channels'  -- remove channels key = all platforms
+WHERE league_id = 39;
+```
+
+---
+
+## public.admin_league_groups (6 columnas)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `group_id` | serial | NO | nextval |
+| `group_key` | text | NO | - |
+| `name` | text | NO | - |
+| `country` | text | YES | - |
+| `tags` | jsonb | NO | '{}' |
+| `created_at` | timestamptz | NO | now() |
+| `updated_at` | timestamptz | NO | now() |
+
+### Notas importantes - admin_league_groups
+
+- **Uso**: Agrupar ligas pareadas (Apertura/Clausura)
+- **group_key**: Identificador único, ej: `'URY_PRIMERA'`, `'PAR_PRIMERA'`
+- **Relación**: `admin_leagues.group_id` → `admin_league_groups.group_id`
+
+---
+
 ## Otras tablas (menos usadas)
 
 | Tabla | Schema | Descripción |
