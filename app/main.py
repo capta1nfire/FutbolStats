@@ -5341,6 +5341,353 @@ async def titan_dashboard_json(request: Request):
         return await get_titan_status(session)
 
 
+# =============================================================================
+# Feature Coverage Matrix (SOTA Dashboard)
+# =============================================================================
+# Cache for feature coverage matrix (expensive query, TTL 30 min)
+_feature_coverage_cache = {
+    "data": None,
+    "timestamp": 0,
+    "ttl": 1800,  # 30 minutes
+}
+
+
+@app.get("/dashboard/feature-coverage.json")
+async def dashboard_feature_coverage_json(request: Request):
+    """
+    Feature Coverage Matrix - Shows % of non-NULL features by league and season.
+
+    Used by SOTA dashboard to identify which leagues have sufficient data quality
+    for ML training (avoid imputing missing values with 0).
+
+    Windows:
+    - 23/24: 2023-08-01 to 2024-07-31
+    - 24/25: 2024-08-01 to 2025-07-31
+
+    Features (30 total):
+    - Tier 1 (14): Core features from public.matches [PROD]
+    - Tier 1b (6): xG features from titan.feature_matrix [TITAN]
+    - Tier 1c (4): Lineup features from titan.feature_matrix [TITAN]
+    - Tier 1d (6): XI Depth features from titan.feature_matrix [TITAN]
+
+    Auth: X-Dashboard-Token header.
+    Cache: 30 minutes TTL.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(
+            status_code=401,
+            detail="Dashboard access requires valid token.",
+        )
+
+    now = time.time()
+    cached = False
+    cache_age = None
+
+    # Check cache
+    if _feature_coverage_cache["data"] and (now - _feature_coverage_cache["timestamp"]) < _feature_coverage_cache["ttl"]:
+        cached = True
+        cache_age = round(now - _feature_coverage_cache["timestamp"], 1)
+        return {
+            "generated_at": _feature_coverage_cache["data"]["generated_at"],
+            "cached": cached,
+            "cache_age_seconds": cache_age,
+            "data": _feature_coverage_cache["data"]["data"],
+        }
+
+    # Calculate fresh data
+    async with AsyncSessionLocal() as session:
+        data = await _calculate_feature_coverage(session)
+
+    # Update cache
+    _feature_coverage_cache["data"] = {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "data": data,
+    }
+    _feature_coverage_cache["timestamp"] = now
+
+    return {
+        "generated_at": _feature_coverage_cache["data"]["generated_at"],
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
+async def _calculate_feature_coverage(session) -> dict:
+    """
+    Calculate feature coverage matrix for all leagues and windows.
+
+    Returns structured data matching the frontend contract.
+    """
+    from app.etl.competitions import COMPETITIONS
+
+    # Define windows
+    windows = [
+        {"key": "23/24", "from": "2023-08-01", "to": "2024-07-31"},
+        {"key": "24/25", "from": "2024-08-01", "to": "2025-07-31"},
+    ]
+
+    # Define tiers
+    tiers = [
+        {"id": "tier1", "label": "[PROD] Tier 1 - Core", "badge": "PROD"},
+        {"id": "tier1b", "label": "[TITAN] Tier 1b - xG", "badge": "TITAN"},
+        {"id": "tier1c", "label": "[TITAN] Tier 1c - Lineup", "badge": "TITAN"},
+        {"id": "tier1d", "label": "[TITAN] Tier 1d - XI Depth", "badge": "TITAN"},
+    ]
+
+    # Define features with tier mapping
+    features = [
+        # Tier 1 - Core (calculated from matches data)
+        {"key": "home_goals_scored_avg", "tier_id": "tier1", "badge": "PROD", "source": "public.matches"},
+        {"key": "home_goals_conceded_avg", "tier_id": "tier1", "badge": "PROD", "source": "public.matches"},
+        {"key": "home_shots_avg", "tier_id": "tier1", "badge": "PROD", "source": "public.matches.stats"},
+        {"key": "home_corners_avg", "tier_id": "tier1", "badge": "PROD", "source": "public.matches.stats"},
+        {"key": "home_rest_days", "tier_id": "tier1", "badge": "PROD", "source": "public.matches"},
+        {"key": "home_matches_played", "tier_id": "tier1", "badge": "PROD", "source": "public.matches"},
+        {"key": "away_goals_scored_avg", "tier_id": "tier1", "badge": "PROD", "source": "public.matches"},
+        {"key": "away_goals_conceded_avg", "tier_id": "tier1", "badge": "PROD", "source": "public.matches"},
+        {"key": "away_shots_avg", "tier_id": "tier1", "badge": "PROD", "source": "public.matches.stats"},
+        {"key": "away_corners_avg", "tier_id": "tier1", "badge": "PROD", "source": "public.matches.stats"},
+        {"key": "away_rest_days", "tier_id": "tier1", "badge": "PROD", "source": "public.matches"},
+        {"key": "away_matches_played", "tier_id": "tier1", "badge": "PROD", "source": "public.matches"},
+        {"key": "goal_diff_avg", "tier_id": "tier1", "badge": "PROD", "source": "derived"},
+        {"key": "rest_diff", "tier_id": "tier1", "badge": "PROD", "source": "derived"},
+        # Tier 1b - xG
+        {"key": "xg_home_last5", "tier_id": "tier1b", "badge": "TITAN", "source": "titan.feature_matrix"},
+        {"key": "xga_home_last5", "tier_id": "tier1b", "badge": "TITAN", "source": "titan.feature_matrix"},
+        {"key": "npxg_home_last5", "tier_id": "tier1b", "badge": "TITAN", "source": "titan.feature_matrix"},
+        {"key": "xg_away_last5", "tier_id": "tier1b", "badge": "TITAN", "source": "titan.feature_matrix"},
+        {"key": "xga_away_last5", "tier_id": "tier1b", "badge": "TITAN", "source": "titan.feature_matrix"},
+        {"key": "npxg_away_last5", "tier_id": "tier1b", "badge": "TITAN", "source": "titan.feature_matrix"},
+        # Tier 1c - Lineup
+        {"key": "sofascore_home_formation", "tier_id": "tier1c", "badge": "TITAN", "source": "titan.feature_matrix"},
+        {"key": "sofascore_away_formation", "tier_id": "tier1c", "badge": "TITAN", "source": "titan.feature_matrix"},
+        {"key": "lineup_home_starters_count", "tier_id": "tier1c", "badge": "TITAN", "source": "titan.feature_matrix"},
+        {"key": "lineup_away_starters_count", "tier_id": "tier1c", "badge": "TITAN", "source": "titan.feature_matrix"},
+        # Tier 1d - XI Depth
+        {"key": "xi_home_def_count", "tier_id": "tier1d", "badge": "TITAN", "source": "titan.feature_matrix"},
+        {"key": "xi_home_mid_count", "tier_id": "tier1d", "badge": "TITAN", "source": "titan.feature_matrix"},
+        {"key": "xi_home_fwd_count", "tier_id": "tier1d", "badge": "TITAN", "source": "titan.feature_matrix"},
+        {"key": "xi_away_def_count", "tier_id": "tier1d", "badge": "TITAN", "source": "titan.feature_matrix"},
+        {"key": "xi_away_mid_count", "tier_id": "tier1d", "badge": "TITAN", "source": "titan.feature_matrix"},
+        {"key": "xi_away_fwd_count", "tier_id": "tier1d", "badge": "TITAN", "source": "titan.feature_matrix"},
+    ]
+
+    # Build leagues list from COMPETITIONS
+    leagues = [
+        {"league_id": comp.league_id, "name": comp.name}
+        for comp in COMPETITIONS.values()
+    ]
+
+    # =========================================================================
+    # Query 1: Get match counts and Tier 1 coverage per league/window
+    # =========================================================================
+    tier1_query = text("""
+        WITH match_counts AS (
+            SELECT
+                league_id,
+                CASE
+                    WHEN date >= '2023-08-01' AND date < '2024-08-01' THEN '23/24'
+                    WHEN date >= '2024-08-01' AND date < '2025-08-01' THEN '24/25'
+                END as time_window,
+                COUNT(*) as total,
+                -- Goals are always available for FT matches
+                COUNT(*) as with_goals,
+                -- Stats JSON with shots/corners (check if total_shots exists)
+                COUNT(*) FILTER (WHERE
+                    stats IS NOT NULL
+                    AND stats::text NOT IN ('null', '{}', '')
+                    AND (stats->'home'->>'total_shots') IS NOT NULL
+                ) as with_stats
+            FROM matches
+            WHERE status = 'FT'
+              AND date >= '2023-08-01'
+              AND date < '2025-08-01'
+            GROUP BY league_id, time_window
+        )
+        SELECT * FROM match_counts WHERE time_window IS NOT NULL
+        ORDER BY league_id, time_window
+    """)
+
+    tier1_result = await session.execute(tier1_query)
+    tier1_rows = tier1_result.fetchall()
+
+    # Build tier1 data structure
+    tier1_data = {}  # {league_id: {window: {total, with_goals, with_stats}}}
+    for row in tier1_rows:
+        lid = row.league_id
+        win = row.time_window
+        if lid not in tier1_data:
+            tier1_data[lid] = {}
+        tier1_data[lid][win] = {
+            "total": int(row.total),
+            "with_goals": int(row.with_goals),
+            "with_stats": int(row.with_stats),
+        }
+
+    # =========================================================================
+    # Query 2: Get TITAN feature coverage per league/window
+    # =========================================================================
+    titan_query = text("""
+        SELECT
+            competition_id as league_id,
+            CASE
+                WHEN kickoff_utc >= '2023-08-01' AND kickoff_utc < '2024-08-01' THEN '23/24'
+                WHEN kickoff_utc >= '2024-08-01' AND kickoff_utc < '2025-08-01' THEN '24/25'
+            END as time_window,
+            COUNT(*) as total,
+            -- Tier 1b: xG features
+            COUNT(*) FILTER (WHERE xg_home_last5 IS NOT NULL) as xg_home_last5,
+            COUNT(*) FILTER (WHERE xga_home_last5 IS NOT NULL) as xga_home_last5,
+            COUNT(*) FILTER (WHERE npxg_home_last5 IS NOT NULL) as npxg_home_last5,
+            COUNT(*) FILTER (WHERE xg_away_last5 IS NOT NULL) as xg_away_last5,
+            COUNT(*) FILTER (WHERE xga_away_last5 IS NOT NULL) as xga_away_last5,
+            COUNT(*) FILTER (WHERE npxg_away_last5 IS NOT NULL) as npxg_away_last5,
+            -- Tier 1c: Lineup features
+            COUNT(*) FILTER (WHERE sofascore_home_formation IS NOT NULL) as sofascore_home_formation,
+            COUNT(*) FILTER (WHERE sofascore_away_formation IS NOT NULL) as sofascore_away_formation,
+            COUNT(*) FILTER (WHERE lineup_home_starters_count IS NOT NULL) as lineup_home_starters_count,
+            COUNT(*) FILTER (WHERE lineup_away_starters_count IS NOT NULL) as lineup_away_starters_count,
+            -- Tier 1d: XI Depth features
+            COUNT(*) FILTER (WHERE xi_home_def_count IS NOT NULL) as xi_home_def_count,
+            COUNT(*) FILTER (WHERE xi_home_mid_count IS NOT NULL) as xi_home_mid_count,
+            COUNT(*) FILTER (WHERE xi_home_fwd_count IS NOT NULL) as xi_home_fwd_count,
+            COUNT(*) FILTER (WHERE xi_away_def_count IS NOT NULL) as xi_away_def_count,
+            COUNT(*) FILTER (WHERE xi_away_mid_count IS NOT NULL) as xi_away_mid_count,
+            COUNT(*) FILTER (WHERE xi_away_fwd_count IS NOT NULL) as xi_away_fwd_count
+        FROM titan.feature_matrix
+        WHERE kickoff_utc >= '2023-08-01' AND kickoff_utc < '2025-08-01'
+        GROUP BY competition_id, time_window
+        HAVING CASE
+            WHEN kickoff_utc >= '2023-08-01' AND kickoff_utc < '2024-08-01' THEN '23/24'
+            WHEN kickoff_utc >= '2024-08-01' AND kickoff_utc < '2025-08-01' THEN '24/25'
+        END IS NOT NULL
+        ORDER BY competition_id, time_window
+    """)
+
+    try:
+        titan_result = await session.execute(titan_query)
+        titan_rows = titan_result.fetchall()
+    except Exception as e:
+        logger.warning(f"TITAN feature_matrix query failed (schema may not exist): {e}")
+        titan_rows = []
+
+    # Build titan data structure
+    titan_data = {}  # {league_id: {window: {feature: count}}}
+    titan_features = [
+        "xg_home_last5", "xga_home_last5", "npxg_home_last5",
+        "xg_away_last5", "xga_away_last5", "npxg_away_last5",
+        "sofascore_home_formation", "sofascore_away_formation",
+        "lineup_home_starters_count", "lineup_away_starters_count",
+        "xi_home_def_count", "xi_home_mid_count", "xi_home_fwd_count",
+        "xi_away_def_count", "xi_away_mid_count", "xi_away_fwd_count",
+    ]
+
+    for row in titan_rows:
+        lid = row.league_id
+        win = row.time_window
+        if lid not in titan_data:
+            titan_data[lid] = {}
+        titan_data[lid][win] = {"total": int(row.total)}
+        for feat in titan_features:
+            titan_data[lid][win][feat] = int(getattr(row, feat, 0) or 0)
+
+    # =========================================================================
+    # Build coverage and league_summaries structures
+    # =========================================================================
+    coverage = {}  # {feature_key: {league_id: {window: {pct, n}}}}
+    league_summaries = {}  # {league_id: {window: {matches_total, avg_pct}}}
+
+    # Initialize coverage structure
+    for feat in features:
+        coverage[feat["key"]] = {}
+
+    # Process each league
+    for league in leagues:
+        lid = league["league_id"]
+        league_summaries[str(lid)] = {}
+
+        for win_def in windows:
+            win = win_def["key"]
+
+            # Get base match count from tier1_data
+            t1 = tier1_data.get(lid, {}).get(win, {"total": 0, "with_goals": 0, "with_stats": 0})
+            matches_total = t1["total"]
+
+            # Calculate coverage for each feature
+            feature_pcts = []
+
+            for feat in features:
+                fkey = feat["key"]
+
+                if str(lid) not in coverage[fkey]:
+                    coverage[fkey][str(lid)] = {}
+
+                if matches_total == 0:
+                    pct = 0.0
+                    n = 0
+                elif feat["tier_id"] == "tier1":
+                    # Tier 1 features - use tier1_data
+                    if fkey in ["home_shots_avg", "away_shots_avg", "home_corners_avg", "away_corners_avg"]:
+                        # Stats-dependent features
+                        n = t1["with_stats"]
+                    else:
+                        # Goals/rest/matches_played - always available for FT matches
+                        n = t1["with_goals"]
+                    pct = round(100.0 * n / matches_total, 1)
+                else:
+                    # Tier 1b/1c/1d - use titan_data
+                    titan_win = titan_data.get(lid, {}).get(win, {})
+                    # Use titan total as denominator if available, else matches_total
+                    titan_total = titan_win.get("total", 0)
+                    if titan_total > 0:
+                        n = titan_win.get(fkey, 0)
+                        pct = round(100.0 * n / titan_total, 1)
+                    else:
+                        n = 0
+                        pct = 0.0
+
+                coverage[fkey][str(lid)][win] = {"pct": pct, "n": n}
+                feature_pcts.append(pct)
+
+            # Calculate league summary (avg across all 30 features)
+            avg_pct = round(sum(feature_pcts) / len(feature_pcts), 1) if feature_pcts else 0.0
+            league_summaries[str(lid)][win] = {
+                "matches_total": matches_total,
+                "avg_pct": avg_pct,
+            }
+
+        # Calculate total (combined windows)
+        total_matches = sum(
+            league_summaries[str(lid)].get(w["key"], {}).get("matches_total", 0)
+            for w in windows
+        )
+        total_pcts = []
+        for feat in features:
+            fkey = feat["key"]
+            total_n = sum(
+                coverage[fkey].get(str(lid), {}).get(w["key"], {}).get("n", 0)
+                for w in windows
+            )
+            total_pct = round(100.0 * total_n / total_matches, 1) if total_matches > 0 else 0.0
+            coverage[fkey][str(lid)]["total"] = {"pct": total_pct, "n": total_n}
+            total_pcts.append(total_pct)
+
+        league_summaries[str(lid)]["total"] = {
+            "matches_total": total_matches,
+            "avg_pct": round(sum(total_pcts) / len(total_pcts), 1) if total_pcts else 0.0,
+        }
+
+    return {
+        "windows": windows,
+        "tiers": tiers,
+        "features": features,
+        "leagues": leagues,
+        "league_summaries": league_summaries,
+        "coverage": coverage,
+    }
+
+
 @app.get("/dashboard/pit/debug")
 async def pit_dashboard_debug(request: Request):
     """
