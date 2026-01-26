@@ -1,6 +1,7 @@
 """
 Admin Panel P0 - Read-only endpoints for leagues/teams visibility.
 
+P2A: Now reads from admin_leagues table (DB-first).
 All functions return data dicts (no cache handling - that's in main.py).
 """
 
@@ -11,30 +12,59 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.etl.competitions import COMPETITIONS
-from app.ml.health import LEAGUE_NAMES
-
 logger = logging.getLogger(__name__)
 
-# Leagues to ignore in unmapped_observed (historical/noise)
-IGNORED_OBSERVED = {
-    28,  # Historical data only (last match 2023-07-04, 26 total matches)
-}
+# In-memory cache for admin_leagues (refreshed on each request, lightweight)
+_league_cache: dict[int, dict] = {}
 
 
-def get_league_info(league_id: int) -> dict:
-    """Get league info from COMPETITIONS dict or fallback to LEAGUE_NAMES."""
-    comp = COMPETITIONS.get(league_id)
-    if comp:
+async def _load_league_cache(session: AsyncSession) -> dict[int, dict]:
+    """Load admin_leagues into memory cache for fast lookups."""
+    global _league_cache
+
+    result = await session.execute(
+        text("""
+            SELECT
+                league_id, name, country, kind, is_active,
+                priority, match_type, match_weight, group_id, source
+            FROM admin_leagues
+        """)
+    )
+    rows = result.fetchall()
+
+    _league_cache = {}
+    for r in rows:
+        _league_cache[r.league_id] = {
+            "league_id": r.league_id,
+            "name": r.name,
+            "country": r.country,
+            "kind": r.kind,
+            "is_active": r.is_active,
+            "priority": r.priority,
+            "match_type": r.match_type,
+            "match_weight": r.match_weight,
+            "group_id": r.group_id,
+            "source": r.source,
+            # configured = source in ('seed', 'override')
+            "configured": r.source in ("seed", "override"),
+        }
+
+    return _league_cache
+
+
+def get_league_info_sync(league_id: int) -> dict:
+    """Get league info from cache (sync version, must call _load_league_cache first)."""
+    if league_id in _league_cache:
+        entry = _league_cache[league_id]
         return {
-            "name": comp.name,
-            "priority": comp.priority.value,
-            "match_type": comp.match_type,
-            "match_weight": comp.match_weight,
-            "configured": True,
+            "name": entry["name"],
+            "priority": entry["priority"],
+            "match_type": entry["match_type"],
+            "match_weight": entry["match_weight"],
+            "configured": entry["configured"],
         }
     return {
-        "name": LEAGUE_NAMES.get(league_id, f"League {league_id}"),
+        "name": f"League {league_id}",
         "priority": None,
         "match_type": None,
         "match_weight": None,
@@ -48,6 +78,21 @@ def get_league_info(league_id: int) -> dict:
 
 async def build_overview(session: AsyncSession) -> dict:
     """Build admin overview with counts and coverage summary."""
+
+    # Load league cache first (DB-first)
+    await _load_league_cache(session)
+
+    # Admin leagues counts (from admin_leagues table)
+    leagues_query = text("""
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE is_active = true) as active,
+            COUNT(*) FILTER (WHERE source = 'seed') as seed,
+            COUNT(*) FILTER (WHERE source = 'observed') as observed
+        FROM admin_leagues
+    """)
+    leagues_result = await session.execute(leagues_query)
+    leagues_row = leagues_result.fetchone()
 
     # Counts from matches
     counts_query = text("""
@@ -106,7 +151,7 @@ async def build_overview(session: AsyncSession) -> dict:
 
     top_leagues = []
     for r in top_rows:
-        info = get_league_info(r.league_id)
+        info = get_league_info_sync(r.league_id)
         top_leagues.append({
             "league_id": r.league_id,
             "name": info["name"],
@@ -115,9 +160,11 @@ async def build_overview(session: AsyncSession) -> dict:
 
     return {
         "counts": {
-            "leagues_configured": len(COMPETITIONS),
-            "leagues_observed": row.total_leagues,
-            "leagues_active_30d": row.active_30d,
+            "leagues_total": leagues_row.total,
+            "leagues_active": leagues_row.active,  # is_active=true (product decision)
+            "leagues_seed": leagues_row.seed,
+            "leagues_observed": leagues_row.observed,
+            "leagues_in_matches_30d": row.active_30d,
             "teams_total": teams_row.total,
             "teams_clubs": teams_row.clubs,
             "teams_national": teams_row.national,
@@ -138,7 +185,10 @@ async def build_overview(session: AsyncSession) -> dict:
 # =============================================================================
 
 async def build_leagues_list(session: AsyncSession) -> dict:
-    """Build leagues list with configured vs observed distinction."""
+    """Build leagues list from admin_leagues (DB-first)."""
+
+    # Load league cache (DB-first)
+    await _load_league_cache(session)
 
     # Get all observed leagues from matches
     observed_query = text("""
@@ -187,27 +237,56 @@ async def build_leagues_list(session: AsyncSession) -> dict:
     except Exception as e:
         logger.warning(f"TITAN query failed (fail-soft): {e}")
 
-    # Build leagues list: merge configured + observed
+    # Get paired league groups
+    groups_query = text("""
+        SELECT group_id, group_key, name as group_name, country as group_country
+        FROM admin_league_groups
+    """)
+    groups_result = await session.execute(groups_query)
+    groups_data = {r.group_id: {"key": r.group_key, "name": r.group_name, "country": r.group_country}
+                   for r in groups_result.fetchall()}
+
+    # Build leagues list from admin_leagues (DB-first)
     leagues = []
-    all_ids = set(COMPETITIONS.keys()) | observed_ids
+    all_ids = set(_league_cache.keys()) | observed_ids
 
     for league_id in sorted(all_ids):
-        info = get_league_info(league_id)
+        db_entry = _league_cache.get(league_id)
         obs = observed_data.get(league_id)
         titan = titan_data.get(league_id)
 
-        league_entry = {
-            "league_id": league_id,
-            "name": info["name"],
-            "configured": info["configured"],
-            "observed": league_id in observed_ids,
-        }
-
-        # Add config fields only if configured
-        if info["configured"]:
-            league_entry["priority"] = info["priority"]
-            league_entry["match_type"] = info["match_type"]
-            league_entry["match_weight"] = info["match_weight"]
+        if db_entry:
+            league_entry = {
+                "league_id": league_id,
+                "name": db_entry["name"],
+                "country": db_entry["country"],
+                "kind": db_entry["kind"],
+                "is_active": db_entry["is_active"],
+                "configured": db_entry["configured"],
+                "source": db_entry["source"],
+                "priority": db_entry["priority"],
+                "match_type": db_entry["match_type"],
+                "match_weight": db_entry["match_weight"],
+                "observed": league_id in observed_ids,
+            }
+            # Add group info if paired
+            if db_entry["group_id"] and db_entry["group_id"] in groups_data:
+                league_entry["group"] = groups_data[db_entry["group_id"]]
+        else:
+            # League in matches but not in admin_leagues (should not happen after sync)
+            league_entry = {
+                "league_id": league_id,
+                "name": f"League {league_id}",
+                "country": None,
+                "kind": "league",
+                "is_active": False,
+                "configured": False,
+                "source": "unknown",
+                "priority": None,
+                "match_type": None,
+                "match_weight": None,
+                "observed": True,
+            }
 
         # Add stats if observed
         if obs:
@@ -227,36 +306,33 @@ async def build_leagues_list(session: AsyncSession) -> dict:
 
         leagues.append(league_entry)
 
-    # Sort: configured first, then by matches
+    # Sort: is_active first, then configured, then by matches
     leagues.sort(key=lambda x: (
-        not x["configured"],  # configured first
+        not x["is_active"],  # active first
+        not x["configured"],  # then configured
         -(x.get("stats", {}).get("total_matches", 0))  # then by matches desc
     ))
 
-    # Unmapped observed (in DB but not in COMPETITIONS, excluding ignored)
-    unmapped = [lid for lid in observed_ids if lid not in COMPETITIONS and lid not in IGNORED_OBSERVED]
-    unmapped_details = []
-    for lid in sorted(unmapped):
-        obs = observed_data.get(lid)
-        if obs:
-            unmapped_details.append({
-                "league_id": lid,
-                "total_matches": obs.total_matches,
-                "matches_25_26": obs.matches_25_26,
-                "last_match": obs.last_match.isoformat() if obs.last_match else None,
-            })
+    # Count by source
+    seed_count = sum(1 for e in _league_cache.values() if e["source"] == "seed")
+    observed_count = sum(1 for e in _league_cache.values() if e["source"] == "observed")
+    active_count = sum(1 for e in _league_cache.values() if e["is_active"])
+
+    # Unmapped = in matches but not in admin_leagues (should be 0 after sync)
+    unmapped = [lid for lid in observed_ids if lid not in _league_cache]
 
     return {
         "leagues": leagues,
         "totals": {
-            "configured": len(COMPETITIONS),
-            "observed_in_db": len(observed_ids),
+            "total_in_db": len(_league_cache),
+            "active": active_count,
+            "seed": seed_count,
+            "observed": observed_count,
+            "in_matches": len(observed_ids),
             "with_titan_data": len(titan_data),
-            "ignored": len(IGNORED_OBSERVED),
         },
-        "unmapped_observed": sorted(unmapped),
-        "unmapped_observed_details": unmapped_details,
-        "ignored_observed": sorted(IGNORED_OBSERVED),
+        "unmapped_in_matches": sorted(unmapped),
+        "groups": list(groups_data.values()),
     }
 
 
@@ -267,13 +343,29 @@ async def build_leagues_list(session: AsyncSession) -> dict:
 async def build_league_detail(session: AsyncSession, league_id: int) -> Optional[dict]:
     """Build detail for a specific league."""
 
-    info = get_league_info(league_id)
+    # Load league cache (DB-first)
+    await _load_league_cache(session)
+
+    db_entry = _league_cache.get(league_id)
 
     # Check if league has any matches
     check_query = text("SELECT COUNT(*) as cnt FROM matches WHERE league_id = :lid")
     check_result = await session.execute(check_query, {"lid": league_id})
-    if check_result.fetchone().cnt == 0 and not info["configured"]:
+    if check_result.fetchone().cnt == 0 and not db_entry:
         return None  # League not found
+
+    # Get group info if paired
+    group_info = None
+    if db_entry and db_entry.get("group_id"):
+        group_query = text("""
+            SELECT group_key, name, country
+            FROM admin_league_groups
+            WHERE group_id = :gid
+        """)
+        group_result = await session.execute(group_query, {"gid": db_entry["group_id"]})
+        gr = group_result.fetchone()
+        if gr:
+            group_info = {"key": gr.group_key, "name": gr.name, "country": gr.country}
 
     # Stats by season
     season_query = text("""
@@ -388,16 +480,40 @@ async def build_league_detail(session: AsyncSession, league_id: int) -> Optional
             "has_prediction": r.has_prediction,
         })
 
+    league_info = {
+        "league_id": league_id,
+        "observed": len(stats_by_season) > 0,
+    }
+
+    if db_entry:
+        league_info.update({
+            "name": db_entry["name"],
+            "country": db_entry["country"],
+            "kind": db_entry["kind"],
+            "is_active": db_entry["is_active"],
+            "configured": db_entry["configured"],
+            "source": db_entry["source"],
+            "priority": db_entry["priority"],
+            "match_type": db_entry["match_type"],
+            "match_weight": db_entry["match_weight"],
+        })
+        if group_info:
+            league_info["group"] = group_info
+    else:
+        league_info.update({
+            "name": f"League {league_id}",
+            "country": None,
+            "kind": "league",
+            "is_active": False,
+            "configured": False,
+            "source": "unknown",
+            "priority": None,
+            "match_type": None,
+            "match_weight": None,
+        })
+
     return {
-        "league": {
-            "league_id": league_id,
-            "name": info["name"],
-            "configured": info["configured"],
-            "observed": len(stats_by_season) > 0,
-            "priority": info["priority"],
-            "match_type": info["match_type"],
-            "match_weight": info["match_weight"],
-        },
+        "league": league_info,
         "stats_by_season": stats_by_season,
         "teams": teams,
         "titan_coverage": titan_coverage,
@@ -504,6 +620,9 @@ async def build_teams_list(
 async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dict]:
     """Build detail for a specific team."""
 
+    # Load league cache (DB-first)
+    await _load_league_cache(session)
+
     # Get team info
     team_query = text("""
         SELECT id, external_id, name, country, team_type, logo_url
@@ -532,7 +651,7 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
 
     leagues_played = []
     for r in leagues_result.fetchall():
-        info = get_league_info(r.league_id)
+        info = get_league_info_sync(r.league_id)
         leagues_played.append({
             "league_id": r.league_id,
             "name": info["name"],
@@ -594,7 +713,7 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
 
     recent_matches = []
     for r in recent_result.fetchall():
-        info = get_league_info(r.league_id)
+        info = get_league_info_sync(r.league_id)
         recent_matches.append({
             "match_id": r.match_id,
             "date": r.date.isoformat() if r.date else None,
