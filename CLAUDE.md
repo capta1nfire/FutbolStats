@@ -70,6 +70,7 @@ Capacidades especializadas que el agente puede invocar.
 |-------|-------------|------|
 | `secrets-scan` | Escanear repo por secretos expuestos | Manual only |
 | `api-contract` | Validar contrato iOS vs backend | Read-only |
+| `titan-ops-audit` | Auditoría operacional TITAN OMNISCIENCE | Read-only |
 
 ### Subagents (`.cursor/skills/`)
 Agentes especializados para tareas delegadas.
@@ -78,6 +79,7 @@ Agentes especializados para tareas delegadas.
 |----------|-------------|---------------|
 | `ops-triage` | Diagnóstico operacional read-only | Sin edición, sin deploy |
 | `db-analyst-ro` | Consultas DB solo SELECT | Sin INSERT/UPDATE/DELETE |
+| `titan-ops-audit` | Audit TITAN: PIT, tiers, SOTA→TITAN | Solo SELECT, sin mutations |
 
 ### Railway CLI
 ```bash
