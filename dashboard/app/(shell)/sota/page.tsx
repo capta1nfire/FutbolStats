@@ -90,6 +90,11 @@ function SotaPageContent() {
   const [selectedSources, setSelectedSources] = useState<SotaSourceFilter[]>([]);
   const [searchValue, setSearchValue] = useState("");
 
+  // Tier filter state for Features view (all enabled by default)
+  const [enabledTiers, setEnabledTiers] = useState<Set<string>>(
+    new Set(["tier1", "tier1b", "tier1c", "tier1d"])
+  );
+
   // Pagination state with localStorage persistence
   const [currentPage, setCurrentPage] = useState(1);
   const { pageSize, setPageSize } = usePageSize("sota");
@@ -220,6 +225,20 @@ function SotaPageContent() {
     setCurrentPage(1);
   }, []);
 
+  // Tier filter handler (for Features view)
+  const handleTierChange = useCallback((tierId: string, checked: boolean) => {
+    setEnabledTiers((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(tierId);
+      } else {
+        next.delete(tierId);
+      }
+      return next;
+    });
+    setFeaturesCurrentPage(1);
+  }, []);
+
   // League filter handlers
   const handleLeagueVisibilityChange = useCallback(
     (leagueId: number, visible: boolean) => {
@@ -271,6 +290,9 @@ function SotaPageContent() {
         showCustomizeColumns={true}
         onCustomizeColumnsClick={handleCustomizeColumnsClick}
         customizeColumnsOpen={customizeColumnsOpen}
+        activeView={activeView}
+        enabledTiers={enabledTiers}
+        onTierChange={handleTierChange}
       />
 
       {/* Customize Columns Panel (Enrichment view) */}
@@ -383,6 +405,7 @@ function SotaPageContent() {
                 currentPage={featuresCurrentPage}
                 pageSize={featuresPageSize}
                 onTotalFeaturesChange={handleTotalFeaturesChange}
+                enabledTiers={enabledTiers}
               />
             )}
           </div>

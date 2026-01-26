@@ -142,6 +142,8 @@ interface FeatureCoverageMatrixProps {
   pageSize?: number;
   /** Callback when total features count changes (for external pagination) */
   onTotalFeaturesChange?: (total: number) => void;
+  /** Enabled tiers (if not provided, all are enabled) */
+  enabledTiers?: Set<string>;
 }
 
 /**
@@ -154,6 +156,9 @@ interface FeatureCoverageMatrixProps {
  * - Sort by league average coverage
  * - Color-coded cells (green >80%, yellow 50-80%, red <50%)
  */
+// Default enabled tiers
+const DEFAULT_ENABLED_TIERS = new Set(["tier1", "tier1b", "tier1c", "tier1d"]);
+
 export function FeatureCoverageMatrix({
   className,
   isLeagueVisible,
@@ -161,6 +166,7 @@ export function FeatureCoverageMatrix({
   currentPage = 1,
   pageSize = 25,
   onTotalFeaturesChange,
+  enabledTiers = DEFAULT_ENABLED_TIERS,
 }: FeatureCoverageMatrixProps) {
   const { data, isLoading, error, refetch } = useFeatureCoverage();
 
@@ -170,9 +176,6 @@ export function FeatureCoverageMatrix({
       onLeaguesLoaded(data.data.leagues);
     }
   }, [data?.data?.leagues, onLeaguesLoaded]);
-
-  // All tiers enabled by default
-  const enabledTiers = new Set(["tier1", "tier1b", "tier1c", "tier1d"]);
 
   // Process data
   const { sortedLeagues, filteredFeatures, windows, tiers, coverage, leagueSummaries } =
