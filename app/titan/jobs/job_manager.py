@@ -233,7 +233,7 @@ class TitanJobManager:
                     first_attempt, last_attempt, next_retry_at
                 ) VALUES (
                     :job_id, :source_id, :idempotency_key, :error_type, :error_message,
-                    :http_status, 1, :max_attempts, :endpoint, :params::jsonb, :date_bucket,
+                    :http_status, 1, :max_attempts, :endpoint, CAST(:params AS jsonb), :date_bucket,
                     :now, :now, :next_retry
                 )
                 RETURNING dlq_id
