@@ -1,0 +1,616 @@
+﻿Nombre Corto (ES),Tabla Pertenencia,Nombre Columna DB,Descripción (ES),PRIORIDAD_XGBOOST,TIPO_DATO,NULL_ESPERADO
+ID Partido,matches,match_id,Identificador único del partido. Clave primaria central del sistema.,566,BIGINT,NEVER
+Fecha UTC,matches,match_date_utc,Fecha del partido en formato UTC para estandarización global.,366,DATE,RARE
+Hora Kick-off UTC,matches,kickoff_utc_ts,Timestamp exacto del silbatazo inicial en UTC.,354,TIMESTAMP,RARE
+Hora Kick-off Local,matches,kickoff_local_ts,Hora local del partido (relevante para fatiga biológica).,370,TIMESTAMP,RARE
+Franja Horaria Local,matches,local_kickoff_hour_bucket,Categoría horaria: MORNING/AFTERNOON/EVENING/NIGHT.,368,VARCHAR(100),RARE
+Equipo Local ID,matches,home_team_id,FK → teams. Identificador del equipo que juega en casa.,573,INT,NEVER
+Equipo Visitante ID,matches,away_team_id,FK → teams. Identificador del equipo visitante.,611,INT,NEVER
+Estadio ID,matches,stadium_id,FK → stadiums. Estadio donde se juega el partido.,577,INT,NEVER
+Competición ID,matches,competition_id,FK → competitions. Liga/copa/torneo del partido.,543,INT,NEVER
+Árbitro Principal ID,matches,referee_id,FK → referees. Árbitro central asignado.,593,INT,NEVER
+Árbitro VAR ID,matches,var_referee_id,FK → referees. Árbitro a cargo del videoarbitraje.,578,INT,NEVER
+Partido Nocturno,matches,is_night_match,BOOL: True si partido nocturno (iluminación artificial).,340,BOOLEAN,RARE
+Campo Neutral,matches,neutral_venue_flag,BOOL: True si no hay local/visitante real.,372,BOOLEAN,RARE
+Puerta Cerrada,matches,behind_closed_doors_flag,BOOL: True si se juega sin público.,346,BOOLEAN,RARE
+Jornada,matches,matchday,Número de jornada dentro de la competición.,88,VARCHAR(100),RARE
+Fase Competición,matches,competition_stage,Categórica: grupos/octavos/cuartos/semifinal/final/liga.,87,VARCHAR(50),RARE
+ID Equipo,teams,team_id,Identificador único del equipo (club o selección).,583,INT,NEVER
+Nombre Equipo,teams,team_name,Nombre oficial del equipo.,498,VARCHAR(255),NEVER
+Tipo Equipo,teams,team_type,CLUB / NATIONAL_TEAM. Crítico para análisis club vs selección.,324,VARCHAR(50),RARE
+País,teams,country_code,"Código ISO del país (ESP, ARG, GER).",328,VARCHAR(10),RARE
+Ciudad ID,teams,city_id,FK → cities. Ciudad sede del equipo.,599,INT,NEVER
+Valor Mercado Total,teams,market_value_eur,Valor de mercado total de la plantilla en EUR.,362,BIGINT,RARE
+ID Jugador,players,player_id,Identificador único del jugador.,544,INT,NEVER
+Nombre Completo,players,full_name,Nombre completo oficial del jugador.,499,VARCHAR(255),NEVER
+Fecha Nacimiento,players,birth_date,Fecha de nacimiento para cálculo de edad exacta.,350,DATE,RARE
+Nacionalidad,players,nationality_code,Código ISO de nacionalidad principal.,371,VARCHAR(10),RARE
+Posición Principal,players,primary_position,GK/CB/LB/RB/CDM/CM/CAM/LW/RW/ST.,329,VARCHAR(100),RARE
+Pie Dominante,players,preferred_foot,LEFT/RIGHT/BOTH. Influye en posicionamiento táctico.,322,VARCHAR(100),RARE
+Altura CM,players,height_cm,Altura en centímetros (duelos aéreos).,323,INT,RARE
+Valor Mercado,players,market_value_eur,Valor de mercado individual en EUR.,363,BIGINT,RARE
+Equipo Actual ID,players,current_team_id,FK → teams. Equipo donde juega actualmente.,574,INT,NEVER
+ID Estadio,stadiums,stadium_id,Identificador único del estadio.,579,INT,NEVER
+Nombre Estadio,stadiums,stadium_name,Nombre oficial del recinto deportivo.,187,VARCHAR(255),SOMETIMES
+Ciudad ID,stadiums,city_id,FK → cities. Ciudad donde se ubica.,600,INT,NEVER
+Latitud,stadiums,latitude,Coordenada GPS latitud.,183,"DECIMAL(9,6)",SOMETIMES
+Longitud,stadiums,longitude,Coordenada GPS longitud.,188,"DECIMAL(9,6)",SOMETIMES
+Altitud Metros,stadiums,altitude_m,Metros sobre nivel del mar. >1500m afecta rendimiento.,175,INT,RARE
+Capacidad Total,stadiums,stadium_capacity,Aforo máximo de espectadores.,176,INT,RARE
+Tipo Césped,stadiums,pitch_surface_type,NATURAL/HYBRID/ARTIFICIAL.,177,VARCHAR(50),SOMETIMES
+Longitud Campo M,stadiums,pitch_length_m,Longitud del terreno en metros.,181,VARCHAR(100),SOMETIMES
+Anchura Campo M,stadiums,pitch_width_m,Anchura del terreno en metros.,179,VARCHAR(100),SOMETIMES
+Calidad Césped,stadiums,pitch_quality_rating,Rating 1-5 del estado del césped.,178,"DECIMAL(6,3)",SOMETIMES
+Tipo Techo,stadiums,roof_type,OPEN/RETRACTABLE/CLOSED.,185,VARCHAR(50),SOMETIMES
+ID Árbitro,referees,referee_id,Identificador único del árbitro.,594,INT,NEVER
+Nombre Completo Árbitro,referees,full_name,Nombre completo del colegiado.,203,VARCHAR(255),SOMETIMES
+Nacionalidad Árbitro,referees,nationality_code,País del árbitro.,205,VARCHAR(10),SOMETIMES
+Categoría FIFA,referees,is_fifa_referee,BOOL: Categoría FIFA internacional.,212,BOOLEAN,SOMETIMES
+Años Experiencia Árbitro,referees,years_experience,Años totales en máxima categoría.,204,VARCHAR(100),SOMETIMES
+Partidos Dirigidos Total,referees,total_matches_career,Total partidos dirigidos en carrera.,208,VARCHAR(100),SOMETIMES
+ID Entrenador,managers,manager_id,Identificador único del técnico.,564,INT,NEVER
+Nombre Completo Entrenador,managers,full_name,Nombre completo del entrenador.,316,VARCHAR(255),SOMETIMES
+Nacionalidad Entrenador,managers,nationality_code,País de origen del técnico.,319,VARCHAR(10),SOMETIMES
+Estilo Táctico,managers,tactical_style,POSSESSION/COUNTER/DIRECT/PRESSING.,312,VARCHAR(50),SOMETIMES
+Formación Preferida,managers,preferred_formation,"Formación habitual (4-3-3, 4-4-2, 3-5-2).",317,VARCHAR(50),SOMETIMES
+ID Competición,competitions,competition_id,Identificador único de la competición.,545,INT,NEVER
+Nombre Competición,competitions,competition_name,"La Liga, Premier League, Copa del Mundo, etc.",495,VARCHAR(255),NEVER
+Tipo Competición,competitions,competition_type,LEAGUE/CUP/CONTINENTAL/WORLD_CUP/FRIENDLY.,375,VARCHAR(50),RARE
+País Competición,competitions,country_code,País de la competición (NULL para internacionales).,330,VARCHAR(10),RARE
+Tier Liga,competitions,tier,"Nivel: 1 (primera división), 2 (segunda), etc.",374,VARCHAR(100),RARE
+ID Temporada,seasons,season_id,Identificador único de la temporada.,546,INT,NEVER
+Año Inicio,seasons,start_year,Año de inicio (ej: 2023).,334,"DECIMAL(5,2)",RARE
+Año Fin,seasons,end_year,Año de finalización.,343,"DECIMAL(5,2)",RARE
+Identificador Temporada,seasons,season_label,Etiqueta legible (2023/2024).,341,VARCHAR(255),RARE
+Es Año Mundial,seasons,is_world_cup_year,BOOL: Copa del Mundo masculina ese año.,348,BOOLEAN,RARE
+Temperatura Kick-off °C,match_weather,temperature_c_at_kickoff,Temperatura exacta al silbatazo inicial. Óptimo: 10-20°C.,148,"DECIMAL(5,2)",SOMETIMES
+Temperatura Promedio 90min,match_weather,temperature_c_avg_90m,Temperatura media durante el partido completo.,149,"DECIMAL(6,3)",SOMETIMES
+Humedad Relativa %,match_weather,humidity_pct_at_kickoff,Porcentaje de humedad. >80% dificulta respiración.,151,"DECIMAL(5,2)",SOMETIMES
+Velocidad Viento m/s,match_weather,wind_speed_mps_at_kickoff,Velocidad viento al inicio. >10 m/s afecta aéreos.,152,"DECIMAL(5,2)",SOMETIMES
+Ráfaga Máxima Viento,match_weather,wind_gust_mps_at_kickoff,Velocidad de ráfagas máximas (impredecibilidad).,154,"DECIMAL(5,2)",SOMETIMES
+Dirección Viento Grados,match_weather,wind_direction_deg_at_kickoff,Dirección viento 0-360°. Afecta saques y corners.,155,"DECIMAL(5,2)",SOMETIMES
+Velocidad Viento Promedio,match_weather,wind_speed_mps_avg_90m,Velocidad media del viento durante 90min.,153,"DECIMAL(6,3)",SOMETIMES
+Precipitación mm/h,match_weather,precipitation_mm_hr_at_kickoff,Intensidad de lluvia al inicio (mm/hora).,156,VARCHAR(100),SOMETIMES
+Precipitación Total 90min,match_weather,precipitation_mm_total_90m,Lluvia acumulada durante todo el partido.,158,VARCHAR(100),SOMETIMES
+Tipo Precipitación,match_weather,precipitation_type,NONE/RAIN/SNOW/HAIL. Nieve/granizo afectan visibilidad.,157,VARCHAR(50),SOMETIMES
+Cobertura Nubes %,match_weather,cloud_cover_pct_at_kickoff,Porcentaje de cielo cubierto.,165,"DECIMAL(5,2)",SOMETIMES
+Presión Atmosférica hPa,match_weather,pressure_hpa_at_kickoff,Presión barométrica. Cambios correlacionan con lesiones.,161,"DECIMAL(5,2)",SOMETIMES
+Visibilidad Metros,match_weather,visibility_m_at_kickoff,Distancia visibilidad. <1000m = niebla.,163,VARCHAR(100),SOMETIMES
+Punto Rocío °C,match_weather,dew_point_c_at_kickoff,Temperatura del punto de rocío (humedad absoluta).,168,VARCHAR(100),SOMETIMES
+Temperatura Bulbo Húmedo,match_weather,wet_bulb_temp_c_at_kickoff,Indicador estrés térmico combinado.,150,"DECIMAL(5,2)",SOMETIMES
+Índice Calor,match_weather,heat_index_c_at_kickoff,Sensación térmica por humedad alta.,169,"DECIMAL(6,3)",SOMETIMES
+Sensación Térmica,match_weather,feels_like_c_at_kickoff,Temperatura percibida con viento (wind chill).,171,BIGINT,SOMETIMES
+Riesgo Rayos,match_weather,lightning_risk_flag,BOOL: Riesgo tormentas eléctricas (suspensiones).,172,BOOLEAN,SOMETIMES
+Alerta Meteorológica,match_weather,weather_alert_flag,BOOL: Alertas oficiales activas.,166,BOOLEAN,SOMETIMES
+Tasa Cambio Clima,match_weather,weather_change_rate,Variación condiciones durante 90min.,164,"DECIMAL(5,2)",SOMETIMES
+Proxy Césped Mojado,match_weather,pitch_wetness_proxy,mm lluvia últimas 6h = estado césped.,170,VARCHAR(100),SOMETIMES
+Deslumbramiento Solar,match_weather,sun_glare_proxy,Altitud/azimut solar (problemas porteros).,167,VARCHAR(100),SOMETIMES
+Calidad Aire,match_weather,air_quality_index_at_kickoff,Índice contaminación (afecta respiración).,162,"DECIMAL(6,3)",SOMETIMES
+Luz Diurna,match_weather,daylight_flag,BOOL: Luz natural suficiente al inicio.,173,BOOLEAN,SOMETIMES
+Posición Liga Local,match_context,home_league_position,Posición tabla local ANTES del partido.,76,VARCHAR(100),RARE
+Posición Liga Visitante,match_context,away_league_position,Posición tabla visitante ANTES del partido.,78,VARCHAR(100),RARE
+Puntos Local,match_context,home_points,Puntos acumulados equipo local.,63,VARCHAR(100),RARE
+Puntos Visitante,match_context,away_points,Puntos acumulados equipo visitante.,61,VARCHAR(100),RARE
+Diferencia Goles Local,match_context,home_goal_diff,Diferencia de goles del local.,432,VARCHAR(100),SOMETIMES
+Diferencia Goles Visitante,match_context,away_goal_diff,Diferencia de goles del visitante.,415,VARCHAR(100),SOMETIMES
+Diferencia Puntos,match_context,points_gap,Diferencia puntos entre ambos equipos.,60,VARCHAR(100),RARE
+Local Zona Descenso,match_context,home_relegation_zone_flag,BOOL: Local en zona descenso.,79,BOOLEAN,RARE
+Visitante Zona Descenso,match_context,away_relegation_zone_flag,BOOL: Visitante en zona descenso.,80,BOOLEAN,RARE
+Local Lucha Título,match_context,home_title_race_flag,BOOL: Local en lucha por título.,84,BOOLEAN,RARE
+Visitante Lucha Título,match_context,away_title_race_flag,BOOL: Visitante en lucha por título.,82,BOOLEAN,RARE
+Local Lucha Europa,match_context,home_european_race_flag,BOOL: Local pelea plazas europeas.,83,BOOLEAN,RARE
+Visitante Lucha Europa,match_context,away_european_race_flag,BOOL: Visitante pelea plazas europeas.,81,BOOLEAN,RARE
+Partidos Restantes,match_context,matches_remaining,Partidos que quedan en temporada.,416,VARCHAR(100),SOMETIMES
+Es Final Temporada,match_context,is_season_finale,BOOL: Última jornada de liga.,475,BOOLEAN,SOMETIMES
+Es Derbi,match_context,is_derby,BOOL: Derbi local/regional.,85,BOOLEAN,RARE
+Es Rivalidad Histórica,match_context,is_rivalry_match,BOOL: Rivalidad histórica especial.,86,BOOLEAN,RARE
+Puntos para Objetivo,match_context,points_needed_for_objective,Puntos necesarios para objetivo (presión).,62,VARCHAR(100),RARE
+Player ID Alineación,match_lineups,player_id,FK → players. Jugador en la alineación.,547,INT,NEVER
+Es Titular,match_lineups,is_starter,BOOL: Empieza partido o está en banquillo.,96,BOOLEAN,SOMETIMES
+Posición Partido,match_lineups,match_position,Posición específica en este partido.,97,VARCHAR(100),SOMETIMES
+Es Capitán,match_lineups,is_captain,BOOL: Es capitán del equipo.,108,BOOLEAN,SOMETIMES
+Formación Equipo,match_lineups,team_formation,"Formación táctica (4-3-3, 4-4-2, 3-5-2).",90,VARCHAR(50),RARE
+Cambio Formación vs Anterior,match_lineups,formation_change_vs_last,BOOL: Formación cambió vs partido anterior.,91,BOOLEAN,RARE
+Cambios XI vs Anterior,match_lineups,lineup_changes_vs_last,Número de cambios en XI (0-11).,92,VARCHAR(100),RARE
+Edad Media XI,match_lineups,team_avg_age_xi,Edad promedio del XI inicial.,94,"DECIMAL(5,2)",RARE
+Valor Mercado XI,match_lineups,team_market_value_xi,Valor mercado total del XI en EUR.,93,"DECIMAL(5,2)",RARE
+Internacionalidades XI,match_lineups,team_total_caps_xi,Suma partidos internacionales del XI.,99,"DECIMAL(5,2)",SOMETIMES
+Lanzador Penaltis Disponible,match_lineups,penalty_taker_available,BOOL: Lanzador habitual en XI.,106,BOOLEAN,SOMETIMES
+Portero Titular Habitual,match_lineups,goalkeeper_regular_flag,BOOL: Juega el portero titular.,112,BOOLEAN,SOMETIMES
+Jugadores Cantera XI,match_lineups,academy_players_count_xi,Número canteranos en XI.,98,"DECIMAL(5,2)",SOMETIMES
+Cuota Local Apertura,match_odds,odds_home_open,Cuota apertura victoria local.,20,"DECIMAL(6,3)",RARE
+Cuota Empate Apertura,match_odds,odds_draw_open,Cuota apertura empate.,21,"DECIMAL(6,3)",RARE
+Cuota Visitante Apertura,match_odds,odds_away_open,Cuota apertura victoria visitante.,19,"DECIMAL(6,3)",RARE
+Cuota Local Cierre,match_odds,odds_home_close,Cuota cierre victoria local.,1,"DECIMAL(6,3)",RARE
+Cuota Empate Cierre,match_odds,odds_draw_close,Cuota cierre empate.,5,"DECIMAL(6,3)",RARE
+Cuota Visitante Cierre,match_odds,odds_away_close,Cuota cierre victoria visitante.,3,"DECIMAL(6,3)",RARE
+Cuota Over 2.5,match_odds,odds_over25_close,Cuota cierre para >2.5 goles.,6,"DECIMAL(6,3)",RARE
+Cuota Under 2.5,match_odds,odds_under25_close,Cuota cierre para <2.5 goles.,7,"DECIMAL(6,3)",RARE
+Cuota BTTS Sí,match_odds,odds_btts_yes_close,Cuota ambos equipos marcan.,9,"DECIMAL(5,2)",RARE
+Cuota BTTS No,match_odds,odds_btts_no_close,Cuota NO ambos equipos marcan.,8,"DECIMAL(6,3)",RARE
+Movimiento Línea Local,match_odds,odds_movement_home,Cierre-apertura local. Detecta 'smart money'.,15,"DECIMAL(6,3)",RARE
+Movimiento Línea Empate,match_odds,odds_movement_draw,Cierre-apertura empate.,16,"DECIMAL(6,3)",RARE
+Movimiento Línea Visitante,match_odds,odds_movement_away,Cierre-apertura visitante.,17,"DECIMAL(6,3)",RARE
+Prob. Implícita Local,match_odds,implied_prob_home,Probabilidad implícita victoria local.,12,"DECIMAL(6,3)",RARE
+Prob. Implícita Empate,match_odds,implied_prob_draw,Probabilidad implícita empate.,13,"DECIMAL(6,3)",RARE
+Prob. Implícita Visitante,match_odds,implied_prob_away,Probabilidad implícita victoria visitante.,14,"DECIMAL(6,3)",RARE
+Línea AH Apertura,match_odds,ah_line_open,Línea Handicap Asiático apertura.,18,"DECIMAL(6,3)",SOMETIMES
+Línea AH Cierre,match_odds,ah_line_close,Línea Handicap Asiático cierre.,10,"DECIMAL(6,3)",RARE
+Cuota AH Local,match_odds,ah_home_odds_close,Cuota AH local al cierre.,2,"DECIMAL(6,3)",RARE
+Cuota AH Visitante,match_odds,ah_away_odds_close,Cuota AH visitante al cierre.,4,"DECIMAL(6,3)",RARE
+Línea Total Goles,match_odds,total_goals_line_close,"Línea total goles cierre (2.5, 3.0).",11,SMALLINT,RARE
+Indicador Smart Money,match_odds,sharp_money_indicator,Línea+volumen = dinero profesional.,22,VARCHAR(100),SOMETIMES
+Distancia Viaje KM,match_travel,travel_distance_km,Km desde último partido o ciudad base.,217,INT,SOMETIMES
+Tiempo Viaje Horas,match_travel,travel_time_hours,Horas estimadas de desplazamiento.,223,SMALLINT,SOMETIMES
+Delta Longitud Viaje,match_travel,travel_direction_longitude_delta,Cambio longitud (proxy jet lag E-W).,218,"DECIMAL(9,6)",SOMETIMES
+Delta Zona Horaria,match_travel,time_zone_delta_hours,Diferencia horaria origen-destino.,227,SMALLINT,SOMETIMES
+Días Descanso,match_travel,days_since_last_match,Días desde el último partido oficial.,214,SMALLINT,SOMETIMES
+Partidos Últimos 7 Días,match_travel,matches_in_last_7d,Partidos jugados última semana.,224,VARCHAR(100),SOMETIMES
+Partidos Últimos 14 Días,match_travel,matches_in_last_14d,Partidos jugados últimas 2 semanas.,228,VARCHAR(100),SOMETIMES
+Minutos XI 14 Días,match_travel,minutes_played_last_14d_squad_sum,Suma minutos XI en 14 días.,225,SMALLINT,SOMETIMES
+Distribución Descanso XI,match_travel,rest_days_distribution_xi,Percentiles descanso XI probable.,216,"DECIMAL(5,2)",SOMETIMES
+Calendario Congestionado,match_travel,congested_schedule_flag,BOOL: >3 partidos en 10 días.,221,BOOLEAN,SOMETIMES
+Prórroga Anterior,match_travel,extra_time_last_match,BOOL: Último partido llegó a prórroga.,226,BOOLEAN,SOMETIMES
+Dif. Descanso vs Rival,match_travel,rest_days_diff_vs_opponent,Días descanso local - visitante.,215,SMALLINT,SOMETIMES
+Total Enfrentamientos,match_h2h,h2h_total_matches,Total partidos históricos entre ambos.,74,VARCHAR(100),SOMETIMES
+Victorias Local H2H,match_h2h,h2h_home_wins,Victorias del local en H2H total.,65,VARCHAR(100),SOMETIMES
+Empates H2H,match_h2h,h2h_draws,Empates en historial completo.,68,VARCHAR(100),SOMETIMES
+Victorias Visitante H2H,match_h2h,h2h_away_wins,Victorias del visitante en H2H total.,64,VARCHAR(100),SOMETIMES
+Victorias Local Últimos 5,match_h2h,h2h_last5_home_wins,Victorias local últimos 5 H2H.,36,VARCHAR(100),RARE
+Empates Últimos 5,match_h2h,h2h_last5_draws,Empates últimos 5 H2H.,34,VARCHAR(100),RARE
+Victorias Visitante Últimos 5,match_h2h,h2h_last5_away_wins,Victorias visitante últimos 5 H2H.,40,VARCHAR(100),RARE
+Media Goles Últimos 5 H2H,match_h2h,h2h_avg_goals_last5,Promedio goles totales últimos 5.,27,"DECIMAL(6,3)",RARE
+Tasa BTTS Últimos 5,match_h2h,h2h_btts_rate_last5,% partidos ambos marcaron últimos 5.,37,"DECIMAL(5,2)",RARE
+Resultado Último H2H,match_h2h,h2h_last_match_result,Resultado último H2H (W/D/L local).,66,VARCHAR(20),SOMETIMES
+Marcador Último H2H,match_h2h,h2h_last_match_score,Marcador exacto último H2H ('2-1').,67,VARCHAR(20),SOMETIMES
+Días Desde Último H2H,match_h2h,h2h_days_since_last,Días desde último enfrentamiento.,71,SMALLINT,SOMETIMES
+ID Evento,match_events,event_id,Identificador único del evento atómico.,527,BIGINT,NEVER
+Tipo Evento,match_events,event_type,GOAL/SHOT/FOUL/CARD/SUB/VAR/CORNER/OFFSIDE/INJURY.,460,VARCHAR(50),SOMETIMES
+Minuto Evento,match_events,event_minute,Minuto del partido (0-90+).,404,SMALLINT,SOMETIMES
+Segundo Evento,match_events,event_second,Segundo dentro del minuto (0-59).,478,VARCHAR(100),SOMETIMES
+Período,match_events,event_period,1H/2H/ET1/ET2 (tiempos del partido).,417,VARCHAR(100),SOMETIMES
+Timestamp UTC,match_events,event_timestamp_utc,Momento exacto del evento en UTC.,389,TIMESTAMP,SOMETIMES
+Equipo Evento,match_events,team_id,FK → teams. Equipo involucrado.,584,INT,NEVER
+Jugador Evento,match_events,player_id,FK → players. Jugador principal del evento.,548,INT,NEVER
+Coordenada X,match_events,event_x,Posición X en el campo (0-100).,381,"DECIMAL(5,2)",SOMETIMES
+Coordenada Y,match_events,event_y,Posición Y en el campo (0-100).,467,"DECIMAL(5,2)",SOMETIMES
+Resultado Evento,match_events,event_outcome,SUCCESS/FAIL para eventos con resultado.,414,VARCHAR(100),SOMETIMES
+ID Posesión,match_events,possession_id,Identificador de la secuencia de posesión.,528,INT,NEVER
+Inicio Posesión,match_events,possession_start_minute,Minuto inicio de la posesión.,419,SMALLINT,SOMETIMES
+Duración Posesión,match_events,possession_duration_s,Duración en segundos de la posesión.,410,VARCHAR(100),SOMETIMES
+Equipo Posesión,match_events,possession_team_id,FK → teams. Equipo con posesión.,601,INT,NEVER
+ID Gol,goals,goal_id,Identificador único del gol.,567,INT,NEVER
+Event ID Gol,goals,event_id,FK → match_events. Evento asociado.,529,BIGINT,NEVER
+Minuto Gol,goals,goal_minute,Minuto exacto del gol.,481,SMALLINT,SOMETIMES
+Goleador ID,goals,scorer_id,FK → players. Jugador que marca.,568,INT,NEVER
+Asistidor ID,goals,assister_id,FK → players. Jugador que asiste (NULL si no hay).,530,INT,NEVER
+Tipo Gol,goals,goal_type,OPEN_PLAY/PENALTY/FREE_KICK/OWN_GOAL/HEADER.,425,VARCHAR(50),SOMETIMES
+Parte Cuerpo,goals,goal_body_part,FOOT_RIGHT/FOOT_LEFT/HEAD/OTHER.,463,VARCHAR(100),SOMETIMES
+Situación Gol,goals,goal_situation,ORGANIZED_ATTACK/COUNTER/SET_PIECE.,468,VARCHAR(100),SOMETIMES
+Tipo Asistencia,goals,assist_type,PASS/CROSS/CORNER/THROUGH_BALL/NONE.,464,VARCHAR(50),SOMETIMES
+xG del Gol,goals,goal_xg,Expected Goals del disparo que resultó en gol.,437,"DECIMAL(5,2)",SOMETIMES
+Distancia Tiro M,goals,shot_distance_m,Distancia en metros desde donde se disparó.,426,INT,SOMETIMES
+Ángulo Tiro,goals,shot_angle_deg,Ángulo de disparo en grados.,438,VARCHAR(100),SOMETIMES
+Equipo Gol,goals,team_id,FK → teams. Equipo que anota.,585,INT,NEVER
+Equipo Marcó Primero,goals,first_goal_team,BOOL: True si es el primer gol del partido.,382,BOOLEAN,SOMETIMES
+Gol en Tiempo Añadido,goals,stoppage_time_goal_flag,BOOL: Gol en minutos 45+ o 90+.,424,BOOLEAN,SOMETIMES
+ID Tiro,shots,shot_id,Identificador único del disparo.,569,INT,NEVER
+Event ID Tiro,shots,event_id,FK → match_events. Evento asociado.,531,BIGINT,NEVER
+Minuto Tiro,shots,shot_minute,Minuto del disparo.,379,SMALLINT,SOMETIMES
+Segundo Tiro,shots,shot_second,Segundo del disparo.,396,VARCHAR(100),SOMETIMES
+Coordenada X Tiro,shots,shot_x,Posición X de origen del disparo.,383,"DECIMAL(5,2)",SOMETIMES
+Coordenada Y Tiro,shots,shot_y,Posición Y de origen del disparo.,454,"DECIMAL(5,2)",SOMETIMES
+Parte Cuerpo Tiro,shots,shot_body_part,FOOT/HEAD/OTHER.,405,VARCHAR(100),SOMETIMES
+Tipo Tiro,shots,shot_type,OPEN_PLAY/SET_PIECE/PENALTY/FREE_KICK/CORNER.,392,VARCHAR(50),SOMETIMES
+Tiro Contraataque,shots,shot_is_fast_break_flag,BOOL: Tiro en contraataque.,393,BOOLEAN,SOMETIMES
+Tiro al Primer Toque,shots,shot_is_one_touch_flag,BOOL: Disparo directo sin controlar.,427,BOOLEAN,SOMETIMES
+Gran Ocasión,shots,shot_is_big_chance_flag,BOOL: Ocasión clara (xG>0.3).,450,BOOLEAN,SOMETIMES
+A Puerta,shots,shot_on_target_flag,BOOL: Disparo entre los tres palos.,402,BOOLEAN,SOMETIMES
+Bloqueado,shots,shot_blocked_flag,BOOL: Disparo bloqueado por defensa.,411,BOOLEAN,SOMETIMES
+Parado,shots,shot_saved_flag,BOOL: Parada del portero.,469,BOOLEAN,SOMETIMES
+Fuera,shots,shot_off_target_flag,BOOL: Disparo desviado.,445,BOOLEAN,SOMETIMES
+Al Palo,shots,shot_hits_woodwork_flag,BOOL: Disparo al poste/larguero.,457,BOOLEAN,SOMETIMES
+Distancia Tiro M,shots,shot_distance_m,Metros desde donde se dispara.,428,INT,SOMETIMES
+Ángulo Tiro,shots,shot_angle_deg,Ángulo del disparo en grados.,439,VARCHAR(100),SOMETIMES
+Pie Disparo,shots,shot_footedness,L/R para pie izquierdo/derecho.,406,VARCHAR(100),SOMETIMES
+Precedido por Centro,shots,shot_preceded_by_cross_flag,BOOL: Hubo centro previo.,397,BOOLEAN,SOMETIMES
+xG del Tiro,shots,shot_xg,Expected Goals del disparo.,436,"DECIMAL(5,2)",SOMETIMES
+Tirador ID,shots,shooter_id,FK → players. Jugador que dispara.,612,INT,NEVER
+ID Tarjeta,cards,card_id,Identificador único de la tarjeta.,613,INT,NEVER
+Event ID Tarjeta,cards,event_id,FK → match_events.,532,BIGINT,NEVER
+Tipo Tarjeta,cards,card_type,YELLOW/SECOND_YELLOW/RED.,412,VARCHAR(50),SOMETIMES
+Minuto Tarjeta,cards,card_minute,Minuto de la tarjeta.,385,SMALLINT,SOMETIMES
+Segundo Tarjeta,cards,card_second,Segundo de la tarjeta.,479,VARCHAR(100),SOMETIMES
+Jugador Tarjeta ID,cards,card_player_id,FK → players. Jugador sancionado.,575,INT,NEVER
+Motivo Tarjeta,cards,card_reason_code,FOUL/PROTEST/SIMULATION/TIME_WASTING.,398,VARCHAR(10),SOMETIMES
+Zona Tarjeta X,cards,card_zone_x,Coordenada X donde ocurrió.,407,"DECIMAL(5,2)",SOMETIMES
+Zona Tarjeta Y,cards,card_zone_y,Coordenada Y donde ocurrió.,442,"DECIMAL(5,2)",SOMETIMES
+Equipo Tarjeta,cards,team_id,FK → teams. Equipo del sancionado.,586,INT,NEVER
+Primera Amarilla Partido,cards,first_yellow_minute,Minuto de la primera amarilla del partido.,455,"DECIMAL(5,2)",SOMETIMES
+Minutos con Inferioridad,cards,minutes_played_with_man_down,Minutos jugados con un hombre menos (tras roja).,434,SMALLINT,SOMETIMES
+ID Sustitución,substitutions,sub_id,Identificador único de la sustitución.,587,INT,NEVER
+Event ID Sustitución,substitutions,event_id,FK → match_events.,533,BIGINT,NEVER
+Minuto Sustitución,substitutions,sub_minute,Minuto del cambio.,380,SMALLINT,SOMETIMES
+Segundo Sustitución,substitutions,sub_second,Segundo del cambio.,443,VARCHAR(100),SOMETIMES
+Jugador Entra ID,substitutions,player_in_id,FK → players. Jugador que entra.,572,INT,NEVER
+Jugador Sale ID,substitutions,player_out_id,FK → players. Jugador que sale.,534,INT,NEVER
+Equipo Sustitución,substitutions,team_id,FK → teams. Equipo que realiza el cambio.,588,INT,NEVER
+Motivo Sustitución,substitutions,sub_reason,TACTICAL/INJURY/PERFORMANCE.,429,VARCHAR(100),SOMETIMES
+Intención Táctica,substitutions,sub_tactical_intent,DEFENSIVE/OFFENSIVE/NEUTRAL.,423,VARCHAR(100),SOMETIMES
+Primera Sustitución,substitutions,first_sub_minute,Minuto de la primera sustitución del partido.,394,SMALLINT,SOMETIMES
+Posición Sale,substitutions,position_out,Posición del jugador que sale.,418,VARCHAR(100),SOMETIMES
+Posición Entra,substitutions,position_in,Posición del jugador que entra.,377,VARCHAR(100),SOMETIMES
+ID Falta,fouls,foul_id,Identificador único de la falta.,576,INT,NEVER
+Event ID Falta,fouls,event_id,FK → match_events.,535,BIGINT,NEVER
+Minuto Falta,fouls,foul_minute,Minuto de la falta.,461,SMALLINT,SOMETIMES
+Segundo Falta,fouls,foul_second,Segundo de la falta.,453,VARCHAR(100),SOMETIMES
+Jugador Comete ID,fouls,foul_committed_by_player_id,FK → players. Quien comete.,549,INT,NEVER
+Jugador Sufre ID,fouls,foul_suffered_by_player_id,FK → players. Quien recibe.,580,INT,NEVER
+Zona Falta X,fouls,foul_zone_x,Coordenada X de la falta.,386,"DECIMAL(5,2)",SOMETIMES
+Zona Falta Y,fouls,foul_zone_y,Coordenada Y de la falta.,387,"DECIMAL(5,2)",SOMETIMES
+Severidad Falta,fouls,foul_severity,LOW/MEDIUM/HIGH (intensidad).,395,VARCHAR(100),SOMETIMES
+Ventaja Jugada,fouls,advantage_played_flag,BOOL: Árbitro dejó seguir.,401,BOOLEAN,SOMETIMES
+Equipo Comete,fouls,team_committed_id,FK → teams. Equipo que comete falta.,540,INT,NEVER
+Equipo Sufre,fouls,team_suffered_id,FK → teams. Equipo que recibe falta.,603,INT,NEVER
+Resultado Falta,fouls,foul_result,CARD/FREE_KICK/PENALTY/PLAY_ON.,388,VARCHAR(20),SOMETIMES
+Zona Campo,fouls,foul_pitch_zone,DEF/MID/ATT tercio del campo.,431,VARCHAR(100),SOMETIMES
+ID Balón Parado,set_pieces,set_piece_id,Identificador único del balón parado.,589,INT,NEVER
+Event ID,set_pieces,event_id,FK → match_events.,536,BIGINT,NEVER
+Tipo Balón Parado,set_pieces,set_piece_type,CORNER/FREE_KICK/THROW_IN/PENALTY.,420,VARCHAR(50),SOMETIMES
+Minuto,set_pieces,set_piece_minute,Minuto del balón parado.,390,SMALLINT,SOMETIMES
+Segundo,set_pieces,set_piece_second,Segundo del balón parado.,458,VARCHAR(100),SOMETIMES
+Ubicación X,set_pieces,set_piece_location_x,Coordenada X del saque.,435,"DECIMAL(5,2)",SOMETIMES
+Ubicación Y,set_pieces,set_piece_location_y,Coordenada Y del saque.,446,"DECIMAL(5,2)",SOMETIMES
+Lado Corner,set_pieces,corner_side,L/R para córners izquierdo/derecho.,465,VARCHAR(100),SOMETIMES
+Zona Saque Banda,set_pieces,throw_in_zone,DEF/MID/ATT para saques de banda.,433,VARCHAR(100),SOMETIMES
+Resultado Balón Parado,set_pieces,set_piece_outcome,GOAL/SHOT/CLEARANCE/RETAINED.,408,VARCHAR(100),SOMETIMES
+Ejecutor ID,set_pieces,taker_id,FK → players. Quien ejecuta.,604,INT,NEVER
+Equipo ID,set_pieces,team_id,FK → teams. Equipo que saca.,590,INT,NEVER
+ID Revisión VAR,var_reviews,var_check_id,Identificador único de la revisión.,542,INT,NEVER
+Event ID,var_reviews,event_id,FK → match_events.,537,BIGINT,NEVER
+Minuto Inicio VAR,var_reviews,var_check_minute_start,Minuto cuando comienza la revisión.,384,SMALLINT,SOMETIMES
+Minuto Fin VAR,var_reviews,var_check_minute_end,Minuto cuando termina la revisión.,447,SMALLINT,SOMETIMES
+Duración VAR Segundos,var_reviews,var_check_duration_s,Duración total en segundos.,421,VARCHAR(100),SOMETIMES
+Motivo VAR,var_reviews,var_reason,GOAL/PENALTY/RED/OFFSIDE.,476,VARCHAR(100),SOMETIMES
+Decisión VAR,var_reviews,var_outcome,OVERTURNED/CONFIRMED/NO_CHANGE.,413,VARCHAR(100),SOMETIMES
+Árbitro VAR ID,var_reviews,var_referee_id,FK → referees. Árbitro VAR.,581,INT,NEVER
+Tasa Reversiones VAR,var_reviews,var_referee_overturn_rate,Tasa histórica de decisiones revertidas del árbitro VAR.,449,"DECIMAL(5,2)",SOMETIMES
+Total Revisiones Partido,var_reviews,var_review_count_match,Número total de revisiones en el partido.,459,SMALLINT,SOMETIMES
+Segundos Totales VAR,var_reviews,var_total_delay_seconds_match,Tiempo total parado por VAR en el partido.,430,VARCHAR(100),SOMETIMES
+Decisión Original,var_reviews,original_decision,GOAL/NO_GOAL/PENALTY/NO_PENALTY. Decisión antes de VAR.,456,VARCHAR(100),SOMETIMES
+ID Stats Temporada,team_season_stats,stat_id,Identificador único del registro.,606,INT,NEVER
+Team ID,team_season_stats,team_id,FK → teams.,591,INT,NEVER
+Season ID,team_season_stats,season_id,FK → seasons.,550,INT,NEVER
+Competition ID,team_season_stats,competition_id,FK → competitions.,551,INT,NEVER
+xG Temporada,team_season_stats,xg_season,Expected Goals acumulados temporada.,52,"DECIMAL(5,3)",RARE
+xGA Temporada,team_season_stats,xga_season,Expected Goals Against acumulados.,47,"DECIMAL(5,3)",RARE
+xG Últimos 5,team_season_stats,xg_last5,xG en últimos 5 partidos.,25,"DECIMAL(5,3)",RARE
+xGA Últimos 5,team_season_stats,xga_last5,xGA en últimos 5 partidos.,26,"DECIMAL(5,3)",RARE
+Sobreperfomance xG,team_season_stats,xg_overperformance,Goles reales - xG (suerte/calidad).,48,"DECIMAL(5,3)",RARE
+npxG Temporada,team_season_stats,npxg_season,Non-penalty xG temporada.,50,"DECIMAL(5,3)",RARE
+Posesión Media,team_season_stats,avg_possession_season,Posesión media en la temporada.,116,VARCHAR(100),SOMETIMES
+Precisión Pases,team_season_stats,pass_accuracy_season,Precisión de pases en temporada.,123,VARCHAR(100),SOMETIMES
+PPDA Temporada,team_season_stats,ppda_season,Passes Per Defensive Action (presión).,141,VARCHAR(100),SOMETIMES
+Entradas Ganadas %,team_season_stats,tackles_won_pct_season,% de entradas ganadas.,139,"DECIMAL(5,2)",SOMETIMES
+Duelos Aéreos %,team_season_stats,aerial_duels_won_pct_season,% de duelos aéreos ganados.,115,"DECIMAL(5,2)",SOMETIMES
+Faltas Cometidas Media,team_season_stats,fouls_committed_avg_season,Media faltas cometidas por partido.,117,"DECIMAL(6,3)",SOMETIMES
+Faltas Recibidas Media,team_season_stats,fouls_received_avg_season,Media faltas recibidas por partido.,144,"DECIMAL(6,3)",SOMETIMES
+Forma Últimos 5,team_season_stats,form_last5,Puntos en últimos 5 partidos.,31,VARCHAR(100),RARE
+Forma Casa Últimos 5,team_season_stats,form_last5_home,Puntos últimos 5 en casa.,32,VARCHAR(100),RARE
+Forma Fuera Últimos 5,team_season_stats,form_last5_away,Puntos últimos 5 fuera.,33,VARCHAR(100),RARE
+Racha Victorias,team_season_stats,win_streak,Partidos consecutivos ganados.,41,VARCHAR(100),RARE
+Racha Sin Ganar,team_season_stats,winless_streak,Partidos consecutivos sin ganar.,42,VARCHAR(100),RARE
+Racha Portería Cero,team_season_stats,clean_sheet_streak,Partidos consecutivos sin encajar.,43,VARCHAR(100),RARE
+Racha Sin Marcar,team_season_stats,failed_to_score_streak,Partidos consecutivos sin marcar.,44,VARCHAR(20),RARE
+Goles Marcados Últimos 5,team_season_stats,goals_scored_last5,Goles a favor últimos 5.,28,SMALLINT,RARE
+Goles Encajados Últimos 5,team_season_stats,goals_conceded_last5,Goles en contra últimos 5.,29,SMALLINT,RARE
+Días Sin Ganar,team_season_stats,days_without_win,Días naturales desde última victoria.,110,SMALLINT,SOMETIMES
+Minutos Sin Marcar,team_season_stats,minutes_without_scoring,Minutos acumulados sin gol.,124,SMALLINT,SOMETIMES
+Snapshot Posición,team_season_stats,snapshot_league_position,Posición en tabla al momento del snapshot.,77,VARCHAR(100),RARE
+Snapshot Puntos,team_season_stats,snapshot_points,Puntos al momento del snapshot.,120,VARCHAR(100),SOMETIMES
+Partidos Jugados,team_season_stats,matches_played,Partidos jugados en la temporada.,113,VARCHAR(100),SOMETIMES
+Snapshot Date,team_season_stats,snapshot_date,Fecha del snapshot de datos.,107,DATE,SOMETIMES
+ID Stats Jugador Temp,player_season_stats,stat_id,Identificador único del registro.,607,INT,NEVER
+Player ID,player_season_stats,player_id,FK → players.,552,INT,NEVER
+Season ID,player_season_stats,season_id,FK → seasons.,553,INT,NEVER
+Competition ID,player_season_stats,competition_id,FK → competitions.,554,INT,NEVER
+Goles Temporada,player_season_stats,goals_season,Goles anotados en la temporada.,231,SMALLINT,RARE
+Asistencias Temporada,player_season_stats,assists_season,Asistencias en la temporada.,233,SMALLINT,RARE
+Minutos Jugados,player_season_stats,minutes_played_season,Minutos totales jugados.,247,SMALLINT,SOMETIMES
+Partidos Titular,player_season_stats,matches_started_season,Partidos como titular.,245,VARCHAR(100),SOMETIMES
+Tarjetas Amarillas,player_season_stats,yellow_cards_season,Amarillas acumuladas.,251,SMALLINT,SOMETIMES
+Tarjetas Rojas,player_season_stats,red_cards_season,Rojas acumuladas.,273,SMALLINT,SOMETIMES
+xG Jugador Temporada,player_season_stats,player_xg_season,Expected Goals del jugador.,49,"DECIMAL(5,2)",RARE
+xA Jugador Temporada,player_season_stats,player_xa_season,Expected Assists del jugador.,250,"DECIMAL(5,2)",SOMETIMES
+Tiros Temporada,player_season_stats,shots_season,Total de disparos.,254,VARCHAR(100),SOMETIMES
+Tiros a Puerta,player_season_stats,shots_on_target_season,Disparos a puerta.,264,VARCHAR(100),SOMETIMES
+Pases Clave,player_season_stats,key_passes_season,Pases que generan ocasión.,286,VARCHAR(100),SOMETIMES
+Duelos Ganados %,player_season_stats,duels_won_pct_season,% de duelos ganados.,248,"DECIMAL(5,2)",SOMETIMES
+Rating Promedio,player_season_stats,avg_rating_season,Rating promedio en la temporada.,58,"DECIMAL(6,3)",RARE
+Goles Últimos 5,player_season_stats,goals_last5,Goles en últimos 5 partidos.,30,SMALLINT,RARE
+Asistencias Últimos 5,player_season_stats,assists_last5,Asistencias en últimos 5.,38,SMALLINT,RARE
+Minutos Sin Marcar,player_season_stats,minutes_since_last_goal,Minutos desde último gol.,243,SMALLINT,SOMETIMES
+ID Stats Partido Jugador,player_match_stats,stat_id,Identificador único del registro.,608,INT,NEVER
+Player ID,player_match_stats,player_id,FK → players.,555,INT,NEVER
+Match ID,player_match_stats,match_id,FK → matches.,570,BIGINT,NEVER
+Minutos Jugados,player_match_stats,minutes_played,Minutos jugados en el partido.,274,SMALLINT,SOMETIMES
+Goles Partido,player_match_stats,goals,Goles anotados en el partido.,275,SMALLINT,SOMETIMES
+Asistencias Partido,player_match_stats,assists,Asistencias en el partido.,255,SMALLINT,SOMETIMES
+Tiros Partido,player_match_stats,shots,Disparos realizados.,265,VARCHAR(100),SOMETIMES
+Tiros a Puerta,player_match_stats,shots_on_target,Disparos a puerta.,266,VARCHAR(100),SOMETIMES
+Pases Completados,player_match_stats,passes_completed,Pases exitosos.,276,VARCHAR(100),SOMETIMES
+Pases Intentados,player_match_stats,passes_attempted,Total pases intentados.,277,"DECIMAL(5,2)",SOMETIMES
+Pases Clave,player_match_stats,key_passes,Pases que crean ocasión.,287,VARCHAR(100),SOMETIMES
+Duelos Ganados,player_match_stats,duels_won,Duelos ganados.,267,VARCHAR(100),SOMETIMES
+Duelos Totales,player_match_stats,duels_total,Total de duelos.,278,VARCHAR(100),SOMETIMES
+Faltas Cometidas,player_match_stats,fouls_committed,Faltas cometidas.,288,VARCHAR(100),SOMETIMES
+Faltas Recibidas,player_match_stats,fouls_suffered,Faltas recibidas.,268,VARCHAR(100),SOMETIMES
+Tarjetas Amarillas,player_match_stats,yellow_cards,Amarillas en el partido (0-2).,279,SMALLINT,SOMETIMES
+Tarjeta Roja,player_match_stats,red_card,BOOL: Expulsado en el partido.,280,BOOLEAN,SOMETIMES
+xG Partido,player_match_stats,player_xg_match,xG generado por el jugador.,45,"DECIMAL(5,2)",RARE
+xA Partido,player_match_stats,player_xa_match,xA generado por el jugador.,289,"DECIMAL(5,2)",SOMETIMES
+Rating Partido,player_match_stats,match_rating,Calificación del partido (0-10).,269,"DECIMAL(6,3)",SOMETIMES
+ID Stats Árbitro Temp,referee_season_stats,stat_id,Identificador único del registro.,609,INT,NEVER
+Referee ID,referee_season_stats,referee_id,FK → referees.,595,INT,NEVER
+Season ID,referee_season_stats,season_id,FK → seasons.,556,INT,NEVER
+Amarillas por Partido,referee_season_stats,avg_yellows_per_match,Media amarillas por partido.,184,"DECIMAL(5,2)",SOMETIMES
+Rojas por Partido,referee_season_stats,avg_reds_per_match,Media rojas por partido.,189,VARCHAR(100),SOMETIMES
+Faltas por Partido,referee_season_stats,avg_fouls_per_match,Media faltas por partido.,200,VARCHAR(100),SOMETIMES
+Penaltis por Partido,referee_season_stats,avg_penalties_per_match,Media penaltis señalados.,211,VARCHAR(100),SOMETIMES
+% Victorias Locales,referee_season_stats,home_win_pct_season,% victorias locales con este árbitro.,193,"DECIMAL(5,2)",SOMETIMES
+% Empates,referee_season_stats,draw_pct_season,% empates con este árbitro.,201,"DECIMAL(5,2)",SOMETIMES
+Tiempo Añadido Media,referee_season_stats,avg_stoppage_time_season,Tiempo añadido promedio que da.,213,VARCHAR(100),SOMETIMES
+Tasa Reversiones VAR,referee_season_stats,var_overturn_rate,% decisiones revertidas por VAR.,206,"DECIMAL(5,2)",SOMETIMES
+Partidos Dirigidos Temp,referee_season_stats,matches_refereed_season,Partidos dirigidos en temporada.,209,VARCHAR(100),SOMETIMES
+Home Bias Index,referee_season_stats,home_bias_index,Índice de sesgo hacia equipos locales.,192,"DECIMAL(6,3)",SOMETIMES
+Racha Tarjetas,referee_season_stats,cards_last_3_matches,Tarjetas en últimos 3 partidos.,210,SMALLINT,SOMETIMES
+Polémica Último Partido,referee_season_stats,last_match_controversy_flag,BOOL: Hubo polémica en último partido.,202,BOOLEAN,SOMETIMES
+Faltas por Tarjeta,referee_season_stats,fouls_per_card_ratio,Ratio de tolerancia (faltas/tarjeta).,207,"DECIMAL(5,2)",SOMETIMES
+ID Ciudad,cities,city_id,Identificador único de la ciudad.,602,INT,NEVER
+Nombre Ciudad,cities,city_name,Nombre de la ciudad.,497,VARCHAR(255),NEVER
+País,cities,country_code,Código ISO del país.,331,VARCHAR(10),RARE
+Latitud,cities,latitude,Coordenada GPS latitud.,344,"DECIMAL(9,6)",RARE
+Longitud,cities,longitude,Coordenada GPS longitud.,325,"DECIMAL(9,6)",RARE
+Zona Horaria,cities,timezone,"Zona horaria (Europe/Madrid, America/Buenos_Aires).",351,VARCHAR(100),RARE
+ID Lesión,player_injuries,injury_id,Identificador único de la lesión.,541,INT,NEVER
+Player ID,player_injuries,player_id,FK → players.,557,INT,NEVER
+Tipo Lesión,player_injuries,injury_type,MUSCULAR/LIGAMENT/BONE/ILLNESS/OTHER.,485,VARCHAR(50),OFTEN
+Zona Afectada,player_injuries,body_zone,LEG/KNEE/ANKLE/BACK/ARM/HEAD.,489,VARCHAR(100),OFTEN
+Fecha Inicio,player_injuries,injury_start_date,Fecha cuando se lesionó.,490,DATE,OFTEN
+Fecha Retorno,player_injuries,injury_end_date,Fecha de retorno a entrenamientos.,491,DATE,OFTEN
+Días Baja,player_injuries,days_out,Días totales de baja.,487,SMALLINT,OFTEN
+Es Recurrente,player_injuries,is_recurring,BOOL: Lesión recurrente en misma zona.,486,BOOLEAN,OFTEN
+Gravedad,player_injuries,severity,MINOR/MODERATE/SEVERE/CAREER_THREATENING.,488,VARCHAR(100),OFTEN
+Partido Lesión ID,player_injuries,injury_match_id,FK → matches. Partido donde se lesionó (si aplica).,596,BIGINT,NEVER
+ID Traspaso,player_transfers,transfer_id,Identificador único del traspaso.,597,INT,NEVER
+Player ID,player_transfers,player_id,FK → players.,558,INT,NEVER
+Equipo Origen ID,player_transfers,from_team_id,FK → teams. Equipo de origen.,582,INT,NEVER
+Equipo Destino ID,player_transfers,to_team_id,FK → teams. Equipo de destino.,571,INT,NEVER
+Fecha Traspaso,player_transfers,transfer_date,Fecha del traspaso.,493,DATE,OFTEN
+Tipo Traspaso,player_transfers,transfer_type,PERMANENT/LOAN/FREE/RETURN_LOAN.,492,VARCHAR(50),OFTEN
+Precio EUR,player_transfers,transfer_fee_eur,Precio del traspaso en EUR.,494,BIGINT,OFTEN
+Season ID,player_transfers,season_id,FK → seasons. Temporada del traspaso.,559,INT,NEVER
+ID Tenure,manager_tenures,tenure_id,Identificador único del período.,605,INT,NEVER
+Manager ID,manager_tenures,manager_id,FK → managers.,565,INT,NEVER
+Team ID,manager_tenures,team_id,FK → teams.,592,INT,NEVER
+Fecha Inicio,manager_tenures,start_date,Fecha de inicio en el cargo.,314,DATE,SOMETIMES
+Fecha Fin,manager_tenures,end_date,Fecha fin del cargo (NULL si activo).,320,DATE,SOMETIMES
+Días en Cargo,manager_tenures,tenure_days,Días totales en el cargo.,295,SMALLINT,SOMETIMES
+Partidos Dirigidos,manager_tenures,matches_managed,Partidos dirigidos con este equipo.,318,VARCHAR(100),SOMETIMES
+Win Rate,manager_tenures,win_rate,Porcentaje de victorias con este equipo.,299,"DECIMAL(5,2)",SOMETIMES
+Asistencia Real,match_attendance,attendance_count,Espectadores presentes en el partido.,326,SMALLINT,SOMETIMES
+% Ocupación,match_attendance,attendance_pct_capacity,Asistencia / Capacidad * 100.,327,"DECIMAL(5,2)",SOMETIMES
+Es Sold Out,match_attendance,is_sold_out,BOOL: Estadio lleno.,367,BOOLEAN,OFTEN
+Afición Local Sancionada,match_attendance,home_ultras_banned_flag,BOOL: Afición local ausente por sanción.,359,BOOLEAN,OFTEN
+Índice Densidad Crowd,match_attendance,crowd_density_index,Asistencia/sectores para medir concentración.,361,"DECIMAL(6,3)",OFTEN
+Diferencial Ruido dB,match_attendance,noise_differential_db,Diferencial de ruido ambiente (proxy presión).,355,VARCHAR(100),OFTEN
+Sentimiento Redes Pre,match_attendance,social_sentiment_prematch,Índice -1 a +1 de menciones positivas/negativas.,332,VARCHAR(100),OFTEN
+Volumen Menciones,match_attendance,social_mentions_volume,Volumen de menciones en redes sociales pre-partido.,364,VARCHAR(100),OFTEN
+Presión Mediática,match_attendance,media_pressure_index,"Índice de presión mediática (portadas, noticias).",336,"DECIMAL(6,3)",OFTEN
+Declaraciones Polémicas,match_attendance,controversial_statements_flag,BOOL: Hubo declaraciones polémicas pre-partido.,357,BOOLEAN,OFTEN
+Tiempo Añadido 1H Anunciado,match_stoppage_times,stoppage_time_announced_1h_min,Minutos añadidos anunciados en primera mitad.,309,SMALLINT,SOMETIMES
+Tiempo Añadido 2H Anunciado,match_stoppage_times,stoppage_time_announced_2h_min,Minutos añadidos anunciados en segunda mitad.,291,SMALLINT,SOMETIMES
+Tiempo Añadido 1H Real,match_stoppage_times,stoppage_time_actual_1h_s,Segundos reales jugados sobre los 45.,296,VARCHAR(100),SOMETIMES
+Tiempo Añadido 2H Real,match_stoppage_times,stoppage_time_actual_2h_s,Segundos reales jugados sobre los 90.,292,VARCHAR(100),SOMETIMES
+Tiempo Balón en Juego,match_stoppage_times,ball_in_play_time_total_s,Segundos totales con balón en juego.,306,VARCHAR(100),SOMETIMES
+Eventos Balón Fuera,match_stoppage_times,ball_out_of_play_events_count,Veces que el balón salió de juego.,310,SMALLINT,SOMETIMES
+Delay Promedio Reinicio,match_stoppage_times,restart_delay_avg_s,Segundos promedio para reanudar.,297,"DECIMAL(6,3)",SOMETIMES
+Parones Lesión Count,match_stoppage_times,injury_stoppage_count,Número de parones por lesión.,304,SMALLINT,SOMETIMES
+Parones Lesión Total,match_stoppage_times,injury_stoppage_total_s,Segundos totales parados por lesiones.,293,VARCHAR(100),SOMETIMES
+Pausas Hidratación,match_stoppage_times,drink_breaks_count,Número de pausas de hidratación.,303,SMALLINT,SOMETIMES
+Pausas Enfriamiento,match_stoppage_times,cooling_breaks_count,Número de pausas de enfriamiento.,302,SMALLINT,SOMETIMES
+Tiempo Muerto VAR Total,match_stoppage_times,var_total_delay_s,Segundos totales parados por VAR.,305,VARCHAR(100),SOMETIMES
+Árbitro vs Local Record,referee_match_history,referee_h2h_home_team_record,Historial W/D/L del árbitro con equipo local.,73,VARCHAR(20),SOMETIMES
+Árbitro vs Visitante Record,referee_match_history,referee_h2h_away_team_record,Historial W/D/L del árbitro con visitante.,69,VARCHAR(20),SOMETIMES
+Amarillas Árbitro a Local,referee_match_history,referee_x_home_yellow_rate,Tasa amarillas del árbitro a este equipo local.,198,"DECIMAL(5,2)",SOMETIMES
+Amarillas Árbitro a Visit,referee_match_history,referee_x_away_yellow_rate,Tasa amarillas del árbitro a este visitante.,196,"DECIMAL(5,2)",SOMETIMES
+Penaltis Árbitro a Local,referee_match_history,referee_x_home_penalty_rate,Tasa penaltis señalados favor del local.,190,"DECIMAL(5,2)",SOMETIMES
+Penaltis Árbitro a Visit,referee_match_history,referee_x_away_penalty_rate,Tasa penaltis señalados favor del visitante.,191,"DECIMAL(5,2)",SOMETIMES
+Expulsiones Árbitro Local,referee_match_history,referee_x_home_red_history,Historial rojas árbitro a este equipo local.,195,"DECIMAL(5,2)",SOMETIMES
+Expulsiones Árbitro Visit,referee_match_history,referee_x_away_red_history,Historial rojas árbitro a este visitante.,194,"DECIMAL(5,2)",SOMETIMES
+Match Estilo vs Árbitro Local,referee_match_history,referee_x_home_fouls_style_match,Match estilo agresivo local + árbitro estricto.,197,"DECIMAL(5,2)",SOMETIMES
+Match Estilo vs Árbitro Visit,referee_match_history,referee_x_away_fouls_style_match,Match estilo agresivo visit + árbitro estricto.,199,"DECIMAL(5,2)",SOMETIMES
+Manager Local ID,manager_match_context,home_manager_id,FK → managers. Técnico local.,614,INT,NEVER
+Manager Visitante ID,manager_match_context,away_manager_id,FK → managers. Técnico visitante.,598,INT,NEVER
+Días Cargo Local,manager_match_context,home_manager_tenure_days,Días en el cargo del técnico local.,298,SMALLINT,SOMETIMES
+Días Cargo Visitante,manager_match_context,away_manager_tenure_days,Días en el cargo del técnico visitante.,294,SMALLINT,SOMETIMES
+H2H Entrenadores Record,manager_match_context,manager_h2h_record,Historial enfrentamientos W/D/L técnicos.,72,VARCHAR(20),SOMETIMES
+H2H Total Partidos,manager_match_context,manager_h2h_total_matches,Total enfrentamientos entre técnicos.,70,VARCHAR(100),SOMETIMES
+Win Rate Local Temp,manager_match_context,home_manager_win_rate_season,% victorias técnico local temporada.,300,"DECIMAL(5,2)",SOMETIMES
+Win Rate Visitante Temp,manager_match_context,away_manager_win_rate_season,% victorias técnico visitante temporada.,301,"DECIMAL(5,2)",SOMETIMES
+Técnico Nuevo Local,manager_match_context,home_manager_new_flag,BOOL: Técnico local < 5 partidos.,311,BOOLEAN,OFTEN
+Técnico Nuevo Visitante,manager_match_context,away_manager_new_flag,BOOL: Técnico visitante < 5 partidos.,313,BOOLEAN,OFTEN
+Ex-Técnico Rival Local,manager_match_context,home_manager_former_club_flag,BOOL: Técnico local fue del rival.,308,BOOLEAN,OFTEN
+Ex-Técnico Rival Visit,manager_match_context,away_manager_former_club_flag,BOOL: Técnico visitante fue del rival.,307,BOOLEAN,OFTEN
+Goles Favor Media Local,manager_match_context,home_manager_avg_goals_scored,Media goles favor técnico local.,315,"DECIMAL(6,3)",SOMETIMES
+Goles Favor Media Visit,manager_match_context,away_manager_avg_goals_scored,Media goles favor técnico visitante.,321,"DECIMAL(6,3)",SOMETIMES
+Ex-Jugadores Local vs Rival,match_emotional_connections,home_xi_former_away_players_count,Jugadores XI local ex del visitante.,378,"DECIMAL(5,2)",OFTEN
+Ex-Jugadores Visit vs Rival,match_emotional_connections,away_xi_former_home_players_count,Jugadores XI visitante ex del local.,391,"DECIMAL(5,2)",OFTEN
+Cedidos Rival en XI Local,match_emotional_connections,home_xi_on_loan_from_away,Cedidos del rival en XI local.,477,"DECIMAL(5,2)",OFTEN
+Cedidos Rival en XI Visit,match_emotional_connections,away_xi_on_loan_from_home,Cedidos del rival en XI visitante.,451,"DECIMAL(5,2)",OFTEN
+Jugadores Ex-Técnico Rival,match_emotional_connections,players_trained_by_opponent_manager,Jugadores entrenados por técnico rival.,444,VARCHAR(100),OFTEN
+Bonificación Económica,match_emotional_connections,economic_bonus_flag,BOOL: Hay bonificación por ganar.,471,BOOLEAN,OFTEN
+Ley del Ex Local,match_emotional_connections,law_of_ex_home_flag,BOOL: Ex-jugador en XI local vs su ex-club.,399,BOOLEAN,OFTEN
+Ley del Ex Visitante,match_emotional_connections,law_of_ex_away_flag,BOOL: Ex-jugador en XI visitante vs su ex-club.,400,BOOLEAN,OFTEN
+Conflicto Árbitro Jugador,match_emotional_connections,player_referee_conflict_history,Jugadores con historial vs este árbitro.,466,VARCHAR(100),OFTEN
+Nacionalidad Foránea %,match_emotional_connections,foreign_nationality_pct_xi,% jugadores XI con nacionalidad diferente al país.,422,"DECIMAL(5,2)",OFTEN
+Fatiga x Descanso Diff,cross_correlation_features,fatigue_rest_diff,Diferencia días descanso (home - away).,482,VARCHAR(100),SOMETIMES
+Asimetría Fatiga Viaje,cross_correlation_features,travel_fatigue_asymmetry,Asimetría de fatiga por viaje.,472,VARCHAR(100),SOMETIMES
+Congestión x Rotación Local,cross_correlation_features,congestion_x_rotation_home,Congestión × rotación XI local.,448,"DECIMAL(5,2)",SOMETIMES
+Congestión x Rotación Visit,cross_correlation_features,congestion_x_rotation_away,Congestión × rotación XI visitante.,440,"DECIMAL(5,2)",SOMETIMES
+Lluvia x Posesión Style,cross_correlation_features,rain_x_possession_style,Lluvia × equipo de posesión.,470,"DECIMAL(5,2)",SOMETIMES
+Viento x Balón Largo,cross_correlation_features,wind_x_long_ball_style,Viento × equipo de balón largo.,474,"DECIMAL(5,2)",SOMETIMES
+Altitud x Visitante Costa,cross_correlation_features,altitude_x_visitor_sea_level,Altitud × visitante de nivel mar.,480,"DECIMAL(5,2)",SOMETIMES
+Cuotas vs Forma Local,cross_correlation_features,odds_vs_form_discrepancy_home,Discrepancia cuotas vs forma local.,23,"DECIMAL(6,3)",SOMETIMES
+Cuotas vs Forma Visit,cross_correlation_features,odds_vs_form_discrepancy_away,Discrepancia cuotas vs forma visitante.,24,"DECIMAL(6,3)",SOMETIMES
+Presión Tabla Local,cross_correlation_features,table_pressure_index_home,Índice presión clasificación local.,473,"DECIMAL(6,3)",SOMETIMES
+Presión Tabla Visitante,cross_correlation_features,table_pressure_index_away,Índice presión clasificación visitante.,441,"DECIMAL(6,3)",SOMETIMES
+Momentum Combinado,cross_correlation_features,combined_momentum_index,Índice momentum local - visitante.,462,"DECIMAL(6,3)",SOMETIMES
+Rating vs Media Personal,player_match_stats,rating_vs_personal_avg,Diferencia entre rating del partido y media personal temporada. Detecta picos/caídas.,281,"DECIMAL(6,3)",SOMETIMES
+Es MVP Partido,player_match_stats,is_motm_flag,BOOL: Designado Man of the Match en este partido.,282,BOOLEAN,SOMETIMES
+Partido Homenaje,player_match_stats,tribute_match_flag,"BOOL: Partido dedicado/homenaje a alguien (fallecimiento, retiro).",270,BOOLEAN,SOMETIMES
+Post Error Viral,player_match_stats,first_match_after_viral_error,BOOL: Es su primer partido después de un error viral.,256,BOOLEAN,SOMETIMES
+MVPs Temporada,player_season_stats,motm_count_season,Veces elegido MVP/MOTM en la temporada.,240,SMALLINT,SOMETIMES
+MVPs Últimos 5,player_season_stats,motm_count_last5,MVPs en últimos 5 partidos (racha de confianza).,39,SMALLINT,RARE
+Win Rate Sin Público,player_season_stats,win_rate_behind_closed_doors,% victorias históricas en partidos sin público.,252,"DECIMAL(5,2)",SOMETIMES
+Rating Medio Sin Público,player_season_stats,avg_rating_no_crowd,Rating promedio en partidos a puerta cerrada.,55,"DECIMAL(6,3)",RARE
+Meses en País,player_season_stats,months_in_country,Meses desde que llegó al país de la liga actual. Proxy adaptación.,257,SMALLINT,SOMETIMES
+Mismo Idioma,player_season_stats,same_language_flag,BOOL: Idioma nativo = idioma del país de la liga.,246,BOOLEAN,SOMETIMES
+Delta Clima Origen,player_season_stats,climate_delta_origin,Diferencia climática vs país de origen (tropical→frío = alto delta).,241,VARCHAR(100),SOMETIMES
+Primera Temp Extranjero,player_season_stats,first_foreign_season_flag,BOOL: Primera temporada jugando fuera de su país natal.,283,BOOLEAN,SOMETIMES
+Rating Medio Liga,player_season_stats,avg_rating_league,Rating promedio solo en partidos de liga doméstica.,54,"DECIMAL(6,3)",RARE
+Rating Medio Copa Nacional,player_season_stats,avg_rating_domestic_cup,Rating promedio en copas nacionales.,59,"DECIMAL(6,3)",RARE
+Rating Medio Continental,player_season_stats,avg_rating_continental,Rating promedio en Champions/Libertadores/Europa League.,57,"DECIMAL(6,3)",RARE
+Goles x90 por Competición,player_season_stats,goals_per90_by_comp_type,"JSON con goles/90min segmentado: league, cup, continental.",229,SMALLINT,RARE
+Win Rate Sin Público Equipo,team_season_stats,team_win_rate_no_crowd,% victorias del equipo en partidos sin público.,127,"DECIMAL(5,2)",SOMETIMES
+Era Pandemia,matches,pandemic_era_flag,BOOL: Partido durante COVID-19 (Mar 2020 - Jun 2022). Análisis histórico.,352,BOOLEAN,RARE
+Silbidos Partido Anterior,match_attendance,boos_last_match_flag,BOOL: Hubo silbidos/abucheos masivos en el partido anterior.,373,BOOLEAN,OFTEN
+Familiar en XI Rival,match_emotional_connections,family_member_opponent_flag,BOOL: Tiene hermano/padre/hijo en el XI del equipo rival.,409,BOOLEAN,OFTEN
+Tipo Parentesco Rival,match_emotional_connections,family_relation_type,BROTHER/FATHER/SON/COUSIN. Tipo de relación familiar con rival.,403,VARCHAR(50),OFTEN
+H2H vs Familiar,match_emotional_connections,family_h2h_record,Record W/D/L en enfrentamientos previos contra su familiar.,75,VARCHAR(20),SOMETIMES
+Presión Hinchada Compuesta,cross_correlation_features,fan_pressure_composite,Índice combinado: winless_streak × -sentiment × media_pressure.,452,"DECIMAL(5,2)",SOMETIMES
+ID Evento Personal,player_personal_events,event_id,Identificador único del evento personal.,538,BIGINT,NEVER
+Player ID Evento,player_personal_events,player_id,FK → players. Jugador afectado por el evento.,560,INT,NEVER
+Tipo Evento Personal,player_personal_events,event_type,BEREAVEMENT/BIRTH/WEDDING/ILLNESS_FAMILY/DIVORCE. Categoría del evento.,502,VARCHAR(50),OFTEN
+Fecha Evento,player_personal_events,event_date,Fecha del evento personal.,503,DATE,OFTEN
+Días Desde Evento,player_personal_events,days_since_event,Días transcurridos desde el evento. Impacto decae con tiempo.,500,SMALLINT,OFTEN
+Gravedad Evento,player_personal_events,severity,LOW/MEDIUM/HIGH/CRITICAL. Pondera el impacto psicológico.,501,VARCHAR(100),OFTEN
+Relación Afectado,player_personal_events,affected_relation,PARENT/SIBLING/CHILD/SPOUSE/TEAMMATE/FRIEND. Relación con la persona.,496,VARCHAR(100),OFTEN
+Índice Estabilidad País,match_geopolitical_context,country_stability_index,Índice 0-100 de estabilidad política (Global Peace Index).,504,"DECIMAL(6,3)",OFTEN
+Conflicto Activo,match_geopolitical_context,active_conflict_flag,BOOL: Conflicto armado activo en el país del partido.,508,BOOLEAN,OFTEN
+Tensión Bilateral,match_geopolitical_context,bilateral_tension_flag,BOOL: Tensión política entre países de los equipos (Serbia-Kosovo).,506,BOOLEAN,OFTEN
+Alerta Orden Público,match_geopolitical_context,public_order_alert_flag,BOOL: Protestas/disturbios en la ciudad el día del partido.,507,BOOLEAN,OFTEN
+Nivel Seguridad,match_geopolitical_context,security_level,LOW/MEDIUM/HIGH/EXTREME. Nivel de despliegue policial requerido.,505,VARCHAR(50),OFTEN
+Restricción Movilidad,match_geopolitical_context,mobility_restriction_flag,BOOL: Toque de queda o restricciones de movimiento activas.,509,BOOLEAN,OFTEN
+Días para Torneo Mayor,player_tournament_context,days_to_major_tournament,Días hasta Copa del Mundo/Eurocopa/Copa América si está convocado.,510,SMALLINT,OFTEN
+Convocado Selección,player_tournament_context,national_team_callup_flag,BOOL: Convocado para próxima fecha FIFA o torneo.,511,BOOLEAN,OFTEN
+Fase Continental Actual,player_tournament_context,continental_stage,NULL/GROUPS/R16/QF/SF/FINAL. Fase actual en Champions/Libertadores.,89,VARCHAR(50),RARE
+Días para Partido Continental,player_tournament_context,days_to_continental_match,Días hasta próximo partido de torneo continental.,512,SMALLINT,OFTEN
+Riesgo Reservarse,player_tournament_context,self_preservation_risk,Índice 0-1: probabilidad de que el jugador 'se guarde' para torneo mayor.,513,VARCHAR(100),OFTEN
+ID Incidente Mediático,player_media_incidents,incident_id,Identificador único del incidente viral.,561,INT,NEVER
+Player ID Incidente,player_media_incidents,player_id,FK → players. Jugador protagonista del error.,562,INT,NEVER
+Error Viral Flag,player_media_incidents,viral_error_flag,BOOL: El error se volvió viral en redes/medios.,518,BOOLEAN,OFTEN
+Tipo Error,player_media_incidents,error_type,OWN_GOAL/MISSED_SITTER/STUPID_RED/PENALTY_MISS/HOWLER.,519,VARCHAR(50),OFTEN
+Fecha Incidente,player_media_incidents,incident_date,Fecha del incidente.,514,DATE,OFTEN
+Días Desde Incidente,player_media_incidents,days_since_incident,Días desde el error viral. Impacto psicológico decae.,516,SMALLINT,OFTEN
+Menciones Negativas,player_media_incidents,negative_mentions_volume,Volumen de menciones negativas en redes post-error.,517,VARCHAR(100),OFTEN
+Match ID Incidente,player_media_incidents,incident_match_id,FK → matches. Partido donde ocurrió el error.,539,BIGINT,NEVER
+Importancia Partido Error,player_media_incidents,incident_match_importance,LOW/MEDIUM/HIGH/CRITICAL. Importancia del partido del error.,515,VARCHAR(100),OFTEN
+Partidos Definidos x Penales,team_season_stats,penalty_shootout_matches,Total partidos definidos por tandas de penales en historia del club.,134,VARCHAR(100),SOMETIMES
+Win Rate Tandas Penales,team_season_stats,penalty_shootout_win_rate,% victorias en tandas de penales histórico.,132,"DECIMAL(5,2)",SOMETIMES
+Última Tanda Resultado,team_season_stats,last_shootout_result,W/L y fecha de última tanda de penales. Memoria reciente.,138,DATE,SOMETIMES
+Partidos con Prórroga,team_season_stats,extra_time_matches_total,Partidos que llegaron a tiempo extra en historia.,142,VARCHAR(100),SOMETIMES
+Win Rate en Prórroga,team_season_stats,extra_time_win_rate,% victorias cuando el partido va a prórroga.,128,"DECIMAL(5,2)",SOMETIMES
+Goles en Prórroga,team_season_stats,goals_in_extra_time_total,Goles marcados en tiempos extra históricos.,145,SMALLINT,SOMETIMES
+Distancia Afición Local,match_attendance,home_fans_travel_distance_km,Km promedio que viajan los fans del 'local' en campo neutral.,345,INT,OFTEN
+Distancia Afición Visitante,match_attendance,away_fans_travel_distance_km,Km promedio que viajan los fans del visitante en neutral.,349,INT,OFTEN
+Ratio Fans Estimado,match_attendance,estimated_fan_ratio,Proporción estimada fans local:visitante (ej: 70:30).,347,"DECIMAL(5,2)",OFTEN
+Ventaja Geográfica Neutral,match_attendance,geographic_advantage_flag,BOOL: Un equipo tiene ventaja geográfica clara en campo neutral.,360,BOOLEAN,OFTEN
+Títulos Liga Históricos,teams,league_titles_count,Campeonatos de liga ganados en historia del club.,369,SMALLINT,RARE
+Títulos Copa Nacional,teams,domestic_cup_titles_count,Copas nacionales ganadas en historia.,339,SMALLINT,RARE
+Títulos Continentales,teams,continental_titles_count,Champions/Libertadores/Europa League ganadas.,365,SMALLINT,RARE
+Mundiales de Clubes,teams,club_world_cup_titles,Mundiales de clubes/Intercontinentales ganados.,335,SMALLINT,RARE
+Años Desde Último Título,teams,years_since_last_major_trophy,Sequía de títulos mayores. Mide hambre vs conformismo.,356,VARCHAR(100),RARE
+Evento No-Deportivo Reciente,stadiums,non_sporting_event_last_7d,BOOL: Concierto/evento masivo en últimos 7 días.,182,BOOLEAN,SOMETIMES
+Días Desde Último Evento,stadiums,days_since_last_event,Días desde último concierto/evento masivo en el estadio.,186,SMALLINT,SOMETIMES
+Partidos en Cancha Últimos 7d,stadiums,matches_on_pitch_last_7d,Partidos jugados en ese césped en última semana.,180,VARCHAR(100),SOMETIMES
+Estado Césped Pre-Partido,match_weather,pitch_condition_prematch,POOR/FAIR/GOOD/EXCELLENT. Reporte oficial del día.,174,VARCHAR(100),SOMETIMES
+ID Registro Disciplina,player_discipline_history,record_id,Identificador único del registro disciplinario.,615,INT,NEVER
+Player ID Disciplina,player_discipline_history,player_id,FK → players. Jugador del registro.,563,INT,NEVER
+Sanción Antidoping,player_discipline_history,antidoping_sanctions_count,Sanciones oficiales por sustancias prohibidas en carrera.,520,SMALLINT,OFTEN
+Incidentes Públicos Conducta,player_discipline_history,public_conduct_incidents,Arrestos/incidentes públicos documentados en prensa.,521,VARCHAR(100),OFTEN
+Días Desde Último Incidente,player_discipline_history,days_since_last_incident,Tiempo desde último problema público documentado.,522,SMALLINT,OFTEN
+Multas Club Temporada,player_discipline_history,club_fines_season,Multas internas del club por indisciplina en temporada.,523,VARCHAR(100),OFTEN
+Ausencias No Justificadas,player_discipline_history,unexcused_absences_season,Faltas a entrenamientos sin justificación en temporada.,524,VARCHAR(100),OFTEN
+Conflictos Cuerpo Técnico,player_discipline_history,staff_conflicts_flag,BOOL: Conflictos públicos con entrenador/directiva.,525,BOOLEAN,OFTEN
+Suspensiones Internas,player_discipline_history,internal_suspensions_count,Suspensiones internas impuestas por el club.,526,SMALLINT,OFTEN
+Clubes Últimos 5 Años,player_season_stats,clubs_last_5_years,Número de clubes diferentes en últimos 5 años.,35,"DECIMAL(5,2)",RARE
+Promedio Meses por Club,player_season_stats,avg_months_per_club,Media de permanencia en cada club de su carrera.,262,VARCHAR(100),SOMETIMES
+Es Jugador Nómada,player_season_stats,journeyman_flag,BOOL: >4 clubes en últimos 5 años.,271,BOOLEAN,SOMETIMES
+Condición Extrema Flag,match_weather,extreme_condition_flag,"BOOL: Temp >35°C, <0°C, o altitud >2500m.",159,BOOLEAN,SOMETIMES
+Tipo Condición Extrema,match_weather,extreme_condition_type,HEAT/COLD/ALTITUDE/HUMIDITY. Tipo de extremo.,160,VARCHAR(50),SOMETIMES
+Delta Altitud vs Base Local,match_travel,altitude_delta_home,Diferencia altitud estadio vs ciudad base del local (m).,220,INT,SOMETIMES
+Delta Altitud vs Base Visitante,match_travel,altitude_delta_away,Diferencia altitud estadio vs ciudad base del visitante (m).,219,INT,SOMETIMES
+Días Aclimatación,match_travel,acclimatization_days,Días que el equipo llegó antes para aclimatarse.,222,SMALLINT,SOMETIMES
+Regresó de Selección,player_match_stats,returned_from_intl_duty,BOOL: Jugó con selección en últimos 10 días.,258,BOOLEAN,SOMETIMES
+Km Viajados Fecha FIFA,player_match_stats,intl_duty_travel_km,Km totales viajados durante la fecha FIFA.,259,DATE,SOMETIMES
+Minutos Jugados Selección,player_match_stats,intl_duty_minutes_played,Minutos jugados con selección en la fecha FIFA.,272,DATE,SOMETIMES
+Lesión Grave Historial,player_injuries,major_injury_flag,BOOL: ACL/menisco/fractura grave en historial.,483,BOOLEAN,OFTEN
+Meses Desde Lesión Grave,player_injuries,months_since_major_injury,Meses desde retorno de lesión grave (NULL si nunca).,484,VARCHAR(100),OFTEN
+Partidos Post Lesión Grave,player_season_stats,matches_since_major_injury,Partidos jugados desde retorno de última lesión grave.,284,VARCHAR(100),SOMETIMES
+Rating Delta Post Lesión,player_season_stats,rating_delta_post_injury,Diferencia rating promedio pre-lesión vs post-lesión.,237,"DECIMAL(6,3)",SOMETIMES
+En Período Recuperación,player_match_stats,injury_recovery_period_flag,BOOL: <12 meses desde lesión grave (rendimiento esperado menor).,260,BOOLEAN,SOMETIMES
+Hijo de Futbolista Pro,players,football_parent_flag,BOOL: Padre/madre fue futbolista profesional.,358,BOOLEAN,RARE
+Padre Futbolista Élite,players,elite_football_parent_flag,BOOL: Padre/madre fue internacional o ganó títulos mayores.,337,BOOLEAN,RARE
+Mismo Club que Padre,player_season_stats,same_club_as_parent_flag,BOOL: Juega en mismo club donde su padre fue leyenda.,239,BOOLEAN,SOMETIMES
+Goles para Récord Club,player_season_stats,goals_to_club_record,Goles que le faltan para ser máximo goleador histórico del club.,232,SMALLINT,RARE
+Máximo Goleador Activo,player_season_stats,top_scorer_active_flag,BOOL: Es el máximo goleador entre jugadores activos del club.,285,BOOLEAN,SOMETIMES
+Cercanía a Récord,player_season_stats,near_club_record_flag,BOOL: A <10 goles del récord histórico del club.,290,BOOLEAN,SOMETIMES
+Sanción FFP Activa,teams,ffp_sanction_flag,BOOL: Bajo sanción de Fair Play Financiero actualmente.,333,BOOLEAN,RARE
+Ratio Deuda/Ingresos,teams,debt_to_revenue_ratio,Ratio deuda/ingresos anuales. >1 = problemas financieros.,342,"DECIMAL(5,2)",RARE
+Nivel Riesgo Financiero,teams,financial_risk_level,LOW/MEDIUM/HIGH/CRITICAL. Nivel de riesgo económico.,353,VARCHAR(50),RARE
+Venta Forzada Jugadores,teams,forced_sales_flag,BOOL: Obligado a vender jugadores por situación financiera.,338,BOOLEAN,RARE
+Retraso en Salarios,teams,salary_delay_flag,BOOL: Reportes de retrasos en pagos a jugadores.,376,BOOLEAN,RARE
+Paradas por Partido,player_season_stats,saves_per_match_avg,Media de paradas por partido del portero en temporada.,235,"DECIMAL(6,3)",SOMETIMES
+% Paradas,player_season_stats,save_percentage,Porcentaje de tiros a puerta detenidos.,234,"DECIMAL(5,2)",SOMETIMES
+% Paradas Penales,player_season_stats,penalty_save_percentage,Porcentaje histórico de penales detenidos.,236,"DECIMAL(5,2)",SOMETIMES
+Penales Enfrentados,player_season_stats,penalties_faced_career,Total de penales enfrentados en carrera.,244,VARCHAR(100),SOMETIMES
+xGOT Enfrentado,player_season_stats,xgot_faced_season,Expected Goals on Target enfrentados en temporada.,263,"DECIMAL(5,3)",SOMETIMES
+Goles Prevenidos,player_season_stats,goals_prevented,Diferencia entre xGOT enfrentado y goles recibidos (calidad).,53,SMALLINT,RARE
+Errores que Llevan a Gol,player_season_stats,errors_leading_to_goal,Errores del portero que resultaron en gol rival.,253,VARCHAR(100),SOMETIMES
+Salidas Aéreas Exitosas,player_season_stats,aerial_claims_success_pct,"% de éxito en salidas aéreas (corners, centros).",249,"DECIMAL(5,2)",SOMETIMES
+Distribución Pases Largos,player_season_stats,long_pass_accuracy_gk,Precisión en pases largos del portero (juego con el pie).,242,VARCHAR(100),SOMETIMES
+Clean Sheets Temporada,player_season_stats,clean_sheets_season,Partidos sin recibir gol en la temporada.,261,VARCHAR(100),SOMETIMES
+Goles de Corner Favor,team_season_stats,goals_from_corners_for,Goles anotados de corner en la temporada.,103,SMALLINT,SOMETIMES
+Goles de Corner Contra,team_season_stats,goals_from_corners_against,Goles recibidos de corner en la temporada.,100,SMALLINT,SOMETIMES
+% Conversión Corners,team_season_stats,corner_conversion_rate,% de corners que terminan en gol.,109,"DECIMAL(5,2)",SOMETIMES
+xG de Set Pieces,team_season_stats,xg_from_set_pieces,Expected Goals generados de balón parado.,51,"DECIMAL(5,3)",RARE
+xGA de Set Pieces,team_season_stats,xga_from_set_pieces,Expected Goals concedidos de balón parado.,104,"DECIMAL(5,3)",SOMETIMES
+Goles Falta Directa,team_season_stats,goals_from_direct_freekick,Goles de falta directa en temporada.,130,SMALLINT,SOMETIMES
+Altura Promedio XI,match_lineups,team_avg_height_xi,Altura promedio del XI en cm. Clave para duelos aéreos.,95,"DECIMAL(5,2)",SOMETIMES
+Especialista Faltas ID,match_lineups,freekick_specialist_id,FK → players. ID del lanzador principal de faltas.,610,INT,NEVER
+Goles de Suplentes Temp,team_season_stats,goals_from_substitutes,Goles anotados por jugadores que entraron de suplentes.,121,SMALLINT,SOMETIMES
+Asistencias de Suplentes,team_season_stats,assists_from_substitutes,Asistencias de jugadores que entraron de suplentes.,122,SMALLINT,SOMETIMES
+Impacto Suplentes Index,team_season_stats,substitute_impact_index,Índice de impacto de suplentes (goles+asist por minuto jugado).,136,"DECIMAL(6,3)",SOMETIMES
+Es Super Sub,player_season_stats,super_sub_flag,BOOL: Rinde mejor entrando de suplente que de titular.,238,BOOLEAN,SOMETIMES
+Goles como Suplente,player_season_stats,goals_as_substitute,Goles anotados entrando desde el banquillo.,230,SMALLINT,RARE
+Rating como Suplente,player_season_stats,avg_rating_as_substitute,Rating promedio cuando entra de suplente vs titular.,56,"DECIMAL(6,3)",RARE
+Duelos Aéreos Def %,team_season_stats,aerial_duels_won_def_pct,% duelos aéreos ganados por defensas centrales.,133,"DECIMAL(5,2)",SOMETIMES
+Errores Defensivos a Gol,team_season_stats,defensive_errors_to_goal,Errores defensivos que llevaron a gol rival.,140,VARCHAR(100),SOMETIMES
+Línea Defensiva Altura,team_season_stats,defensive_line_height_avg,Altura promedio de la línea defensiva (metros desde portería).,146,"DECIMAL(6,3)",SOMETIMES
+Offsides Provocados,team_season_stats,offsides_won_season,Fueras de juego provocados por la defensa en temporada.,135,VARCHAR(100),SOMETIMES
+Intercepciones x90,team_season_stats,interceptions_per90,Intercepciones por cada 90 minutos jugados.,137,VARCHAR(100),SOMETIMES
+Goles en Contraataque,team_season_stats,goals_from_counter_attack,Goles anotados en transición rápida/contraataque.,114,SMALLINT,SOMETIMES
+Goles Recibidos Contra,team_season_stats,goals_conceded_counter,Goles recibidos en contraataques rivales.,118,SMALLINT,SOMETIMES
+Velocidad Transición,team_season_stats,avg_transition_speed,Segundos promedio desde recuperación hasta tiro en transición.,125,VARCHAR(100),SOMETIMES
+xG en Transición,team_season_stats,xg_from_transitions,Expected Goals generados en contraataques.,46,"DECIMAL(5,3)",RARE
+Field Tilt,team_season_stats,field_tilt_pct,% del tiempo que el juego transcurre en campo rival.,143,"DECIMAL(5,2)",SOMETIMES
+Posesión Último Tercio,team_season_stats,possession_final_third_pct,% de posesión en el último tercio del campo.,126,"DECIMAL(5,2)",SOMETIMES
+Pases Progresivos x90,team_season_stats,progressive_passes_per90,Pases que avanzan >10m hacia portería rival por 90min.,129,VARCHAR(100),SOMETIMES
+Minutos Juntos Dupla Ataque,match_lineups,striker_partnership_minutes,Minutos jugados juntos por la dupla de ataque titular.,101,SMALLINT,SOMETIMES
+Goles Conexión Dupla,match_lineups,striker_partnership_goals,Goles donde participaron ambos de la dupla (gol+asist).,105,SMALLINT,SOMETIMES
+Capitán en Campo,match_lineups,captain_playing_flag,BOOL: El capitán oficial está en el XI titular.,102,BOOLEAN,SOMETIMES
+Minutos Desde Último Gol Equipo,team_season_stats,minutes_since_last_team_goal,Minutos desde el último gol del equipo (sequía).,119,SMALLINT,SOMETIMES
+% Puntos Perdiendo al HT,team_season_stats,points_when_losing_ht_pct,% de puntos obtenidos cuando iban perdiendo al descanso.,147,"DECIMAL(5,2)",SOMETIMES
+Remontadas Temporada,team_season_stats,comebacks_season,"Partidos remontados (perdiendo al HT, ganando al FT).",131,VARCHAR(100),SOMETIMES
+Colapsos Temporada,team_season_stats,collapses_season,"Partidos colapsados (ganando al HT, perdiendo al FT).",111,VARCHAR(100),SOMETIMES

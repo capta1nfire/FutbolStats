@@ -432,6 +432,7 @@ async def build_league_nav_detail(session: AsyncSession, league_id: int) -> Opti
     recent_query = text("""
         SELECT
             m.id as match_id, m.date, m.status,
+            m.home_team_id, m.away_team_id,
             ht.name as home_team, at.name as away_team,
             m.home_goals, m.away_goals
         FROM matches m
@@ -447,6 +448,8 @@ async def build_league_nav_detail(session: AsyncSession, league_id: int) -> Opti
             "match_id": r.match_id,
             "date": r.date.isoformat() if r.date else None,
             "status": r.status,
+            "home_team_id": r.home_team_id,
+            "away_team_id": r.away_team_id,
             "home_team": r.home_team,
             "away_team": r.away_team,
             "score": f"{r.home_goals}-{r.away_goals}" if r.home_goals is not None else None,
@@ -583,6 +586,7 @@ async def build_group_nav_detail(session: AsyncSession, group_id: int) -> Option
     recent_query = text("""
         SELECT
             m.id as match_id, m.date, m.league_id, m.status,
+            m.home_team_id, m.away_team_id,
             ht.name as home_team, at.name as away_team,
             m.home_goals, m.away_goals
         FROM matches m
@@ -599,6 +603,8 @@ async def build_group_nav_detail(session: AsyncSession, group_id: int) -> Option
             "date": r.date.isoformat() if r.date else None,
             "league_id": r.league_id,
             "status": r.status,
+            "home_team_id": r.home_team_id,
+            "away_team_id": r.away_team_id,
             "home_team": r.home_team,
             "away_team": r.away_team,
             "score": f"{r.home_goals}-{r.away_goals}" if r.home_goals is not None else None,

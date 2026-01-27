@@ -14,6 +14,7 @@ import {
   Settings,
   Sparkles,
   Activity,
+  Trophy,
   LucideIcon,
 } from "lucide-react";
 import {
@@ -32,6 +33,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { icon: LayoutDashboard, label: "Overview", href: "/overview" },
+  { icon: Trophy, label: "Football", href: "/football" },
   { icon: Calendar, label: "Matches", href: "/matches" },
   { icon: TrendingUp, label: "Predictions", href: "/predictions" },
   { icon: Cog, label: "Jobs", href: "/jobs" },

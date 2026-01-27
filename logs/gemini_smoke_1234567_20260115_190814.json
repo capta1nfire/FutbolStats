@@ -1,0 +1,43 @@
+{
+  "timestamp": "2026-01-15T19:08:14.184471Z",
+  "match_id": 1234567,
+  "prompt_version": "v1.5",
+  "prompt_hash": "f8a7c6ca1817b0c9",
+  "prompt_size_chars": 6103,
+  "model": "gemini-2.5-pro",
+  "gemini": {
+    "status": "COMPLETED",
+    "client_elapsed_ms": 5056.999921798706,
+    "model_version": "gemini-2.5-pro"
+  },
+  "validation": {
+    "status": "error",
+    "error": "No text in Gemini response"
+  },
+  "raw_response": {
+    "candidates": [
+      {
+        "content": {
+          "role": "model"
+        },
+        "finishReason": "MAX_TOKENS",
+        "index": 0
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 2232,
+      "totalTokenCount": 2679,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 2232
+        }
+      ],
+      "thoughtsTokenCount": 447
+    },
+    "modelVersion": "gemini-2.5-pro",
+    "responseId": "HjtpadHuBOW6jrEPs46BoQ0",
+    "_client_elapsed_ms": 5056.999921798706,
+    "status": "COMPLETED"
+  }
+}

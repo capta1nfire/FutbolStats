@@ -1,0 +1,5 @@
+{
+  "generated_at": "2026-01-24T09:00:00.287541",
+  "error": "invalid DSN: scheme is expected to be either \"postgresql\" or \"postgres\", got 'postgresql+asyncpg'",
+  "phase": "error"
+}

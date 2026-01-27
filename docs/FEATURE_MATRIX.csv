@@ -1,0 +1,642 @@
+﻿FEATURE MATRIX - ESTRUCTURA OPTIMIZADA PARA XGBOOST,,,,,
+"Variables ordenadas por PODER PREDICTIVO (1 = máximo, 615 = mínimo)",,,,,
+Esta es la estructura de la TABLA PLANA que alimentará XGBoost,,,,,
+,,,,,
+PRIORIDAD,FEATURE_NAME,TIPO_DATO,NULL_ESPERADO,ORIGEN_TABLA,DESCRIPCIÓN
+1,odds_home_close,"DECIMAL(6,3)",RARE,match_odds,Cuota cierre victoria local.
+2,ah_home_odds_close,"DECIMAL(6,3)",RARE,match_odds,Cuota AH local al cierre.
+3,odds_away_close,"DECIMAL(6,3)",RARE,match_odds,Cuota cierre victoria visitante.
+4,ah_away_odds_close,"DECIMAL(6,3)",RARE,match_odds,Cuota AH visitante al cierre.
+5,odds_draw_close,"DECIMAL(6,3)",RARE,match_odds,Cuota cierre empate.
+6,odds_over25_close,"DECIMAL(6,3)",RARE,match_odds,Cuota cierre para >2.5 goles.
+7,odds_under25_close,"DECIMAL(6,3)",RARE,match_odds,Cuota cierre para <2.5 goles.
+8,odds_btts_no_close,"DECIMAL(6,3)",RARE,match_odds,Cuota NO ambos equipos marcan.
+9,odds_btts_yes_close,"DECIMAL(5,2)",RARE,match_odds,Cuota ambos equipos marcan.
+10,ah_line_close,"DECIMAL(6,3)",RARE,match_odds,Línea Handicap Asiático cierre.
+11,total_goals_line_close,SMALLINT,RARE,match_odds,"Línea total goles cierre (2.5, 3.0)."
+12,implied_prob_home,"DECIMAL(6,3)",RARE,match_odds,Probabilidad implícita victoria local.
+13,implied_prob_draw,"DECIMAL(6,3)",RARE,match_odds,Probabilidad implícita empate.
+14,implied_prob_away,"DECIMAL(6,3)",RARE,match_odds,Probabilidad implícita victoria visitante.
+15,odds_movement_home,"DECIMAL(6,3)",RARE,match_odds,Cierre-apertura local. Detecta 'smart money'.
+16,odds_movement_draw,"DECIMAL(6,3)",RARE,match_odds,Cierre-apertura empate.
+17,odds_movement_away,"DECIMAL(6,3)",RARE,match_odds,Cierre-apertura visitante.
+18,ah_line_open,"DECIMAL(6,3)",SOMETIMES,match_odds,Línea Handicap Asiático apertura.
+19,odds_away_open,"DECIMAL(6,3)",RARE,match_odds,Cuota apertura victoria visitante.
+20,odds_home_open,"DECIMAL(6,3)",RARE,match_odds,Cuota apertura victoria local.
+21,odds_draw_open,"DECIMAL(6,3)",RARE,match_odds,Cuota apertura empate.
+22,sharp_money_indicator,VARCHAR(100),SOMETIMES,match_odds,Línea+volumen = dinero profesional.
+23,odds_vs_form_discrepancy_home,"DECIMAL(6,3)",SOMETIMES,cross_correlation_features,Discrepancia cuotas vs forma local.
+24,odds_vs_form_discrepancy_away,"DECIMAL(6,3)",SOMETIMES,cross_correlation_features,Discrepancia cuotas vs forma visitante.
+25,xg_last5,"DECIMAL(5,3)",RARE,team_season_stats,xG en últimos 5 partidos.
+26,xga_last5,"DECIMAL(5,3)",RARE,team_season_stats,xGA en últimos 5 partidos.
+27,h2h_avg_goals_last5,"DECIMAL(6,3)",RARE,match_h2h,Promedio goles totales últimos 5.
+28,goals_scored_last5,SMALLINT,RARE,team_season_stats,Goles a favor últimos 5.
+29,goals_conceded_last5,SMALLINT,RARE,team_season_stats,Goles en contra últimos 5.
+30,goals_last5,SMALLINT,RARE,player_season_stats,Goles en últimos 5 partidos.
+31,form_last5,VARCHAR(100),RARE,team_season_stats,Puntos en últimos 5 partidos.
+32,form_last5_home,VARCHAR(100),RARE,team_season_stats,Puntos últimos 5 en casa.
+33,form_last5_away,VARCHAR(100),RARE,team_season_stats,Puntos últimos 5 fuera.
+34,h2h_last5_draws,VARCHAR(100),RARE,match_h2h,Empates últimos 5 H2H.
+35,clubs_last_5_years,"DECIMAL(5,2)",RARE,player_season_stats,Número de clubes diferentes en últimos 5 años.
+36,h2h_last5_home_wins,VARCHAR(100),RARE,match_h2h,Victorias local últimos 5 H2H.
+37,h2h_btts_rate_last5,"DECIMAL(5,2)",RARE,match_h2h,% partidos ambos marcaron últimos 5.
+38,assists_last5,SMALLINT,RARE,player_season_stats,Asistencias en últimos 5.
+39,motm_count_last5,SMALLINT,RARE,player_season_stats,MVPs en últimos 5 partidos (racha de confianza).
+40,h2h_last5_away_wins,VARCHAR(100),RARE,match_h2h,Victorias visitante últimos 5 H2H.
+41,win_streak,VARCHAR(100),RARE,team_season_stats,Partidos consecutivos ganados.
+42,winless_streak,VARCHAR(100),RARE,team_season_stats,Partidos consecutivos sin ganar.
+43,clean_sheet_streak,VARCHAR(100),RARE,team_season_stats,Partidos consecutivos sin encajar.
+44,failed_to_score_streak,VARCHAR(20),RARE,team_season_stats,Partidos consecutivos sin marcar.
+45,player_xg_match,"DECIMAL(5,2)",RARE,player_match_stats,xG generado por el jugador.
+46,xg_from_transitions,"DECIMAL(5,3)",RARE,team_season_stats,Expected Goals generados en contraataques.
+47,xga_season,"DECIMAL(5,3)",RARE,team_season_stats,Expected Goals Against acumulados.
+48,xg_overperformance,"DECIMAL(5,3)",RARE,team_season_stats,Goles reales - xG (suerte/calidad).
+49,player_xg_season,"DECIMAL(5,2)",RARE,player_season_stats,Expected Goals del jugador.
+50,npxg_season,"DECIMAL(5,3)",RARE,team_season_stats,Non-penalty xG temporada.
+51,xg_from_set_pieces,"DECIMAL(5,3)",RARE,team_season_stats,Expected Goals generados de balón parado.
+52,xg_season,"DECIMAL(5,3)",RARE,team_season_stats,Expected Goals acumulados temporada.
+53,goals_prevented,SMALLINT,RARE,player_season_stats,Diferencia entre xGOT enfrentado y goles recibidos (calidad).
+54,avg_rating_league,"DECIMAL(6,3)",RARE,player_season_stats,Rating promedio solo en partidos de liga doméstica.
+55,avg_rating_no_crowd,"DECIMAL(6,3)",RARE,player_season_stats,Rating promedio en partidos a puerta cerrada.
+56,avg_rating_as_substitute,"DECIMAL(6,3)",RARE,player_season_stats,Rating promedio cuando entra de suplente vs titular.
+57,avg_rating_continental,"DECIMAL(6,3)",RARE,player_season_stats,Rating promedio en Champions/Libertadores/Europa League.
+58,avg_rating_season,"DECIMAL(6,3)",RARE,player_season_stats,Rating promedio en la temporada.
+59,avg_rating_domestic_cup,"DECIMAL(6,3)",RARE,player_season_stats,Rating promedio en copas nacionales.
+60,points_gap,VARCHAR(100),RARE,match_context,Diferencia puntos entre ambos equipos.
+61,away_points,VARCHAR(100),RARE,match_context,Puntos acumulados equipo visitante.
+62,points_needed_for_objective,VARCHAR(100),RARE,match_context,Puntos necesarios para objetivo (presión).
+63,home_points,VARCHAR(100),RARE,match_context,Puntos acumulados equipo local.
+64,h2h_away_wins,VARCHAR(100),SOMETIMES,match_h2h,Victorias del visitante en H2H total.
+65,h2h_home_wins,VARCHAR(100),SOMETIMES,match_h2h,Victorias del local en H2H total.
+66,h2h_last_match_result,VARCHAR(20),SOMETIMES,match_h2h,Resultado último H2H (W/D/L local).
+67,h2h_last_match_score,VARCHAR(20),SOMETIMES,match_h2h,Marcador exacto último H2H ('2-1').
+68,h2h_draws,VARCHAR(100),SOMETIMES,match_h2h,Empates en historial completo.
+69,referee_h2h_away_team_record,VARCHAR(20),SOMETIMES,referee_match_history,Historial W/D/L del árbitro con visitante.
+70,manager_h2h_total_matches,VARCHAR(100),SOMETIMES,manager_match_context,Total enfrentamientos entre técnicos.
+71,h2h_days_since_last,SMALLINT,SOMETIMES,match_h2h,Días desde último enfrentamiento.
+72,manager_h2h_record,VARCHAR(20),SOMETIMES,manager_match_context,Historial enfrentamientos W/D/L técnicos.
+73,referee_h2h_home_team_record,VARCHAR(20),SOMETIMES,referee_match_history,Historial W/D/L del árbitro con equipo local.
+74,h2h_total_matches,VARCHAR(100),SOMETIMES,match_h2h,Total partidos históricos entre ambos.
+75,family_h2h_record,VARCHAR(20),SOMETIMES,match_emotional_connections,Record W/D/L en enfrentamientos previos contra su familiar.
+76,home_league_position,VARCHAR(100),RARE,match_context,Posición tabla local ANTES del partido.
+77,snapshot_league_position,VARCHAR(100),RARE,team_season_stats,Posición en tabla al momento del snapshot.
+78,away_league_position,VARCHAR(100),RARE,match_context,Posición tabla visitante ANTES del partido.
+79,home_relegation_zone_flag,BOOLEAN,RARE,match_context,BOOL: Local en zona descenso.
+80,away_relegation_zone_flag,BOOLEAN,RARE,match_context,BOOL: Visitante en zona descenso.
+81,away_european_race_flag,BOOLEAN,RARE,match_context,BOOL: Visitante pelea plazas europeas.
+82,away_title_race_flag,BOOLEAN,RARE,match_context,BOOL: Visitante en lucha por título.
+83,home_european_race_flag,BOOLEAN,RARE,match_context,BOOL: Local pelea plazas europeas.
+84,home_title_race_flag,BOOLEAN,RARE,match_context,BOOL: Local en lucha por título.
+85,is_derby,BOOLEAN,RARE,match_context,BOOL: Derbi local/regional.
+86,is_rivalry_match,BOOLEAN,RARE,match_context,BOOL: Rivalidad histórica especial.
+87,competition_stage,VARCHAR(50),RARE,matches,Categórica: grupos/octavos/cuartos/semifinal/final/liga.
+88,matchday,VARCHAR(100),RARE,matches,Número de jornada dentro de la competición.
+89,continental_stage,VARCHAR(50),RARE,player_tournament_context,NULL/GROUPS/R16/QF/SF/FINAL. Fase actual en Champions/Libertadores.
+90,team_formation,VARCHAR(50),RARE,match_lineups,"Formación táctica (4-3-3, 4-4-2, 3-5-2)."
+91,formation_change_vs_last,BOOLEAN,RARE,match_lineups,BOOL: Formación cambió vs partido anterior.
+92,lineup_changes_vs_last,VARCHAR(100),RARE,match_lineups,Número de cambios en XI (0-11).
+93,team_market_value_xi,"DECIMAL(5,2)",RARE,match_lineups,Valor mercado total del XI en EUR.
+94,team_avg_age_xi,"DECIMAL(5,2)",RARE,match_lineups,Edad promedio del XI inicial.
+95,team_avg_height_xi,"DECIMAL(5,2)",SOMETIMES,match_lineups,Altura promedio del XI en cm. Clave para duelos aéreos.
+96,is_starter,BOOLEAN,SOMETIMES,match_lineups,BOOL: Empieza partido o está en banquillo.
+97,match_position,VARCHAR(100),SOMETIMES,match_lineups,Posición específica en este partido.
+98,academy_players_count_xi,"DECIMAL(5,2)",SOMETIMES,match_lineups,Número canteranos en XI.
+99,team_total_caps_xi,"DECIMAL(5,2)",SOMETIMES,match_lineups,Suma partidos internacionales del XI.
+100,goals_from_corners_against,SMALLINT,SOMETIMES,team_season_stats,Goles recibidos de corner en la temporada.
+101,striker_partnership_minutes,SMALLINT,SOMETIMES,match_lineups,Minutos jugados juntos por la dupla de ataque titular.
+102,captain_playing_flag,BOOLEAN,SOMETIMES,match_lineups,BOOL: El capitán oficial está en el XI titular.
+103,goals_from_corners_for,SMALLINT,SOMETIMES,team_season_stats,Goles anotados de corner en la temporada.
+104,xga_from_set_pieces,"DECIMAL(5,3)",SOMETIMES,team_season_stats,Expected Goals concedidos de balón parado.
+105,striker_partnership_goals,SMALLINT,SOMETIMES,match_lineups,Goles donde participaron ambos de la dupla (gol+asist).
+106,penalty_taker_available,BOOLEAN,SOMETIMES,match_lineups,BOOL: Lanzador habitual en XI.
+107,snapshot_date,DATE,SOMETIMES,team_season_stats,Fecha del snapshot de datos.
+108,is_captain,BOOLEAN,SOMETIMES,match_lineups,BOOL: Es capitán del equipo.
+109,corner_conversion_rate,"DECIMAL(5,2)",SOMETIMES,team_season_stats,% de corners que terminan en gol.
+110,days_without_win,SMALLINT,SOMETIMES,team_season_stats,Días naturales desde última victoria.
+111,collapses_season,VARCHAR(100),SOMETIMES,team_season_stats,"Partidos colapsados (ganando al HT, perdiendo al FT)."
+112,goalkeeper_regular_flag,BOOLEAN,SOMETIMES,match_lineups,BOOL: Juega el portero titular.
+113,matches_played,VARCHAR(100),SOMETIMES,team_season_stats,Partidos jugados en la temporada.
+114,goals_from_counter_attack,SMALLINT,SOMETIMES,team_season_stats,Goles anotados en transición rápida/contraataque.
+115,aerial_duels_won_pct_season,"DECIMAL(5,2)",SOMETIMES,team_season_stats,% de duelos aéreos ganados.
+116,avg_possession_season,VARCHAR(100),SOMETIMES,team_season_stats,Posesión media en la temporada.
+117,fouls_committed_avg_season,"DECIMAL(6,3)",SOMETIMES,team_season_stats,Media faltas cometidas por partido.
+118,goals_conceded_counter,SMALLINT,SOMETIMES,team_season_stats,Goles recibidos en contraataques rivales.
+119,minutes_since_last_team_goal,SMALLINT,SOMETIMES,team_season_stats,Minutos desde el último gol del equipo (sequía).
+120,snapshot_points,VARCHAR(100),SOMETIMES,team_season_stats,Puntos al momento del snapshot.
+121,goals_from_substitutes,SMALLINT,SOMETIMES,team_season_stats,Goles anotados por jugadores que entraron de suplentes.
+122,assists_from_substitutes,SMALLINT,SOMETIMES,team_season_stats,Asistencias de jugadores que entraron de suplentes.
+123,pass_accuracy_season,VARCHAR(100),SOMETIMES,team_season_stats,Precisión de pases en temporada.
+124,minutes_without_scoring,SMALLINT,SOMETIMES,team_season_stats,Minutos acumulados sin gol.
+125,avg_transition_speed,VARCHAR(100),SOMETIMES,team_season_stats,Segundos promedio desde recuperación hasta tiro en transición.
+126,possession_final_third_pct,"DECIMAL(5,2)",SOMETIMES,team_season_stats,% de posesión en el último tercio del campo.
+127,team_win_rate_no_crowd,"DECIMAL(5,2)",SOMETIMES,team_season_stats,% victorias del equipo en partidos sin público.
+128,extra_time_win_rate,"DECIMAL(5,2)",SOMETIMES,team_season_stats,% victorias cuando el partido va a prórroga.
+129,progressive_passes_per90,VARCHAR(100),SOMETIMES,team_season_stats,Pases que avanzan >10m hacia portería rival por 90min.
+130,goals_from_direct_freekick,SMALLINT,SOMETIMES,team_season_stats,Goles de falta directa en temporada.
+131,comebacks_season,VARCHAR(100),SOMETIMES,team_season_stats,"Partidos remontados (perdiendo al HT, ganando al FT)."
+132,penalty_shootout_win_rate,"DECIMAL(5,2)",SOMETIMES,team_season_stats,% victorias en tandas de penales histórico.
+133,aerial_duels_won_def_pct,"DECIMAL(5,2)",SOMETIMES,team_season_stats,% duelos aéreos ganados por defensas centrales.
+134,penalty_shootout_matches,VARCHAR(100),SOMETIMES,team_season_stats,Total partidos definidos por tandas de penales en historia del club.
+135,offsides_won_season,VARCHAR(100),SOMETIMES,team_season_stats,Fueras de juego provocados por la defensa en temporada.
+136,substitute_impact_index,"DECIMAL(6,3)",SOMETIMES,team_season_stats,Índice de impacto de suplentes (goles+asist por minuto jugado).
+137,interceptions_per90,VARCHAR(100),SOMETIMES,team_season_stats,Intercepciones por cada 90 minutos jugados.
+138,last_shootout_result,DATE,SOMETIMES,team_season_stats,W/L y fecha de última tanda de penales. Memoria reciente.
+139,tackles_won_pct_season,"DECIMAL(5,2)",SOMETIMES,team_season_stats,% de entradas ganadas.
+140,defensive_errors_to_goal,VARCHAR(100),SOMETIMES,team_season_stats,Errores defensivos que llevaron a gol rival.
+141,ppda_season,VARCHAR(100),SOMETIMES,team_season_stats,Passes Per Defensive Action (presión).
+142,extra_time_matches_total,VARCHAR(100),SOMETIMES,team_season_stats,Partidos que llegaron a tiempo extra en historia.
+143,field_tilt_pct,"DECIMAL(5,2)",SOMETIMES,team_season_stats,% del tiempo que el juego transcurre en campo rival.
+144,fouls_received_avg_season,"DECIMAL(6,3)",SOMETIMES,team_season_stats,Media faltas recibidas por partido.
+145,goals_in_extra_time_total,SMALLINT,SOMETIMES,team_season_stats,Goles marcados en tiempos extra históricos.
+146,defensive_line_height_avg,"DECIMAL(6,3)",SOMETIMES,team_season_stats,Altura promedio de la línea defensiva (metros desde portería).
+147,points_when_losing_ht_pct,"DECIMAL(5,2)",SOMETIMES,team_season_stats,% de puntos obtenidos cuando iban perdiendo al descanso.
+148,temperature_c_at_kickoff,"DECIMAL(5,2)",SOMETIMES,match_weather,Temperatura exacta al silbatazo inicial. Óptimo: 10-20°C.
+149,temperature_c_avg_90m,"DECIMAL(6,3)",SOMETIMES,match_weather,Temperatura media durante el partido completo.
+150,wet_bulb_temp_c_at_kickoff,"DECIMAL(5,2)",SOMETIMES,match_weather,Indicador estrés térmico combinado.
+151,humidity_pct_at_kickoff,"DECIMAL(5,2)",SOMETIMES,match_weather,Porcentaje de humedad. >80% dificulta respiración.
+152,wind_speed_mps_at_kickoff,"DECIMAL(5,2)",SOMETIMES,match_weather,Velocidad viento al inicio. >10 m/s afecta aéreos.
+153,wind_speed_mps_avg_90m,"DECIMAL(6,3)",SOMETIMES,match_weather,Velocidad media del viento durante 90min.
+154,wind_gust_mps_at_kickoff,"DECIMAL(5,2)",SOMETIMES,match_weather,Velocidad de ráfagas máximas (impredecibilidad).
+155,wind_direction_deg_at_kickoff,"DECIMAL(5,2)",SOMETIMES,match_weather,Dirección viento 0-360°. Afecta saques y corners.
+156,precipitation_mm_hr_at_kickoff,VARCHAR(100),SOMETIMES,match_weather,Intensidad de lluvia al inicio (mm/hora).
+157,precipitation_type,VARCHAR(50),SOMETIMES,match_weather,NONE/RAIN/SNOW/HAIL. Nieve/granizo afectan visibilidad.
+158,precipitation_mm_total_90m,VARCHAR(100),SOMETIMES,match_weather,Lluvia acumulada durante todo el partido.
+159,extreme_condition_flag,BOOLEAN,SOMETIMES,match_weather,"BOOL: Temp >35°C, <0°C, o altitud >2500m."
+160,extreme_condition_type,VARCHAR(50),SOMETIMES,match_weather,HEAT/COLD/ALTITUDE/HUMIDITY. Tipo de extremo.
+161,pressure_hpa_at_kickoff,"DECIMAL(5,2)",SOMETIMES,match_weather,Presión barométrica. Cambios correlacionan con lesiones.
+162,air_quality_index_at_kickoff,"DECIMAL(6,3)",SOMETIMES,match_weather,Índice contaminación (afecta respiración).
+163,visibility_m_at_kickoff,VARCHAR(100),SOMETIMES,match_weather,Distancia visibilidad. <1000m = niebla.
+164,weather_change_rate,"DECIMAL(5,2)",SOMETIMES,match_weather,Variación condiciones durante 90min.
+165,cloud_cover_pct_at_kickoff,"DECIMAL(5,2)",SOMETIMES,match_weather,Porcentaje de cielo cubierto.
+166,weather_alert_flag,BOOLEAN,SOMETIMES,match_weather,BOOL: Alertas oficiales activas.
+167,sun_glare_proxy,VARCHAR(100),SOMETIMES,match_weather,Altitud/azimut solar (problemas porteros).
+168,dew_point_c_at_kickoff,VARCHAR(100),SOMETIMES,match_weather,Temperatura del punto de rocío (humedad absoluta).
+169,heat_index_c_at_kickoff,"DECIMAL(6,3)",SOMETIMES,match_weather,Sensación térmica por humedad alta.
+170,pitch_wetness_proxy,VARCHAR(100),SOMETIMES,match_weather,mm lluvia últimas 6h = estado césped.
+171,feels_like_c_at_kickoff,BIGINT,SOMETIMES,match_weather,Temperatura percibida con viento (wind chill).
+172,lightning_risk_flag,BOOLEAN,SOMETIMES,match_weather,BOOL: Riesgo tormentas eléctricas (suspensiones).
+173,daylight_flag,BOOLEAN,SOMETIMES,match_weather,BOOL: Luz natural suficiente al inicio.
+174,pitch_condition_prematch,VARCHAR(100),SOMETIMES,match_weather,POOR/FAIR/GOOD/EXCELLENT. Reporte oficial del día.
+175,altitude_m,INT,RARE,stadiums,Metros sobre nivel del mar. >1500m afecta rendimiento.
+176,stadium_capacity,INT,RARE,stadiums,Aforo máximo de espectadores.
+177,pitch_surface_type,VARCHAR(50),SOMETIMES,stadiums,NATURAL/HYBRID/ARTIFICIAL.
+178,pitch_quality_rating,"DECIMAL(6,3)",SOMETIMES,stadiums,Rating 1-5 del estado del césped.
+179,pitch_width_m,VARCHAR(100),SOMETIMES,stadiums,Anchura del terreno en metros.
+180,matches_on_pitch_last_7d,VARCHAR(100),SOMETIMES,stadiums,Partidos jugados en ese césped en última semana.
+181,pitch_length_m,VARCHAR(100),SOMETIMES,stadiums,Longitud del terreno en metros.
+182,non_sporting_event_last_7d,BOOLEAN,SOMETIMES,stadiums,BOOL: Concierto/evento masivo en últimos 7 días.
+183,latitude,"DECIMAL(9,6)",SOMETIMES,stadiums,Coordenada GPS latitud.
+184,avg_yellows_per_match,"DECIMAL(5,2)",SOMETIMES,referee_season_stats,Media amarillas por partido.
+185,roof_type,VARCHAR(50),SOMETIMES,stadiums,OPEN/RETRACTABLE/CLOSED.
+186,days_since_last_event,SMALLINT,SOMETIMES,stadiums,Días desde último concierto/evento masivo en el estadio.
+187,stadium_name,VARCHAR(255),SOMETIMES,stadiums,Nombre oficial del recinto deportivo.
+188,longitude,"DECIMAL(9,6)",SOMETIMES,stadiums,Coordenada GPS longitud.
+189,avg_reds_per_match,VARCHAR(100),SOMETIMES,referee_season_stats,Media rojas por partido.
+190,referee_x_home_penalty_rate,"DECIMAL(5,2)",SOMETIMES,referee_match_history,Tasa penaltis señalados favor del local.
+191,referee_x_away_penalty_rate,"DECIMAL(5,2)",SOMETIMES,referee_match_history,Tasa penaltis señalados favor del visitante.
+192,home_bias_index,"DECIMAL(6,3)",SOMETIMES,referee_season_stats,Índice de sesgo hacia equipos locales.
+193,home_win_pct_season,"DECIMAL(5,2)",SOMETIMES,referee_season_stats,% victorias locales con este árbitro.
+194,referee_x_away_red_history,"DECIMAL(5,2)",SOMETIMES,referee_match_history,Historial rojas árbitro a este visitante.
+195,referee_x_home_red_history,"DECIMAL(5,2)",SOMETIMES,referee_match_history,Historial rojas árbitro a este equipo local.
+196,referee_x_away_yellow_rate,"DECIMAL(5,2)",SOMETIMES,referee_match_history,Tasa amarillas del árbitro a este visitante.
+197,referee_x_home_fouls_style_match,"DECIMAL(5,2)",SOMETIMES,referee_match_history,Match estilo agresivo local + árbitro estricto.
+198,referee_x_home_yellow_rate,"DECIMAL(5,2)",SOMETIMES,referee_match_history,Tasa amarillas del árbitro a este equipo local.
+199,referee_x_away_fouls_style_match,"DECIMAL(5,2)",SOMETIMES,referee_match_history,Match estilo agresivo visit + árbitro estricto.
+200,avg_fouls_per_match,VARCHAR(100),SOMETIMES,referee_season_stats,Media faltas por partido.
+201,draw_pct_season,"DECIMAL(5,2)",SOMETIMES,referee_season_stats,% empates con este árbitro.
+202,last_match_controversy_flag,BOOLEAN,SOMETIMES,referee_season_stats,BOOL: Hubo polémica en último partido.
+203,full_name,VARCHAR(255),SOMETIMES,referees,Nombre completo del colegiado.
+204,years_experience,VARCHAR(100),SOMETIMES,referees,Años totales en máxima categoría.
+205,nationality_code,VARCHAR(10),SOMETIMES,referees,País del árbitro.
+206,var_overturn_rate,"DECIMAL(5,2)",SOMETIMES,referee_season_stats,% decisiones revertidas por VAR.
+207,fouls_per_card_ratio,"DECIMAL(5,2)",SOMETIMES,referee_season_stats,Ratio de tolerancia (faltas/tarjeta).
+208,total_matches_career,VARCHAR(100),SOMETIMES,referees,Total partidos dirigidos en carrera.
+209,matches_refereed_season,VARCHAR(100),SOMETIMES,referee_season_stats,Partidos dirigidos en temporada.
+210,cards_last_3_matches,SMALLINT,SOMETIMES,referee_season_stats,Tarjetas en últimos 3 partidos.
+211,avg_penalties_per_match,VARCHAR(100),SOMETIMES,referee_season_stats,Media penaltis señalados.
+212,is_fifa_referee,BOOLEAN,SOMETIMES,referees,BOOL: Categoría FIFA internacional.
+213,avg_stoppage_time_season,VARCHAR(100),SOMETIMES,referee_season_stats,Tiempo añadido promedio que da.
+214,days_since_last_match,SMALLINT,SOMETIMES,match_travel,Días desde el último partido oficial.
+215,rest_days_diff_vs_opponent,SMALLINT,SOMETIMES,match_travel,Días descanso local - visitante.
+216,rest_days_distribution_xi,"DECIMAL(5,2)",SOMETIMES,match_travel,Percentiles descanso XI probable.
+217,travel_distance_km,INT,SOMETIMES,match_travel,Km desde último partido o ciudad base.
+218,travel_direction_longitude_delta,"DECIMAL(9,6)",SOMETIMES,match_travel,Cambio longitud (proxy jet lag E-W).
+219,altitude_delta_away,INT,SOMETIMES,match_travel,Diferencia altitud estadio vs ciudad base del visitante (m).
+220,altitude_delta_home,INT,SOMETIMES,match_travel,Diferencia altitud estadio vs ciudad base del local (m).
+221,congested_schedule_flag,BOOLEAN,SOMETIMES,match_travel,BOOL: >3 partidos en 10 días.
+222,acclimatization_days,SMALLINT,SOMETIMES,match_travel,Días que el equipo llegó antes para aclimatarse.
+223,travel_time_hours,SMALLINT,SOMETIMES,match_travel,Horas estimadas de desplazamiento.
+224,matches_in_last_7d,VARCHAR(100),SOMETIMES,match_travel,Partidos jugados última semana.
+225,minutes_played_last_14d_squad_sum,SMALLINT,SOMETIMES,match_travel,Suma minutos XI en 14 días.
+226,extra_time_last_match,BOOLEAN,SOMETIMES,match_travel,BOOL: Último partido llegó a prórroga.
+227,time_zone_delta_hours,SMALLINT,SOMETIMES,match_travel,Diferencia horaria origen-destino.
+228,matches_in_last_14d,VARCHAR(100),SOMETIMES,match_travel,Partidos jugados últimas 2 semanas.
+229,goals_per90_by_comp_type,SMALLINT,RARE,player_season_stats,"JSON con goles/90min segmentado: league, cup, continental."
+230,goals_as_substitute,SMALLINT,RARE,player_season_stats,Goles anotados entrando desde el banquillo.
+231,goals_season,SMALLINT,RARE,player_season_stats,Goles anotados en la temporada.
+232,goals_to_club_record,SMALLINT,RARE,player_season_stats,Goles que le faltan para ser máximo goleador histórico del club.
+233,assists_season,SMALLINT,RARE,player_season_stats,Asistencias en la temporada.
+234,save_percentage,"DECIMAL(5,2)",SOMETIMES,player_season_stats,Porcentaje de tiros a puerta detenidos.
+235,saves_per_match_avg,"DECIMAL(6,3)",SOMETIMES,player_season_stats,Media de paradas por partido del portero en temporada.
+236,penalty_save_percentage,"DECIMAL(5,2)",SOMETIMES,player_season_stats,Porcentaje histórico de penales detenidos.
+237,rating_delta_post_injury,"DECIMAL(6,3)",SOMETIMES,player_season_stats,Diferencia rating promedio pre-lesión vs post-lesión.
+238,super_sub_flag,BOOLEAN,SOMETIMES,player_season_stats,BOOL: Rinde mejor entrando de suplente que de titular.
+239,same_club_as_parent_flag,BOOLEAN,SOMETIMES,player_season_stats,BOOL: Juega en mismo club donde su padre fue leyenda.
+240,motm_count_season,SMALLINT,SOMETIMES,player_season_stats,Veces elegido MVP/MOTM en la temporada.
+241,climate_delta_origin,VARCHAR(100),SOMETIMES,player_season_stats,Diferencia climática vs país de origen (tropical→frío = alto delta).
+242,long_pass_accuracy_gk,VARCHAR(100),SOMETIMES,player_season_stats,Precisión en pases largos del portero (juego con el pie).
+243,minutes_since_last_goal,SMALLINT,SOMETIMES,player_season_stats,Minutos desde último gol.
+244,penalties_faced_career,VARCHAR(100),SOMETIMES,player_season_stats,Total de penales enfrentados en carrera.
+245,matches_started_season,VARCHAR(100),SOMETIMES,player_season_stats,Partidos como titular.
+246,same_language_flag,BOOLEAN,SOMETIMES,player_season_stats,BOOL: Idioma nativo = idioma del país de la liga.
+247,minutes_played_season,SMALLINT,SOMETIMES,player_season_stats,Minutos totales jugados.
+248,duels_won_pct_season,"DECIMAL(5,2)",SOMETIMES,player_season_stats,% de duelos ganados.
+249,aerial_claims_success_pct,"DECIMAL(5,2)",SOMETIMES,player_season_stats,"% de éxito en salidas aéreas (corners, centros)."
+250,player_xa_season,"DECIMAL(5,2)",SOMETIMES,player_season_stats,Expected Assists del jugador.
+251,yellow_cards_season,SMALLINT,SOMETIMES,player_season_stats,Amarillas acumuladas.
+252,win_rate_behind_closed_doors,"DECIMAL(5,2)",SOMETIMES,player_season_stats,% victorias históricas en partidos sin público.
+253,errors_leading_to_goal,VARCHAR(100),SOMETIMES,player_season_stats,Errores del portero que resultaron en gol rival.
+254,shots_season,VARCHAR(100),SOMETIMES,player_season_stats,Total de disparos.
+255,assists,SMALLINT,SOMETIMES,player_match_stats,Asistencias en el partido.
+256,first_match_after_viral_error,BOOLEAN,SOMETIMES,player_match_stats,BOOL: Es su primer partido después de un error viral.
+257,months_in_country,SMALLINT,SOMETIMES,player_season_stats,Meses desde que llegó al país de la liga actual. Proxy adaptación.
+258,returned_from_intl_duty,BOOLEAN,SOMETIMES,player_match_stats,BOOL: Jugó con selección en últimos 10 días.
+259,intl_duty_travel_km,DATE,SOMETIMES,player_match_stats,Km totales viajados durante la fecha FIFA.
+260,injury_recovery_period_flag,BOOLEAN,SOMETIMES,player_match_stats,BOOL: <12 meses desde lesión grave (rendimiento esperado menor).
+261,clean_sheets_season,VARCHAR(100),SOMETIMES,player_season_stats,Partidos sin recibir gol en la temporada.
+262,avg_months_per_club,VARCHAR(100),SOMETIMES,player_season_stats,Media de permanencia en cada club de su carrera.
+263,xgot_faced_season,"DECIMAL(5,3)",SOMETIMES,player_season_stats,Expected Goals on Target enfrentados en temporada.
+264,shots_on_target_season,VARCHAR(100),SOMETIMES,player_season_stats,Disparos a puerta.
+265,shots,VARCHAR(100),SOMETIMES,player_match_stats,Disparos realizados.
+266,shots_on_target,VARCHAR(100),SOMETIMES,player_match_stats,Disparos a puerta.
+267,duels_won,VARCHAR(100),SOMETIMES,player_match_stats,Duelos ganados.
+268,fouls_suffered,VARCHAR(100),SOMETIMES,player_match_stats,Faltas recibidas.
+269,match_rating,"DECIMAL(6,3)",SOMETIMES,player_match_stats,Calificación del partido (0-10).
+270,tribute_match_flag,BOOLEAN,SOMETIMES,player_match_stats,"BOOL: Partido dedicado/homenaje a alguien (fallecimiento, retiro)."
+271,journeyman_flag,BOOLEAN,SOMETIMES,player_season_stats,BOOL: >4 clubes en últimos 5 años.
+272,intl_duty_minutes_played,DATE,SOMETIMES,player_match_stats,Minutos jugados con selección en la fecha FIFA.
+273,red_cards_season,SMALLINT,SOMETIMES,player_season_stats,Rojas acumuladas.
+274,minutes_played,SMALLINT,SOMETIMES,player_match_stats,Minutos jugados en el partido.
+275,goals,SMALLINT,SOMETIMES,player_match_stats,Goles anotados en el partido.
+276,passes_completed,VARCHAR(100),SOMETIMES,player_match_stats,Pases exitosos.
+277,passes_attempted,"DECIMAL(5,2)",SOMETIMES,player_match_stats,Total pases intentados.
+278,duels_total,VARCHAR(100),SOMETIMES,player_match_stats,Total de duelos.
+279,yellow_cards,SMALLINT,SOMETIMES,player_match_stats,Amarillas en el partido (0-2).
+280,red_card,BOOLEAN,SOMETIMES,player_match_stats,BOOL: Expulsado en el partido.
+281,rating_vs_personal_avg,"DECIMAL(6,3)",SOMETIMES,player_match_stats,Diferencia entre rating del partido y media personal temporada. Detecta picos/ca...
+282,is_motm_flag,BOOLEAN,SOMETIMES,player_match_stats,BOOL: Designado Man of the Match en este partido.
+283,first_foreign_season_flag,BOOLEAN,SOMETIMES,player_season_stats,BOOL: Primera temporada jugando fuera de su país natal.
+284,matches_since_major_injury,VARCHAR(100),SOMETIMES,player_season_stats,Partidos jugados desde retorno de última lesión grave.
+285,top_scorer_active_flag,BOOLEAN,SOMETIMES,player_season_stats,BOOL: Es el máximo goleador entre jugadores activos del club.
+286,key_passes_season,VARCHAR(100),SOMETIMES,player_season_stats,Pases que generan ocasión.
+287,key_passes,VARCHAR(100),SOMETIMES,player_match_stats,Pases que crean ocasión.
+288,fouls_committed,VARCHAR(100),SOMETIMES,player_match_stats,Faltas cometidas.
+289,player_xa_match,"DECIMAL(5,2)",SOMETIMES,player_match_stats,xA generado por el jugador.
+290,near_club_record_flag,BOOLEAN,SOMETIMES,player_season_stats,BOOL: A <10 goles del récord histórico del club.
+291,stoppage_time_announced_2h_min,SMALLINT,SOMETIMES,match_stoppage_times,Minutos añadidos anunciados en segunda mitad.
+292,stoppage_time_actual_2h_s,VARCHAR(100),SOMETIMES,match_stoppage_times,Segundos reales jugados sobre los 90.
+293,injury_stoppage_total_s,VARCHAR(100),SOMETIMES,match_stoppage_times,Segundos totales parados por lesiones.
+294,away_manager_tenure_days,SMALLINT,SOMETIMES,manager_match_context,Días en el cargo del técnico visitante.
+295,tenure_days,SMALLINT,SOMETIMES,manager_tenures,Días totales en el cargo.
+296,stoppage_time_actual_1h_s,VARCHAR(100),SOMETIMES,match_stoppage_times,Segundos reales jugados sobre los 45.
+297,restart_delay_avg_s,"DECIMAL(6,3)",SOMETIMES,match_stoppage_times,Segundos promedio para reanudar.
+298,home_manager_tenure_days,SMALLINT,SOMETIMES,manager_match_context,Días en el cargo del técnico local.
+299,win_rate,"DECIMAL(5,2)",SOMETIMES,manager_tenures,Porcentaje de victorias con este equipo.
+300,home_manager_win_rate_season,"DECIMAL(5,2)",SOMETIMES,manager_match_context,% victorias técnico local temporada.
+301,away_manager_win_rate_season,"DECIMAL(5,2)",SOMETIMES,manager_match_context,% victorias técnico visitante temporada.
+302,cooling_breaks_count,SMALLINT,SOMETIMES,match_stoppage_times,Número de pausas de enfriamiento.
+303,drink_breaks_count,SMALLINT,SOMETIMES,match_stoppage_times,Número de pausas de hidratación.
+304,injury_stoppage_count,SMALLINT,SOMETIMES,match_stoppage_times,Número de parones por lesión.
+305,var_total_delay_s,VARCHAR(100),SOMETIMES,match_stoppage_times,Segundos totales parados por VAR.
+306,ball_in_play_time_total_s,VARCHAR(100),SOMETIMES,match_stoppage_times,Segundos totales con balón en juego.
+307,away_manager_former_club_flag,BOOLEAN,OFTEN,manager_match_context,BOOL: Técnico visitante fue del rival.
+308,home_manager_former_club_flag,BOOLEAN,OFTEN,manager_match_context,BOOL: Técnico local fue del rival.
+309,stoppage_time_announced_1h_min,SMALLINT,SOMETIMES,match_stoppage_times,Minutos añadidos anunciados en primera mitad.
+310,ball_out_of_play_events_count,SMALLINT,SOMETIMES,match_stoppage_times,Veces que el balón salió de juego.
+311,home_manager_new_flag,BOOLEAN,OFTEN,manager_match_context,BOOL: Técnico local < 5 partidos.
+312,tactical_style,VARCHAR(50),SOMETIMES,managers,POSSESSION/COUNTER/DIRECT/PRESSING.
+313,away_manager_new_flag,BOOLEAN,OFTEN,manager_match_context,BOOL: Técnico visitante < 5 partidos.
+314,start_date,DATE,SOMETIMES,manager_tenures,Fecha de inicio en el cargo.
+315,home_manager_avg_goals_scored,"DECIMAL(6,3)",SOMETIMES,manager_match_context,Media goles favor técnico local.
+316,full_name,VARCHAR(255),SOMETIMES,managers,Nombre completo del entrenador.
+317,preferred_formation,VARCHAR(50),SOMETIMES,managers,"Formación habitual (4-3-3, 4-4-2, 3-5-2)."
+318,matches_managed,VARCHAR(100),SOMETIMES,manager_tenures,Partidos dirigidos con este equipo.
+319,nationality_code,VARCHAR(10),SOMETIMES,managers,País de origen del técnico.
+320,end_date,DATE,SOMETIMES,manager_tenures,Fecha fin del cargo (NULL si activo).
+321,away_manager_avg_goals_scored,"DECIMAL(6,3)",SOMETIMES,manager_match_context,Media goles favor técnico visitante.
+322,preferred_foot,VARCHAR(100),RARE,players,LEFT/RIGHT/BOTH. Influye en posicionamiento táctico.
+323,height_cm,INT,RARE,players,Altura en centímetros (duelos aéreos).
+324,team_type,VARCHAR(50),RARE,teams,CLUB / NATIONAL_TEAM. Crítico para análisis club vs selección.
+325,longitude,"DECIMAL(9,6)",RARE,cities,Coordenada GPS longitud.
+326,attendance_count,SMALLINT,SOMETIMES,match_attendance,Espectadores presentes en el partido.
+327,attendance_pct_capacity,"DECIMAL(5,2)",SOMETIMES,match_attendance,Asistencia / Capacidad * 100.
+328,country_code,VARCHAR(10),RARE,teams,"Código ISO del país (ESP, ARG, GER)."
+329,primary_position,VARCHAR(100),RARE,players,GK/CB/LB/RB/CDM/CM/CAM/LW/RW/ST.
+330,country_code,VARCHAR(10),RARE,competitions,País de la competición (NULL para internacionales).
+331,country_code,VARCHAR(10),RARE,cities,Código ISO del país.
+332,social_sentiment_prematch,VARCHAR(100),OFTEN,match_attendance,Índice -1 a +1 de menciones positivas/negativas.
+333,ffp_sanction_flag,BOOLEAN,RARE,teams,BOOL: Bajo sanción de Fair Play Financiero actualmente.
+334,start_year,"DECIMAL(5,2)",RARE,seasons,Año de inicio (ej: 2023).
+335,club_world_cup_titles,SMALLINT,RARE,teams,Mundiales de clubes/Intercontinentales ganados.
+336,media_pressure_index,"DECIMAL(6,3)",OFTEN,match_attendance,"Índice de presión mediática (portadas, noticias)."
+337,elite_football_parent_flag,BOOLEAN,RARE,players,BOOL: Padre/madre fue internacional o ganó títulos mayores.
+338,forced_sales_flag,BOOLEAN,RARE,teams,BOOL: Obligado a vender jugadores por situación financiera.
+339,domestic_cup_titles_count,SMALLINT,RARE,teams,Copas nacionales ganadas en historia.
+340,is_night_match,BOOLEAN,RARE,matches,BOOL: True si partido nocturno (iluminación artificial).
+341,season_label,VARCHAR(255),RARE,seasons,Etiqueta legible (2023/2024).
+342,debt_to_revenue_ratio,"DECIMAL(5,2)",RARE,teams,Ratio deuda/ingresos anuales. >1 = problemas financieros.
+343,end_year,"DECIMAL(5,2)",RARE,seasons,Año de finalización.
+344,latitude,"DECIMAL(9,6)",RARE,cities,Coordenada GPS latitud.
+345,home_fans_travel_distance_km,INT,OFTEN,match_attendance,Km promedio que viajan los fans del 'local' en campo neutral.
+346,behind_closed_doors_flag,BOOLEAN,RARE,matches,BOOL: True si se juega sin público.
+347,estimated_fan_ratio,"DECIMAL(5,2)",OFTEN,match_attendance,Proporción estimada fans local:visitante (ej: 70:30).
+348,is_world_cup_year,BOOLEAN,RARE,seasons,BOOL: Copa del Mundo masculina ese año.
+349,away_fans_travel_distance_km,INT,OFTEN,match_attendance,Km promedio que viajan los fans del visitante en neutral.
+350,birth_date,DATE,RARE,players,Fecha de nacimiento para cálculo de edad exacta.
+351,timezone,VARCHAR(100),RARE,cities,"Zona horaria (Europe/Madrid, America/Buenos_Aires)."
+352,pandemic_era_flag,BOOLEAN,RARE,matches,BOOL: Partido durante COVID-19 (Mar 2020 - Jun 2022). Análisis histórico.
+353,financial_risk_level,VARCHAR(50),RARE,teams,LOW/MEDIUM/HIGH/CRITICAL. Nivel de riesgo económico.
+354,kickoff_utc_ts,TIMESTAMP,RARE,matches,Timestamp exacto del silbatazo inicial en UTC.
+355,noise_differential_db,VARCHAR(100),OFTEN,match_attendance,Diferencial de ruido ambiente (proxy presión).
+356,years_since_last_major_trophy,VARCHAR(100),RARE,teams,Sequía de títulos mayores. Mide hambre vs conformismo.
+357,controversial_statements_flag,BOOLEAN,OFTEN,match_attendance,BOOL: Hubo declaraciones polémicas pre-partido.
+358,football_parent_flag,BOOLEAN,RARE,players,BOOL: Padre/madre fue futbolista profesional.
+359,home_ultras_banned_flag,BOOLEAN,OFTEN,match_attendance,BOOL: Afición local ausente por sanción.
+360,geographic_advantage_flag,BOOLEAN,OFTEN,match_attendance,BOOL: Un equipo tiene ventaja geográfica clara en campo neutral.
+361,crowd_density_index,"DECIMAL(6,3)",OFTEN,match_attendance,Asistencia/sectores para medir concentración.
+362,market_value_eur,BIGINT,RARE,teams,Valor de mercado total de la plantilla en EUR.
+363,market_value_eur,BIGINT,RARE,players,Valor de mercado individual en EUR.
+364,social_mentions_volume,VARCHAR(100),OFTEN,match_attendance,Volumen de menciones en redes sociales pre-partido.
+365,continental_titles_count,SMALLINT,RARE,teams,Champions/Libertadores/Europa League ganadas.
+366,match_date_utc,DATE,RARE,matches,Fecha del partido en formato UTC para estandarización global.
+367,is_sold_out,BOOLEAN,OFTEN,match_attendance,BOOL: Estadio lleno.
+368,local_kickoff_hour_bucket,VARCHAR(100),RARE,matches,Categoría horaria: MORNING/AFTERNOON/EVENING/NIGHT.
+369,league_titles_count,SMALLINT,RARE,teams,Campeonatos de liga ganados en historia del club.
+370,kickoff_local_ts,TIMESTAMP,RARE,matches,Hora local del partido (relevante para fatiga biológica).
+371,nationality_code,VARCHAR(10),RARE,players,Código ISO de nacionalidad principal.
+372,neutral_venue_flag,BOOLEAN,RARE,matches,BOOL: True si no hay local/visitante real.
+373,boos_last_match_flag,BOOLEAN,OFTEN,match_attendance,BOOL: Hubo silbidos/abucheos masivos en el partido anterior.
+374,tier,VARCHAR(100),RARE,competitions,"Nivel: 1 (primera división), 2 (segunda), etc."
+375,competition_type,VARCHAR(50),RARE,competitions,LEAGUE/CUP/CONTINENTAL/WORLD_CUP/FRIENDLY.
+376,salary_delay_flag,BOOLEAN,RARE,teams,BOOL: Reportes de retrasos en pagos a jugadores.
+377,position_in,VARCHAR(100),SOMETIMES,substitutions,Posición del jugador que entra.
+378,home_xi_former_away_players_count,"DECIMAL(5,2)",OFTEN,match_emotional_connections,Jugadores XI local ex del visitante.
+379,shot_minute,SMALLINT,SOMETIMES,shots,Minuto del disparo.
+380,sub_minute,SMALLINT,SOMETIMES,substitutions,Minuto del cambio.
+381,event_x,"DECIMAL(5,2)",SOMETIMES,match_events,Posición X en el campo (0-100).
+382,first_goal_team,BOOLEAN,SOMETIMES,goals,BOOL: True si es el primer gol del partido.
+383,shot_x,"DECIMAL(5,2)",SOMETIMES,shots,Posición X de origen del disparo.
+384,var_check_minute_start,SMALLINT,SOMETIMES,var_reviews,Minuto cuando comienza la revisión.
+385,card_minute,SMALLINT,SOMETIMES,cards,Minuto de la tarjeta.
+386,foul_zone_x,"DECIMAL(5,2)",SOMETIMES,fouls,Coordenada X de la falta.
+387,foul_zone_y,"DECIMAL(5,2)",SOMETIMES,fouls,Coordenada Y de la falta.
+388,foul_result,VARCHAR(20),SOMETIMES,fouls,CARD/FREE_KICK/PENALTY/PLAY_ON.
+389,event_timestamp_utc,TIMESTAMP,SOMETIMES,match_events,Momento exacto del evento en UTC.
+390,set_piece_minute,SMALLINT,SOMETIMES,set_pieces,Minuto del balón parado.
+391,away_xi_former_home_players_count,"DECIMAL(5,2)",OFTEN,match_emotional_connections,Jugadores XI visitante ex del local.
+392,shot_type,VARCHAR(50),SOMETIMES,shots,OPEN_PLAY/SET_PIECE/PENALTY/FREE_KICK/CORNER.
+393,shot_is_fast_break_flag,BOOLEAN,SOMETIMES,shots,BOOL: Tiro en contraataque.
+394,first_sub_minute,SMALLINT,SOMETIMES,substitutions,Minuto de la primera sustitución del partido.
+395,foul_severity,VARCHAR(100),SOMETIMES,fouls,LOW/MEDIUM/HIGH (intensidad).
+396,shot_second,VARCHAR(100),SOMETIMES,shots,Segundo del disparo.
+397,shot_preceded_by_cross_flag,BOOLEAN,SOMETIMES,shots,BOOL: Hubo centro previo.
+398,card_reason_code,VARCHAR(10),SOMETIMES,cards,FOUL/PROTEST/SIMULATION/TIME_WASTING.
+399,law_of_ex_home_flag,BOOLEAN,OFTEN,match_emotional_connections,BOOL: Ex-jugador en XI local vs su ex-club.
+400,law_of_ex_away_flag,BOOLEAN,OFTEN,match_emotional_connections,BOOL: Ex-jugador en XI visitante vs su ex-club.
+401,advantage_played_flag,BOOLEAN,SOMETIMES,fouls,BOOL: Árbitro dejó seguir.
+402,shot_on_target_flag,BOOLEAN,SOMETIMES,shots,BOOL: Disparo entre los tres palos.
+403,family_relation_type,VARCHAR(50),OFTEN,match_emotional_connections,BROTHER/FATHER/SON/COUSIN. Tipo de relación familiar con rival.
+404,event_minute,SMALLINT,SOMETIMES,match_events,Minuto del partido (0-90+).
+405,shot_body_part,VARCHAR(100),SOMETIMES,shots,FOOT/HEAD/OTHER.
+406,shot_footedness,VARCHAR(100),SOMETIMES,shots,L/R para pie izquierdo/derecho.
+407,card_zone_x,"DECIMAL(5,2)",SOMETIMES,cards,Coordenada X donde ocurrió.
+408,set_piece_outcome,VARCHAR(100),SOMETIMES,set_pieces,GOAL/SHOT/CLEARANCE/RETAINED.
+409,family_member_opponent_flag,BOOLEAN,OFTEN,match_emotional_connections,BOOL: Tiene hermano/padre/hijo en el XI del equipo rival.
+410,possession_duration_s,VARCHAR(100),SOMETIMES,match_events,Duración en segundos de la posesión.
+411,shot_blocked_flag,BOOLEAN,SOMETIMES,shots,BOOL: Disparo bloqueado por defensa.
+412,card_type,VARCHAR(50),SOMETIMES,cards,YELLOW/SECOND_YELLOW/RED.
+413,var_outcome,VARCHAR(100),SOMETIMES,var_reviews,OVERTURNED/CONFIRMED/NO_CHANGE.
+414,event_outcome,VARCHAR(100),SOMETIMES,match_events,SUCCESS/FAIL para eventos con resultado.
+415,away_goal_diff,VARCHAR(100),SOMETIMES,match_context,Diferencia de goles del visitante.
+416,matches_remaining,VARCHAR(100),SOMETIMES,match_context,Partidos que quedan en temporada.
+417,event_period,VARCHAR(100),SOMETIMES,match_events,1H/2H/ET1/ET2 (tiempos del partido).
+418,position_out,VARCHAR(100),SOMETIMES,substitutions,Posición del jugador que sale.
+419,possession_start_minute,SMALLINT,SOMETIMES,match_events,Minuto inicio de la posesión.
+420,set_piece_type,VARCHAR(50),SOMETIMES,set_pieces,CORNER/FREE_KICK/THROW_IN/PENALTY.
+421,var_check_duration_s,VARCHAR(100),SOMETIMES,var_reviews,Duración total en segundos.
+422,foreign_nationality_pct_xi,"DECIMAL(5,2)",OFTEN,match_emotional_connections,% jugadores XI con nacionalidad diferente al país.
+423,sub_tactical_intent,VARCHAR(100),SOMETIMES,substitutions,DEFENSIVE/OFFENSIVE/NEUTRAL.
+424,stoppage_time_goal_flag,BOOLEAN,SOMETIMES,goals,BOOL: Gol en minutos 45+ o 90+.
+425,goal_type,VARCHAR(50),SOMETIMES,goals,OPEN_PLAY/PENALTY/FREE_KICK/OWN_GOAL/HEADER.
+426,shot_distance_m,INT,SOMETIMES,goals,Distancia en metros desde donde se disparó.
+427,shot_is_one_touch_flag,BOOLEAN,SOMETIMES,shots,BOOL: Disparo directo sin controlar.
+428,shot_distance_m,INT,SOMETIMES,shots,Metros desde donde se dispara.
+429,sub_reason,VARCHAR(100),SOMETIMES,substitutions,TACTICAL/INJURY/PERFORMANCE.
+430,var_total_delay_seconds_match,VARCHAR(100),SOMETIMES,var_reviews,Tiempo total parado por VAR en el partido.
+431,foul_pitch_zone,VARCHAR(100),SOMETIMES,fouls,DEF/MID/ATT tercio del campo.
+432,home_goal_diff,VARCHAR(100),SOMETIMES,match_context,Diferencia de goles del local.
+433,throw_in_zone,VARCHAR(100),SOMETIMES,set_pieces,DEF/MID/ATT para saques de banda.
+434,minutes_played_with_man_down,SMALLINT,SOMETIMES,cards,Minutos jugados con un hombre menos (tras roja).
+435,set_piece_location_x,"DECIMAL(5,2)",SOMETIMES,set_pieces,Coordenada X del saque.
+436,shot_xg,"DECIMAL(5,2)",SOMETIMES,shots,Expected Goals del disparo.
+437,goal_xg,"DECIMAL(5,2)",SOMETIMES,goals,Expected Goals del disparo que resultó en gol.
+438,shot_angle_deg,VARCHAR(100),SOMETIMES,goals,Ángulo de disparo en grados.
+439,shot_angle_deg,VARCHAR(100),SOMETIMES,shots,Ángulo del disparo en grados.
+440,congestion_x_rotation_away,"DECIMAL(5,2)",SOMETIMES,cross_correlation_features,Congestión × rotación XI visitante.
+441,table_pressure_index_away,"DECIMAL(6,3)",SOMETIMES,cross_correlation_features,Índice presión clasificación visitante.
+442,card_zone_y,"DECIMAL(5,2)",SOMETIMES,cards,Coordenada Y donde ocurrió.
+443,sub_second,VARCHAR(100),SOMETIMES,substitutions,Segundo del cambio.
+444,players_trained_by_opponent_manager,VARCHAR(100),OFTEN,match_emotional_connections,Jugadores entrenados por técnico rival.
+445,shot_off_target_flag,BOOLEAN,SOMETIMES,shots,BOOL: Disparo desviado.
+446,set_piece_location_y,"DECIMAL(5,2)",SOMETIMES,set_pieces,Coordenada Y del saque.
+447,var_check_minute_end,SMALLINT,SOMETIMES,var_reviews,Minuto cuando termina la revisión.
+448,congestion_x_rotation_home,"DECIMAL(5,2)",SOMETIMES,cross_correlation_features,Congestión × rotación XI local.
+449,var_referee_overturn_rate,"DECIMAL(5,2)",SOMETIMES,var_reviews,Tasa histórica de decisiones revertidas del árbitro VAR.
+450,shot_is_big_chance_flag,BOOLEAN,SOMETIMES,shots,BOOL: Ocasión clara (xG>0.3).
+451,away_xi_on_loan_from_home,"DECIMAL(5,2)",OFTEN,match_emotional_connections,Cedidos del rival en XI visitante.
+452,fan_pressure_composite,"DECIMAL(5,2)",SOMETIMES,cross_correlation_features,Índice combinado: winless_streak × -sentiment × media_pressure.
+453,foul_second,VARCHAR(100),SOMETIMES,fouls,Segundo de la falta.
+454,shot_y,"DECIMAL(5,2)",SOMETIMES,shots,Posición Y de origen del disparo.
+455,first_yellow_minute,"DECIMAL(5,2)",SOMETIMES,cards,Minuto de la primera amarilla del partido.
+456,original_decision,VARCHAR(100),SOMETIMES,var_reviews,GOAL/NO_GOAL/PENALTY/NO_PENALTY. Decisión antes de VAR.
+457,shot_hits_woodwork_flag,BOOLEAN,SOMETIMES,shots,BOOL: Disparo al poste/larguero.
+458,set_piece_second,VARCHAR(100),SOMETIMES,set_pieces,Segundo del balón parado.
+459,var_review_count_match,SMALLINT,SOMETIMES,var_reviews,Número total de revisiones en el partido.
+460,event_type,VARCHAR(50),SOMETIMES,match_events,GOAL/SHOT/FOUL/CARD/SUB/VAR/CORNER/OFFSIDE/INJURY.
+461,foul_minute,SMALLINT,SOMETIMES,fouls,Minuto de la falta.
+462,combined_momentum_index,"DECIMAL(6,3)",SOMETIMES,cross_correlation_features,Índice momentum local - visitante.
+463,goal_body_part,VARCHAR(100),SOMETIMES,goals,FOOT_RIGHT/FOOT_LEFT/HEAD/OTHER.
+464,assist_type,VARCHAR(50),SOMETIMES,goals,PASS/CROSS/CORNER/THROUGH_BALL/NONE.
+465,corner_side,VARCHAR(100),SOMETIMES,set_pieces,L/R para córners izquierdo/derecho.
+466,player_referee_conflict_history,VARCHAR(100),OFTEN,match_emotional_connections,Jugadores con historial vs este árbitro.
+467,event_y,"DECIMAL(5,2)",SOMETIMES,match_events,Posición Y en el campo (0-100).
+468,goal_situation,VARCHAR(100),SOMETIMES,goals,ORGANIZED_ATTACK/COUNTER/SET_PIECE.
+469,shot_saved_flag,BOOLEAN,SOMETIMES,shots,BOOL: Parada del portero.
+470,rain_x_possession_style,"DECIMAL(5,2)",SOMETIMES,cross_correlation_features,Lluvia × equipo de posesión.
+471,economic_bonus_flag,BOOLEAN,OFTEN,match_emotional_connections,BOOL: Hay bonificación por ganar.
+472,travel_fatigue_asymmetry,VARCHAR(100),SOMETIMES,cross_correlation_features,Asimetría de fatiga por viaje.
+473,table_pressure_index_home,"DECIMAL(6,3)",SOMETIMES,cross_correlation_features,Índice presión clasificación local.
+474,wind_x_long_ball_style,"DECIMAL(5,2)",SOMETIMES,cross_correlation_features,Viento × equipo de balón largo.
+475,is_season_finale,BOOLEAN,SOMETIMES,match_context,BOOL: Última jornada de liga.
+476,var_reason,VARCHAR(100),SOMETIMES,var_reviews,GOAL/PENALTY/RED/OFFSIDE.
+477,home_xi_on_loan_from_away,"DECIMAL(5,2)",OFTEN,match_emotional_connections,Cedidos del rival en XI local.
+478,event_second,VARCHAR(100),SOMETIMES,match_events,Segundo dentro del minuto (0-59).
+479,card_second,VARCHAR(100),SOMETIMES,cards,Segundo de la tarjeta.
+480,altitude_x_visitor_sea_level,"DECIMAL(5,2)",SOMETIMES,cross_correlation_features,Altitud × visitante de nivel mar.
+481,goal_minute,SMALLINT,SOMETIMES,goals,Minuto exacto del gol.
+482,fatigue_rest_diff,VARCHAR(100),SOMETIMES,cross_correlation_features,Diferencia días descanso (home - away).
+483,major_injury_flag,BOOLEAN,OFTEN,player_injuries,BOOL: ACL/menisco/fractura grave en historial.
+484,months_since_major_injury,VARCHAR(100),OFTEN,player_injuries,Meses desde retorno de lesión grave (NULL si nunca).
+485,injury_type,VARCHAR(50),OFTEN,player_injuries,MUSCULAR/LIGAMENT/BONE/ILLNESS/OTHER.
+486,is_recurring,BOOLEAN,OFTEN,player_injuries,BOOL: Lesión recurrente en misma zona.
+487,days_out,SMALLINT,OFTEN,player_injuries,Días totales de baja.
+488,severity,VARCHAR(100),OFTEN,player_injuries,MINOR/MODERATE/SEVERE/CAREER_THREATENING.
+489,body_zone,VARCHAR(100),OFTEN,player_injuries,LEG/KNEE/ANKLE/BACK/ARM/HEAD.
+490,injury_start_date,DATE,OFTEN,player_injuries,Fecha cuando se lesionó.
+491,injury_end_date,DATE,OFTEN,player_injuries,Fecha de retorno a entrenamientos.
+492,transfer_type,VARCHAR(50),OFTEN,player_transfers,PERMANENT/LOAN/FREE/RETURN_LOAN.
+493,transfer_date,DATE,OFTEN,player_transfers,Fecha del traspaso.
+494,transfer_fee_eur,BIGINT,OFTEN,player_transfers,Precio del traspaso en EUR.
+495,competition_name,VARCHAR(255),NEVER,competitions,"La Liga, Premier League, Copa del Mundo, etc."
+496,affected_relation,VARCHAR(100),OFTEN,player_personal_events,PARENT/SIBLING/CHILD/SPOUSE/TEAMMATE/FRIEND. Relación con la persona.
+497,city_name,VARCHAR(255),NEVER,cities,Nombre de la ciudad.
+498,team_name,VARCHAR(255),NEVER,teams,Nombre oficial del equipo.
+499,full_name,VARCHAR(255),NEVER,players,Nombre completo oficial del jugador.
+500,days_since_event,SMALLINT,OFTEN,player_personal_events,Días transcurridos desde el evento. Impacto decae con tiempo.
+501,severity,VARCHAR(100),OFTEN,player_personal_events,LOW/MEDIUM/HIGH/CRITICAL. Pondera el impacto psicológico.
+502,event_type,VARCHAR(50),OFTEN,player_personal_events,BEREAVEMENT/BIRTH/WEDDING/ILLNESS_FAMILY/DIVORCE. Categoría del evento.
+503,event_date,DATE,OFTEN,player_personal_events,Fecha del evento personal.
+504,country_stability_index,"DECIMAL(6,3)",OFTEN,match_geopolitical_context,Índice 0-100 de estabilidad política (Global Peace Index).
+505,security_level,VARCHAR(50),OFTEN,match_geopolitical_context,LOW/MEDIUM/HIGH/EXTREME. Nivel de despliegue policial requerido.
+506,bilateral_tension_flag,BOOLEAN,OFTEN,match_geopolitical_context,BOOL: Tensión política entre países de los equipos (Serbia-Kosovo).
+507,public_order_alert_flag,BOOLEAN,OFTEN,match_geopolitical_context,BOOL: Protestas/disturbios en la ciudad el día del partido.
+508,active_conflict_flag,BOOLEAN,OFTEN,match_geopolitical_context,BOOL: Conflicto armado activo en el país del partido.
+509,mobility_restriction_flag,BOOLEAN,OFTEN,match_geopolitical_context,BOOL: Toque de queda o restricciones de movimiento activas.
+510,days_to_major_tournament,SMALLINT,OFTEN,player_tournament_context,Días hasta Copa del Mundo/Eurocopa/Copa América si está convocado.
+511,national_team_callup_flag,BOOLEAN,OFTEN,player_tournament_context,BOOL: Convocado para próxima fecha FIFA o torneo.
+512,days_to_continental_match,SMALLINT,OFTEN,player_tournament_context,Días hasta próximo partido de torneo continental.
+513,self_preservation_risk,VARCHAR(100),OFTEN,player_tournament_context,Índice 0-1: probabilidad de que el jugador 'se guarde' para torneo mayor.
+514,incident_date,DATE,OFTEN,player_media_incidents,Fecha del incidente.
+515,incident_match_importance,VARCHAR(100),OFTEN,player_media_incidents,LOW/MEDIUM/HIGH/CRITICAL. Importancia del partido del error.
+516,days_since_incident,SMALLINT,OFTEN,player_media_incidents,Días desde el error viral. Impacto psicológico decae.
+517,negative_mentions_volume,VARCHAR(100),OFTEN,player_media_incidents,Volumen de menciones negativas en redes post-error.
+518,viral_error_flag,BOOLEAN,OFTEN,player_media_incidents,BOOL: El error se volvió viral en redes/medios.
+519,error_type,VARCHAR(50),OFTEN,player_media_incidents,OWN_GOAL/MISSED_SITTER/STUPID_RED/PENALTY_MISS/HOWLER.
+520,antidoping_sanctions_count,SMALLINT,OFTEN,player_discipline_history,Sanciones oficiales por sustancias prohibidas en carrera.
+521,public_conduct_incidents,VARCHAR(100),OFTEN,player_discipline_history,Arrestos/incidentes públicos documentados en prensa.
+522,days_since_last_incident,SMALLINT,OFTEN,player_discipline_history,Tiempo desde último problema público documentado.
+523,club_fines_season,VARCHAR(100),OFTEN,player_discipline_history,Multas internas del club por indisciplina en temporada.
+524,unexcused_absences_season,VARCHAR(100),OFTEN,player_discipline_history,Faltas a entrenamientos sin justificación en temporada.
+525,staff_conflicts_flag,BOOLEAN,OFTEN,player_discipline_history,BOOL: Conflictos públicos con entrenador/directiva.
+526,internal_suspensions_count,SMALLINT,OFTEN,player_discipline_history,Suspensiones internas impuestas por el club.
+527,event_id,BIGINT,NEVER,match_events,Identificador único del evento atómico.
+528,possession_id,INT,NEVER,match_events,Identificador de la secuencia de posesión.
+529,event_id,BIGINT,NEVER,goals,FK → match_events. Evento asociado.
+530,assister_id,INT,NEVER,goals,FK → players. Jugador que asiste (NULL si no hay).
+531,event_id,BIGINT,NEVER,shots,FK → match_events. Evento asociado.
+532,event_id,BIGINT,NEVER,cards,FK → match_events.
+533,event_id,BIGINT,NEVER,substitutions,FK → match_events.
+534,player_out_id,INT,NEVER,substitutions,FK → players. Jugador que sale.
+535,event_id,BIGINT,NEVER,fouls,FK → match_events.
+536,event_id,BIGINT,NEVER,set_pieces,FK → match_events.
+537,event_id,BIGINT,NEVER,var_reviews,FK → match_events.
+538,event_id,BIGINT,NEVER,player_personal_events,Identificador único del evento personal.
+539,incident_match_id,BIGINT,NEVER,player_media_incidents,FK → matches. Partido donde ocurrió el error.
+540,team_committed_id,INT,NEVER,fouls,FK → teams. Equipo que comete falta.
+541,injury_id,INT,NEVER,player_injuries,Identificador único de la lesión.
+542,var_check_id,INT,NEVER,var_reviews,Identificador único de la revisión.
+543,competition_id,INT,NEVER,matches,FK → competitions. Liga/copa/torneo del partido.
+544,player_id,INT,NEVER,players,Identificador único del jugador.
+545,competition_id,INT,NEVER,competitions,Identificador único de la competición.
+546,season_id,INT,NEVER,seasons,Identificador único de la temporada.
+547,player_id,INT,NEVER,match_lineups,FK → players. Jugador en la alineación.
+548,player_id,INT,NEVER,match_events,FK → players. Jugador principal del evento.
+549,foul_committed_by_player_id,INT,NEVER,fouls,FK → players. Quien comete.
+550,season_id,INT,NEVER,team_season_stats,FK → seasons.
+551,competition_id,INT,NEVER,team_season_stats,FK → competitions.
+552,player_id,INT,NEVER,player_season_stats,FK → players.
+553,season_id,INT,NEVER,player_season_stats,FK → seasons.
+554,competition_id,INT,NEVER,player_season_stats,FK → competitions.
+555,player_id,INT,NEVER,player_match_stats,FK → players.
+556,season_id,INT,NEVER,referee_season_stats,FK → seasons.
+557,player_id,INT,NEVER,player_injuries,FK → players.
+558,player_id,INT,NEVER,player_transfers,FK → players.
+559,season_id,INT,NEVER,player_transfers,FK → seasons. Temporada del traspaso.
+560,player_id,INT,NEVER,player_personal_events,FK → players. Jugador afectado por el evento.
+561,incident_id,INT,NEVER,player_media_incidents,Identificador único del incidente viral.
+562,player_id,INT,NEVER,player_media_incidents,FK → players. Jugador protagonista del error.
+563,player_id,INT,NEVER,player_discipline_history,FK → players. Jugador del registro.
+564,manager_id,INT,NEVER,managers,Identificador único del técnico.
+565,manager_id,INT,NEVER,manager_tenures,FK → managers.
+566,match_id,BIGINT,NEVER,matches,Identificador único del partido. Clave primaria central del sistema.
+567,goal_id,INT,NEVER,goals,Identificador único del gol.
+568,scorer_id,INT,NEVER,goals,FK → players. Jugador que marca.
+569,shot_id,INT,NEVER,shots,Identificador único del disparo.
+570,match_id,BIGINT,NEVER,player_match_stats,FK → matches.
+571,to_team_id,INT,NEVER,player_transfers,FK → teams. Equipo de destino.
+572,player_in_id,INT,NEVER,substitutions,FK → players. Jugador que entra.
+573,home_team_id,INT,NEVER,matches,FK → teams. Identificador del equipo que juega en casa.
+574,current_team_id,INT,NEVER,players,FK → teams. Equipo donde juega actualmente.
+575,card_player_id,INT,NEVER,cards,FK → players. Jugador sancionado.
+576,foul_id,INT,NEVER,fouls,Identificador único de la falta.
+577,stadium_id,INT,NEVER,matches,FK → stadiums. Estadio donde se juega el partido.
+578,var_referee_id,INT,NEVER,matches,FK → referees. Árbitro a cargo del videoarbitraje.
+579,stadium_id,INT,NEVER,stadiums,Identificador único del estadio.
+580,foul_suffered_by_player_id,INT,NEVER,fouls,FK → players. Quien recibe.
+581,var_referee_id,INT,NEVER,var_reviews,FK → referees. Árbitro VAR.
+582,from_team_id,INT,NEVER,player_transfers,FK → teams. Equipo de origen.
+583,team_id,INT,NEVER,teams,Identificador único del equipo (club o selección).
+584,team_id,INT,NEVER,match_events,FK → teams. Equipo involucrado.
+585,team_id,INT,NEVER,goals,FK → teams. Equipo que anota.
+586,team_id,INT,NEVER,cards,FK → teams. Equipo del sancionado.
+587,sub_id,INT,NEVER,substitutions,Identificador único de la sustitución.
+588,team_id,INT,NEVER,substitutions,FK → teams. Equipo que realiza el cambio.
+589,set_piece_id,INT,NEVER,set_pieces,Identificador único del balón parado.
+590,team_id,INT,NEVER,set_pieces,FK → teams. Equipo que saca.
+591,team_id,INT,NEVER,team_season_stats,FK → teams.
+592,team_id,INT,NEVER,manager_tenures,FK → teams.
+593,referee_id,INT,NEVER,matches,FK → referees. Árbitro central asignado.
+594,referee_id,INT,NEVER,referees,Identificador único del árbitro.
+595,referee_id,INT,NEVER,referee_season_stats,FK → referees.
+596,injury_match_id,BIGINT,NEVER,player_injuries,FK → matches. Partido donde se lesionó (si aplica).
+597,transfer_id,INT,NEVER,player_transfers,Identificador único del traspaso.
+598,away_manager_id,INT,NEVER,manager_match_context,FK → managers. Técnico visitante.
+599,city_id,INT,NEVER,teams,FK → cities. Ciudad sede del equipo.
+600,city_id,INT,NEVER,stadiums,FK → cities. Ciudad donde se ubica.
+601,possession_team_id,INT,NEVER,match_events,FK → teams. Equipo con posesión.
+602,city_id,INT,NEVER,cities,Identificador único de la ciudad.
+603,team_suffered_id,INT,NEVER,fouls,FK → teams. Equipo que recibe falta.
+604,taker_id,INT,NEVER,set_pieces,FK → players. Quien ejecuta.
+605,tenure_id,INT,NEVER,manager_tenures,Identificador único del período.
+606,stat_id,INT,NEVER,team_season_stats,Identificador único del registro.
+607,stat_id,INT,NEVER,player_season_stats,Identificador único del registro.
+608,stat_id,INT,NEVER,player_match_stats,Identificador único del registro.
+609,stat_id,INT,NEVER,referee_season_stats,Identificador único del registro.
+610,freekick_specialist_id,INT,NEVER,match_lineups,FK → players. ID del lanzador principal de faltas.
+611,away_team_id,INT,NEVER,matches,FK → teams. Identificador del equipo visitante.
+612,shooter_id,INT,NEVER,shots,FK → players. Jugador que dispara.
+613,card_id,INT,NEVER,cards,Identificador único de la tarjeta.
+614,home_manager_id,INT,NEVER,manager_match_context,FK → managers. Técnico local.
+615,record_id,INT,NEVER,player_discipline_history,Identificador único del registro disciplinario.
+,,,,,
+,,,,,
+,,,,,
+LEYENDA DE PRIORIDADES PARA XGBOOST,,,,,
+,,,,,
+PRIORIDAD,TIER,TIPO DE VARIABLES,PODER PREDICTIVO,NULL ESPERADO,
+Jan-50,TIER 1,"Cuotas de cierre, probabilidades implícitas, movimientos de línea",MÁXIMO,RARE,
+51-100,TIER 2,"Forma últimos 5, rachas, xG reciente",MUY ALTO,RARE,
+101-150,TIER 3,"H2H histórico, contexto competitivo, derbis",ALTO,SOMETIMES,
+151-250,TIER 4,"Alineación, clima, estadio, altitud",MEDIO-ALTO,SOMETIMES,
+251-350,TIER 5,"Árbitro, fatiga, viajes, descanso",MEDIO,SOMETIMES,
+351-450,TIER 6,"Stats individuales, entrenador, eventos",MEDIO-BAJO,SOMETIMES,
+451-550,TIER 7,"Asistencia, ambiente, conexiones emocionales",BAJO,OFTEN,
+551-615,TIER 8,"Psicología avanzada, disciplina, geopolítica",EXPERIMENTAL,OFTEN,
+,,,,,
+,,,,,
+NOTAS PARA IMPLEMENTACIÓN:,,,,,
+• Para XGBoost: Generar UNA FILA POR PARTIDO con todas las 615 columnas,,,,,
+• Las columnas con NULL_ESPERADO='OFTEN' pueden requerir imputación o eliminación,,,,,
+"• IDs (prioridad 600+) son para JOINs, NO son features predictivos",,,,,
+• Considerar feature selection con las primeras 200-300 variables para modelo inicial,,,,,
+• TARGET sugerido: HOME_WIN / DRAW / AWAY_WIN (clasificación multiclase),,,,,

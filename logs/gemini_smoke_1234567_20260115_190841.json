@@ -1,0 +1,29 @@
+{
+  "timestamp": "2026-01-15T19:08:41.509051Z",
+  "match_id": 1234567,
+  "prompt_version": "v1.5",
+  "prompt_hash": "f8a7c6ca1817b0c9",
+  "prompt_size_chars": 6103,
+  "model": "gemini-2.5-flash",
+  "gemini": {
+    "status": "COMPLETED",
+    "client_elapsed_ms": 9861.32287979126,
+    "model_version": "gemini-2.5-flash"
+  },
+  "raw_output_length": 1708,
+  "tokens": {
+    "input": 2232,
+    "output": 507,
+    "total": 4276
+  },
+  "cost_usd": {
+    "input": 0.0002232,
+    "output": 0.0002028,
+    "total": 0.000426
+  },
+  "validation": {
+    "status": "error",
+    "error": "Failed to parse JSON from LLM output"
+  },
+  "raw_output_preview": "```json\n{\n  \"match_id\": 1234567,\n  \"lang\": \"es\",\n  \"result\": {\n    \"ft_score\": \"2-1\",\n    \"outcome\": \"HOME\",\n    \"bet_won\": true\n  },\n  \"prediction\": {\n    \"selection\": \"HOME\",\n    \"confidence\": 0.52,\n    \"probabilities\": {\n      \"home\": 0.52,\n      \"draw\": 0.28,\n      \"away\": 0.2\n    }\n  },\n  \"market_odds\": null,\n  \"narrative\": {\n    \"title\": \"Puebla asegura victoria con arranque dominante\",\n    \"body\": \"Puebla aseguró una importante victoria en casa, cimentando su triunfo con un arranque rápido que sorprendió a los visitantes. Los locales tomaron la delantera muy temprano con un gol de Velázquez en el minuto 2, seguido por otra anotación de Ormeño en el minuto 12, estableciendo una ventaja de 2-0 que sería decisiva.\\n\\nA lo largo del encuentro, Puebla demostró un claro dominio estadístico, manteniendo el 56% de la posesión del balón y generando una notable diferencia en el total de remates, con 20 disparos frente a los 8 de Mazatlán. Aunque los visitantes lograron descontar en el min"
+}

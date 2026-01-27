@@ -1,0 +1,116 @@
+{
+  "generated_at": "2026-01-17T09:38:28.930396",
+  "protocol_version": "2.0",
+  "filters": {
+    "snapshot_type": "lineup_confirmed",
+    "odds_freshness": "live",
+    "timing_window_valid": "10-90 min",
+    "timing_window_ideal": "45-75 min",
+    "edge_threshold": 0.05,
+    "min_snapshot_date": "2026-01-13"
+  },
+  "counts": {
+    "n_total_snapshots": 78,
+    "n_live": 78,
+    "n_pre_kickoff": 78,
+    "n_pit_valid_10_90": 62,
+    "n_pit_valid_ideal_45_75": 26,
+    "n_with_pit_safe_predictions": 61,
+    "n_no_prediction_asof": 1
+  },
+  "timing_distribution": {
+    "p10": 21.05666666666667,
+    "p50": 37.30833333333334,
+    "p90": 53.90833333333333,
+    "min": 10.5,
+    "max": 58.36666666666667
+  },
+  "breakdown_by_league": [
+    {
+      "league_id": 78,
+      "n": 13
+    },
+    {
+      "league_id": 40,
+      "n": 10
+    },
+    {
+      "league_id": 262,
+      "n": 8
+    },
+    {
+      "league_id": 39,
+      "n": 6
+    },
+    {
+      "league_id": 135,
+      "n": 6
+    },
+    {
+      "league_id": 143,
+      "n": 6
+    },
+    {
+      "league_id": 140,
+      "n": 3
+    },
+    {
+      "league_id": 94,
+      "n": 2
+    },
+    {
+      "league_id": 307,
+      "n": 2
+    },
+    {
+      "league_id": 239,
+      "n": 2
+    }
+  ],
+  "breakdown_by_bookmaker": [
+    {
+      "bookmaker": "Bet365_live",
+      "n": 62
+    }
+  ],
+  "brier": {
+    "n_with_predictions": 61,
+    "brier_model": 0.624474489051988,
+    "brier_uniform": 0.6666666666666666,
+    "brier_market": 0.5538202129717829,
+    "skill_vs_uniform": 0.06328826642201801,
+    "skill_vs_market": -0.12757619607467263
+  },
+  "betting": {
+    "n_bets": 51,
+    "roi": 0.025490196078431317,
+    "ev": 0.8580276049253146,
+    "total_staked": 51,
+    "total_returns": 52.3,
+    "roi_ci95_low": -0.5392156862745098,
+    "roi_ci95_high": 0.6352941176470588,
+    "roi_ci_status": "ok",
+    "ev_ci95_low": 0.684536574050817,
+    "ev_ci95_high": 1.0445015467684897,
+    "ev_ci_status": "ok",
+    "win_rate": 0.21568627450980393
+  },
+  "phase": "piloto",
+  "interpretation": {
+    "confidence": "medium",
+    "verdict": "HOLD",
+    "bullet_notes": [
+      "model worse than market (early signal): skill_vs_market=-12.76%",
+      "ROI CI95 includes zero: [-53.92%, 63.53%]"
+    ]
+  },
+  "prediction_integrity": {
+    "table_exists": true,
+    "has_created_at": true,
+    "pit_prediction_integrity": "enforced",
+    "n_predictions_pit_safe": 61,
+    "n_no_prediction_asof": 1,
+    "n_had_prediction_but_not_pit_safe": 0
+  },
+  "notes": "read-only evaluation; no writes to DB; probs normalized; PIT integrity enforced (pred.created_at < snapshot_at)"
+}

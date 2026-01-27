@@ -1,0 +1,29 @@
+{
+  "timestamp": "2026-01-15T19:07:50.538066Z",
+  "match_id": 1234567,
+  "prompt_version": "v1.5",
+  "prompt_hash": "f8a7c6ca1817b0c9",
+  "prompt_size_chars": 6103,
+  "model": "gemini-2.5-flash",
+  "gemini": {
+    "status": "COMPLETED",
+    "client_elapsed_ms": 2706.2997817993164,
+    "model_version": "gemini-2.5-flash"
+  },
+  "raw_output_length": 29,
+  "tokens": {
+    "input": 2232,
+    "output": 17,
+    "total": 2678
+  },
+  "cost_usd": {
+    "input": 0.0002232,
+    "output": 6.8e-06,
+    "total": 0.00023
+  },
+  "validation": {
+    "status": "error",
+    "error": "Failed to parse JSON from LLM output"
+  },
+  "raw_output_preview": "```json\n{\n  \"match_id\": 12345"
+}
