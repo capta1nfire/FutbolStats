@@ -11,6 +11,7 @@ import {
   LeagueDetailDrawer,
   AdminLeagueGroupsTable,
   AdminAuditTable,
+  GroupDetailDrawer,
 } from "@/components/admin";
 import type { AdminSection } from "@/components/admin";
 import type { AdminLeagueListItem, AdminLeagueGroupListItem, AdminLeaguesFilters, AdminAuditFilters } from "@/lib/types";
@@ -45,6 +46,7 @@ function AdminPageContent() {
   // Audit filters
   const auditEntityType = useMemo(() => searchParams.get("entity_type") ?? "", [searchParams]);
   const auditEntityId = useMemo(() => searchParams.get("entity_id") ?? "", [searchParams]);
+  const auditOffset = useMemo(() => parseNumericId(searchParams.get("offset")) ?? 0, [searchParams]);
 
   // Static kinds list (matches DB values)
   const kinds = useMemo(() => ["league", "cup", "international", "friendly"], []);
@@ -72,19 +74,21 @@ function AdminPageContent() {
       if (targetSection === "audit") {
         base.entity_type = overrides.entity_type !== undefined ? overrides.entity_type : auditEntityType || undefined;
         base.entity_id = overrides.entity_id !== undefined ? overrides.entity_id : auditEntityId || undefined;
+        const off = overrides.offset !== undefined ? Number(overrides.offset) : auditOffset;
+        if (off > 0) base.offset = off;
       }
 
       const params = buildSearchParams(base);
       const qs = params.toString();
       return `/admin${qs ? `?${qs}` : ""}`;
     },
-    [section, leagueSearch, leagueKind, leagueActive, selectedLeagueId, selectedGroupId, auditEntityType, auditEntityId]
+    [section, leagueSearch, leagueKind, leagueActive, selectedLeagueId, selectedGroupId, auditEntityType, auditEntityId, auditOffset]
   );
 
   // --- Handlers ---
   const handleSectionChange = useCallback(
     (s: AdminSection) => {
-      router.replace(buildUrl({ section: s, leagueId: null, groupId: null, q: null, kind: null, is_active: null, entity_type: null, entity_id: null }), { scroll: false });
+      router.replace(buildUrl({ section: s, leagueId: null, groupId: null, q: null, kind: null, is_active: null, entity_type: null, entity_id: null, offset: null }), { scroll: false });
     },
     [router, buildUrl]
   );
@@ -128,6 +132,17 @@ function AdminPageContent() {
     [router, buildUrl]
   );
 
+  const handleGroupDrawerClose = useCallback(() => {
+    router.replace(buildUrl({ groupId: null }), { scroll: false });
+  }, [router, buildUrl]);
+
+  const handleAuditOffsetChange = useCallback(
+    (newOffset: number) => {
+      router.replace(buildUrl({ offset: newOffset || null }), { scroll: false });
+    },
+    [router, buildUrl]
+  );
+
   // --- Build filter objects ---
   const leagueFilters = useMemo<AdminLeaguesFilters>(
     () => ({
@@ -143,8 +158,9 @@ function AdminPageContent() {
       entity_type: auditEntityType || undefined,
       entity_id: auditEntityId || undefined,
       limit: 50,
+      offset: auditOffset || undefined,
     }),
-    [auditEntityType, auditEntityId]
+    [auditEntityType, auditEntityId, auditOffset]
   );
 
   return (
@@ -182,15 +198,21 @@ function AdminPageContent() {
         )}
 
         {section === "audit" && (
-          <AdminAuditTable filters={auditFilters} />
+          <AdminAuditTable filters={auditFilters} onOffsetChange={handleAuditOffsetChange} />
         )}
       </div>
 
-      {/* Col 5: League detail drawer */}
+      {/* Col 5: Detail drawers */}
       {section === "leagues" && (
         <LeagueDetailDrawer
           leagueId={selectedLeagueId}
           onClose={handleLeagueDrawerClose}
+        />
+      )}
+      {section === "groups" && (
+        <GroupDetailDrawer
+          groupId={selectedGroupId}
+          onClose={handleGroupDrawerClose}
         />
       )}
     </div>

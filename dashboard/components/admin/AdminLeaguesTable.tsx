@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/tables/DataTable";
 import { Badge } from "@/components/ui/badge";
+import { LeagueTotalsBar } from "./LeagueTotalsBar";
 import type { AdminLeagueListItem, AdminLeaguesFilters } from "@/lib/types";
 import { useAdminLeagues } from "@/lib/hooks";
 
@@ -119,17 +120,24 @@ export function AdminLeaguesTable({
   );
 
   const leagues = data?.leagues ?? [];
+  const totals = data?.totals;
+  const unmappedCount = data?.unmapped_in_matches?.length ?? 0;
 
   return (
-    <DataTable
-      columns={columns}
-      data={leagues}
-      isLoading={isLoading}
-      error={error}
-      onRetry={refetch}
-      selectedRowId={selectedLeagueId}
-      onRowClick={onRowClick}
-      getRowId={(row) => row.league_id}
-    />
+    <div className="flex flex-col h-full overflow-hidden">
+      {totals && (
+        <LeagueTotalsBar totals={totals} unmappedCount={unmappedCount} />
+      )}
+      <DataTable
+        columns={columns}
+        data={leagues}
+        isLoading={isLoading}
+        error={error}
+        onRetry={refetch}
+        selectedRowId={selectedLeagueId}
+        onRowClick={onRowClick}
+        getRowId={(row) => row.league_id}
+      />
+    </div>
   );
 }

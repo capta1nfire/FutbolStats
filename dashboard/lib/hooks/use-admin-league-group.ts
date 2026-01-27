@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import type { AdminLeagueGroupDetail, AdminLeagueGroupDetailResponse } from "@/lib/types";
+import type { AdminLeagueGroupDetailFull, AdminLeagueGroupDetailResponse } from "@/lib/types";
 
 async function fetchAdminLeagueGroup(id: number): Promise<AdminLeagueGroupDetailResponse | null> {
   const response = await fetch(`/api/admin/league-group/${id}`, {
@@ -24,7 +24,7 @@ export function useAdminLeagueGroup(groupId: number | null) {
   });
 
   return {
-    data: (data?.data ?? null) as AdminLeagueGroupDetail | null,
+    data: (data?.data ?? null) as AdminLeagueGroupDetailFull | null,
     isLoading,
     error: error as Error | null,
     refetch: () => refetch(),

@@ -90,11 +90,17 @@ export interface AdminLeaguesTotals {
   with_titan_data: number;
 }
 
+export interface AdminLeagueGroupSummary {
+  key: string;
+  name: string;
+  country: string;
+}
+
 export interface AdminLeaguesList {
   leagues: AdminLeagueListItem[];
   totals: AdminLeaguesTotals;
-  unmapped_in_matches: unknown[];
-  groups: unknown[];
+  unmapped_in_matches: number[];
+  groups: AdminLeagueGroupSummary[];
 }
 
 export type AdminLeaguesListResponse = FootballApiResponse<AdminLeaguesList>;
@@ -102,6 +108,13 @@ export type AdminLeaguesListResponse = FootballApiResponse<AdminLeaguesList>;
 // =============================================================================
 // League Detail — data.league, data.stats_by_season[], data.teams[], ...
 // =============================================================================
+
+export interface AdminLeagueGroupRef {
+  key: string;
+  name: string;
+  country: string;
+  paired_handling?: string;
+}
 
 export interface AdminLeagueDetailCore {
   league_id: number;
@@ -115,6 +128,7 @@ export interface AdminLeagueDetailCore {
   match_type: string;
   match_weight: number | null;
   observed: boolean;
+  group?: AdminLeagueGroupRef;
 }
 
 export interface AdminLeagueSeasonStats {
@@ -125,12 +139,37 @@ export interface AdminLeagueSeasonStats {
   with_odds_pct: number;
 }
 
+export interface AdminLeagueTeam {
+  team_id: number;
+  external_id: number;
+  name: string;
+  matches_in_league: number;
+}
+
+export interface AdminLeagueTitanCoverage {
+  total: number;
+  tier1: number;
+  tier1b: number;
+  tier1_pct: number;
+  tier1b_pct: number;
+}
+
+export interface AdminLeagueRecentMatch {
+  match_id: number;
+  date: string;
+  home: string;
+  away: string;
+  status: string;
+  has_stats: boolean;
+  has_prediction: boolean;
+}
+
 export interface AdminLeagueDetailData {
   league: AdminLeagueDetailCore;
   stats_by_season: AdminLeagueSeasonStats[];
-  teams: unknown[];
-  titan_coverage: unknown;
-  recent_matches: unknown[];
+  teams: AdminLeagueTeam[];
+  titan_coverage: AdminLeagueTitanCoverage | null;
+  recent_matches: AdminLeagueRecentMatch[];
 }
 
 export type AdminLeagueDetailResponse = FootballApiResponse<AdminLeagueDetailData>;
@@ -139,15 +178,10 @@ export type AdminLeagueDetailResponse = FootballApiResponse<AdminLeagueDetailDat
 // League PATCH Response
 // =============================================================================
 
-export interface AdminLeagueChangeEntry {
-  old: unknown;
-  new: unknown;
-}
-
 export interface AdminLeaguePatchResponse {
   league: AdminLeagueDetailCore;
   audit_id: number;
-  changes_applied: Record<string, AdminLeagueChangeEntry>;
+  changes_applied: string[];
 }
 
 // =============================================================================
@@ -188,11 +222,56 @@ export interface AdminLeagueGroupsList {
 export type AdminLeagueGroupsListResponse = FootballApiResponse<AdminLeagueGroupsList>;
 
 // =============================================================================
-// League Group Detail (same shape as list item for now)
+// League Group Detail — full response from /dashboard/admin/league-group/{id}.json
 // =============================================================================
 
-export type AdminLeagueGroupDetail = AdminLeagueGroupListItem;
-export type AdminLeagueGroupDetailResponse = FootballApiResponse<AdminLeagueGroupDetail>;
+export interface AdminLeagueGroupMemberFull {
+  league_id: number;
+  name: string;
+  kind: string;
+  is_active: boolean;
+  stats?: AdminLeagueStats;
+}
+
+export interface AdminLeagueGroupSeasonStats {
+  season: number;
+  total_matches: number;
+  finished: number;
+  with_stats_pct: number;
+}
+
+export interface AdminLeagueGroupTeam {
+  team_id: number;
+  name: string;
+  country?: string;
+}
+
+export interface AdminLeagueGroupMatch {
+  match_id: number;
+  date: string;
+  home_team: string;
+  away_team: string;
+  score?: string;
+}
+
+export interface AdminLeagueGroupDetailFull {
+  group: {
+    group_id: number;
+    group_key: string;
+    name: string;
+    country: string;
+    tags?: Record<string, unknown>;
+  };
+  member_leagues: AdminLeagueGroupMemberFull[];
+  is_active_any: boolean;
+  is_active_all: boolean;
+  stats_by_season: AdminLeagueGroupSeasonStats[];
+  teams_count: number;
+  teams: AdminLeagueGroupTeam[];
+  recent_matches: AdminLeagueGroupMatch[];
+}
+
+export type AdminLeagueGroupDetailResponse = FootballApiResponse<AdminLeagueGroupDetailFull>;
 
 // =============================================================================
 // Audit — data.entries[], data.pagination, data.filters
@@ -213,6 +292,7 @@ export interface AdminAuditPagination {
   total: number;
   limit: number;
   offset: number;
+  has_more: boolean;
 }
 
 export interface AdminAuditList {

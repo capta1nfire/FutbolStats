@@ -4,15 +4,17 @@ import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/tables/DataTable";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { DetailDrawer } from "@/components/shell/DetailDrawer";
 import type { AdminAuditEntry, AdminAuditFilters } from "@/lib/types";
 import { useAdminAudit } from "@/lib/hooks";
 
 interface AdminAuditTableProps {
   filters: AdminAuditFilters;
+  onOffsetChange?: (offset: number) => void;
 }
 
-export function AdminAuditTable({ filters }: AdminAuditTableProps) {
+export function AdminAuditTable({ filters, onOffsetChange }: AdminAuditTableProps) {
   const { data, isLoading, error, refetch } = useAdminAudit(filters);
   const [selectedEntry, setSelectedEntry] = useState<AdminAuditEntry | null>(null);
 
@@ -81,6 +83,14 @@ export function AdminAuditTable({ filters }: AdminAuditTableProps) {
   );
 
   const entries = data?.entries ?? [];
+  const pagination = data?.pagination;
+  const limit = pagination?.limit ?? 50;
+  const offset = pagination?.offset ?? 0;
+  const total = pagination?.total ?? 0;
+  const hasMore = pagination?.has_more ?? false;
+  const hasPrev = offset > 0;
+  const showingFrom = total > 0 ? offset + 1 : 0;
+  const showingTo = Math.min(offset + limit, total);
 
   return (
     <div className="relative h-full flex flex-col overflow-hidden">
@@ -94,6 +104,35 @@ export function AdminAuditTable({ filters }: AdminAuditTableProps) {
         onRowClick={(entry) => setSelectedEntry(entry)}
         getRowId={(row) => row.id}
       />
+
+      {/* Pagination bar */}
+      {total > 0 && (
+        <div className="flex items-center justify-between border-t border-border px-4 py-2 text-xs text-muted-foreground shrink-0">
+          <span>
+            Showing {showingFrom}–{showingTo} of {total}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!hasPrev || isLoading}
+              onClick={() => onOffsetChange?.(Math.max(0, offset - limit))}
+              className="h-7 text-xs"
+            >
+              Prev
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!hasMore || isLoading}
+              onClick={() => onOffsetChange?.(offset + limit)}
+              className="h-7 text-xs"
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
 
       <DetailDrawer
         open={selectedEntry !== null}
