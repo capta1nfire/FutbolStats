@@ -877,3 +877,408 @@ async def build_football_overview(session: AsyncSession) -> dict:
         "alerts": alerts,
         "titan": titan,
     }
+
+
+# =============================================================================
+# National Teams API (P3.3)
+# =============================================================================
+
+
+async def build_nationals_countries_list(session: AsyncSession) -> dict:
+    """
+    Build list of countries with national teams.
+    Only includes teams with matches in active international competitions.
+    Fail-soft: returns empty list if no international competitions.
+    """
+    # Get active international competitions
+    intl_leagues_query = text("""
+        SELECT league_id, name FROM admin_leagues
+        WHERE kind = 'international' AND is_active = true
+    """)
+    intl_result = await session.execute(intl_leagues_query)
+    intl_leagues = {r.league_id: r.name for r in intl_result.fetchall()}
+    intl_league_ids = list(intl_leagues.keys())
+
+    # Fail-soft: no international competitions
+    if not intl_league_ids:
+        return {
+            "countries": [],
+            "totals": {"countries_count": 0, "teams_count": 0, "competitions_count": 0}
+        }
+
+    # Get national teams with match stats in international competitions
+    # For national teams, teams.name IS the country (teams.country may be NULL)
+    countries_query = text("""
+        SELECT
+            t.name as country,
+            COUNT(DISTINCT t.id) as teams_count,
+            COUNT(m.id) as total_matches,
+            COUNT(DISTINCT m.league_id) as competitions_count,
+            MAX(m.date) as last_match
+        FROM teams t
+        LEFT JOIN matches m ON (t.id = m.home_team_id OR t.id = m.away_team_id)
+            AND m.league_id = ANY(:intl_ids)
+        WHERE t.team_type = 'national'
+        GROUP BY t.name
+        HAVING COUNT(m.id) > 0
+        ORDER BY COUNT(m.id) DESC
+    """)
+    result = await session.execute(countries_query, {"intl_ids": intl_league_ids})
+
+    countries = []
+    total_teams = 0
+    for r in result.fetchall():
+        countries.append({
+            "country": r.country,
+            "teams_count": r.teams_count,
+            "total_matches": r.total_matches,
+            "competitions_count": r.competitions_count,
+            "last_match": r.last_match.isoformat() + "Z" if r.last_match else None
+        })
+        total_teams += r.teams_count
+
+    return {
+        "countries": countries,
+        "totals": {
+            "countries_count": len(countries),
+            "teams_count": total_teams,
+            "competitions_count": len(intl_leagues)
+        }
+    }
+
+
+async def build_nationals_country_detail(session: AsyncSession, country: str) -> Optional[dict]:
+    """
+    Build detail for a country's national teams.
+    The country parameter is the team name (e.g., "Portugal", "Spain").
+    Returns None if no team found with that name.
+    """
+    # Get teams for this country (name matches country)
+    teams_query = text("""
+        SELECT id, name, logo_url
+        FROM teams
+        WHERE team_type = 'national' AND name = :country
+    """)
+    teams_result = await session.execute(teams_query, {"country": country})
+    teams_rows = teams_result.fetchall()
+
+    if not teams_rows:
+        return None
+
+    team_ids = [t.id for t in teams_rows]
+
+    # Get international leagues
+    intl_query = text("""
+        SELECT league_id, name FROM admin_leagues
+        WHERE kind = 'international' AND is_active = true
+    """)
+    intl_result = await session.execute(intl_query)
+    intl_leagues = {r.league_id: r.name for r in intl_result.fetchall()}
+    intl_ids = list(intl_leagues.keys()) or [-1]  # Placeholder to avoid empty array
+
+    # Get stats per team
+    stats_query = text("""
+        SELECT
+            t.id as team_id,
+            t.name,
+            t.logo_url,
+            COUNT(m.id) as total_matches,
+            COUNT(m.id) FILTER (WHERE m.date >= '2025-08-01') as matches_25_26,
+            array_agg(DISTINCT m.league_id) FILTER (WHERE m.league_id IS NOT NULL) as competition_ids
+        FROM teams t
+        LEFT JOIN matches m ON (t.id = m.home_team_id OR t.id = m.away_team_id)
+            AND m.league_id = ANY(:intl_ids)
+        WHERE t.id = ANY(:tids)
+        GROUP BY t.id, t.name, t.logo_url
+    """)
+    stats_result = await session.execute(stats_query, {"tids": team_ids, "intl_ids": intl_ids})
+
+    teams = []
+    for r in stats_result.fetchall():
+        comp_names = [intl_leagues.get(lid, f"Competition {lid}") for lid in (r.competition_ids or [])]
+        teams.append({
+            "team_id": r.team_id,
+            "name": r.name,
+            "logo_url": r.logo_url,
+            "total_matches": r.total_matches,
+            "matches_25_26": r.matches_25_26,
+            "competitions": comp_names
+        })
+
+    # Competitions with match counts
+    comps_query = text("""
+        SELECT
+            m.league_id,
+            COUNT(*) as matches_count
+        FROM matches m
+        WHERE (m.home_team_id = ANY(:tids) OR m.away_team_id = ANY(:tids))
+            AND m.league_id = ANY(:intl_ids)
+        GROUP BY m.league_id
+        ORDER BY COUNT(*) DESC
+    """)
+    comps_result = await session.execute(comps_query, {"tids": team_ids, "intl_ids": intl_ids})
+    competitions = [
+        {
+            "league_id": r.league_id,
+            "name": intl_leagues.get(r.league_id, f"Competition {r.league_id}"),
+            "matches_count": r.matches_count
+        }
+        for r in comps_result.fetchall()
+    ]
+
+    # Recent matches
+    recent_query = text("""
+        SELECT
+            m.id as match_id, m.date, m.league_id, m.status,
+            m.home_goals, m.away_goals,
+            ht.name as home_team, at.name as away_team
+        FROM matches m
+        JOIN teams ht ON m.home_team_id = ht.id
+        JOIN teams at ON m.away_team_id = at.id
+        WHERE (m.home_team_id = ANY(:tids) OR m.away_team_id = ANY(:tids))
+            AND m.league_id = ANY(:intl_ids)
+        ORDER BY m.date DESC
+        LIMIT 20
+    """)
+    recent_result = await session.execute(recent_query, {"tids": team_ids, "intl_ids": intl_ids})
+    recent_matches = [
+        {
+            "match_id": r.match_id,
+            "date": r.date.isoformat() + "Z" if r.date else None,
+            "competition_name": intl_leagues.get(r.league_id, "Unknown"),
+            "home_team": r.home_team,
+            "away_team": r.away_team,
+            "status": r.status,
+            "score": f"{r.home_goals}-{r.away_goals}" if r.home_goals is not None else None
+        }
+        for r in recent_result.fetchall()
+    ]
+
+    # Overall stats (wins/draws/losses)
+    overall_query = text("""
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE
+                (m.home_team_id = ANY(:tids) AND m.home_goals > m.away_goals) OR
+                (m.away_team_id = ANY(:tids) AND m.away_goals > m.home_goals)
+            ) as wins,
+            COUNT(*) FILTER (WHERE m.home_goals = m.away_goals) as draws,
+            COUNT(*) FILTER (WHERE
+                (m.home_team_id = ANY(:tids) AND m.home_goals < m.away_goals) OR
+                (m.away_team_id = ANY(:tids) AND m.away_goals < m.home_goals)
+            ) as losses
+        FROM matches m
+        WHERE (m.home_team_id = ANY(:tids) OR m.away_team_id = ANY(:tids))
+            AND m.league_id = ANY(:intl_ids)
+            AND m.status IN ('FT', 'AET', 'PEN')
+    """)
+    overall_result = await session.execute(overall_query, {"tids": team_ids, "intl_ids": intl_ids})
+    overall = overall_result.fetchone()
+
+    return {
+        "country": country,
+        "teams": teams,
+        "competitions": competitions,
+        "recent_matches": recent_matches,
+        "stats": {
+            "total_matches": overall.total if overall else 0,
+            "wins": overall.wins if overall else 0,
+            "draws": overall.draws if overall else 0,
+            "losses": overall.losses if overall else 0
+        }
+    }
+
+
+async def build_nationals_team_detail(session: AsyncSession, team_id: int) -> Optional[dict]:
+    """
+    Build Team 360 for a national team.
+    Returns None if team not found or not a national team.
+    """
+    # Get team (must be national)
+    team_query = text("""
+        SELECT id, name, logo_url, team_type
+        FROM teams
+        WHERE id = :tid AND team_type = 'national'
+    """)
+    team_result = await session.execute(team_query, {"tid": team_id})
+    team_row = team_result.fetchone()
+
+    if not team_row:
+        return None
+
+    # Get international leagues
+    intl_query = text("""
+        SELECT league_id, name FROM admin_leagues
+        WHERE kind = 'international' AND is_active = true
+    """)
+    intl_result = await session.execute(intl_query)
+    intl_leagues = {r.league_id: r.name for r in intl_result.fetchall()}
+    intl_ids = list(intl_leagues.keys()) or [-1]
+
+    # Stats by competition
+    comp_stats_query = text("""
+        SELECT
+            m.league_id,
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE
+                (m.home_team_id = :tid AND m.home_goals > m.away_goals) OR
+                (m.away_team_id = :tid AND m.away_goals > m.home_goals)
+            ) as wins,
+            COUNT(*) FILTER (WHERE m.home_goals = m.away_goals) as draws,
+            COUNT(*) FILTER (WHERE
+                (m.home_team_id = :tid AND m.home_goals < m.away_goals) OR
+                (m.away_team_id = :tid AND m.away_goals < m.home_goals)
+            ) as losses,
+            MAX(m.date) as last_match
+        FROM matches m
+        WHERE (m.home_team_id = :tid OR m.away_team_id = :tid)
+            AND m.league_id = ANY(:intl_ids)
+            AND m.status IN ('FT', 'AET', 'PEN')
+        GROUP BY m.league_id
+        ORDER BY COUNT(*) DESC
+    """)
+    comp_stats_result = await session.execute(comp_stats_query, {"tid": team_id, "intl_ids": intl_ids})
+
+    competitions = []
+    stats_by_competition = []
+    total_wins, total_draws, total_losses, total_matches = 0, 0, 0, 0
+
+    for r in comp_stats_result.fetchall():
+        name = intl_leagues.get(r.league_id, f"Competition {r.league_id}")
+        competitions.append({
+            "league_id": r.league_id,
+            "name": name,
+            "matches_count": r.total,
+            "last_match": r.last_match.strftime("%Y-%m-%d") if r.last_match else None
+        })
+        stats_by_competition.append({
+            "league_id": r.league_id,
+            "name": name,
+            "matches": r.total,
+            "wins": r.wins,
+            "draws": r.draws,
+            "losses": r.losses
+        })
+        total_wins += r.wins
+        total_draws += r.draws
+        total_losses += r.losses
+        total_matches += r.total
+
+    # Goals stats
+    goals_query = text("""
+        SELECT
+            SUM(CASE WHEN m.home_team_id = :tid THEN m.home_goals ELSE m.away_goals END) as goals_for,
+            SUM(CASE WHEN m.home_team_id = :tid THEN m.away_goals ELSE m.home_goals END) as goals_against
+        FROM matches m
+        WHERE (m.home_team_id = :tid OR m.away_team_id = :tid)
+            AND m.league_id = ANY(:intl_ids)
+            AND m.status IN ('FT', 'AET', 'PEN')
+    """)
+    goals_result = await session.execute(goals_query, {"tid": team_id, "intl_ids": intl_ids})
+    goals = goals_result.fetchone()
+
+    # Recent matches
+    recent_query = text("""
+        SELECT
+            m.id as match_id, m.date, m.league_id, m.status,
+            m.home_team_id, m.away_team_id,
+            m.home_goals, m.away_goals,
+            ht.name as home_team, at.name as away_team
+        FROM matches m
+        JOIN teams ht ON m.home_team_id = ht.id
+        JOIN teams at ON m.away_team_id = at.id
+        WHERE (m.home_team_id = :tid OR m.away_team_id = :tid)
+            AND m.league_id = ANY(:intl_ids)
+        ORDER BY m.date DESC
+        LIMIT 20
+    """)
+    recent_result = await session.execute(recent_query, {"tid": team_id, "intl_ids": intl_ids})
+
+    recent_matches = []
+    for r in recent_result.fetchall():
+        is_home = r.home_team_id == team_id
+        opponent = r.away_team if is_home else r.home_team
+        result = None
+        if r.home_goals is not None:
+            if is_home:
+                result = f"{r.home_goals}-{r.away_goals}"
+            else:
+                result = f"{r.away_goals}-{r.home_goals}"
+
+        recent_matches.append({
+            "match_id": r.match_id,
+            "date": r.date.isoformat() + "Z" if r.date else None,
+            "competition_id": r.league_id,
+            "competition_name": intl_leagues.get(r.league_id, "Unknown"),
+            "opponent": opponent,
+            "home_away": "home" if is_home else "away",
+            "result": result,
+            "status": r.status
+        })
+
+    # Head to head (top 10 opponents)
+    h2h_query = text("""
+        SELECT
+            CASE WHEN m.home_team_id = :tid THEN m.away_team_id ELSE m.home_team_id END as opponent_id,
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE
+                (m.home_team_id = :tid AND m.home_goals > m.away_goals) OR
+                (m.away_team_id = :tid AND m.away_goals > m.home_goals)
+            ) as wins,
+            COUNT(*) FILTER (WHERE m.home_goals = m.away_goals) as draws,
+            COUNT(*) FILTER (WHERE
+                (m.home_team_id = :tid AND m.home_goals < m.away_goals) OR
+                (m.away_team_id = :tid AND m.away_goals < m.home_goals)
+            ) as losses
+        FROM matches m
+        WHERE (m.home_team_id = :tid OR m.away_team_id = :tid)
+            AND m.league_id = ANY(:intl_ids)
+            AND m.status IN ('FT', 'AET', 'PEN')
+        GROUP BY opponent_id
+        ORDER BY COUNT(*) DESC
+        LIMIT 10
+    """)
+    h2h_result = await session.execute(h2h_query, {"tid": team_id, "intl_ids": intl_ids})
+    h2h_rows = h2h_result.fetchall()
+
+    # Get opponent names
+    opponent_ids = [r.opponent_id for r in h2h_rows]
+    if opponent_ids:
+        names_query = text("SELECT id, name FROM teams WHERE id = ANY(:ids)")
+        names_result = await session.execute(names_query, {"ids": opponent_ids})
+        opponent_names = {r.id: r.name for r in names_result.fetchall()}
+    else:
+        opponent_names = {}
+
+    head_to_head = [
+        {
+            "opponent_id": r.opponent_id,
+            "opponent_name": opponent_names.get(r.opponent_id, "Unknown"),
+            "total_matches": r.total,
+            "wins": r.wins,
+            "draws": r.draws,
+            "losses": r.losses
+        }
+        for r in h2h_rows
+    ]
+
+    return {
+        "team": {
+            "team_id": team_row.id,
+            "name": team_row.name,
+            "logo_url": team_row.logo_url,
+            "team_type": team_row.team_type
+        },
+        "competitions": competitions,
+        "stats_overall": {
+            "total_matches": total_matches,
+            "wins": total_wins,
+            "draws": total_draws,
+            "losses": total_losses,
+            "goals_for": int(goals.goals_for or 0) if goals else 0,
+            "goals_against": int(goals.goals_against or 0) if goals else 0
+        },
+        "stats_by_competition": stats_by_competition,
+        "recent_matches": recent_matches,
+        "head_to_head": head_to_head
+    }

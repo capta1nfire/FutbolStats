@@ -6400,6 +6400,133 @@ async def dashboard_football_overview(request: Request):
     }
 
 
+# =============================================================================
+# Football Navigation - National Teams (P3.3)
+# =============================================================================
+
+
+@app.get("/dashboard/football/nationals/countries.json")
+async def dashboard_football_nationals_countries(request: Request):
+    """
+    Football Navigation - List countries with national teams.
+
+    P3.3: Returns countries with national teams that have matches in active
+    international competitions. Ordered by total_matches DESC.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    cache_key = "football_nationals_countries"
+    cached_data, cache_age = _get_football_cache(cache_key, FOOTBALL_NAV_CACHE_TTL)
+
+    if cached_data:
+        return {
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "cached": True,
+            "cache_age_seconds": cache_age,
+            "data": cached_data,
+        }
+
+    from app.dashboard.football_nav import build_nationals_countries_list
+
+    async with AsyncSessionLocal() as session:
+        data = await build_nationals_countries_list(session)
+
+    _set_football_cache(cache_key, data)
+
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
+@app.get("/dashboard/football/nationals/country/{country}.json")
+async def dashboard_football_nationals_country(request: Request, country: str):
+    """
+    Football Navigation - Country detail with national teams.
+
+    P3.3: The {country} parameter is the team name (e.g., "Portugal", "Spain").
+    Returns teams, competitions, recent matches, and stats.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    # URL decode the country parameter (handles spaces, accents, etc.)
+    from urllib.parse import unquote
+    country = unquote(country)
+
+    cache_key = f"football_nationals_country_{country}"
+    cached_data, cache_age = _get_football_cache(cache_key, FOOTBALL_NAV_DETAIL_CACHE_TTL)
+
+    if cached_data:
+        return {
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "cached": True,
+            "cache_age_seconds": cache_age,
+            "data": cached_data,
+        }
+
+    from app.dashboard.football_nav import build_nationals_country_detail
+
+    async with AsyncSessionLocal() as session:
+        data = await build_nationals_country_detail(session, country)
+
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"Country '{country}' not found")
+
+    _set_football_cache(cache_key, data)
+
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
+@app.get("/dashboard/football/nationals/team/{team_id}.json")
+async def dashboard_football_nationals_team(request: Request, team_id: int):
+    """
+    Football Navigation - Team 360 for national team.
+
+    P3.3: Returns full team details including competitions, stats (overall and
+    by competition), recent matches, and head-to-head records.
+    Only works for teams with team_type='national'.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    cache_key = f"football_nationals_team_{team_id}"
+    cached_data, cache_age = _get_football_cache(cache_key, FOOTBALL_NAV_DETAIL_CACHE_TTL)
+
+    if cached_data:
+        return {
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "cached": True,
+            "cache_age_seconds": cache_age,
+            "data": cached_data,
+        }
+
+    from app.dashboard.football_nav import build_nationals_team_detail
+
+    async with AsyncSessionLocal() as session:
+        data = await build_nationals_team_detail(session, team_id)
+
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"National team {team_id} not found")
+
+    _set_football_cache(cache_key, data)
+
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
 @app.get("/dashboard/pit/debug")
 async def pit_dashboard_debug(request: Request):
     """
