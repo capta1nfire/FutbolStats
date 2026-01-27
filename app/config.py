@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     ODDS_SYNC_FRESHNESS_HOURS: int = 6  # Skip if odds updated within N hours
     ODDS_SYNC_INTERVAL_HOURS: int = 6  # How often to run the job
 
+    # Sofascore Refs Matching
+    SOFASCORE_REFS_THRESHOLD: float = 0.75  # Default threshold for match score
+    SOFASCORE_REFS_THRESHOLD_OVERRIDES: str = ""  # Per-league: "128:0.70,307:0.70"
+
     # Telemetry / Observability
     METRICS_BEARER_TOKEN: str = ""  # Bearer token for /metrics endpoint (Grafana Cloud scraping)
 

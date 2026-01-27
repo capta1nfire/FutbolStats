@@ -730,7 +730,13 @@ async def sync_sofascore_refs(
     from app.etl.sofascore_provider import (
         SofascoreProvider,
         calculate_match_score,
+        get_sofascore_threshold,
+        normalize_team_name,
     )
+    from app.etl.sofascore_aliases import build_alias_index
+
+    # Build alias index once per job run
+    alias_index = build_alias_index()
 
     metrics = {
         "scanned": 0,
@@ -739,6 +745,7 @@ async def sync_sofascore_refs(
         "linked_review": 0,
         "skipped_no_candidates": 0,
         "skipped_low_score": 0,
+        "near_misses": 0,
         "errors": 0,
     }
 
@@ -816,10 +823,11 @@ async def sync_sofascore_refs(
                     metrics["skipped_no_candidates"] += 1
                     continue
 
-                # Find best match
+                # Find best match — track top-3 for near-miss logging
                 best_score = 0.0
                 best_event = None
                 best_matched_by = ""
+                top_candidates: list[tuple[float, str, dict]] = []
 
                 for event in candidates:
                     score, matched_by = calculate_match_score(
@@ -829,20 +837,48 @@ async def sync_sofascore_refs(
                         sf_home=event["home_team"],
                         sf_away=event["away_team"],
                         sf_kickoff=event["kickoff_utc"],
+                        alias_index=alias_index,
                     )
+
+                    # Maintain top-3 candidates for near-miss logging
+                    top_candidates.append((score, matched_by, event))
+                    top_candidates.sort(key=lambda x: x[0], reverse=True)
+                    top_candidates = top_candidates[:3]
 
                     if score > best_score:
                         best_score = score
                         best_event = event
                         best_matched_by = matched_by
 
-                # Decision based on score
-                if best_score < 0.75:
+                # Decision based on score (configurable threshold per league)
+                threshold = get_sofascore_threshold(match.league_id)
+                if best_score < threshold:
                     metrics["skipped_low_score"] += 1
-                    logger.debug(
-                        f"[SOFASCORE_REFS] No match for {home_team} vs {away_team} "
-                        f"(best_score={best_score:.2f})"
-                    )
+
+                    # Near-miss logging: top-3 candidates when 0.50 <= score < threshold
+                    if best_score >= 0.50:
+                        metrics["near_misses"] += 1
+                        candidates_summary = " | ".join(
+                            f"#{i+1} sf={c[2]['home_team']} vs {c[2]['away_team']} "
+                            f"score={c[0]:.3f} ({c[1]})"
+                            for i, c in enumerate(top_candidates[:3])
+                        )
+                        logger.warning(
+                            "[SOFASCORE_REFS] Near-miss: match=%d league=%d "
+                            "our=%s vs %s | best_score=%.3f | "
+                            "our_norm=%s|%s | candidates: %s",
+                            match_id, match.league_id,
+                            home_team, away_team,
+                            best_score,
+                            normalize_team_name(home_team),
+                            normalize_team_name(away_team),
+                            candidates_summary,
+                        )
+                    else:
+                        logger.debug(
+                            "[SOFASCORE_REFS] No match for %s vs %s (best_score=%.2f)",
+                            home_team, away_team, best_score,
+                        )
                     continue
 
                 # Add needs_review flag if score is borderline
@@ -885,7 +921,8 @@ async def sync_sofascore_refs(
         logger.info(
             f"[SOFASCORE_REFS] Complete: scanned={metrics['scanned']}, "
             f"linked_auto={metrics['linked_auto']}, linked_review={metrics['linked_review']}, "
-            f"skipped_low={metrics['skipped_low_score']}, skipped_no_cand={metrics['skipped_no_candidates']}, "
+            f"skipped_low={metrics['skipped_low_score']}, near_misses={metrics['near_misses']}, "
+            f"skipped_no_cand={metrics['skipped_no_candidates']}, "
             f"already={metrics['already_linked']}, errors={metrics['errors']}"
         )
 

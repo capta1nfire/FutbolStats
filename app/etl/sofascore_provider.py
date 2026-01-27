@@ -606,16 +606,28 @@ def normalize_team_name(name: str) -> str:
     Normalize team name for fuzzy matching.
 
     Steps:
-    1. Lowercase
-    2. Remove accents/diacritics
-    3. Remove common suffixes (FC, CF, SC, etc.)
-    4. Remove punctuation
+    1. Lowercase + trim
+    2. Strip diacritics (NFKD)
+    3. Replace punctuation/hyphens/slashes with space (not delete)
+    4. Remove ONLY juridical/organizational tokens (NOT semantic ones)
     5. Collapse whitespace
+
+    v2 changes vs original:
+    - Does NOT strip 'real', 'united', 'city' (caused collisions:
+      "Real Madrid" and "Real Sociedad" both became just the city name;
+      "Manchester City" and "Manchester United" both became "manchester")
+    - Punctuation replaced with space instead of deleted
+      ("Bodo/Glimt" -> "bodo glimt" instead of "bodoglimt")
 
     Examples:
         "Manchester United FC" -> "manchester united"
-        "Atlético Madrid" -> "atletico madrid"
-        "FC Barcelona" -> "barcelona"
+        "Manchester City FC"   -> "manchester city"
+        "Real Madrid"          -> "real madrid"
+        "Real Sociedad"        -> "real sociedad"
+        "Atlético Madrid"      -> "atletico madrid"
+        "FC Barcelona"         -> "barcelona"
+        "Bodø/Glimt"           -> "bodo glimt"
+        "Paris Saint-Germain"  -> "paris saint germain"
     """
     if not name:
         return ""
@@ -623,22 +635,25 @@ def normalize_team_name(name: str) -> str:
     # Lowercase
     name = name.lower().strip()
 
-    # Remove accents
+    # Remove accents/diacritics
+    # Manual replacements for chars NFKD doesn't decompose (Nordic letters)
+    name = name.replace("ø", "o").replace("æ", "ae").replace("ð", "d")
     name = unicodedata.normalize("NFKD", name)
     name = "".join(c for c in name if not unicodedata.combining(c))
 
-    # Remove common prefixes/suffixes
-    suffixes = [
+    # Replace punctuation/hyphens/slashes with space (preserve word boundaries)
+    name = re.sub(r"[^\w\s]", " ", name)
+
+    # Remove ONLY juridical/organizational tokens (safe to strip)
+    # NOT semantic tokens like 'real', 'united', 'city' which distinguish teams
+    _SAFE_ORG_TOKENS = [
         r"\bfc\b", r"\bcf\b", r"\bsc\b", r"\bafc\b", r"\bssc\b",
         r"\bac\b", r"\bas\b", r"\bcd\b", r"\bud\b", r"\brc\b",
         r"\bsv\b", r"\bvfb\b", r"\btsv\b", r"\bfk\b", r"\bsk\b",
-        r"\breal\b", r"\bunited\b", r"\bcity\b", r"\bclub\b",
+        r"\bclub\b",
     ]
-    for suffix in suffixes:
-        name = re.sub(suffix, "", name)
-
-    # Remove punctuation
-    name = re.sub(r"[^\w\s]", "", name)
+    for token in _SAFE_ORG_TOKENS:
+        name = re.sub(token, "", name)
 
     # Collapse whitespace
     name = " ".join(name.split())
@@ -646,14 +661,25 @@ def normalize_team_name(name: str) -> str:
     return name
 
 
-def calculate_team_similarity(name1: str, name2: str) -> float:
+def calculate_team_similarity(
+    name1: str,
+    name2: str,
+    alias_index: Optional[dict] = None,
+) -> float:
     """
     Calculate similarity score between two team names.
 
-    Uses normalized Levenshtein-like approach:
+    Scoring tiers:
     - Exact match after normalization: 1.0
+    - Alias match (via cross-provider index): 0.95
     - One contains the other: 0.85
     - Token overlap (Jaccard): 0.0-0.8
+
+    Args:
+        name1: First team name (e.g. from API-Football).
+        name2: Second team name (e.g. from Sofascore).
+        alias_index: Optional alias index from build_alias_index().
+            If provided, enables cross-provider alias matching.
 
     Returns:
         Score from 0.0 to 1.0.
@@ -667,6 +693,11 @@ def calculate_team_similarity(name1: str, name2: str) -> float:
     # Exact match
     if n1 == n2:
         return 1.0
+
+    # Alias match (cross-provider: e.g. "Man City" ↔ "Manchester City")
+    if alias_index is not None:
+        if n1 in alias_index.get(n2, set()) or n2 in alias_index.get(n1, set()):
+            return 0.95
 
     # One contains the other
     if n1 in n2 or n2 in n1:
@@ -694,6 +725,7 @@ def calculate_match_score(
     sf_away: str,
     sf_kickoff: Optional[datetime],
     kickoff_tolerance_hours: float = 2.0,
+    alias_index: Optional[dict] = None,
 ) -> tuple[float, str]:
     """
     Calculate matching score between our match and Sofascore event.
@@ -707,6 +739,7 @@ def calculate_match_score(
         our_*: Our match data.
         sf_*: Sofascore event data.
         kickoff_tolerance_hours: Max hours difference for kickoff match.
+        alias_index: Optional cross-provider alias index for improved name matching.
 
     Returns:
         Tuple of (score, matched_by_description).
@@ -725,13 +758,13 @@ def calculate_match_score(
                 matched_by_parts.append(f"kickoff(±{time_diff_hours:.1f}h)")
 
     # Home team matching (0.35 weight)
-    home_sim = calculate_team_similarity(our_home, sf_home)
+    home_sim = calculate_team_similarity(our_home, sf_home, alias_index)
     score += 0.35 * home_sim
     if home_sim >= 0.7:
         matched_by_parts.append(f"home({home_sim:.2f})")
 
     # Away team matching (0.35 weight)
-    away_sim = calculate_team_similarity(our_away, sf_away)
+    away_sim = calculate_team_similarity(our_away, sf_away, alias_index)
     score += 0.35 * away_sim
     if away_sim >= 0.7:
         matched_by_parts.append(f"away({away_sim:.2f})")
@@ -739,3 +772,28 @@ def calculate_match_score(
     matched_by = "+".join(matched_by_parts) if matched_by_parts else "low_confidence"
 
     return round(score, 3), matched_by
+
+
+def get_sofascore_threshold(league_id: int) -> float:
+    """Get match score threshold for a league (env-overridable via config)."""
+    from app.config import get_settings
+    settings = get_settings()
+    overrides = _parse_threshold_overrides(settings.SOFASCORE_REFS_THRESHOLD_OVERRIDES)
+    return overrides.get(league_id, settings.SOFASCORE_REFS_THRESHOLD)
+
+
+def _parse_threshold_overrides(raw: str) -> dict[int, float]:
+    """Parse '128:0.70,307:0.70' -> {128: 0.70, 307: 0.70}."""
+    if not raw:
+        return {}
+    result = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if ":" not in pair:
+            continue
+        k, v = pair.split(":", 1)
+        try:
+            result[int(k.strip())] = float(v.strip())
+        except (ValueError, TypeError):
+            continue
+    return result
