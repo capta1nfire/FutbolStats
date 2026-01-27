@@ -295,6 +295,49 @@ GROUP BY competition_id
 - **tags.channels**: Opcional. Array de plataformas: `["ios","android","web"]`. Si no existe y is_active=true, se asume todas.
 - **group_id**: FK a `admin_league_groups` para ligas pareadas (Apertura/Clausura)
 
+### rules_json v1 Schema
+
+El campo `rules_json` almacena reglas específicas de la liga. Schema v1:
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `team_count_expected` | int (>0) | Equipos esperados, ej: 18, 20 |
+| `season_model` | string | `"aug_jul"` o `"calendar"` |
+| `promotion_relegation.promote` | int (>=0) | Equipos que ascienden |
+| `promotion_relegation.relegate` | int (>=0) | Equipos que descienden |
+| `promotion_relegation.playoffs` | bool | Si hay playoffs |
+| `qualification.targets[]` | array | Lista de clasificaciones |
+| `qualification.targets[].target_league_id` | int | Liga destino |
+| `qualification.targets[].slots` | int (>=0) | Cupos |
+| `qualification.targets[].note` | string | Nota opcional |
+| `paired_handling` | string | `"grouped"` (default) o `"separate"` |
+
+**Ejemplo completo:**
+
+```json
+{
+  "team_count_expected": 20,
+  "season_model": "aug_jul",
+  "promotion_relegation": {
+    "promote": 0,
+    "relegate": 3,
+    "playoffs": false
+  },
+  "qualification": {
+    "targets": [
+      {"target_league_id": 2, "slots": 4, "note": "Champions League"},
+      {"target_league_id": 3, "slots": 2, "note": "Europa League"}
+    ]
+  },
+  "paired_handling": "grouped"
+}
+```
+
+**Notas:**
+- Campos desconocidos se ignoran (forward compatibility)
+- `{}` es válido (sin reglas)
+- `paired_handling`: cómo tratar ligas pareadas en UI (`"grouped"` = mostrar como entidad única)
+
 ### Ejemplo de control por plataforma
 
 ```sql

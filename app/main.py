@@ -6096,6 +6096,53 @@ async def dashboard_admin_audit(
     }
 
 
+@app.get("/dashboard/admin/league-groups.json")
+async def dashboard_admin_league_groups(request: Request):
+    """
+    Admin Panel - List league groups with aggregated metrics.
+
+    P2C: Paired leagues (Apertura/Clausura) as navigable entities.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from app.dashboard.admin import build_league_groups_list
+
+    async with AsyncSessionLocal() as session:
+        data = await build_league_groups_list(session)
+
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "cached": False,
+        "data": data,
+    }
+
+
+@app.get("/dashboard/admin/league-group/{group_id}.json")
+async def dashboard_admin_league_group_detail(request: Request, group_id: int):
+    """
+    Admin Panel - League group detail with member leagues.
+
+    P2C: Full details for a paired league group.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from app.dashboard.admin import build_league_group_detail
+
+    async with AsyncSessionLocal() as session:
+        data = await build_league_group_detail(session, group_id)
+
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"Group {group_id} not found")
+
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "cached": False,
+        "data": data,
+    }
+
+
 @app.get("/dashboard/pit/debug")
 async def pit_dashboard_debug(request: Request):
     """

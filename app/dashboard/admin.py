@@ -28,7 +28,7 @@ async def _load_league_cache(session: AsyncSession) -> dict[int, dict]:
         text("""
             SELECT
                 league_id, name, country, kind, is_active,
-                priority, match_type, match_weight, group_id, source
+                priority, match_type, match_weight, group_id, source, rules_json
             FROM admin_leagues
         """)
     )
@@ -47,6 +47,7 @@ async def _load_league_cache(session: AsyncSession) -> dict[int, dict]:
             "match_weight": r.match_weight,
             "group_id": r.group_id,
             "source": r.source,
+            "rules_json": r.rules_json if isinstance(r.rules_json, dict) else {},
             # configured = source in ('seed', 'override')
             "configured": r.source in ("seed", "override"),
         }
@@ -271,9 +272,12 @@ async def build_leagues_list(session: AsyncSession) -> dict:
                 "match_weight": db_entry["match_weight"],
                 "observed": league_id in observed_ids,
             }
-            # Add group info if paired
+            # Add group info if paired (with paired_handling from rules_json)
             if db_entry["group_id"] and db_entry["group_id"] in groups_data:
-                league_entry["group"] = groups_data[db_entry["group_id"]]
+                group_info = groups_data[db_entry["group_id"]].copy()
+                rules = db_entry.get("rules_json") or {}
+                group_info["paired_handling"] = rules.get("paired_handling", "grouped")
+                league_entry["group"] = group_info
         else:
             # League in matches but not in admin_leagues (should not happen after sync)
             league_entry = {
@@ -356,7 +360,7 @@ async def build_league_detail(session: AsyncSession, league_id: int) -> Optional
     if check_result.fetchone().cnt == 0 and not db_entry:
         return None  # League not found
 
-    # Get group info if paired
+    # Get group info if paired (with paired_handling from rules_json)
     group_info = None
     if db_entry and db_entry.get("group_id"):
         group_query = text("""
@@ -367,7 +371,13 @@ async def build_league_detail(session: AsyncSession, league_id: int) -> Optional
         group_result = await session.execute(group_query, {"gid": db_entry["group_id"]})
         gr = group_result.fetchone()
         if gr:
-            group_info = {"key": gr.group_key, "name": gr.name, "country": gr.country}
+            rules = db_entry.get("rules_json") or {}
+            group_info = {
+                "key": gr.group_key,
+                "name": gr.name,
+                "country": gr.country,
+                "paired_handling": rules.get("paired_handling", "grouped")
+            }
 
     # Stats by season
     season_query = text("""
@@ -786,10 +796,70 @@ VALID_PRIORITIES = {"high", "medium", "low", None}
 VALID_MATCH_TYPES = {"official", "friendly", None}
 VALID_CHANNELS = {"ios", "android", "web"}
 
+# rules_json v1 schema validation
+VALID_SEASON_MODELS = {"aug_jul", "calendar"}
+VALID_PAIRED_HANDLING = {"grouped", "separate"}
+
 
 class ValidationError(Exception):
     """Raised when patch validation fails."""
     pass
+
+
+def _validate_rules_json_v1(rules: dict) -> None:
+    """
+    Validate rules_json against v1 schema.
+    Empty dict is valid. Unknown fields are ignored (forward compatibility).
+    Raises ValidationError on type/value violations.
+    """
+    if not rules:
+        return  # Empty is valid
+
+    # team_count_expected
+    if "team_count_expected" in rules:
+        tc = rules["team_count_expected"]
+        if not isinstance(tc, int) or tc <= 0:
+            raise ValidationError("rules_json.team_count_expected must be a positive integer")
+
+    # season_model
+    if "season_model" in rules:
+        sm = rules["season_model"]
+        if sm not in VALID_SEASON_MODELS:
+            raise ValidationError(f"rules_json.season_model must be one of: {sorted(VALID_SEASON_MODELS)}")
+
+    # promotion_relegation
+    if "promotion_relegation" in rules:
+        pr = rules["promotion_relegation"]
+        if not isinstance(pr, dict):
+            raise ValidationError("rules_json.promotion_relegation must be an object")
+        if "promote" in pr and (not isinstance(pr["promote"], int) or pr["promote"] < 0):
+            raise ValidationError("rules_json.promotion_relegation.promote must be >= 0")
+        if "relegate" in pr and (not isinstance(pr["relegate"], int) or pr["relegate"] < 0):
+            raise ValidationError("rules_json.promotion_relegation.relegate must be >= 0")
+        if "playoffs" in pr and not isinstance(pr["playoffs"], bool):
+            raise ValidationError("rules_json.promotion_relegation.playoffs must be boolean")
+
+    # qualification
+    if "qualification" in rules:
+        qual = rules["qualification"]
+        if not isinstance(qual, dict):
+            raise ValidationError("rules_json.qualification must be an object")
+        if "targets" in qual:
+            if not isinstance(qual["targets"], list):
+                raise ValidationError("rules_json.qualification.targets must be an array")
+            for i, t in enumerate(qual["targets"]):
+                if not isinstance(t, dict):
+                    raise ValidationError(f"rules_json.qualification.targets[{i}] must be an object")
+                if "target_league_id" in t and not isinstance(t["target_league_id"], int):
+                    raise ValidationError(f"rules_json.qualification.targets[{i}].target_league_id must be int")
+                if "slots" in t and (not isinstance(t["slots"], int) or t["slots"] < 0):
+                    raise ValidationError(f"rules_json.qualification.targets[{i}].slots must be >= 0")
+
+    # paired_handling
+    if "paired_handling" in rules:
+        ph = rules["paired_handling"]
+        if ph not in VALID_PAIRED_HANDLING:
+            raise ValidationError(f"rules_json.paired_handling must be one of: {sorted(VALID_PAIRED_HANDLING)}")
 
 
 def _validate_patch(patch: dict) -> dict:
@@ -870,6 +940,7 @@ def _validate_patch(patch: dict) -> dict:
         elif key == "rules_json":
             if not isinstance(value, dict):
                 raise ValidationError("rules_json must be a JSON object")
+            _validate_rules_json_v1(value)
             sanitized[key] = value
 
         elif key == "name":
@@ -1150,4 +1221,246 @@ async def get_audit_log(
             "entity_type": entity_type,
             "entity_id": entity_id,
         },
+    }
+
+
+# =============================================================================
+# League Groups Endpoints (P2C)
+# =============================================================================
+
+
+async def build_league_groups_list(session: AsyncSession) -> dict:
+    """
+    Build list of league groups with aggregated metrics.
+    """
+    # Get all groups
+    groups_query = text("""
+        SELECT g.group_id, g.group_key, g.name, g.country, g.tags
+        FROM admin_league_groups g
+        ORDER BY g.name
+    """)
+    groups_result = await session.execute(groups_query)
+    groups_rows = groups_result.fetchall()
+
+    # Get member leagues for each group
+    members_query = text("""
+        SELECT
+            al.group_id,
+            al.league_id,
+            al.name as league_name,
+            al.is_active
+        FROM admin_leagues al
+        WHERE al.group_id IS NOT NULL
+        ORDER BY al.group_id, al.name
+    """)
+    members_result = await session.execute(members_query)
+    members_by_group = {}
+    for row in members_result.fetchall():
+        if row.group_id not in members_by_group:
+            members_by_group[row.group_id] = []
+        members_by_group[row.group_id].append({
+            "league_id": row.league_id,
+            "name": row.league_name,
+            "is_active": row.is_active
+        })
+
+    # Get aggregated stats for each group
+    stats_query = text("""
+        SELECT
+            al.group_id,
+            COUNT(m.id) as total_matches,
+            COUNT(m.id) FILTER (WHERE m.date >= '2025-08-01') as matches_25_26,
+            MAX(m.date) as last_match,
+            MIN(m.season) as first_season,
+            MAX(m.season) as last_season,
+            COUNT(m.id) FILTER (WHERE m.stats IS NOT NULL AND m.stats::text != '{}') as with_stats,
+            COUNT(m.id) FILTER (WHERE m.odds_home IS NOT NULL) as with_odds
+        FROM admin_leagues al
+        LEFT JOIN matches m ON m.league_id = al.league_id
+        WHERE al.group_id IS NOT NULL
+        GROUP BY al.group_id
+    """)
+    stats_result = await session.execute(stats_query)
+    stats_by_group = {row.group_id: row for row in stats_result.fetchall()}
+
+    # Build response
+    groups = []
+    for g in groups_rows:
+        members = members_by_group.get(g.group_id, [])
+        stats = stats_by_group.get(g.group_id)
+
+        total = stats.total_matches if stats else 0
+        with_stats = stats.with_stats if stats else 0
+        with_odds = stats.with_odds if stats else 0
+
+        groups.append({
+            "group_id": g.group_id,
+            "group_key": g.group_key,
+            "name": g.name,
+            "country": g.country,
+            "leagues": members,
+            "is_active_any": any(m["is_active"] for m in members),
+            "is_active_all": all(m["is_active"] for m in members) if members else False,
+            "stats": {
+                "total_matches": total,
+                "matches_25_26": stats.matches_25_26 if stats else 0,
+                "last_match": stats.last_match.isoformat() if stats and stats.last_match else None,
+                "seasons_range": [stats.first_season, stats.last_season] if stats and stats.first_season else None,
+                "with_stats_pct": round(with_stats * 100 / total, 1) if total > 0 else None,
+                "with_odds_pct": round(with_odds * 100 / total, 1) if total > 0 else None,
+            }
+        })
+
+    return {
+        "groups": groups,
+        "total": len(groups)
+    }
+
+
+async def build_league_group_detail(session: AsyncSession, group_id: int) -> Optional[dict]:
+    """
+    Build detailed view of a league group.
+    Returns None if group not found.
+    """
+    # Get group info
+    group_query = text("""
+        SELECT group_id, group_key, name, country, tags, created_at, updated_at
+        FROM admin_league_groups
+        WHERE group_id = :gid
+    """)
+    result = await session.execute(group_query, {"gid": group_id})
+    group_row = result.fetchone()
+
+    if not group_row:
+        return None
+
+    # Get member leagues with full stats
+    members_query = text("""
+        SELECT
+            al.league_id, al.name, al.country, al.kind, al.is_active,
+            al.priority, al.match_type, al.match_weight, al.rules_json,
+            COUNT(m.id) as total_matches,
+            COUNT(m.id) FILTER (WHERE m.date >= '2025-08-01') as matches_25_26,
+            COUNT(m.id) FILTER (WHERE m.status IN ('FT', 'AET', 'PEN')) as finished,
+            MAX(m.date) as last_match
+        FROM admin_leagues al
+        LEFT JOIN matches m ON m.league_id = al.league_id
+        WHERE al.group_id = :gid
+        GROUP BY al.league_id, al.name, al.country, al.kind, al.is_active,
+                 al.priority, al.match_type, al.match_weight, al.rules_json
+        ORDER BY al.name
+    """)
+    members_result = await session.execute(members_query, {"gid": group_id})
+
+    member_leagues = []
+    for m in members_result.fetchall():
+        member_leagues.append({
+            "league_id": m.league_id,
+            "name": m.name,
+            "country": m.country,
+            "kind": m.kind,
+            "is_active": m.is_active,
+            "priority": m.priority,
+            "match_type": m.match_type,
+            "match_weight": m.match_weight,
+            "rules_json": m.rules_json if isinstance(m.rules_json, dict) else {},
+            "stats": {
+                "total_matches": m.total_matches,
+                "matches_25_26": m.matches_25_26,
+                "finished": m.finished,
+                "last_match": m.last_match.isoformat() if m.last_match else None
+            }
+        })
+
+    # Aggregated stats by season
+    league_ids = [m["league_id"] for m in member_leagues]
+    if league_ids:
+        stats_by_season_query = text("""
+            SELECT
+                season,
+                COUNT(*) as total_matches,
+                COUNT(*) FILTER (WHERE status IN ('FT', 'AET', 'PEN')) as finished,
+                COUNT(*) FILTER (WHERE stats IS NOT NULL AND stats::text != '{}') as with_stats,
+                COUNT(*) FILTER (WHERE odds_home IS NOT NULL) as with_odds
+            FROM matches
+            WHERE league_id = ANY(:lids)
+            GROUP BY season
+            ORDER BY season DESC
+            LIMIT 10
+        """)
+        stats_result = await session.execute(stats_by_season_query, {"lids": league_ids})
+        stats_by_season = [
+            {
+                "season": r.season,
+                "total_matches": r.total_matches,
+                "finished": r.finished,
+                "with_stats_pct": round(r.with_stats * 100 / r.total_matches, 1) if r.total_matches > 0 else None,
+                "with_odds_pct": round(r.with_odds * 100 / r.total_matches, 1) if r.total_matches > 0 else None
+            }
+            for r in stats_result.fetchall()
+        ]
+    else:
+        stats_by_season = []
+
+    # Distinct teams across all member leagues
+    if league_ids:
+        teams_query = text("""
+            SELECT DISTINCT t.id as team_id, t.name, t.country
+            FROM teams t
+            JOIN matches m ON t.id = m.home_team_id OR t.id = m.away_team_id
+            WHERE m.league_id = ANY(:lids)
+            ORDER BY t.name
+            LIMIT 100
+        """)
+        teams_result = await session.execute(teams_query, {"lids": league_ids})
+        teams = [{"team_id": r.team_id, "name": r.name, "country": r.country}
+                 for r in teams_result.fetchall()]
+    else:
+        teams = []
+
+    # Recent matches across all member leagues
+    if league_ids:
+        recent_query = text("""
+            SELECT
+                m.id as match_id, m.date, m.league_id, m.status,
+                ht.name as home_team, at.name as away_team,
+                m.home_goals, m.away_goals
+            FROM matches m
+            JOIN teams ht ON m.home_team_id = ht.id
+            JOIN teams at ON m.away_team_id = at.id
+            WHERE m.league_id = ANY(:lids)
+            ORDER BY m.date DESC
+            LIMIT 20
+        """)
+        recent_result = await session.execute(recent_query, {"lids": league_ids})
+        recent_matches = [
+            {
+                "match_id": r.match_id,
+                "date": r.date.isoformat() if r.date else None,
+                "league_id": r.league_id,
+                "status": r.status,
+                "home_team": r.home_team,
+                "away_team": r.away_team,
+                "score": f"{r.home_goals}-{r.away_goals}" if r.home_goals is not None else None
+            }
+            for r in recent_result.fetchall()
+        ]
+    else:
+        recent_matches = []
+
+    return {
+        "group": {
+            "group_id": group_row.group_id,
+            "group_key": group_row.group_key,
+            "name": group_row.name,
+            "country": group_row.country,
+            "tags": group_row.tags if isinstance(group_row.tags, dict) else {},
+        },
+        "member_leagues": member_leagues,
+        "is_active_any": any(m["is_active"] for m in member_leagues),
+        "is_active_all": all(m["is_active"] for m in member_leagues) if member_leagues else False,
+        "stats_by_season": stats_by_season,
+        "teams_count": len(teams),
+        "teams": teams,
+        "recent_matches": recent_matches
     }
