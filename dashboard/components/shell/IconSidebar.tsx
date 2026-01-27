@@ -15,6 +15,7 @@ import {
   Sparkles,
   Activity,
   Trophy,
+  Shield,
   LucideIcon,
 } from "lucide-react";
 import {
@@ -43,6 +44,7 @@ const navItems: NavItem[] = [
   { icon: Activity, label: "ML Health", href: "/ml-health" },
   { icon: Database, label: "Data Quality", href: "/data-quality" },
   { icon: FileText, label: "Audit", href: "/audit" },
+  { icon: Shield, label: "Admin", href: "/admin" },
   { icon: Settings, label: "Settings", href: "/settings" },
 ];
 

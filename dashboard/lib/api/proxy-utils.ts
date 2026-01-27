@@ -185,3 +185,62 @@ export async function proxyFetch(
   // Fallback (shouldn't reach here)
   return { data: { error: "Failed after retries" }, status: 502, requestId };
 }
+
+/**
+ * Generic proxy fetch for mutations (PATCH/POST/PUT)
+ *
+ * - NO retry (mutations are not idempotent)
+ * - Timeout + abort
+ * - x-request-id tracking
+ * - Content-Type: application/json
+ */
+export async function proxyFetchMutation(
+  path: string,
+  method: "PATCH" | "POST" | "PUT",
+  body: unknown,
+  options: ProxyOptions = {}
+): Promise<{ data: unknown; status: number; requestId: string }> {
+  const { prefix = "mut", timeoutMs = DEFAULT_TIMEOUT_MS } = options;
+  const requestId = generateRequestId(prefix);
+  const baseUrl = getBackendBaseUrl();
+
+  if (!baseUrl) {
+    return { data: { error: "Backend not configured" }, status: 503, requestId };
+  }
+
+  const url = `${baseUrl}${path}`;
+  const headers = {
+    ...buildHeaders(requestId),
+    "Content-Type": "application/json",
+  };
+
+  const fetchOptions: RequestInit = {
+    method,
+    headers,
+    body: JSON.stringify(body),
+    cache: "no-store",
+  };
+
+  try {
+    const response = await fetchWithTimeout(url, fetchOptions, timeoutMs);
+
+    const data = await response.json().catch(() => null);
+
+    if (response.ok) {
+      return { data, status: response.status, requestId };
+    }
+
+    return {
+      data: data || { error: `Backend returned ${response.status}` },
+      status: response.status,
+      requestId,
+    };
+  } catch (error) {
+    const isTimeout = error instanceof Error && error.name === "AbortError";
+    return {
+      data: { error: isTimeout ? "Backend timeout" : "Backend unreachable" },
+      status: 504,
+      requestId,
+    };
+  }
+}

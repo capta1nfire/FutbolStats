@@ -9,3 +9,4 @@ export * from "./settings";
 export * from "./predictions";
 export * from "./ml-health";
 export * from "./football";
+export * from "./admin";
