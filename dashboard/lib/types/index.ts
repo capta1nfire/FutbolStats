@@ -10,3 +10,4 @@ export * from "./predictions";
 export * from "./ml-health";
 export * from "./football";
 export * from "./admin";
+export * from "./feature-coverage-detail";

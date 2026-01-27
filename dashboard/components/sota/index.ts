@@ -4,6 +4,7 @@ export { SotaViewTabs } from "./SotaViewTabs";
 export type { SotaView } from "./SotaViewTabs";
 export { FeatureCoverageMatrix } from "./FeatureCoverageMatrix";
 export type { CoverageRangeFilter } from "./FeatureCoverageMatrix";
+export { FeatureCoverageDetailDrawer } from "./FeatureCoverageDetailDrawer";
 export type { FeatureCoverageLeague } from "@/lib/hooks/use-feature-coverage";
 export { LeagueFilterPanel } from "./LeagueFilterPanel";
 export type { LeagueOption } from "./LeagueFilterPanel";
