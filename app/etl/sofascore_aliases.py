@@ -16,7 +16,7 @@ import json
 import logging
 from pathlib import Path
 
-from app.etl.sofascore_provider import normalize_team_name
+from app.etl.name_normalization import normalize_team_name
 
 logger = logging.getLogger(__name__)
 

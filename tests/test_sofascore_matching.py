@@ -2,8 +2,8 @@
 
 import pytest
 
+from app.etl.name_normalization import normalize_team_name
 from app.etl.sofascore_provider import (
-    normalize_team_name,
     calculate_team_similarity,
     _parse_threshold_overrides,
 )

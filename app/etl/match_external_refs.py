@@ -10,62 +10,22 @@ Reference: docs/ARCHITECTURE_SOTA.md section 1.2 (match_external_refs)
 """
 
 import logging
-import re
-import unicodedata
 from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.etl.name_normalization import normalize_team_name
+from app.etl.sofascore_aliases import names_are_aliases
+
 logger = logging.getLogger(__name__)
-
-
-def normalize_team_name(name: str) -> str:
-    """
-    Normalize team name for matching.
-
-    Transformations:
-    - Lowercase
-    - Strip whitespace
-    - Remove diacritics (á → a, ñ → n, etc.)
-    - Remove punctuation
-    - Collapse multiple spaces to single space
-    - Common abbreviation handling (FC, CF, etc.)
-
-    Args:
-        name: Raw team name.
-
-    Returns:
-        Normalized team name string.
-    """
-    if not name:
-        return ""
-
-    # Lowercase and strip
-    result = name.lower().strip()
-
-    # Remove diacritics (NFD decomposition + filter combining marks)
-    result = unicodedata.normalize("NFD", result)
-    result = "".join(c for c in result if unicodedata.category(c) != "Mn")
-
-    # Remove punctuation (keep alphanumeric and spaces)
-    result = re.sub(r"[^\w\s]", " ", result)
-
-    # Collapse multiple spaces
-    result = re.sub(r"\s+", " ", result).strip()
-
-    # Common suffix/prefix normalization (optional, helps matching)
-    # Remove trailing FC, CF, SC, etc.
-    result = re.sub(r"\b(fc|cf|sc|ac|afc|ssc|as|rc|cd|ud|sd|ca|rcd|real)\b", "", result)
-    result = re.sub(r"\s+", " ", result).strip()
-
-    return result
 
 
 def compute_match_score(
     api_match: dict,
     ext_match: dict,
+    alias_index: Optional[dict[str, set[str]]] = None,
 ) -> float:
     """
     Compute similarity score between an API-Football match and an external source match.
@@ -118,6 +78,8 @@ def compute_match_score(
     if api_home and ext_home:
         if api_home == ext_home:
             score += 0.2
+        elif alias_index and names_are_aliases(api_match.get("home_team", ""), ext_match.get("home_team", ""), alias_index):
+            score += 0.18
         elif api_home in ext_home or ext_home in api_home:
             score += 0.15
         elif _fuzzy_team_match(api_home, ext_home):
@@ -127,6 +89,8 @@ def compute_match_score(
     if api_away and ext_away:
         if api_away == ext_away:
             score += 0.2
+        elif alias_index and names_are_aliases(api_match.get("away_team", ""), ext_match.get("away_team", ""), alias_index):
+            score += 0.18
         elif api_away in ext_away or ext_away in api_away:
             score += 0.15
         elif _fuzzy_team_match(api_away, ext_away):

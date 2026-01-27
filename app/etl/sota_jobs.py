@@ -20,6 +20,9 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.etl.name_normalization import normalize_team_name
+from app.etl.sofascore_aliases import build_alias_index, names_are_aliases
+
 logger = logging.getLogger(__name__)
 
 # Understat covers these leagues (API-Football league IDs)
@@ -82,6 +85,7 @@ async def sync_understat_refs(
     # Cache for Understat league matches
     understat_cache: dict[str, list[dict]] = {}
     provider = UnderstatProvider(use_mock=False)
+    alias_index = build_alias_index()
 
     try:
         # Get candidate matches (FT without understat ref, in supported leagues)
@@ -138,7 +142,7 @@ async def sync_understat_refs(
 
                 # Fetch Understat candidates
                 candidates = await _fetch_understat_candidates(
-                    api_match, provider, understat_cache
+                    api_match, provider, understat_cache, alias_index=alias_index
                 )
 
                 if not candidates:
@@ -149,7 +153,7 @@ async def sync_understat_refs(
                 best_candidate = None
                 best_score = 0.0
                 for candidate in candidates:
-                    score = compute_match_score(api_match, candidate)
+                    score = compute_match_score(api_match, candidate, alias_index=alias_index)
                     if score > best_score:
                         best_score = score
                         best_candidate = candidate
@@ -211,6 +215,7 @@ async def _fetch_understat_candidates(
     api_match: dict,
     provider,
     cache: dict,
+    alias_index: Optional[dict[str, set[str]]] = None,
 ) -> list[dict]:
     """Fetch Understat match candidates using provider with caching."""
     league_id = api_match.get("league_id")
@@ -245,7 +250,7 @@ async def _fetch_understat_candidates(
         if not u_match.get("is_result"):
             continue
 
-        if _is_match_candidate(api_match, u_match):
+        if _is_match_candidate(api_match, u_match, alias_index=alias_index):
             try:
                 candidates.append({
                     "source_match_id": str(u_match.get("id")),
@@ -263,19 +268,13 @@ async def _fetch_understat_candidates(
     return candidates
 
 
-def _is_match_candidate(api_match: dict, u_match: dict, tolerance_hours: int = 2) -> bool:
+def _is_match_candidate(
+    api_match: dict,
+    u_match: dict,
+    tolerance_hours: int = 2,
+    alias_index: Optional[dict[str, set[str]]] = None,
+) -> bool:
     """Check if Understat match could match the API match."""
-    import unicodedata
-
-    def normalize(name: str) -> str:
-        if not name:
-            return ""
-        name = name.lower()
-        name = unicodedata.normalize('NFKD', name).encode('ascii', 'ignore').decode('ascii')
-        name = name.replace(" fc", "").replace("fc ", "")
-        name = name.replace(" cf", "").replace("cf ", "")
-        return " ".join(name.split())
-
     try:
         u_kickoff_str = u_match.get("datetime", "")
         u_kickoff = datetime.strptime(u_kickoff_str, "%Y-%m-%d %H:%M:%S")
@@ -290,13 +289,21 @@ def _is_match_candidate(api_match: dict, u_match: dict, tolerance_hours: int = 2
     if time_diff > tolerance_hours:
         return False
 
-    api_home = normalize(api_match.get("home_team", ""))
-    api_away = normalize(api_match.get("away_team", ""))
-    u_home = normalize(u_match.get("home_team", ""))
-    u_away = normalize(u_match.get("away_team", ""))
+    api_home = normalize_team_name(api_match.get("home_team", ""))
+    api_away = normalize_team_name(api_match.get("away_team", ""))
+    u_home = normalize_team_name(u_match.get("home_team", ""))
+    u_away = normalize_team_name(u_match.get("away_team", ""))
 
-    home_match = api_home in u_home or u_home in api_home or api_home == u_home
-    away_match = api_away in u_away or u_away in api_away or api_away == u_away
+    home_match = (
+        api_home == u_home
+        or api_home in u_home or u_home in api_home
+        or (alias_index and names_are_aliases(api_match.get("home_team", ""), u_match.get("home_team", ""), alias_index))
+    )
+    away_match = (
+        api_away == u_away
+        or api_away in u_away or u_away in api_away
+        or (alias_index and names_are_aliases(api_match.get("away_team", ""), u_match.get("away_team", ""), alias_index))
+    )
 
     return home_match and away_match
 
