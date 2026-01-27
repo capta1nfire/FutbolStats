@@ -2,7 +2,7 @@
 
 > **IMPORTANTE**: Consultar este documento ANTES de escribir queries SQL para evitar errores de columnas inexistentes.
 >
-> Generado: 2026-01-26 (actualizado con tablas P2B + SOTA Sofascore + standings)
+> Generado: 2026-01-27 (actualizado con columnas observed_at/ingested_at en odds_history)
 
 ---
 
@@ -511,13 +511,15 @@ WHERE league_id = 39;
 
 ---
 
-## public.odds_history (17 columnas)
+## public.odds_history (19 columnas)
 
 | Column | Type | Nullable | Default |
 |--------|------|----------|---------|
 | `id` | integer | NO | nextval('odds_history_id_seq') |
 | `match_id` | integer | NO | - |
 | `recorded_at` | timestamptz | NO | now() |
+| `observed_at` | timestamptz | YES | NULL |
+| `ingested_at` | timestamptz | YES | now() |
 | `odds_home` | double precision | YES | - |
 | `odds_draw` | double precision | YES | - |
 | `odds_away` | double precision | YES | - |
@@ -537,10 +539,13 @@ WHERE league_id = 39;
 
 - **Uso**: Historial detallado de movimientos de odds por partido
 - **Relación**: `odds_history.match_id` → `matches.id`
+- **observed_at**: Timestamp de cuando las odds fueron observadas en la fuente (provider timestamp si disponible)
+- **ingested_at**: Timestamp de cuando las odds fueron ingestadas en nuestro sistema
 - **is_opening/is_closing**: Marca si es la primera/última captura
 - **implied_***: Probabilidades implícitas calculadas (1/odds)
 - **overround**: Margen del bookmaker (suma de implied > 1.0)
-- **quarantined/tainted**: Flags de calidad de datos
+- **quarantined/tainted**: Flags de calidad de datos (P0 Telemetry)
+- **Poblado por**: Job `odds_sync` en `app/scheduler.py` (usa `OddsHistory.from_odds()`)
 - **Usado por**: Endpoint `/matches/{id}/odds-history`
 
 ---
