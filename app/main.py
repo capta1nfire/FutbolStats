@@ -6363,6 +6363,43 @@ async def dashboard_football_group_detail(request: Request, group_id: int):
     }
 
 
+@app.get("/dashboard/football/overview.json")
+async def dashboard_football_overview(request: Request):
+    """
+    Football Navigation - Overview.
+
+    P3.1: Shows summary counts, upcoming matches, top leagues, and alerts.
+    All filtered by admin_leagues.is_active = true.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    cache_key = "football_overview"
+    cached_data, cache_age = _get_football_cache(cache_key, FOOTBALL_NAV_CACHE_TTL)
+
+    if cached_data:
+        return {
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "cached": True,
+            "cache_age_seconds": cache_age,
+            "data": cached_data,
+        }
+
+    from app.dashboard.football_nav import build_football_overview
+
+    async with AsyncSessionLocal() as session:
+        data = await build_football_overview(session)
+
+    _set_football_cache(cache_key, data)
+
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
 @app.get("/dashboard/pit/debug")
 async def pit_dashboard_debug(request: Request):
     """

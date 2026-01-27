@@ -624,3 +624,188 @@ async def build_group_nav_detail(session: AsyncSession, group_id: int) -> Option
             "note": "Standings table coming soon",
         },
     }
+
+
+# =============================================================================
+# Football Overview (P3.1)
+# =============================================================================
+
+async def build_football_overview(session: AsyncSession) -> dict:
+    """
+    Build football overview for category=overview.
+    Shows summary counts, upcoming matches, top leagues, and alerts.
+    All filtered by admin_leagues.is_active = true.
+    """
+    # 1. Summary counts (single query for efficiency)
+    summary_query = text("""
+        WITH active_leagues AS (
+            SELECT league_id FROM admin_leagues WHERE is_active = true
+        )
+        SELECT
+            (SELECT COUNT(*) FROM admin_leagues WHERE is_active = true) as leagues_active,
+            (SELECT COUNT(DISTINCT country) FROM admin_leagues WHERE is_active = true AND country IS NOT NULL) as countries_active,
+            (SELECT COUNT(*) FROM matches WHERE league_id IN (SELECT league_id FROM active_leagues)
+                AND date >= NOW() AND date < NOW() + INTERVAL '7 days') as matches_next_7d,
+            (SELECT COUNT(*) FROM matches WHERE league_id IN (SELECT league_id FROM active_leagues)
+                AND status IN ('1H', '2H', 'HT', 'LIVE', 'ET', 'BT', 'P')) as matches_live,
+            (SELECT COUNT(*) FROM matches WHERE league_id IN (SELECT league_id FROM active_leagues)
+                AND status IN ('FT', 'AET', 'PEN') AND date >= NOW() - INTERVAL '24 hours') as matches_finished_24h
+    """)
+    summary_result = await session.execute(summary_query)
+    summary_row = summary_result.fetchone()
+
+    # 2. Teams active count (separate for clarity)
+    teams_query = text("""
+        SELECT COUNT(DISTINCT t.id) as teams_active
+        FROM teams t
+        JOIN matches m ON t.id = m.home_team_id OR t.id = m.away_team_id
+        JOIN admin_leagues al ON m.league_id = al.league_id AND al.is_active = true
+        WHERE m.date >= NOW() - INTERVAL '365 days'
+    """)
+    teams_result = await session.execute(teams_query)
+    teams_row = teams_result.fetchone()
+
+    summary = {
+        "leagues_active_count": summary_row.leagues_active,
+        "countries_active_count": summary_row.countries_active,
+        "matches_next_7d_count": summary_row.matches_next_7d,
+        "matches_live_count": summary_row.matches_live,
+        "matches_finished_24h_count": summary_row.matches_finished_24h,
+        "teams_active_count": teams_row.teams_active,
+    }
+
+    # 3. Upcoming matches (próximos 20)
+    upcoming_query = text("""
+        SELECT
+            m.id as match_id, m.date, m.league_id, m.status,
+            al.name as league_name,
+            ht.name as home_team, at.name as away_team,
+            EXISTS(SELECT 1 FROM predictions p WHERE p.match_id = m.id) as has_prediction
+        FROM matches m
+        JOIN admin_leagues al ON m.league_id = al.league_id AND al.is_active = true
+        JOIN teams ht ON m.home_team_id = ht.id
+        JOIN teams at ON m.away_team_id = at.id
+        WHERE m.date >= NOW() AND m.status = 'NS'
+        ORDER BY m.date ASC
+        LIMIT 20
+    """)
+    upcoming_result = await session.execute(upcoming_query)
+    upcoming = [
+        {
+            "match_id": r.match_id,
+            "date": r.date.isoformat() if r.date else None,
+            "league_id": r.league_id,
+            "league_name": r.league_name,
+            "home_team": r.home_team,
+            "away_team": r.away_team,
+            "status": r.status,
+            "has_prediction": r.has_prediction,
+        }
+        for r in upcoming_result.fetchall()
+    ]
+
+    # 4. Top 10 leagues by matches_30d, then matches_total
+    leagues_query = text("""
+        SELECT
+            al.league_id, al.name, al.country,
+            COUNT(*) FILTER (WHERE m.date >= NOW() - INTERVAL '30 days') as matches_30d,
+            COUNT(*) as matches_total,
+            COUNT(*) FILTER (WHERE m.stats IS NOT NULL AND m.stats::text != '{}' AND (m.stats->>'_no_stats') IS NULL) as with_stats,
+            COUNT(*) FILTER (WHERE m.odds_home IS NOT NULL) as with_odds
+        FROM admin_leagues al
+        LEFT JOIN matches m ON m.league_id = al.league_id
+        WHERE al.is_active = true
+        GROUP BY al.league_id, al.name, al.country
+        ORDER BY COUNT(*) FILTER (WHERE m.date >= NOW() - INTERVAL '30 days') DESC, COUNT(*) DESC
+        LIMIT 10
+    """)
+    leagues_result = await session.execute(leagues_query)
+    leagues = [
+        {
+            "league_id": r.league_id,
+            "name": r.name,
+            "country": r.country,
+            "matches_30d": r.matches_30d,
+            "matches_total": r.matches_total,
+            "with_stats_pct": round(r.with_stats * 100 / r.matches_total, 1) if r.matches_total > 0 else None,
+            "with_odds_pct": round(r.with_odds * 100 / r.matches_total, 1) if r.matches_total > 0 else None,
+        }
+        for r in leagues_result.fetchall()
+    ]
+
+    # 5. Alerts: ligas activas con with_stats_pct < 50 o with_odds_pct < 50
+    alerts_query = text("""
+        WITH league_coverage AS (
+            SELECT
+                al.league_id, al.name,
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE m.stats IS NOT NULL AND m.stats::text != '{}' AND (m.stats->>'_no_stats') IS NULL) as with_stats,
+                COUNT(*) FILTER (WHERE m.odds_home IS NOT NULL) as with_odds
+            FROM admin_leagues al
+            LEFT JOIN matches m ON m.league_id = al.league_id
+            WHERE al.is_active = true
+            GROUP BY al.league_id, al.name
+            HAVING COUNT(*) > 0
+        )
+        SELECT league_id, name,
+            ROUND(with_stats * 100.0 / total, 1) as stats_pct,
+            ROUND(with_odds * 100.0 / total, 1) as odds_pct
+        FROM league_coverage
+        WHERE with_stats * 100.0 / total < 50
+           OR with_odds * 100.0 / total < 50
+        ORDER BY with_stats * 100.0 / total ASC
+        LIMIT 5
+    """)
+    alerts_result = await session.execute(alerts_query)
+    alerts = []
+    for r in alerts_result.fetchall():
+        if r.stats_pct < 50:
+            alerts.append({
+                "type": "low_stats_coverage",
+                "league_id": r.league_id,
+                "league_name": r.name,
+                "message": f"Stats coverage below 50%: {r.stats_pct}%",
+                "value": float(r.stats_pct),
+            })
+        if r.odds_pct < 50:
+            alerts.append({
+                "type": "low_odds_coverage",
+                "league_id": r.league_id,
+                "league_name": r.name,
+                "message": f"Odds coverage below 50%: {r.odds_pct}%",
+                "value": float(r.odds_pct),
+            })
+
+    # 6. TITAN coverage (fail-soft)
+    titan = None
+    try:
+        titan_query = text("""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN tier1_complete THEN 1 ELSE 0 END) as tier1,
+                SUM(CASE WHEN tier1b_complete THEN 1 ELSE 0 END) as tier1b
+            FROM titan.feature_matrix fm
+            JOIN admin_leagues al ON fm.competition_id = al.league_id AND al.is_active = true
+            WHERE fm.season = 2025
+        """)
+        titan_result = await session.execute(titan_query)
+        titan_row = titan_result.fetchone()
+        if titan_row and titan_row.total > 0:
+            titan = {
+                "total": titan_row.total,
+                "tier1": titan_row.tier1,
+                "tier1b": titan_row.tier1b,
+                "tier1_pct": round(titan_row.tier1 * 100 / titan_row.total, 1),
+                "tier1b_pct": round(titan_row.tier1b * 100 / titan_row.total, 1),
+            }
+    except Exception as e:
+        logger.warning(f"TITAN query failed (fail-soft): {e}")
+        titan = None
+
+    return {
+        "summary": summary,
+        "upcoming": upcoming,
+        "leagues": leagues,
+        "alerts": alerts,
+        "titan": titan,
+    }
