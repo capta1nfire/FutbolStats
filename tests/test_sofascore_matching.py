@@ -126,6 +126,7 @@ class TestAliasIndex:
         assert names_are_aliases("Olympiakos Piraeus", "Olympiacos FC", index)
         assert names_are_aliases("Velez Sarsfield", "Vélez Sarsfield", index)
         assert names_are_aliases("Jaguares", "Jaguares de Córdoba", index)
+        assert names_are_aliases("La Equidad", "Internacional de Bogotá", index)
 
 
 # ---------------------------------------------------------------------------

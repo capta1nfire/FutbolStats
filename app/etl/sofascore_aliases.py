@@ -62,6 +62,7 @@ SOFASCORE_OVERRIDES: dict[int, list[str]] = {
     438: ["Velez Sarsfield", "Vélez Sarsfield"],
     1066: ["Gimnasia M.", "Gimnasia y Esgrima Mendoza", "Gimnasia Mendoza"],
     1133: ["Jaguares", "Jaguares de Córdoba", "Jaguares de Cordoba"],
+    1134: ["La Equidad", "Internacional de Bogotá", "Internacional de Bogota"],
     # Brazil — special characters
     126: ["Sao Paulo", "São Paulo"],
     1062: ["Atletico-MG", "Atletico Mineiro", "Atlético Mineiro"],
