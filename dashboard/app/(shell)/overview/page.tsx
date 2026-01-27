@@ -181,10 +181,6 @@ export default function OverviewPage() {
 
       {/* Left Rail: Budget + Sentry + LLM Cost + Upcoming Matches */}
       <aside className="w-[277px] min-w-[277px] shrink-0 border-r border-border bg-sidebar flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="h-12 flex items-center px-3 border-b border-border">
-          <span className="text-sm font-medium text-foreground">Services</span>
-        </div>
         {/* Content */}
         <ScrollArea className="flex-1">
           <div className="p-3 space-y-3">
