@@ -111,6 +111,22 @@ class TestAliasIndex:
         assert names_are_aliases("FC Porto", "Porto", index)
         assert names_are_aliases("SC Braga", "Sporting Braga", index)
 
+    def test_near_miss_round1_aliases(self, index):
+        """Aliases from P1 near-miss log analysis (round 1)."""
+        assert names_are_aliases("1899 Hoffenheim", "TSG Hoffenheim", index)
+        assert names_are_aliases("Werder Bremen", "SV Werder Bremen", index)
+        assert names_are_aliases("Talleres Cordoba", "CA Talleres", index)
+        assert names_are_aliases("Gimnasia M.", "Gimnasia y Esgrima Mendoza", index)
+        assert names_are_aliases("Ajax", "AFC Ajax", index)
+        assert names_are_aliases("FC Copenhagen", "FC København", index)
+        assert names_are_aliases("Atletico Paranaense", "Athletico", index)
+        assert names_are_aliases("Al-Hazm", "Al-Hazem", index)
+        assert names_are_aliases("Belgrano Cordoba", "Club Atlético Belgrano", index)
+        assert names_are_aliases("Ferencvarosi TC", "Ferencváros TC", index)
+        assert names_are_aliases("Olympiakos Piraeus", "Olympiacos FC", index)
+        assert names_are_aliases("Velez Sarsfield", "Vélez Sarsfield", index)
+        assert names_are_aliases("Jaguares", "Jaguares de Córdoba", index)
+
 
 # ---------------------------------------------------------------------------
 # calculate_team_similarity with alias

@@ -33,7 +33,7 @@ SOFASCORE_OVERRIDES: dict[int, list[str]] = {
     2934: ["Al-Ettifaq", "Al Ettifaq"],
     2931: ["Al-Fateh", "Al Fateh"],
     2944: ["Al-Fayha", "Al Fayha"],
-    2945: ["Al-Hazm", "Al Hazm"],
+    2945: ["Al-Hazm", "Al Hazm", "Al-Hazem"],
     2932: ["Al-Hilal Saudi FC", "Al Hilal", "Al-Hilal"],
     2938: ["Al-Ittihad FC", "Al Ittihad", "Al-Ittihad"],
     2939: ["Al-Nassr", "Al Nassr"],
@@ -52,25 +52,40 @@ SOFASCORE_OVERRIDES: dict[int, list[str]] = {
     434: ["Gimnasia L.P.", "Gimnasia LP", "Gimnasia y Esgrima"],
     478: ["Instituto Cordoba", "Instituto"],
     473: ["Independ. Rivadavia", "Independiente Rivadavia"],
-    456: ["Talleres Cordoba", "Talleres"],
+    456: ["Talleres Cordoba", "Talleres", "CA Talleres"],
     474: ["Sarmiento Junin", "Sarmiento"],
     476: ["Deportivo Riestra", "Riestra"],
     1065: ["Central Cordoba de Santiago", "Central Cordoba"],
     441: ["Union Santa Fe", "Union de Santa Fe"],
-    440: ["Belgrano Cordoba", "Belgrano"],
+    440: ["Belgrano Cordoba", "Belgrano", "Club Atlético Belgrano"],
     461: ["San Martin S.J.", "San Martin de San Juan", "San Martin SJ"],
+    438: ["Velez Sarsfield", "Vélez Sarsfield"],
+    1066: ["Gimnasia M.", "Gimnasia y Esgrima Mendoza", "Gimnasia Mendoza"],
+    1133: ["Jaguares", "Jaguares de Córdoba", "Jaguares de Cordoba"],
     # Brazil — special characters
     126: ["Sao Paulo", "São Paulo"],
     1062: ["Atletico-MG", "Atletico Mineiro", "Atlético Mineiro"],
     133: ["Vasco DA Gama", "Vasco da Gama", "Vasco"],
     154: ["Fortaleza EC", "Fortaleza"],
     123: ["Sport Recife", "Sport"],
+    134: ["Atletico Paranaense", "Athletico Paranaense", "Athletico"],
     # Portugal
     212: ["FC Porto", "Porto"],
     762: ["GIL Vicente", "Gil Vicente"],
     217: ["SC Braga", "Braga", "Sporting Braga"],
     228: ["Sporting CP", "Sporting", "Sporting Lisbon"],
     224: ["Guimaraes", "Guimarães", "Vitória de Guimarães", "Vitoria SC"],
+    # Germany — Sofascore full names
+    167: ["1899 Hoffenheim", "TSG Hoffenheim", "TSG 1899 Hoffenheim"],
+    162: ["Werder Bremen", "SV Werder Bremen"],
+    # Netherlands — Sofascore full names
+    194: ["Ajax", "AFC Ajax"],
+    # Denmark — diacritics
+    400: ["FC Copenhagen", "FC København", "Copenhagen", "København"],
+    # Hungary — diacritics
+    553: ["Olympiakos Piraeus", "Olympiacos", "Olympiacos FC", "Olympiakos"],
+    # Europa — misc diacritics/variants
+    651: ["Ferencvarosi TC", "Ferencváros TC", "Ferencváros"],
     # Championship — short names
     1346: ["Coventry", "Coventry City"],
     69: ["Derby", "Derby County"],
