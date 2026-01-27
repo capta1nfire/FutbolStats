@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import Image from "next/image";
-import { useFootballNav, useFootballCountries } from "@/lib/hooks";
+import { useFootballNav, useFootballCountries, useNationalsCountries } from "@/lib/hooks";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Loader } from "@/components/ui/loader";
@@ -94,19 +94,26 @@ export function FootballNav({
     isLoading: isCountriesLoading,
   } = useFootballCountries();
 
-  // Filter countries by search query
-  const filteredCountries = useMemo(() => {
-    if (!countriesData?.countries) return [];
-    if (!searchQuery.trim()) return countriesData.countries;
+  // Fetch nationals countries list (only when category is national_teams)
+  const {
+    data: nationalsData,
+    isLoading: isNationalsLoading,
+  } = useNationalsCountries();
 
-    const query = searchQuery.toLowerCase();
-    return countriesData.countries.filter((c) =>
-      c.country.toLowerCase().includes(query)
-    );
-  }, [countriesData?.countries, searchQuery]);
+  // Filter countries by search query (no manual memoization)
+  const query = searchQuery.trim().toLowerCase();
+  const countries = countriesData?.countries ?? [];
+  const nationals = nationalsData?.countries ?? [];
+  const filteredCountries = query
+    ? countries.filter((c) => c.country.toLowerCase().includes(query))
+    : countries;
+  const filteredNationals = query
+    ? nationals.filter((c) => c.country.toLowerCase().includes(query))
+    : nationals;
 
-  // Show countries list when category is leagues_by_country
+  // Show countries list when category is leagues_by_country or national_teams
   const showCountriesList = selectedCategory === "leagues_by_country";
+  const showNationalsList = selectedCategory === "national_teams";
 
   return (
     <div className="w-[277px] border-r border-border bg-sidebar flex flex-col">
@@ -159,7 +166,7 @@ export function FootballNav({
                         {cat.note}
                       </span>
                     )}
-                    {isSelected && showCountriesList && (
+                    {isSelected && (showCountriesList || showNationalsList) && (
                       <ChevronRight className="h-4 w-4 shrink-0" />
                     )}
                   </button>
@@ -169,6 +176,75 @@ export function FootballNav({
           )}
         </div>
       </div>
+
+      {/* National Teams Countries List (when national_teams is selected) */}
+      {showNationalsList && (
+        <>
+          <div className="border-t border-border" />
+
+          {/* Search */}
+          <div className="px-3 py-2 shrink-0">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search countries..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-8 h-8 text-sm"
+              />
+            </div>
+          </div>
+
+          {/* Nationals ScrollArea */}
+          <ScrollArea className="flex-1 min-h-0">
+            <div className="p-2">
+              {isNationalsLoading ? (
+                <div className="flex items-center justify-center py-4">
+                  <Loader size="sm" />
+                </div>
+              ) : filteredNationals.length === 0 ? (
+                <div className="px-3 py-4 text-sm text-muted-foreground text-center">
+                  {searchQuery ? "No countries found" : "No countries available"}
+                </div>
+              ) : (
+                <nav className="space-y-0.5">
+                  {filteredNationals.map((c) => {
+                    const isSelected = selectedCountry === c.country;
+
+                    return (
+                      <button
+                        key={c.country}
+                        onClick={() => onCountrySelect(c.country)}
+                        className={cn(
+                          "w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-colors text-left",
+                          isSelected
+                            ? "bg-sidebar-accent text-sidebar-primary font-medium"
+                            : "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/50"
+                        )}
+                      >
+                        <CountryFlag country={c.country} className="shrink-0" />
+                        <span className="flex-1 truncate">{c.country}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {c.teams_count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </nav>
+              )}
+            </div>
+          </ScrollArea>
+
+          {/* Nationals footer */}
+          {nationalsData && (
+            <div className="px-3 py-2 border-t border-border shrink-0">
+              <span className="text-xs text-muted-foreground">
+                {nationalsData.totals.countries_count} countries
+              </span>
+            </div>
+          )}
+        </>
+      )}
 
       {/* Countries List (when leagues_by_country is selected) */}
       {showCountriesList && (

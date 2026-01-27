@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader } from "@/components/ui/loader";
+import { Flag } from "lucide-react";
 import {
   FootballNav,
   FootballOverview,
@@ -14,6 +15,7 @@ import {
   WorldCup2026Overview,
   WorldCup2026Groups,
   WorldCup2026GroupDetail,
+  NationalTeamsCountryDetail,
 } from "@/components/football";
 
 /**
@@ -276,6 +278,10 @@ function FootballPageContent() {
       if (leagueId) return "league";
       return "tournaments";
     }
+    if (category === "national_teams") {
+      if (country) return "nationals_country";
+      return "nationals_placeholder";
+    }
     if (category === "world_cup_2026") {
       if (worldCupTab === "groups" && worldCupGroup) return "worldcup_group_detail";
       if (worldCupTab === "groups") return "worldcup_groups";
@@ -319,6 +325,23 @@ function FootballPageContent() {
             onLeagueSelect={handleLeagueSelect}
             onTeamSelect={handleTeamSelect}
           />
+        )}
+        {contentView === "nationals_country" && country && (
+          <NationalTeamsCountryDetail
+            country={country}
+            onTeamSelect={handleTeamSelect}
+          />
+        )}
+        {contentView === "nationals_placeholder" && (
+          <div className="h-full flex items-center justify-center">
+            <div className="text-center max-w-md">
+              <Flag className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <h2 className="text-lg font-semibold text-foreground mb-2">National Teams</h2>
+              <p className="text-sm text-muted-foreground">
+                Select a country from the sidebar to view its national teams, competitions, and recent matches.
+              </p>
+            </div>
+          </div>
         )}
         {contentView === "tournaments" && (
           <TournamentsList onLeagueSelect={handleLeagueSelect} />

@@ -1,7 +1,10 @@
 "use client";
 
 import Image from "next/image";
-import { useFootballGroup } from "@/lib/hooks";
+import { useState } from "react";
+import { useFootballGroup, useStandings } from "@/lib/hooks";
+import { cn } from "@/lib/utils";
+import type { StandingEntry } from "@/lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Loader } from "@/components/ui/loader";
@@ -233,6 +236,192 @@ function RecentMatchesList({
 }
 
 /**
+ * Standings Table Component
+ */
+function GroupStandingsTable({
+  standings,
+  onTeamSelect,
+}: {
+  standings: StandingEntry[];
+  onTeamSelect?: (teamId: number) => void;
+}) {
+  if (standings.length === 0) {
+    return (
+      <div className="text-sm text-muted-foreground text-center py-4">
+        No standings data
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border">
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-8">#</th>
+            <th className="text-left py-2 px-2 text-xs font-medium text-muted-foreground">Team</th>
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-8">P</th>
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-8">W</th>
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-8">D</th>
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-8">L</th>
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-10">GD</th>
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-10">Pts</th>
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-20">Form</th>
+          </tr>
+        </thead>
+        <tbody>
+          {standings.map((entry) => {
+            const teamClickable = entry.teamId > 0 && onTeamSelect;
+
+            return (
+              <tr key={entry.position} className="border-b border-border last:border-0 hover:bg-muted/30">
+                <td className="text-center py-1.5 px-2 text-muted-foreground">{entry.position}</td>
+                <td className="py-1.5 px-2">
+                  <div className="flex items-center gap-2">
+                    {entry.teamLogo ? (
+                      <Image src={entry.teamLogo} alt="" width={16} height={16} className="rounded-full object-cover" />
+                    ) : (
+                      <Globe className="h-4 w-4 text-muted-foreground" />
+                    )}
+                    {teamClickable ? (
+                      <button
+                        onClick={() => onTeamSelect(entry.teamId)}
+                        className="text-foreground hover:text-primary hover:underline transition-colors text-left truncate"
+                      >
+                        {entry.teamName}
+                      </button>
+                    ) : (
+                      <span className="text-foreground truncate">{entry.teamName}</span>
+                    )}
+                    {entry.description && (
+                      <span className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
+                        {entry.description}
+                      </span>
+                    )}
+                  </div>
+                </td>
+                <td className="text-center py-1.5 px-2 text-muted-foreground">{entry.played}</td>
+                <td className="text-center py-1.5 px-2 text-muted-foreground">{entry.won}</td>
+                <td className="text-center py-1.5 px-2 text-muted-foreground">{entry.drawn}</td>
+                <td className="text-center py-1.5 px-2 text-muted-foreground">{entry.lost}</td>
+                <td className={cn(
+                  "text-center py-1.5 px-2 font-medium",
+                  entry.goalDiff > 0 ? "text-green-500" : entry.goalDiff < 0 ? "text-red-500" : "text-muted-foreground"
+                )}>
+                  {entry.goalDiff > 0 ? `+${entry.goalDiff}` : entry.goalDiff}
+                </td>
+                <td className="text-center py-1.5 px-2 font-bold text-foreground">{entry.points}</td>
+                <td className="text-center py-1.5 px-2">
+                  {entry.form ? (
+                    <div className="flex items-center justify-center gap-0.5">
+                      {entry.form.split("").slice(-5).map((ch, i) => (
+                        <span
+                          key={i}
+                          className={cn(
+                            "w-2 h-2 rounded-full",
+                            ch === "W" ? "bg-green-500" : ch === "D" ? "bg-yellow-500" : ch === "L" ? "bg-red-500" : "bg-muted"
+                          )}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground">-</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * Standings section with tabs per member league
+ */
+function GroupStandingsSection({
+  memberLeagues,
+  onTeamSelect,
+}: {
+  memberLeagues: { league_id: number; name: string }[];
+  onTeamSelect?: (teamId: number) => void;
+}) {
+  const [selectedIdx, setSelectedIdx] = useState(0);
+  const selectedLeagueId = memberLeagues[selectedIdx]?.league_id ?? null;
+
+  const { data: standingsData, isLoading: isStandingsLoading } = useStandings(
+    selectedLeagueId,
+    selectedLeagueId !== null
+  );
+
+  if (memberLeagues.length === 0) {
+    return (
+      <div className="bg-card border border-border rounded-lg p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Trophy className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold text-foreground">Standings</h2>
+        </div>
+        <p className="text-sm text-muted-foreground">No member leagues available</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-card border border-border rounded-lg overflow-hidden">
+      <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+        <Trophy className="h-4 w-4 text-muted-foreground" />
+        <h2 className="text-sm font-semibold text-foreground">Standings</h2>
+        {standingsData && (
+          <span className="text-xs text-muted-foreground ml-auto">
+            {standingsData.season} &middot; {standingsData.source}
+          </span>
+        )}
+        {standingsData?.isPlaceholder && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-600">Placeholder</span>
+        )}
+        {standingsData?.isCalculated && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600">Calculated</span>
+        )}
+      </div>
+
+      {/* Tabs (only if multiple member leagues) */}
+      {memberLeagues.length > 1 && (
+        <div className="px-4 py-2 border-b border-border flex gap-1 overflow-x-auto">
+          {memberLeagues.map((ml, idx) => (
+            <button
+              key={ml.league_id}
+              onClick={() => setSelectedIdx(idx)}
+              className={cn(
+                "px-3 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap",
+                idx === selectedIdx
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              )}
+            >
+              {ml.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Standings content */}
+      {isStandingsLoading ? (
+        <div className="flex items-center justify-center py-6">
+          <Loader size="sm" />
+        </div>
+      ) : standingsData && standingsData.standings.length > 0 ? (
+        <GroupStandingsTable standings={standingsData.standings} onTeamSelect={onTeamSelect} />
+      ) : (
+        <div className="px-4 py-4 text-sm text-muted-foreground">
+          No standings available for this league
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * GroupDetail Component
  *
  * Displays detailed group information:
@@ -242,7 +431,7 @@ function RecentMatchesList({
  * - Aggregated stats by season
  * - TITAN coverage
  * - Recent matches across all member leagues
- * - Standings placeholder
+ * - Standings per member league
  */
 export function GroupDetail({
   groupId,
@@ -290,7 +479,7 @@ export function GroupDetail({
     );
   }
 
-  const { group, member_leagues, is_active_all, stats_by_season, titan, recent_matches, standings } =
+  const { group, member_leagues, is_active_all, stats_by_season, titan, recent_matches } =
     data;
 
   return (
@@ -396,18 +585,11 @@ export function GroupDetail({
           <RecentMatchesList matches={recent_matches} onTeamSelect={onTeamSelect} />
         </div>
 
-        {/* Standings Placeholder */}
-        <div className="bg-card border border-border rounded-lg p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Trophy className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold text-foreground">Standings</h2>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            {standings.status === "not_available"
-              ? standings.note || "Standings not available for groups"
-              : standings.note || "Coming soon"}
-          </p>
-        </div>
+        {/* Standings per member league */}
+        <GroupStandingsSection
+          memberLeagues={member_leagues}
+          onTeamSelect={onTeamSelect}
+        />
       </div>
     </ScrollArea>
   );

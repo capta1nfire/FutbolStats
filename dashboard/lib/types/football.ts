@@ -483,3 +483,70 @@ export interface WorldCupGroupDetail {
 }
 
 export type WorldCupGroupDetailResponse = FootballApiResponse<WorldCupGroupDetail>;
+
+// =============================================================================
+// National Teams (nationals/*.json) - P3.3
+// =============================================================================
+
+export interface NationalsCountryItem {
+  country: string;
+  teams_count: number;
+  total_matches: number;
+  competitions_count: number;
+  last_match: string | null;
+}
+
+export interface NationalsCountriesTotals {
+  countries_count: number;
+  teams_count: number;
+  competitions_count: number;
+}
+
+export interface NationalsCountriesList {
+  countries: NationalsCountryItem[];
+  totals: NationalsCountriesTotals;
+}
+
+export type NationalsCountriesListResponse = FootballApiResponse<NationalsCountriesList>;
+
+export interface NationalsTeamItem {
+  team_id: number;
+  name: string;
+  logo_url: string | null;
+  total_matches: number;
+  matches_25_26: number;
+  competitions: string[];
+}
+
+export interface NationalsCompetitionItem {
+  league_id: number;
+  name: string;
+  matches_count: number;
+}
+
+export interface NationalsRecentMatch {
+  match_id: number;
+  date: string | null;
+  competition_name: string;
+  home_team: string;
+  away_team: string;
+  status: string;
+  score: string | null;
+}
+
+export interface NationalsCountryStats {
+  total_matches: number;
+  wins: number;
+  draws: number;
+  losses: number;
+}
+
+export interface NationalsCountryDetail {
+  country: string;
+  teams: NationalsTeamItem[];
+  competitions: NationalsCompetitionItem[];
+  recent_matches: NationalsRecentMatch[];
+  stats: NationalsCountryStats;
+}
+
+export type NationalsCountryDetailResponse = FootballApiResponse<NationalsCountryDetail>;

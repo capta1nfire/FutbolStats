@@ -220,7 +220,9 @@ const COUNTRY_TO_ISO: Record<string, string> = {
  * Get ISO code for a country name
  * Returns undefined if not found
  */
-export function getCountryIsoCode(countryName: string): string | undefined {
+export function getCountryIsoCode(countryName: string | null | undefined): string | undefined {
+  if (!countryName) return undefined;
+
   // Direct lookup
   if (COUNTRY_TO_ISO[countryName]) {
     return COUNTRY_TO_ISO[countryName];

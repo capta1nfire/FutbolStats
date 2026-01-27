@@ -2,7 +2,7 @@
 
 > **IMPORTANTE**: Consultar este documento ANTES de escribir queries SQL para evitar errores de columnas inexistentes.
 >
-> Generado: 2026-01-26
+> Generado: 2026-01-26 (actualizado con tablas P2B + SOTA Sofascore + standings)
 
 ---
 
@@ -374,13 +374,214 @@ WHERE league_id = 39;
 
 ---
 
-## Otras tablas (menos usadas)
+## public.admin_audit_log (8 columnas)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | integer | NO | nextval('admin_audit_log_id_seq') |
+| `entity_type` | text | NO | - |
+| `entity_id` | text | NO | - |
+| `action` | text | NO | - |
+| `actor` | text | YES | - |
+| `before_json` | jsonb | YES | - |
+| `after_json` | jsonb | YES | - |
+| `created_at` | timestamptz | NO | now() |
+
+### Notas importantes - admin_audit_log
+
+- **Inmutable**: No UPDATE ni DELETE en esta tabla
+- **entity_type**: `'admin_leagues'`, `'admin_league_groups'`
+- **entity_id**: ID como string (ej: `'39'` para league_id)
+- **action**: `'update'`, `'create'`, `'delete'`
+- **actor**: `'dashboard'`, `'api'`, `null` (sistema)
+- **before_json/after_json**: Estado completo antes/después del cambio
+- **Migración**: `migrations/admin_002_create_audit_log.sql`
+
+---
+
+## public.match_external_refs (6 columnas)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `match_id` | integer | NO | - |
+| `source` | varchar | NO | - |
+| `source_match_id` | varchar | NO | - |
+| `confidence` | double precision | NO | - |
+| `matched_by` | varchar | NO | - |
+| `created_at` | timestamp without time zone | NO | now() |
+
+### Notas importantes - match_external_refs
+
+- **Uso**: Mapeo de partidos internos a IDs externos (Sofascore, Understat, etc.)
+- **PK compuesta**: `(match_id, source)` — un ref por fuente por partido
+- **source**: `'sofascore'`, `'understat'`, etc.
+- **source_match_id**: ID del partido en la fuente externa (string)
+- **confidence**: Score de confianza del matching (0.0 a 1.0)
+- **matched_by**: Método de matching: `'auto'` (automático), `'review'` (manual/low-confidence)
+- **Relación**: `match_external_refs.match_id` → `matches.id`
+- **NOTA**: Reemplaza el campo legacy `matches.sofascore_id` para Sofascore refs
+
+---
+
+## public.match_sofascore_lineup (4 columnas)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `match_id` | integer | NO | - |
+| `team_side` | varchar | NO | - |
+| `formation` | varchar | NO | - |
+| `captured_at` | timestamp without time zone | NO | now() |
+
+### Notas importantes - match_sofascore_lineup
+
+- **Uso**: Formación capturada de Sofascore pre-kickoff
+- **team_side**: `'home'` o `'away'`
+- **formation**: Ej: `'4-3-3'`, `'4-4-2'`
+- **Timing**: Se captura ~1-2h antes del kickoff (job `sota_sofascore_xi_capture`)
+
+---
+
+## public.match_sofascore_player (9 columnas)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `match_id` | integer | NO | - |
+| `team_side` | varchar | NO | - |
+| `player_id_ext` | varchar | NO | - |
+| `position` | varchar | NO | - |
+| `is_starter` | boolean | NO | - |
+| `rating_pre_match` | double precision | YES | - |
+| `rating_recent_form` | double precision | YES | - |
+| `minutes_expected` | integer | YES | - |
+| `captured_at` | timestamp without time zone | NO | now() |
+
+### Notas importantes - match_sofascore_player
+
+- **Uso**: Jugadores individuales del XI capturado de Sofascore
+- **player_id_ext**: ID del jugador en Sofascore (string)
+- **position**: Ej: `'GK'`, `'CB'`, `'CM'`, `'ST'`
+- **is_starter**: `true` = titular, `false` = suplente
+- **Relación**: `match_sofascore_player.match_id` → `matches.id`
+
+---
+
+## public.league_standings (7 columnas)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | integer | NO | nextval('league_standings_id_seq') |
+| `league_id` | integer | NO | - |
+| `season` | integer | NO | - |
+| `standings` | json | YES | - |
+| `captured_at` | timestamp without time zone | NO | - |
+| `source` | varchar | NO | - |
+| `expires_at` | timestamp without time zone | YES | - |
+
+### Notas importantes - league_standings
+
+- **Uso**: Tablas de posiciones por liga y temporada
+- **standings**: JSON array con objetos por equipo (position, team_id, points, played, won, drawn, lost, goals_for, goals_against, goal_diff, form, group, description)
+- **source**: `'api_football'`, `'no_table'` (sin datos disponibles)
+- **team_id en standings JSON**: Es `external_id` de API-Football, NO `teams.id`
+- **Usado por**: World Cup 2026 endpoints (`/dashboard/football/world-cup-2026/*`)
+
+---
+
+## public.job_runs (9 columnas)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | integer | NO | nextval('job_runs_id_seq') |
+| `job_name` | varchar | NO | - |
+| `status` | varchar | NO | 'ok' |
+| `started_at` | timestamp without time zone | NO | now() |
+| `finished_at` | timestamp without time zone | YES | - |
+| `duration_ms` | integer | YES | - |
+| `error_message` | text | YES | - |
+| `metrics` | jsonb | YES | - |
+| `created_at` | timestamp without time zone | NO | now() |
+
+### Notas importantes - job_runs
+
+- **Uso**: Log de ejecución de jobs del scheduler
+- **job_name**: Ej: `'global_sync'`, `'live_tick'`, `'stats_backfill'`, `'sota_sofascore_refs_sync'`, `'sota_sofascore_xi_capture'`
+- **status**: `'ok'`, `'error'`, `'partial'`
+- **metrics**: JSONB con métricas específicas del job (ej: `{"scanned": 84, "linked_auto": 49}`)
+- **Usado por**: Dashboard ops (`/dashboard/ops.json`)
+
+---
+
+## public.odds_history (17 columnas)
+
+| Column | Type | Nullable | Default |
+|--------|------|----------|---------|
+| `id` | integer | NO | nextval('odds_history_id_seq') |
+| `match_id` | integer | NO | - |
+| `recorded_at` | timestamptz | NO | now() |
+| `odds_home` | double precision | YES | - |
+| `odds_draw` | double precision | YES | - |
+| `odds_away` | double precision | YES | - |
+| `source` | varchar | YES | 'api_football' |
+| `is_opening` | boolean | YES | false |
+| `is_closing` | boolean | YES | false |
+| `implied_home` | double precision | YES | - |
+| `implied_draw` | double precision | YES | - |
+| `implied_away` | double precision | YES | - |
+| `overround` | double precision | YES | - |
+| `quarantined` | boolean | YES | false |
+| `quarantine_reason` | varchar | YES | NULL |
+| `tainted` | boolean | YES | false |
+| `taint_reason` | varchar | YES | NULL |
+
+### Notas importantes - odds_history
+
+- **Uso**: Historial detallado de movimientos de odds por partido
+- **Relación**: `odds_history.match_id` → `matches.id`
+- **is_opening/is_closing**: Marca si es la primera/última captura
+- **implied_***: Probabilidades implícitas calculadas (1/odds)
+- **overround**: Margen del bookmaker (suma de implied > 1.0)
+- **quarantined/tainted**: Flags de calidad de datos
+- **Usado por**: Endpoint `/matches/{id}/odds-history`
+
+---
+
+## Otras tablas (no documentadas en detalle)
 
 | Tabla | Schema | Descripción |
 |-------|--------|-------------|
-| `narratives` | public | Narrativas LLM post-partido |
-| `odds_history` | public | Historial de odds por partido |
-| `job_runs` | public | Log de jobs scheduler |
+| `alpha_progress_snapshots` | public | Snapshots de progreso alpha |
+| `fastpath_ticks` | public | Ticks del pipeline fastpath (narrativas LLM) |
+| `league_bookmaker_config` | public | Configuración de bookmakers por liga |
+| `league_season_baselines` | public | Baselines por temporada/liga |
+| `league_team_profiles` | public | Perfiles de equipos por liga |
+| `lineup_movement_snapshots` | public | Snapshots de movimiento de lineups |
+| `market_movement_snapshots` | public | Snapshots de movimiento de mercado |
+| `match_lineups` | public | Lineups de API-Football |
+| `match_odds_snapshot` | public | Snapshots de odds |
+| `match_understat_team` | public | Stats xG de Understat |
+| `match_weather` | public | Datos meteorológicos |
+| `model_performance_logs` | public | Logs de performance del modelo ML |
+| `model_snapshots` | public | Snapshots de modelos ML |
+| `odds_snapshots` | public | Snapshots de odds (bulk) |
+| `ops_alerts` | public | Alertas operacionales |
+| `ops_audit_log` | public | Log de auditoría operacional |
+| `ops_daily_rollups` | public | Rollups diarios de operaciones |
+| `pit_reports` | public | Reportes PIT (Point-in-Time) |
+| `player_stats_rolling` | public | Stats rolling de jugadores |
+| `post_match_audits` | public | Auditorías post-partido |
+| `prediction_outcomes` | public | Outcomes de predicciones |
+| `prediction_performance_reports` | public | Reportes de performance |
+| `prediction_reruns` | public | Re-ejecuciones de predicciones |
+| `sensor_predictions` | public | Predicciones de sensores |
+| `shadow_predictions` | public | Predicciones shadow model |
+| `team_adjustments` | public | Ajustes por equipo |
+| `team_home_city_profile` | public | Perfiles de ciudades (venue) |
+| `team_overrides` | public | Overrides manuales de equipos |
+| `team_values` | public | Valores de mercado de equipos |
+| `unmapped_entities_backlog` | public | Backlog de entidades sin mapear |
+| `venue_geo` | public | Geolocalización de venues |
+| `titan.job_dlq` | titan | Dead letter queue de jobs TITAN |
+| `titan.raw_extractions` | titan | Extracciones crudas TITAN |
 
 Para consultar schema de estas tablas:
 
