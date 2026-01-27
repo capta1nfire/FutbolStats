@@ -6114,6 +6114,7 @@ async def dashboard_admin_league_groups(request: Request):
     return {
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "cached": False,
+        "cache_age_seconds": None,
         "data": data,
     }
 
@@ -6139,6 +6140,7 @@ async def dashboard_admin_league_group_detail(request: Request, group_id: int):
     return {
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "cached": False,
+        "cache_age_seconds": None,
         "data": data,
     }
 
