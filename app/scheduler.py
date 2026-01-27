@@ -3513,6 +3513,7 @@ async def sync_odds_for_upcoming_matches() -> dict:
         record_job_run,
     )
     from app.telemetry.validators import validate_odds_1x2
+    from app.models import OddsHistory
 
     settings = get_settings()
     start_time = time.time()
@@ -3532,6 +3533,7 @@ async def sync_odds_for_upcoming_matches() -> dict:
     metrics = {
         "scanned": 0,
         "updated": 0,
+        "odds_history_saved": 0,
         "skipped_fresh": 0,
         "skipped_no_external_id": 0,
         "api_calls": 0,
@@ -3580,7 +3582,7 @@ async def sync_odds_for_upcoming_matches() -> dict:
                 )
                 duration_ms = (time.time() - start_time) * 1000
                 record_odds_sync_run("ok", duration_ms)
-                record_job_run(job="odds_sync", status="ok", duration_ms=duration_ms)
+                record_job_run(job="odds_sync", status="no_matches", duration_ms=duration_ms, metrics=metrics)
                 return {**metrics, "status": "no_matches"}
 
             logger.info(f"Odds sync: Found {len(matches)} matches needing odds")
@@ -3653,10 +3655,29 @@ async def sync_odds_for_upcoming_matches() -> dict:
                         metrics["updated"] += 1
                         record_odds_sync_request("ok", 0)
 
+                        # Fix A: Persist snapshot to odds_history
+                        bookmaker = odds_data.get("bookmaker", "api_football")
+                        # Check if this is the first snapshot for this match (opening odds)
+                        existing = await session.execute(text(
+                            "SELECT COUNT(*) FROM odds_history WHERE match_id = :mid"
+                        ), {"mid": match_id})
+                        is_opening = existing.scalar() == 0
+
+                        history_entry = OddsHistory.from_odds(
+                            match_id=match_id,
+                            odds_home=odds_home,
+                            odds_draw=odds_draw,
+                            odds_away=odds_away,
+                            source=bookmaker,
+                            is_opening=is_opening,
+                        )
+                        session.add(history_entry)
+                        metrics["odds_history_saved"] += 1
+
                         logger.debug(
                             f"Odds sync: Updated match {match_id}: "
                             f"H={odds_home:.2f}, D={odds_draw:.2f}, A={odds_away:.2f} "
-                            f"(source: {odds_data.get('bookmaker', 'unknown')})"
+                            f"(source: {bookmaker}, opening={is_opening})"
                         )
 
                     except APIBudgetExceeded as e:
@@ -3688,11 +3709,12 @@ async def sync_odds_for_upcoming_matches() -> dict:
 
         record_odds_sync_batch(metrics["scanned"], metrics["updated"])
         record_odds_sync_run("ok", duration_ms)
-        record_job_run(job="odds_sync", status="ok", duration_ms=duration_ms)
+        record_job_run(job="odds_sync", status="ok", duration_ms=duration_ms, metrics=metrics)
 
         logger.info(
             f"Odds sync complete: "
             f"scanned={metrics['scanned']}, updated={metrics['updated']}, "
+            f"odds_history_saved={metrics['odds_history_saved']}, "
             f"api_calls={metrics['api_calls']}, empty={metrics['api_empty']}, "
             f"errors_429={metrics['errors_429']}, duration={duration_ms:.0f}ms"
         )
@@ -3703,7 +3725,7 @@ async def sync_odds_for_upcoming_matches() -> dict:
         duration_ms = (time.time() - start_time) * 1000
         logger.warning(f"Odds sync stopped: {e}. Budget status: {get_api_budget_status()}")
         record_odds_sync_run("error", duration_ms)
-        record_job_run(job="odds_sync", status="budget_exceeded", duration_ms=duration_ms)
+        record_job_run(job="odds_sync", status="budget_exceeded", duration_ms=duration_ms, metrics=metrics)
         metrics["budget_status"] = get_api_budget_status()
         return {**metrics, "status": "budget_exceeded", "error": str(e)}
     except Exception as e:
@@ -3711,7 +3733,7 @@ async def sync_odds_for_upcoming_matches() -> dict:
         logger.error(f"Odds sync failed: {e}")
         sentry_capture_exception(e, job_id="odds_sync", metrics=metrics)
         record_odds_sync_run("error", duration_ms)
-        record_job_run(job="odds_sync", status="error", duration_ms=duration_ms)
+        record_job_run(job="odds_sync", status="error", duration_ms=duration_ms, metrics=metrics)
         return {**metrics, "status": "error", "error": str(e)}
 
 
