@@ -6145,6 +6145,224 @@ async def dashboard_admin_league_group_detail(request: Request, group_id: int):
     }
 
 
+# =============================================================================
+# Football Navigation API (P3)
+# =============================================================================
+
+# Cache for football nav endpoints
+_football_nav_cache: dict = {}
+FOOTBALL_NAV_CACHE_TTL = 120  # 2 minutes for lists
+FOOTBALL_NAV_DETAIL_CACHE_TTL = 60  # 1 minute for details
+
+
+def _get_football_cache(key: str, ttl: int) -> tuple:
+    """Get cached data if valid. Returns (data, age_seconds) or (None, None)."""
+    if key in _football_nav_cache:
+        cached = _football_nav_cache[key]
+        age = time.time() - cached["timestamp"]
+        if age < ttl:
+            return cached["data"], int(age)
+    return None, None
+
+
+def _set_football_cache(key: str, data: dict):
+    """Set cache entry."""
+    _football_nav_cache[key] = {"data": data, "timestamp": time.time()}
+
+
+@app.get("/dashboard/football/nav.json")
+async def dashboard_football_nav(request: Request):
+    """
+    Football Navigation - Top-level categories.
+
+    P3: Returns categories for Col 2 top area.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    cache_key = "football_nav"
+    cached_data, cache_age = _get_football_cache(cache_key, FOOTBALL_NAV_CACHE_TTL)
+
+    if cached_data:
+        return {
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "cached": True,
+            "cache_age_seconds": cache_age,
+            "data": cached_data,
+        }
+
+    from app.dashboard.football_nav import build_nav
+
+    async with AsyncSessionLocal() as session:
+        data = await build_nav(session)
+
+    _set_football_cache(cache_key, data)
+
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
+@app.get("/dashboard/football/leagues/countries.json")
+async def dashboard_football_countries(request: Request):
+    """
+    Football Navigation - Countries with active leagues.
+
+    P3: For Col 2 when category=leagues_by_country.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    cache_key = "football_countries"
+    cached_data, cache_age = _get_football_cache(cache_key, FOOTBALL_NAV_CACHE_TTL)
+
+    if cached_data:
+        return {
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "cached": True,
+            "cache_age_seconds": cache_age,
+            "data": cached_data,
+        }
+
+    from app.dashboard.football_nav import build_countries_list
+
+    async with AsyncSessionLocal() as session:
+        data = await build_countries_list(session)
+
+    _set_football_cache(cache_key, data)
+
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
+@app.get("/dashboard/football/leagues/country/{country}.json")
+async def dashboard_football_country_detail(request: Request, country: str):
+    """
+    Football Navigation - Leagues for a specific country.
+
+    P3: For Col 4 when a country is selected.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    # URL decode country name
+    from urllib.parse import unquote
+    country = unquote(country)
+
+    cache_key = f"football_country_{country}"
+    cached_data, cache_age = _get_football_cache(cache_key, FOOTBALL_NAV_DETAIL_CACHE_TTL)
+
+    if cached_data:
+        return {
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "cached": True,
+            "cache_age_seconds": cache_age,
+            "data": cached_data,
+        }
+
+    from app.dashboard.football_nav import build_country_detail
+
+    async with AsyncSessionLocal() as session:
+        data = await build_country_detail(session, country)
+
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"Country '{country}' not found or has no active leagues")
+
+    _set_football_cache(cache_key, data)
+
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
+@app.get("/dashboard/football/league/{league_id}.json")
+async def dashboard_football_league_detail(request: Request, league_id: int):
+    """
+    Football Navigation - League detail.
+
+    P3: For Col 4 drilldown of a specific league.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    cache_key = f"football_league_{league_id}"
+    cached_data, cache_age = _get_football_cache(cache_key, FOOTBALL_NAV_DETAIL_CACHE_TTL)
+
+    if cached_data:
+        return {
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "cached": True,
+            "cache_age_seconds": cache_age,
+            "data": cached_data,
+        }
+
+    from app.dashboard.football_nav import build_league_nav_detail
+
+    async with AsyncSessionLocal() as session:
+        data = await build_league_nav_detail(session, league_id)
+
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"League {league_id} not found or not active")
+
+    _set_football_cache(cache_key, data)
+
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
+@app.get("/dashboard/football/group/{group_id}.json")
+async def dashboard_football_group_detail(request: Request, group_id: int):
+    """
+    Football Navigation - League group detail (paired leagues).
+
+    P3: For Col 4 drilldown of a paired league group.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    cache_key = f"football_group_{group_id}"
+    cached_data, cache_age = _get_football_cache(cache_key, FOOTBALL_NAV_DETAIL_CACHE_TTL)
+
+    if cached_data:
+        return {
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "cached": True,
+            "cache_age_seconds": cache_age,
+            "data": cached_data,
+        }
+
+    from app.dashboard.football_nav import build_group_nav_detail
+
+    async with AsyncSessionLocal() as session:
+        data = await build_group_nav_detail(session, group_id)
+
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"Group {group_id} not found or has no active members")
+
+    _set_football_cache(cache_key, data)
+
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
 @app.get("/dashboard/pit/debug")
 async def pit_dashboard_debug(request: Request):
     """
