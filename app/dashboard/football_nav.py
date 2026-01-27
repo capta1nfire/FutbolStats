@@ -457,6 +457,36 @@ async def build_league_nav_detail(session: AsyncSession, league_id: int) -> Opti
         for r in recent_result.fetchall()
     ]
 
+    # Get participants (top 50 teams by matches in this league)
+    participants_query = text("""
+        SELECT
+            t.id as team_id,
+            t.name,
+            t.country,
+            t.logo_url,
+            COUNT(m.id) as matches_in_league,
+            MIN(m.season) as first_season,
+            MAX(m.season) as last_season
+        FROM teams t
+        JOIN matches m ON t.id = m.home_team_id OR t.id = m.away_team_id
+        WHERE m.league_id = :lid
+        GROUP BY t.id, t.name, t.country, t.logo_url
+        ORDER BY COUNT(m.id) DESC
+        LIMIT 50
+    """)
+    participants_result = await session.execute(participants_query, {"lid": league_id})
+    participants = [
+        {
+            "team_id": r.team_id,
+            "name": r.name,
+            "country": r.country,
+            "logo_url": r.logo_url,
+            "matches_in_league": r.matches_in_league,
+            "seasons_range": [r.first_season, r.last_season] if r.first_season else None,
+        }
+        for r in participants_result.fetchall()
+    ]
+
     return {
         "league": {
             "league_id": league_row.league_id,
@@ -472,6 +502,7 @@ async def build_league_nav_detail(session: AsyncSession, league_id: int) -> Opti
         "stats_by_season": stats_by_season,
         "titan": titan,
         "recent_matches": recent_matches,
+        "participants": participants,
         "standings": {
             "status": "not_available",
             "note": "Standings table coming soon",
@@ -612,6 +643,36 @@ async def build_group_nav_detail(session: AsyncSession, group_id: int) -> Option
         for r in recent_result.fetchall()
     ]
 
+    # Get participants (top 60 teams by matches across all member leagues)
+    participants_query = text("""
+        SELECT
+            t.id as team_id,
+            t.name,
+            t.country,
+            t.logo_url,
+            COUNT(m.id) as matches_in_group,
+            MIN(m.season) as first_season,
+            MAX(m.season) as last_season
+        FROM teams t
+        JOIN matches m ON t.id = m.home_team_id OR t.id = m.away_team_id
+        WHERE m.league_id = ANY(:lids)
+        GROUP BY t.id, t.name, t.country, t.logo_url
+        ORDER BY COUNT(m.id) DESC
+        LIMIT 60
+    """)
+    participants_result = await session.execute(participants_query, {"lids": league_ids})
+    participants = [
+        {
+            "team_id": r.team_id,
+            "name": r.name,
+            "country": r.country,
+            "logo_url": r.logo_url,
+            "matches_in_group": r.matches_in_group,
+            "seasons_range": [r.first_season, r.last_season] if r.first_season else None,
+        }
+        for r in participants_result.fetchall()
+    ]
+
     return {
         "group": {
             "group_id": group_row.group_id,
@@ -625,6 +686,7 @@ async def build_group_nav_detail(session: AsyncSession, group_id: int) -> Option
         "stats_by_season": stats_by_season,
         "titan": titan,
         "recent_matches": recent_matches,
+        "participants": participants,
         "standings": {
             "status": "not_available",
             "note": "Standings table coming soon",
