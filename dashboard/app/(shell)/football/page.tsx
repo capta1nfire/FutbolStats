@@ -10,6 +10,10 @@ import {
   LeagueDetail,
   GroupDetail,
   TeamDrawer,
+  TournamentsList,
+  WorldCup2026Overview,
+  WorldCup2026Groups,
+  WorldCup2026GroupDetail,
 } from "@/components/football";
 
 /**
@@ -30,6 +34,8 @@ function buildFootballUrl(params: {
   league?: number | null;
   group?: number | null;
   team?: number | null;
+  worldCupTab?: string | null;
+  worldCupGroup?: string | null;
 }): string {
   const searchParams = new URLSearchParams();
 
@@ -47,6 +53,12 @@ function buildFootballUrl(params: {
   }
   if (params.team) {
     searchParams.set("team", params.team.toString());
+  }
+  if (params.worldCupTab && params.worldCupTab !== "overview") {
+    searchParams.set("wcTab", params.worldCupTab);
+  }
+  if (params.worldCupGroup) {
+    searchParams.set("wcGroup", params.worldCupGroup);
   }
 
   const search = searchParams.toString();
@@ -74,6 +86,8 @@ function FootballPageContent() {
   const leagueId = parseNumericId(searchParams.get("league"));
   const groupId = parseNumericId(searchParams.get("group"));
   const teamId = parseNumericId(searchParams.get("team"));
+  const worldCupTab = searchParams.get("wcTab") || "overview";
+  const worldCupGroup = searchParams.get("wcGroup");
 
   // Navigation handlers
   const handleCategoryChange = useCallback(
@@ -182,6 +196,71 @@ function FootballPageContent() {
     );
   }, [router, category, country, teamId]);
 
+  const handleBackToTournaments = useCallback(() => {
+    router.replace(
+      buildFootballUrl({
+        category: "tournaments_competitions",
+        country: null,
+        league: null,
+        group: null,
+        team: teamId,
+      }),
+      { scroll: false }
+    );
+  }, [router, teamId]);
+
+  // World Cup navigation handlers
+  const handleWorldCupGroupsClick = useCallback(() => {
+    router.replace(
+      buildFootballUrl({
+        category,
+        worldCupTab: "groups",
+        worldCupGroup: null,
+        team: teamId,
+      }),
+      { scroll: false }
+    );
+  }, [router, category, teamId]);
+
+  const handleWorldCupGroupSelect = useCallback(
+    (groupName: string) => {
+      router.replace(
+        buildFootballUrl({
+          category,
+          worldCupTab: "groups",
+          worldCupGroup: groupName,
+          team: teamId,
+        }),
+        { scroll: false }
+      );
+    },
+    [router, category, teamId]
+  );
+
+  const handleWorldCupBackToGroups = useCallback(() => {
+    router.replace(
+      buildFootballUrl({
+        category,
+        worldCupTab: "groups",
+        worldCupGroup: null,
+        team: teamId,
+      }),
+      { scroll: false }
+    );
+  }, [router, category, teamId]);
+
+  const handleWorldCupBackToOverview = useCallback(() => {
+    router.replace(
+      buildFootballUrl({
+        category,
+        worldCupTab: "overview",
+        worldCupGroup: null,
+        team: teamId,
+      }),
+      { scroll: false }
+    );
+  }, [router, category, teamId]);
+
   // Determine what content to show in main area
   const contentView = useMemo(() => {
     if (category === "overview") {
@@ -193,9 +272,18 @@ function FootballPageContent() {
       if (country) return "country";
       return "overview"; // show overview when just category selected
     }
+    if (category === "tournaments_competitions") {
+      if (leagueId) return "league";
+      return "tournaments";
+    }
+    if (category === "world_cup_2026") {
+      if (worldCupTab === "groups" && worldCupGroup) return "worldcup_group_detail";
+      if (worldCupTab === "groups") return "worldcup_groups";
+      return "worldcup_overview";
+    }
     // Other categories show overview for now
     return "overview";
-  }, [category, country, leagueId, groupId]);
+  }, [category, country, leagueId, groupId, worldCupTab, worldCupGroup]);
 
   return (
     <div className="h-full flex overflow-hidden relative">
@@ -220,7 +308,7 @@ function FootballPageContent() {
         {contentView === "league" && leagueId && (
           <LeagueDetail
             leagueId={leagueId}
-            onBack={handleBackToCountry}
+            onBack={category === "tournaments_competitions" ? handleBackToTournaments : handleBackToCountry}
             onTeamSelect={handleTeamSelect}
           />
         )}
@@ -229,6 +317,25 @@ function FootballPageContent() {
             groupId={groupId}
             onBack={handleBackToCountry}
             onLeagueSelect={handleLeagueSelect}
+            onTeamSelect={handleTeamSelect}
+          />
+        )}
+        {contentView === "tournaments" && (
+          <TournamentsList onLeagueSelect={handleLeagueSelect} />
+        )}
+        {contentView === "worldcup_overview" && (
+          <WorldCup2026Overview onGroupsClick={handleWorldCupGroupsClick} />
+        )}
+        {contentView === "worldcup_groups" && (
+          <WorldCup2026Groups
+            onBack={handleWorldCupBackToOverview}
+            onGroupSelect={handleWorldCupGroupSelect}
+          />
+        )}
+        {contentView === "worldcup_group_detail" && worldCupGroup && (
+          <WorldCup2026GroupDetail
+            group={worldCupGroup}
+            onBack={handleWorldCupBackToGroups}
             onTeamSelect={handleTeamSelect}
           />
         )}

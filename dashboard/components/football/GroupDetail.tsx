@@ -1,9 +1,11 @@
 "use client";
 
+import Image from "next/image";
 import { useFootballGroup } from "@/lib/hooks";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Loader } from "@/components/ui/loader";
+import { getCountryIsoCode } from "@/lib/utils/country-flags";
 import {
   RefreshCw,
   AlertTriangle,
@@ -14,7 +16,29 @@ import {
   BarChart3,
   TrendingUp,
   ChevronRight,
+  Globe,
 } from "lucide-react";
+
+/**
+ * Country Flag Component
+ */
+function CountryFlag({ country, size = 14 }: { country: string; size?: number }) {
+  const isoCode = getCountryIsoCode(country);
+
+  if (!isoCode) {
+    return <Globe className="text-muted-foreground" style={{ width: size, height: size }} />;
+  }
+
+  return (
+    <Image
+      src={`/flags/${isoCode}.svg`}
+      alt={`${country} flag`}
+      width={size}
+      height={size}
+      className="rounded-full object-cover"
+    />
+  );
+}
 
 interface GroupDetailProps {
   groupId: number;
@@ -283,7 +307,10 @@ export function GroupDetail({
               <h1 className="text-lg font-semibold text-foreground">{group.name}</h1>
             </div>
             <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
-              <span>{group.country}</span>
+              <span className="flex items-center gap-1">
+                <CountryFlag country={group.country} size={14} />
+                {group.country}
+              </span>
               <span className="px-1.5 py-0.5 bg-muted rounded text-xs">{group.group_key}</span>
               {group.paired_handling && (
                 <span className="text-xs">Paired: {group.paired_handling}</span>

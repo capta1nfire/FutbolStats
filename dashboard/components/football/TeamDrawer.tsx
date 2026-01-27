@@ -1,9 +1,11 @@
 "use client";
 
+import Image from "next/image";
 import { useFootballTeam } from "@/lib/hooks";
 import { DetailDrawer } from "@/components/shell";
 import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
+import { getCountryIsoCode } from "@/lib/utils/country-flags";
 import {
   RefreshCw,
   AlertTriangle,
@@ -20,6 +22,27 @@ import type {
   TeamLeague,
   TeamFormMatch,
 } from "@/lib/types";
+
+/**
+ * Country Flag Component
+ */
+function CountryFlag({ country, size = 14 }: { country: string; size?: number }) {
+  const isoCode = getCountryIsoCode(country);
+
+  if (!isoCode) {
+    return <Globe className="text-muted-foreground" style={{ width: size, height: size }} />;
+  }
+
+  return (
+    <Image
+      src={`/flags/${isoCode}.svg`}
+      alt={`${country} flag`}
+      width={size}
+      height={size}
+      className="rounded-full object-cover"
+    />
+  );
+}
 
 interface TeamDrawerProps {
   teamId: number | null;
@@ -52,7 +75,7 @@ function TeamInfoSection({ team }: { team: TeamInfo }) {
             <p className="text-sm text-muted-foreground">{team.short_name}</p>
           )}
           <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-            <Globe className="h-3 w-3" />
+            <CountryFlag country={team.country} size={12} />
             <span>{team.country}</span>
             {team.founded && (
               <>

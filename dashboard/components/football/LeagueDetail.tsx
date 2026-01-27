@@ -1,9 +1,11 @@
 "use client";
 
+import Image from "next/image";
 import { useFootballLeague } from "@/lib/hooks";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Loader } from "@/components/ui/loader";
+import { getCountryIsoCode } from "@/lib/utils/country-flags";
 import {
   RefreshCw,
   AlertTriangle,
@@ -15,6 +17,27 @@ import {
   Users,
   TrendingUp,
 } from "lucide-react";
+
+/**
+ * Country Flag Component
+ */
+function CountryFlag({ country, size = 14 }: { country: string; size?: number }) {
+  const isoCode = getCountryIsoCode(country);
+
+  if (!isoCode) {
+    return <Globe className="text-muted-foreground" style={{ width: size, height: size }} />;
+  }
+
+  return (
+    <Image
+      src={`/flags/${isoCode}.svg`}
+      alt={`${country} flag`}
+      width={size}
+      height={size}
+      className="rounded-full object-cover"
+    />
+  );
+}
 
 interface LeagueDetailProps {
   leagueId: number;
@@ -229,7 +252,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
             </div>
             <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
               <span className="flex items-center gap-1">
-                <Globe className="h-3 w-3" />
+                <CountryFlag country={league.country} size={14} />
                 {league.country}
               </span>
               {league.kind && <span className="capitalize">{league.kind}</span>}

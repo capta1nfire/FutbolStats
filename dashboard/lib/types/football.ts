@@ -331,3 +331,155 @@ export interface TeamDetail {
 }
 
 export type TeamDetailResponse = FootballApiResponse<TeamDetail>;
+
+// =============================================================================
+// Tournaments & Cups (tournaments.json) - P3.4
+// =============================================================================
+
+export interface TournamentStats {
+  total_matches: number;
+  matches_30d: number;
+  seasons_range: [number, number] | null;
+  last_match: string | null;
+  next_match: string | null;
+  with_stats_pct: number | null;
+  with_odds_pct: number | null;
+  participants_count: number;
+}
+
+export interface TournamentEntry {
+  league_id: number;
+  name: string;
+  country: string | null;
+  kind: string;
+  priority: string;
+  stats: TournamentStats;
+}
+
+export interface TournamentsTotals {
+  tournaments_count: number;
+  cups_count: number;
+  international_count: number;
+  friendly_count: number;
+}
+
+export interface TournamentsList {
+  tournaments: TournamentEntry[];
+  totals: TournamentsTotals;
+}
+
+export type TournamentsListResponse = FootballApiResponse<TournamentsList>;
+
+// =============================================================================
+// World Cup 2026 (world-cup-2026/*.json) - P3.5
+// =============================================================================
+
+export interface WorldCupLeagueInfo {
+  league_id: number;
+  name?: string;
+  season: number;
+}
+
+export interface WorldCupSummary {
+  groups_count: number;
+  teams_count: number;
+  matches_total: number;
+  matches_played: number;
+  matches_upcoming: number;
+  next_match_at: string | null;
+  standings_source: string;
+  standings_captured_at: string | null;
+}
+
+export interface WorldCupAlert {
+  type: string;
+  message: string;
+  value: number | null;
+}
+
+export interface WorldCupUpcomingMatch {
+  match_id: number;
+  date: string | null;
+  group: string | null;
+  home_team: string;
+  away_team: string;
+  home_team_id: number | null;
+  away_team_id: number | null;
+  status: string;
+}
+
+// World Cup status union matches backend: "ok" | "not_ready" | "disabled"
+export type WorldCupStatus = "ok" | "not_ready" | "disabled";
+
+export interface WorldCupOverview {
+  league: WorldCupLeagueInfo;
+  status: WorldCupStatus;
+  summary: WorldCupSummary;
+  alerts: WorldCupAlert[];
+  upcoming: WorldCupUpcomingMatch[];
+}
+
+export type WorldCupOverviewResponse = FootballApiResponse<WorldCupOverview>;
+
+// World Cup Groups List
+// Backend returns groups with embedded teams array, not summary stats
+
+export interface WorldCupStandingEntry {
+  team_id: number | null;
+  external_id: number | null;
+  name: string;
+  logo_url: string | null;
+  position: number;
+  points: number;
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  goals_for: number;
+  goals_against: number;
+  goal_diff: number;
+  form: string | null;
+  description: string | null;
+}
+
+export interface WorldCupGroupWithTeams {
+  group: string;
+  teams: WorldCupStandingEntry[];
+}
+
+export interface WorldCupGroupsTotals {
+  groups_count: number;
+  teams_count: number;
+}
+
+export interface WorldCupGroups {
+  league: WorldCupLeagueInfo;
+  status: WorldCupStatus;
+  groups: WorldCupGroupWithTeams[];
+  totals: WorldCupGroupsTotals;
+}
+
+export type WorldCupGroupsResponse = FootballApiResponse<WorldCupGroups>;
+
+// World Cup Group Detail
+
+export interface WorldCupGroupMatch {
+  match_id: number;
+  date: string | null;
+  home_team: string;
+  away_team: string;
+  home_team_id: number | null;
+  away_team_id: number | null;
+  score: string | null;
+  status: string;
+}
+
+export interface WorldCupGroupDetail {
+  league: WorldCupLeagueInfo;
+  status: WorldCupStatus;
+  group: string;
+  standings: WorldCupStandingEntry[];
+  matches: WorldCupGroupMatch[];
+}
+
+export type WorldCupGroupDetailResponse = FootballApiResponse<WorldCupGroupDetail>;

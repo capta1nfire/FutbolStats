@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import Image from "next/image";
 import { useFootballNav, useFootballCountries } from "@/lib/hooks";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Loader } from "@/components/ui/loader";
 import { cn } from "@/lib/utils";
+import { getCountryIsoCode } from "@/lib/utils/country-flags";
 import {
   Search,
   Globe,
@@ -15,6 +17,29 @@ import {
   ChevronRight,
   AlertCircle,
 } from "lucide-react";
+
+/**
+ * Country Flag Component
+ * Displays circular flag icon from circle-flags
+ */
+function CountryFlag({ country, className }: { country: string; className?: string }) {
+  const isoCode = getCountryIsoCode(country);
+
+  if (!isoCode) {
+    // Fallback: show globe icon for unknown countries
+    return <Globe className={cn("h-4 w-4 text-muted-foreground", className)} />;
+  }
+
+  return (
+    <Image
+      src={`/flags/${isoCode}.svg`}
+      alt={`${country} flag`}
+      width={16}
+      height={16}
+      className={cn("rounded-full object-cover", className)}
+    />
+  );
+}
 
 interface FootballNavProps {
   selectedCategory: string;
@@ -190,6 +215,7 @@ export function FootballNav({
                             : "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/50"
                         )}
                       >
+                        <CountryFlag country={c.country} className="shrink-0" />
                         <span className="flex-1 truncate">{c.country}</span>
                         <span className="text-xs text-muted-foreground">
                           {c.leagues_count}

@@ -1,10 +1,12 @@
 "use client";
 
+import Image from "next/image";
 import { useFootballCountry } from "@/lib/hooks";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Loader } from "@/components/ui/loader";
 import { cn } from "@/lib/utils";
+import { getCountryIsoCode } from "@/lib/utils/country-flags";
 import {
   RefreshCw,
   AlertTriangle,
@@ -13,8 +15,30 @@ import {
   Calendar,
   BarChart3,
   ChevronRight,
+  Globe,
 } from "lucide-react";
 import type { CompetitionEntry } from "@/lib/types";
+
+/**
+ * Country Flag Component
+ */
+function CountryFlag({ country, size = 20 }: { country: string; size?: number }) {
+  const isoCode = getCountryIsoCode(country);
+
+  if (!isoCode) {
+    return <Globe className="text-muted-foreground" style={{ width: size, height: size }} />;
+  }
+
+  return (
+    <Image
+      src={`/flags/${isoCode}.svg`}
+      alt={`${country} flag`}
+      width={size}
+      height={size}
+      className="rounded-full object-cover"
+    />
+  );
+}
 
 interface CountryCompetitionsProps {
   country: string;
@@ -186,11 +210,14 @@ export function CountryCompetitions({
       <div className="p-6 space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-semibold text-foreground">{data.country}</h1>
-            <p className="text-sm text-muted-foreground">
-              {data.total} competition{data.total !== 1 ? "s" : ""}
-            </p>
+          <div className="flex items-center gap-3">
+            <CountryFlag country={data.country} size={32} />
+            <div>
+              <h1 className="text-lg font-semibold text-foreground">{data.country}</h1>
+              <p className="text-sm text-muted-foreground">
+                {data.total} competition{data.total !== 1 ? "s" : ""}
+              </p>
+            </div>
           </div>
           <Button variant="ghost" size="sm" onClick={() => refetch()}>
             <RefreshCw className="h-4 w-4 mr-2" />
