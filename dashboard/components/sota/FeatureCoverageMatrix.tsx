@@ -70,6 +70,8 @@ function CoverageCell({
   leagueName,
   featureKey,
   isProd,
+  leagueId,
+  onCellClick,
 }: {
   pct: number;
   n: number;
@@ -78,6 +80,8 @@ function CoverageCell({
   leagueName: string;
   featureKey: string;
   isProd: boolean;
+  leagueId: number;
+  onCellClick?: (featureKey: string, leagueId: number) => void;
 }) {
   const totalLabel = isProd ? "Total (FT):" : "Total (TITAN):";
 
@@ -87,9 +91,23 @@ function CoverageCell({
         <TooltipTrigger asChild>
           <div
             className={cn(
-              "text-center text-sm tabular-nums cursor-default",
+              "text-center text-sm tabular-nums",
+              onCellClick ? "cursor-pointer hover:bg-emerald-500/15 rounded px-1.5 py-0.5" : "cursor-default",
               getCoverageColor(pct)
             )}
+            role={onCellClick ? "button" : undefined}
+            tabIndex={onCellClick ? 0 : undefined}
+            onClick={() => onCellClick?.(featureKey, leagueId)}
+            onKeyDown={
+              onCellClick
+                ? (e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onCellClick(featureKey, leagueId);
+                    }
+                  }
+                : undefined
+            }
           >
             {formatPct(pct)}
           </div>
@@ -147,6 +165,8 @@ interface FeatureCoverageMatrixProps {
   enabledTiers?: Set<string>;
   /** Coverage range filter */
   coverageRangeFilter?: CoverageRangeFilter;
+  /** Callback when a coverage cell is clicked (opens detail drawer) */
+  onCellClick?: (featureKey: string, leagueId: number) => void;
 }
 
 /**
@@ -191,6 +211,7 @@ export function FeatureCoverageMatrix({
   onTotalFeaturesChange,
   enabledTiers = DEFAULT_ENABLED_TIERS,
   coverageRangeFilter = "all",
+  onCellClick,
 }: FeatureCoverageMatrixProps) {
   const { data, isLoading, error, refetch } = useFeatureCoverage();
 
@@ -450,6 +471,8 @@ export function FeatureCoverageMatrix({
                             leagueName={league.name}
                             featureKey={feature.key}
                             isProd={isProd}
+                            leagueId={league.league_id}
+                            onCellClick={onCellClick}
                           />
                         </td>
                       );
@@ -472,6 +495,8 @@ export function FeatureCoverageMatrix({
                           leagueName={league.name}
                           featureKey={feature.key}
                           isProd={isProd}
+                          leagueId={league.league_id}
+                          onCellClick={onCellClick}
                         />
                       ) : (
                         <div className="text-center text-sm text-muted-foreground">
