@@ -21,6 +21,7 @@ from app.config import get_settings
 from app.database import close_db, get_async_session, init_db, AsyncSessionLocal, get_pool_status
 from app.etl import APIFootballProvider, ETLPipeline
 from app.etl.competitions import ALL_LEAGUE_IDS, COMPETITIONS
+from app.etl.sota_constants import SOFASCORE_SUPPORTED_LEAGUES
 from app.features import FeatureEngineer
 from app.ml import XGBoostEngine
 from app.ml.persistence import load_active_model, persist_model_snapshot
@@ -8629,8 +8630,9 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
         tables_exist = table_check.scalar()
 
         if tables_exist:
+            sofascore_league_ids = ",".join(str(lid) for lid in SOFASCORE_SUPPORTED_LEAGUES)
             res = await session.execute(
-                text("""
+                text(f"""
                     SELECT
                         COUNT(*) FILTER (WHERE msl.match_id IS NOT NULL) AS with_xi,
                         COUNT(*) AS total_ns
@@ -8639,7 +8641,7 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
                     WHERE m.status = 'NS'
                       AND m.date >= NOW()
                       AND m.date < NOW() + INTERVAL '48 hours'
-                      AND m.league_id IN (39, 140, 135, 78, 61, 239, 253)
+                      AND m.league_id IN ({sofascore_league_ids})
                 """)
             )
             row = res.first()
@@ -14024,9 +14026,10 @@ async def _build_data_quality_checks(session: AsyncSession) -> list[dict]:
         tables_exist = table_check.scalar()
 
         if tables_exist:
+            sofascore_league_ids = ",".join(str(lid) for lid in SOFASCORE_SUPPORTED_LEAGUES)
             res = await session.execute(
                 text(
-                    """
+                    f"""
                     SELECT
                         COUNT(*) FILTER (WHERE msl.match_id IS NOT NULL) AS with_xi,
                         COUNT(*) AS total_ns
@@ -14035,7 +14038,7 @@ async def _build_data_quality_checks(session: AsyncSession) -> list[dict]:
                     WHERE m.status = 'NS'
                       AND m.date >= NOW()
                       AND m.date < NOW() + INTERVAL '48 hours'
-                      AND m.league_id IN (39, 140, 135, 78, 61, 239, 253)
+                      AND m.league_id IN ({sofascore_league_ids})
                     """
                 )
             )

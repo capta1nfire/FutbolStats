@@ -58,7 +58,7 @@ async def run_backfill(args):
         calculate_match_score,
         get_sofascore_threshold,
     )
-    from app.etl.sota_jobs import SOFASCORE_SUPPORTED_LEAGUES
+    from app.etl.sota_constants import SOFASCORE_SUPPORTED_LEAGUES
 
     # --- Resolve date range ---
     if args.start_date:
