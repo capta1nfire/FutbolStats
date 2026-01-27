@@ -50,8 +50,8 @@ NAV_CATEGORIES = [
     {
         "id": "world_cup_2026",
         "label": "World Cup 2026",
-        "enabled": False,
-        "note": "Coming soon",
+        "enabled": True,
+        "note": None,
     },
     {
         "id": "players",
@@ -93,6 +93,15 @@ async def build_nav(session: AsyncSession) -> dict:
     national_row = national_result.fetchone()
     national_countries = national_row.national_countries if national_row else 0
 
+    # Get World Cup 2026 matches count
+    wc_query = text("""
+        SELECT COUNT(*) as cnt FROM matches
+        WHERE league_id = 1 AND season = 2026
+    """)
+    wc_result = await session.execute(wc_query)
+    wc_row = wc_result.fetchone()
+    wc_matches_count = wc_row.cnt if wc_row else 0
+
     # Add counts to categories
     categories = []
     for cat in NAV_CATEGORIES:
@@ -105,6 +114,9 @@ async def build_nav(session: AsyncSession) -> dict:
         elif cat["id"] == "national_teams":
             # Real countries with national teams (not competition count)
             cat_copy["count"] = national_countries
+        elif cat["id"] == "world_cup_2026":
+            # Count of World Cup 2026 matches (badge de actividad)
+            cat_copy["count"] = wc_matches_count
         categories.append(cat_copy)
 
     return {
@@ -1398,4 +1410,384 @@ async def build_tournaments_list(session: AsyncSession) -> dict:
             "international_count": intl_count,
             "friendly_count": friendly_count
         }
+    }
+
+
+# =============================================================================
+# World Cup 2026 (P3.5)
+# =============================================================================
+
+WORLD_CUP_LEAGUE_ID = 1
+WORLD_CUP_SEASON = 2026
+
+
+async def _get_world_cup_status(session: AsyncSession) -> str:
+    """
+    Check World Cup 2026 status.
+    Returns: "ok", "not_ready", or "disabled"
+    """
+    # Check if World Cup is active in admin_leagues
+    active_query = text("""
+        SELECT is_active FROM admin_leagues WHERE league_id = :lid
+    """)
+    result = await session.execute(active_query, {"lid": WORLD_CUP_LEAGUE_ID})
+    row = result.fetchone()
+
+    if not row or not row.is_active:
+        return "disabled"
+
+    # Check if we have standings data
+    standings_query = text("""
+        SELECT source, standings FROM league_standings
+        WHERE league_id = :lid AND season = :season
+    """)
+    standings_result = await session.execute(standings_query, {"lid": WORLD_CUP_LEAGUE_ID, "season": WORLD_CUP_SEASON})
+    standings_row = standings_result.fetchone()
+
+    if not standings_row or not standings_row.standings or standings_row.source == "no_table":
+        return "not_ready"
+
+    return "ok"
+
+
+async def _map_external_to_db_team_ids(session: AsyncSession, external_ids: list[int]) -> dict[int, dict]:
+    """
+    Map external team IDs to DB team IDs.
+    Returns: {external_id: {"team_id": db_id, "name": ..., "logo_url": ...}}
+    """
+    if not external_ids:
+        return {}
+
+    query = text("""
+        SELECT id, external_id, name, logo_url FROM teams
+        WHERE external_id = ANY(:ext_ids)
+    """)
+    result = await session.execute(query, {"ext_ids": external_ids})
+
+    return {
+        r.external_id: {"team_id": r.id, "name": r.name, "logo_url": r.logo_url}
+        for r in result.fetchall()
+    }
+
+
+async def build_world_cup_overview(session: AsyncSession) -> dict:
+    """Build World Cup 2026 overview."""
+    status = await _get_world_cup_status(session)
+
+    alerts = []
+    summary = {
+        "groups_count": 0,
+        "teams_count": 0,
+        "matches_total": 0,
+        "matches_played": 0,
+        "matches_upcoming": 0,
+        "next_match_at": None,
+        "standings_source": "missing",
+        "standings_captured_at": None,
+    }
+    upcoming = []
+
+    if status == "disabled":
+        return {
+            "league": {"league_id": WORLD_CUP_LEAGUE_ID, "name": "FIFA World Cup", "season": WORLD_CUP_SEASON},
+            "status": status,
+            "summary": summary,
+            "alerts": [{"type": "disabled", "message": "World Cup 2026 not active", "value": None}],
+            "upcoming": [],
+        }
+
+    # Get standings info
+    standings_query = text("""
+        SELECT source, captured_at, standings FROM league_standings
+        WHERE league_id = :lid AND season = :season
+    """)
+    standings_result = await session.execute(standings_query, {"lid": WORLD_CUP_LEAGUE_ID, "season": WORLD_CUP_SEASON})
+    standings_row = standings_result.fetchone()
+
+    if standings_row and standings_row.standings:
+        standings_data = standings_row.standings if isinstance(standings_row.standings, list) else []
+        groups = set(s.get("group") for s in standings_data if s.get("group"))
+        summary["groups_count"] = len(groups)
+        summary["teams_count"] = len(standings_data)
+        summary["standings_source"] = standings_row.source or "db"
+        summary["standings_captured_at"] = standings_row.captured_at.isoformat() + "Z" if standings_row.captured_at else None
+    else:
+        summary["standings_source"] = "missing"
+        alerts.append({"type": "standings_missing", "message": "No standings data available", "value": None})
+
+    # Get matches stats
+    matches_query = text("""
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE status IN ('FT', 'AET', 'PEN')) as played,
+            COUNT(*) FILTER (WHERE status = 'NS' AND date > NOW()) as upcoming,
+            MIN(date) FILTER (WHERE status = 'NS' AND date > NOW()) as next_match
+        FROM matches
+        WHERE league_id = :lid AND season = :season
+    """)
+    matches_result = await session.execute(matches_query, {"lid": WORLD_CUP_LEAGUE_ID, "season": WORLD_CUP_SEASON})
+    matches_row = matches_result.fetchone()
+
+    if matches_row:
+        summary["matches_total"] = matches_row.total or 0
+        summary["matches_played"] = matches_row.played or 0
+        summary["matches_upcoming"] = matches_row.upcoming or 0
+        summary["next_match_at"] = matches_row.next_match.isoformat() + "Z" if matches_row.next_match else None
+
+    if summary["matches_total"] == 0:
+        alerts.append({"type": "fixtures_missing", "message": "No fixtures available yet", "value": None})
+
+    # Get upcoming matches (next 10)
+    if status == "ok" or summary["matches_upcoming"] > 0:
+        upcoming_query = text("""
+            SELECT
+                m.id as match_id, m.date, m.status,
+                m.home_team_id, m.away_team_id,
+                ht.name as home_team, at.name as away_team,
+                EXISTS(SELECT 1 FROM predictions p WHERE p.match_id = m.id) as has_prediction
+            FROM matches m
+            JOIN teams ht ON m.home_team_id = ht.id
+            JOIN teams at ON m.away_team_id = at.id
+            WHERE m.league_id = :lid AND m.season = :season
+                AND m.date > NOW() AND m.status = 'NS'
+            ORDER BY m.date ASC
+            LIMIT 10
+        """)
+        upcoming_result = await session.execute(upcoming_query, {"lid": WORLD_CUP_LEAGUE_ID, "season": WORLD_CUP_SEASON})
+
+        # Build team_id → group map from standings
+        team_groups = {}
+        if standings_row and standings_row.standings:
+            for s in standings_row.standings:
+                ext_id = s.get("team_id")
+                grp = s.get("group")
+                if ext_id and grp:
+                    team_groups[ext_id] = grp
+
+        # Map external IDs to DB IDs
+        external_ids = list(team_groups.keys())
+        team_map = await _map_external_to_db_team_ids(session, external_ids)
+        db_to_group = {team_map[ext]["team_id"]: grp for ext, grp in team_groups.items() if ext in team_map}
+
+        for r in upcoming_result.fetchall():
+            home_group = db_to_group.get(r.home_team_id)
+            away_group = db_to_group.get(r.away_team_id)
+            match_group = home_group if home_group == away_group else None
+
+            upcoming.append({
+                "match_id": r.match_id,
+                "date": r.date.isoformat() + "Z" if r.date else None,
+                "group": match_group,
+                "home_team": r.home_team,
+                "away_team": r.away_team,
+                "home_team_id": r.home_team_id,
+                "away_team_id": r.away_team_id,
+                "status": r.status,
+                "has_prediction": r.has_prediction,
+            })
+
+    return {
+        "league": {"league_id": WORLD_CUP_LEAGUE_ID, "name": "FIFA World Cup", "season": WORLD_CUP_SEASON},
+        "status": status,
+        "summary": summary,
+        "alerts": alerts,
+        "upcoming": upcoming,
+    }
+
+
+async def build_world_cup_groups(session: AsyncSession) -> dict:
+    """Build World Cup 2026 groups list."""
+    status = await _get_world_cup_status(session)
+
+    if status == "disabled":
+        return {
+            "league": {"league_id": WORLD_CUP_LEAGUE_ID, "season": WORLD_CUP_SEASON},
+            "status": status,
+            "groups": [],
+            "totals": {"groups_count": 0, "teams_count": 0},
+        }
+
+    # Get standings
+    standings_query = text("""
+        SELECT standings FROM league_standings
+        WHERE league_id = :lid AND season = :season
+    """)
+    result = await session.execute(standings_query, {"lid": WORLD_CUP_LEAGUE_ID, "season": WORLD_CUP_SEASON})
+    row = result.fetchone()
+
+    if not row or not row.standings:
+        return {
+            "league": {"league_id": WORLD_CUP_LEAGUE_ID, "season": WORLD_CUP_SEASON},
+            "status": "not_ready",
+            "groups": [],
+            "totals": {"groups_count": 0, "teams_count": 0},
+        }
+
+    standings_data = row.standings if isinstance(row.standings, list) else []
+
+    # Map external IDs to DB IDs
+    external_ids = [s.get("team_id") for s in standings_data if s.get("team_id")]
+    team_map = await _map_external_to_db_team_ids(session, external_ids)
+
+    # Group by group name
+    groups_dict = {}
+    for s in standings_data:
+        grp = s.get("group", "Unknown")
+        if grp not in groups_dict:
+            groups_dict[grp] = []
+
+        ext_id = s.get("team_id")
+        db_info = team_map.get(ext_id, {})
+
+        groups_dict[grp].append({
+            "team_id": db_info.get("team_id"),
+            "external_id": ext_id,
+            "name": s.get("team_name") or db_info.get("name", "Unknown"),
+            "logo_url": s.get("team_logo") or db_info.get("logo_url"),
+            "position": s.get("position", 0),
+            "points": s.get("points", 0),
+            "played": s.get("played", 0),
+            "won": s.get("won", 0),
+            "drawn": s.get("drawn", 0),
+            "lost": s.get("lost", 0),
+            "goals_for": s.get("goals_for", 0),
+            "goals_against": s.get("goals_against", 0),
+            "goal_diff": s.get("goal_diff", 0),
+            "form": s.get("form"),
+            "description": s.get("description"),
+        })
+
+    # Sort teams by position within each group
+    for grp in groups_dict:
+        groups_dict[grp].sort(key=lambda x: x["position"])
+
+    # Build groups list sorted by group name
+    groups = [
+        {"group": grp, "teams": teams}
+        for grp, teams in sorted(groups_dict.items())
+    ]
+
+    return {
+        "league": {"league_id": WORLD_CUP_LEAGUE_ID, "season": WORLD_CUP_SEASON},
+        "status": status,
+        "groups": groups,
+        "totals": {
+            "groups_count": len(groups),
+            "teams_count": len(standings_data),
+        },
+    }
+
+
+async def build_world_cup_group_detail(session: AsyncSession, group: str) -> Optional[dict]:
+    """Build World Cup 2026 group detail with standings and matches."""
+    status = await _get_world_cup_status(session)
+
+    if status == "disabled":
+        return {
+            "league": {"league_id": WORLD_CUP_LEAGUE_ID, "season": WORLD_CUP_SEASON},
+            "status": status,
+            "group": group,
+            "standings": [],
+            "matches": [],
+        }
+
+    # Get standings
+    standings_query = text("""
+        SELECT standings FROM league_standings
+        WHERE league_id = :lid AND season = :season
+    """)
+    result = await session.execute(standings_query, {"lid": WORLD_CUP_LEAGUE_ID, "season": WORLD_CUP_SEASON})
+    row = result.fetchone()
+
+    if not row or not row.standings:
+        return {
+            "league": {"league_id": WORLD_CUP_LEAGUE_ID, "season": WORLD_CUP_SEASON},
+            "status": "not_ready",
+            "group": group,
+            "standings": [],
+            "matches": [],
+        }
+
+    standings_data = row.standings if isinstance(row.standings, list) else []
+
+    # Filter to this group
+    group_standings = [s for s in standings_data if s.get("group") == group]
+
+    if not group_standings:
+        return None  # Group not found
+
+    # Map external IDs to DB IDs
+    external_ids = [s.get("team_id") for s in group_standings if s.get("team_id")]
+    team_map = await _map_external_to_db_team_ids(session, external_ids)
+
+    # Build standings list
+    standings = []
+    db_team_ids = []
+    for s in sorted(group_standings, key=lambda x: x.get("position", 0)):
+        ext_id = s.get("team_id")
+        db_info = team_map.get(ext_id, {})
+        db_team_id = db_info.get("team_id")
+        if db_team_id:
+            db_team_ids.append(db_team_id)
+
+        standings.append({
+            "team_id": db_team_id,
+            "external_id": ext_id,
+            "name": s.get("team_name") or db_info.get("name", "Unknown"),
+            "logo_url": s.get("team_logo") or db_info.get("logo_url"),
+            "position": s.get("position", 0),
+            "points": s.get("points", 0),
+            "played": s.get("played", 0),
+            "won": s.get("won", 0),
+            "drawn": s.get("drawn", 0),
+            "lost": s.get("lost", 0),
+            "goals_for": s.get("goals_for", 0),
+            "goals_against": s.get("goals_against", 0),
+            "goal_diff": s.get("goal_diff", 0),
+            "form": s.get("form"),
+            "description": s.get("description"),
+        })
+
+    # Get matches for this group (both teams from this group)
+    matches = []
+    if db_team_ids:
+        matches_query = text("""
+            SELECT
+                m.id as match_id, m.date, m.status,
+                m.home_team_id, m.away_team_id,
+                m.home_goals, m.away_goals,
+                ht.name as home_team, at.name as away_team,
+                EXISTS(SELECT 1 FROM predictions p WHERE p.match_id = m.id) as has_prediction
+            FROM matches m
+            JOIN teams ht ON m.home_team_id = ht.id
+            JOIN teams at ON m.away_team_id = at.id
+            WHERE m.league_id = :lid AND m.season = :season
+                AND m.home_team_id = ANY(:tids) AND m.away_team_id = ANY(:tids)
+            ORDER BY m.date ASC
+        """)
+        matches_result = await session.execute(matches_query, {
+            "lid": WORLD_CUP_LEAGUE_ID,
+            "season": WORLD_CUP_SEASON,
+            "tids": db_team_ids,
+        })
+
+        for r in matches_result.fetchall():
+            matches.append({
+                "match_id": r.match_id,
+                "date": r.date.isoformat() + "Z" if r.date else None,
+                "status": r.status,
+                "home_team": r.home_team,
+                "away_team": r.away_team,
+                "home_team_id": r.home_team_id,
+                "away_team_id": r.away_team_id,
+                "score": f"{r.home_goals}-{r.away_goals}" if r.home_goals is not None else None,
+                "has_prediction": r.has_prediction,
+            })
+
+    return {
+        "league": {"league_id": WORLD_CUP_LEAGUE_ID, "season": WORLD_CUP_SEASON},
+        "status": status,
+        "group": group,
+        "standings": standings,
+        "matches": matches,
     }

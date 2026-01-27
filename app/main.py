@@ -6570,6 +6570,132 @@ async def dashboard_football_tournaments(request: Request):
     }
 
 
+# =============================================================================
+# Football Navigation - World Cup 2026 (P3.5)
+# =============================================================================
+
+
+@app.get("/dashboard/football/world-cup-2026/overview.json")
+async def dashboard_football_world_cup_overview(request: Request):
+    """
+    Football Navigation - World Cup 2026 overview.
+
+    P3.5: Returns overview with summary, alerts, and upcoming matches.
+    Status can be: "ok", "not_ready", or "disabled".
+    Fail-soft: returns status="not_ready" if no data, never 500.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    cache_key = "football_world_cup_overview"
+    cached_data, cache_age = _get_football_cache(cache_key, FOOTBALL_NAV_CACHE_TTL)
+
+    if cached_data:
+        return {
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "cached": True,
+            "cache_age_seconds": cache_age,
+            "data": cached_data,
+        }
+
+    from app.dashboard.football_nav import build_world_cup_overview
+
+    async with AsyncSessionLocal() as session:
+        data = await build_world_cup_overview(session)
+
+    _set_football_cache(cache_key, data)
+
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
+@app.get("/dashboard/football/world-cup-2026/groups.json")
+async def dashboard_football_world_cup_groups(request: Request):
+    """
+    Football Navigation - World Cup 2026 groups list.
+
+    P3.5: Returns all groups with team standings.
+    Status can be: "ok", "not_ready", or "disabled".
+    Fail-soft: returns empty groups if no standings data.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    cache_key = "football_world_cup_groups"
+    cached_data, cache_age = _get_football_cache(cache_key, FOOTBALL_NAV_DETAIL_CACHE_TTL)
+
+    if cached_data:
+        return {
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "cached": True,
+            "cache_age_seconds": cache_age,
+            "data": cached_data,
+        }
+
+    from app.dashboard.football_nav import build_world_cup_groups
+
+    async with AsyncSessionLocal() as session:
+        data = await build_world_cup_groups(session)
+
+    _set_football_cache(cache_key, data)
+
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
+@app.get("/dashboard/football/world-cup-2026/group/{group}.json")
+async def dashboard_football_world_cup_group_detail(request: Request, group: str):
+    """
+    Football Navigation - World Cup 2026 group detail.
+
+    P3.5: Returns standings and matches for a specific group.
+    Parameter group is URL-decoded (e.g., "Group A" or "Group%20A").
+    Returns 404 if group not found.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    # URL decode the group name
+    from urllib.parse import unquote
+    group = unquote(group)
+
+    cache_key = f"football_world_cup_group_{group}"
+    cached_data, cache_age = _get_football_cache(cache_key, FOOTBALL_NAV_DETAIL_CACHE_TTL)
+
+    if cached_data:
+        return {
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "cached": True,
+            "cache_age_seconds": cache_age,
+            "data": cached_data,
+        }
+
+    from app.dashboard.football_nav import build_world_cup_group_detail
+
+    async with AsyncSessionLocal() as session:
+        data = await build_world_cup_group_detail(session, group)
+
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"Group '{group}' not found")
+
+    _set_football_cache(cache_key, data)
+
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
 @app.get("/dashboard/pit/debug")
 async def pit_dashboard_debug(request: Request):
     """
