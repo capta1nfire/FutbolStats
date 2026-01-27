@@ -148,21 +148,27 @@ export function AdminAuditTable({ filters, onOffsetChange }: AdminAuditTableProp
 
 function AuditDetail({ entry }: { entry: AdminAuditEntry }) {
   return (
-    <div className="space-y-4 text-sm">
-      <div className="grid grid-cols-2 gap-2">
-        <InfoRow label="ID" value={String(entry.id)} />
-        <InfoRow label="Date" value={new Date(entry.created_at).toLocaleString()} />
-        <InfoRow label="Actor" value={entry.actor} />
-        <InfoRow label="Action" value={entry.action} />
-        <InfoRow label="Entity Type" value={entry.entity_type} />
-        <InfoRow label="Entity ID" value={entry.entity_id} />
+    <div className="space-y-3 text-sm">
+      <div className="bg-card border border-border rounded-lg p-3">
+        <div className="grid grid-cols-2 gap-2">
+          <InfoRow label="ID" value={String(entry.id)} />
+          <InfoRow label="Date" value={new Date(entry.created_at).toLocaleString()} />
+          <InfoRow label="Actor" value={entry.actor} />
+          <InfoRow label="Action" value={entry.action} />
+          <InfoRow label="Entity Type" value={entry.entity_type} />
+          <InfoRow label="Entity ID" value={entry.entity_id} />
+        </div>
       </div>
 
       {entry.before && (
-        <JsonBlock label="Before" data={entry.before} />
+        <div className="bg-card border border-border rounded-lg p-3">
+          <JsonBlock label="Before" data={entry.before} />
+        </div>
       )}
       {entry.after && (
-        <JsonBlock label="After" data={entry.after} />
+        <div className="bg-card border border-border rounded-lg p-3">
+          <JsonBlock label="After" data={entry.after} />
+        </div>
       )}
     </div>
   );

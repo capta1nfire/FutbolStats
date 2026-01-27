@@ -138,21 +138,21 @@ function LeagueForm({ league }: { league: AdminLeagueDetailCore }) {
   }
 
   return (
-    <div className="space-y-5 text-sm">
+    <div className="space-y-3 text-sm">
       {/* Read-only info */}
-      <div className="grid grid-cols-2 gap-3">
-        <ReadOnlyField label="ID" value={String(league.league_id)} />
-        <ReadOnlyField label="Source" value={league.source} />
-        <ReadOnlyField label="Country" value={league.country} />
-        <ReadOnlyField label="Match Type" value={league.match_type} />
-        <ReadOnlyField label="Observed" value={league.observed ? "Yes" : "No"} />
-        <ReadOnlyField label="Configured" value={league.configured ? "Yes" : "No"} />
+      <div className="bg-card border border-border rounded-lg p-3">
+        <div className="grid grid-cols-2 gap-3">
+          <ReadOnlyField label="ID" value={String(league.league_id)} />
+          <ReadOnlyField label="Source" value={league.source} />
+          <ReadOnlyField label="Country" value={league.country} />
+          <ReadOnlyField label="Match Type" value={league.match_type} />
+          <ReadOnlyField label="Observed" value={league.observed ? "Yes" : "No"} />
+          <ReadOnlyField label="Configured" value={league.configured ? "Yes" : "No"} />
+        </div>
       </div>
 
-      <hr className="border-border" />
-
       {/* Editable fields */}
-      <div className="space-y-4">
+      <div className="bg-card border border-border rounded-lg p-3 space-y-4">
         <div className="flex items-center justify-between">
           <Label htmlFor="is-active" className="text-sm">Active</Label>
           <Switch
@@ -204,28 +204,28 @@ function LeagueForm({ league }: { league: AdminLeagueDetailCore }) {
             className="h-8 text-sm"
           />
         </div>
-      </div>
 
-      {/* Save button */}
-      <div className="flex items-center gap-3">
-        <Button
-          onClick={handleSave}
-          disabled={!isDirty || mutation.isPending}
-          size="sm"
-        >
-          {mutation.isPending ? "Saving…" : "Save"}
-        </Button>
-        {mutation.isSuccess && (
-          <span className="text-xs text-green-600">
-            Saved{lastAuditId ? ` (audit #${lastAuditId})` : ""}
-            {lastChanges.length > 0 && ` — ${lastChanges.join(", ")}`}
-          </span>
-        )}
-        {mutation.isError && (
-          <span className="text-xs text-destructive">
-            Error: {(mutation.error as Error)?.message ?? "Save failed"}
-          </span>
-        )}
+        {/* Save button */}
+        <div className="flex items-center gap-3 pt-2">
+          <Button
+            onClick={handleSave}
+            disabled={!isDirty || mutation.isPending}
+            size="sm"
+          >
+            {mutation.isPending ? "Saving…" : "Save"}
+          </Button>
+          {mutation.isSuccess && (
+            <span className="text-xs text-green-600">
+              Saved{lastAuditId ? ` (audit #${lastAuditId})` : ""}
+              {lastChanges.length > 0 && ` — ${lastChanges.join(", ")}`}
+            </span>
+          )}
+          {mutation.isError && (
+            <span className="text-xs text-destructive">
+              Error: {(mutation.error as Error)?.message ?? "Save failed"}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -255,15 +255,17 @@ function StatsTab({ leagueId }: { leagueId: number }) {
   }
 
   return (
-    <div className="space-y-5 text-sm">
+    <div className="space-y-3 text-sm">
       {/* TITAN Coverage */}
       {data.titan_coverage && (
-        <TitanCoverageCard coverage={data.titan_coverage} />
+        <div className="bg-card border border-border rounded-lg p-3">
+          <TitanCoverageCard coverage={data.titan_coverage} />
+        </div>
       )}
 
       {/* Stats by season */}
       {data.stats_by_season.length > 0 && (
-        <div className="space-y-2">
+        <div className="bg-card border border-border rounded-lg p-3 space-y-2">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
             Stats by Season
           </h3>
@@ -289,7 +291,7 @@ function StatsTab({ leagueId }: { leagueId: number }) {
       )}
 
       {/* Teams count */}
-      <div className="text-xs text-muted-foreground">
+      <div className="bg-card border border-border rounded-lg p-3 text-xs text-muted-foreground">
         Teams: <span className="font-mono font-medium text-foreground">{data.teams.length}</span>
       </div>
     </div>
@@ -354,28 +356,30 @@ function MatchesTab({ leagueId }: { leagueId: number }) {
   }
 
   return (
-    <div className="space-y-5 text-sm">
+    <div className="space-y-3 text-sm">
       {/* Recent matches */}
-      {data.recent_matches.length > 0 ? (
-        <div className="space-y-2">
-          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-            Recent Matches
-          </h3>
-          <div className="space-y-1">
-            {data.recent_matches.map((m) => (
-              <RecentMatchRow key={m.match_id} match={m} />
-            ))}
+      <div className="bg-card border border-border rounded-lg p-3">
+        {data.recent_matches.length > 0 ? (
+          <div className="space-y-2">
+            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Recent Matches
+            </h3>
+            <div className="space-y-1">
+              {data.recent_matches.map((m) => (
+                <RecentMatchRow key={m.match_id} match={m} />
+              ))}
+            </div>
           </div>
-        </div>
-      ) : (
-        <div className="text-xs text-muted-foreground text-center py-4">
-          No recent matches
-        </div>
-      )}
+        ) : (
+          <div className="text-xs text-muted-foreground text-center py-2">
+            No recent matches
+          </div>
+        )}
+      </div>
 
       {/* Teams */}
       {data.teams.length > 0 && (
-        <div className="space-y-2">
+        <div className="bg-card border border-border rounded-lg p-3 space-y-2">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
             Teams ({data.teams.length})
           </h3>

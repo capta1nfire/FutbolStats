@@ -45,9 +45,9 @@ function GroupDetailContent({ data }: { data: AdminLeagueGroupDetailFull }) {
   const { group, member_leagues, is_active_all, is_active_any, stats_by_season, teams_count, recent_matches } = data;
 
   return (
-    <div className="space-y-5 text-sm">
+    <div className="space-y-3 text-sm">
       {/* Header info */}
-      <div className="space-y-2">
+      <div className="bg-card border border-border rounded-lg p-3 space-y-2">
         <div className="flex items-center gap-2">
           <Badge
             variant={is_active_all ? "default" : is_active_any ? "secondary" : "outline"}
@@ -63,11 +63,9 @@ function GroupDetailContent({ data }: { data: AdminLeagueGroupDetailFull }) {
         </div>
       </div>
 
-      <hr className="border-border" />
-
       {/* Member leagues */}
       {member_leagues.length > 0 && (
-        <div className="space-y-2">
+        <div className="bg-card border border-border rounded-lg p-3 space-y-2">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
             Member Leagues
           </h3>
@@ -81,7 +79,7 @@ function GroupDetailContent({ data }: { data: AdminLeagueGroupDetailFull }) {
 
       {/* Stats by season */}
       {stats_by_season.length > 0 && (
-        <div className="space-y-2">
+        <div className="bg-card border border-border rounded-lg p-3 space-y-2">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
             Stats by Season
           </h3>
@@ -107,7 +105,7 @@ function GroupDetailContent({ data }: { data: AdminLeagueGroupDetailFull }) {
 
       {/* Recent matches */}
       {recent_matches.length > 0 && (
-        <div className="space-y-2">
+        <div className="bg-card border border-border rounded-lg p-3 space-y-2">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
             Recent Matches
           </h3>
