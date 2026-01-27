@@ -6527,6 +6527,49 @@ async def dashboard_football_nationals_team(request: Request, team_id: int):
     }
 
 
+# =============================================================================
+# Football Navigation - Tournaments & Cups (P3.4)
+# =============================================================================
+
+
+@app.get("/dashboard/football/tournaments.json")
+async def dashboard_football_tournaments(request: Request):
+    """
+    Football Navigation - List tournaments, cups and international competitions.
+
+    P3.4: Returns tournaments filtered by kind IN ('cup', 'international', 'friendly')
+    AND is_active=true. Includes stats per tournament: total_matches, matches_30d,
+    seasons_range, last_match, next_match, coverage percentages, participants_count.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    cache_key = "football_tournaments"
+    cached_data, cache_age = _get_football_cache(cache_key, FOOTBALL_NAV_CACHE_TTL)
+
+    if cached_data:
+        return {
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "cached": True,
+            "cache_age_seconds": cache_age,
+            "data": cached_data,
+        }
+
+    from app.dashboard.football_nav import build_tournaments_list
+
+    async with AsyncSessionLocal() as session:
+        data = await build_tournaments_list(session)
+
+    _set_football_cache(cache_key, data)
+
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
 @app.get("/dashboard/pit/debug")
 async def pit_dashboard_debug(request: Request):
     """

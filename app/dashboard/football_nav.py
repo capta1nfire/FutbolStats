@@ -67,17 +67,31 @@ async def build_nav(session: AsyncSession) -> dict:
     Build top-level navigation categories for Football.
     Returns static categories with dynamic counts.
     """
-    # Get counts for badges
+    # Get counts for badges from admin_leagues
     counts_query = text("""
         SELECT
             COUNT(*) FILTER (WHERE is_active = true AND kind = 'league') as leagues,
             COUNT(*) FILTER (WHERE is_active = true AND kind = 'cup') as cups,
             COUNT(*) FILTER (WHERE is_active = true AND kind = 'international') as international,
+            COUNT(*) FILTER (WHERE is_active = true AND kind = 'friendly') as friendly,
             COUNT(DISTINCT country) FILTER (WHERE is_active = true AND country IS NOT NULL) as countries
         FROM admin_leagues
     """)
     result = await session.execute(counts_query)
     row = result.fetchone()
+
+    # Get real national teams countries count (distinct team names with matches in intl leagues)
+    national_query = text("""
+        SELECT COUNT(DISTINCT t.name) as national_countries
+        FROM teams t
+        JOIN matches m ON (t.id = m.home_team_id OR t.id = m.away_team_id)
+        JOIN admin_leagues al ON m.league_id = al.league_id
+            AND al.kind = 'international' AND al.is_active = true
+        WHERE t.team_type = 'national'
+    """)
+    national_result = await session.execute(national_query)
+    national_row = national_result.fetchone()
+    national_countries = national_row.national_countries if national_row else 0
 
     # Add counts to categories
     categories = []
@@ -86,9 +100,11 @@ async def build_nav(session: AsyncSession) -> dict:
         if cat["id"] == "leagues_by_country":
             cat_copy["count"] = row.countries if row else 0
         elif cat["id"] == "tournaments_competitions":
-            cat_copy["count"] = row.cups if row else 0
+            # cups + international + friendly
+            cat_copy["count"] = ((row.cups or 0) + (row.international or 0) + (row.friendly or 0)) if row else 0
         elif cat["id"] == "national_teams":
-            cat_copy["count"] = row.international if row else 0
+            # Real countries with national teams (not competition count)
+            cat_copy["count"] = national_countries
         categories.append(cat_copy)
 
     return {
@@ -1281,4 +1297,105 @@ async def build_nationals_team_detail(session: AsyncSession, team_id: int) -> Op
         "stats_by_competition": stats_by_competition,
         "recent_matches": recent_matches,
         "head_to_head": head_to_head
+    }
+
+
+# =============================================================================
+# Tournaments & Cups (P3.4)
+# =============================================================================
+
+
+async def build_tournaments_list(session: AsyncSession) -> dict:
+    """
+    Build list of tournaments, cups and international competitions.
+    For category=tournaments_competitions.
+    Filtered by admin_leagues.kind IN ('cup', 'international', 'friendly') AND is_active = true.
+    Fail-soft: returns empty list if no tournaments found.
+    """
+    # Get tournaments with stats - simplified query for participants
+    tournaments_query = text("""
+        SELECT
+            al.league_id,
+            al.name,
+            al.country,
+            al.kind,
+            al.priority,
+            COUNT(m.id) as total_matches,
+            COUNT(m.id) FILTER (WHERE m.date >= NOW() - INTERVAL '30 days') as matches_30d,
+            MIN(m.season) as first_season,
+            MAX(m.season) as last_season,
+            MAX(m.date) FILTER (WHERE m.status IN ('FT', 'AET', 'PEN')) as last_match,
+            MIN(m.date) FILTER (WHERE m.date > NOW() AND m.status = 'NS') as next_match,
+            COUNT(m.id) FILTER (WHERE m.stats IS NOT NULL AND m.stats::text != '{}' AND (m.stats->>'_no_stats') IS NULL) as with_stats,
+            COUNT(m.id) FILTER (WHERE m.odds_home IS NOT NULL) as with_odds
+        FROM admin_leagues al
+        LEFT JOIN matches m ON m.league_id = al.league_id
+        WHERE al.is_active = true
+          AND al.kind IN ('cup', 'international', 'friendly')
+        GROUP BY al.league_id, al.name, al.country, al.kind, al.priority
+        ORDER BY
+            CASE WHEN al.kind = 'international' THEN 1 WHEN al.kind = 'cup' THEN 2 ELSE 3 END,
+            CASE WHEN al.priority = 'high' THEN 1 WHEN al.priority = 'medium' THEN 2 ELSE 3 END,
+            COUNT(m.id) DESC
+    """)
+    result = await session.execute(tournaments_query)
+    tournament_rows = result.fetchall()
+
+    # Get participants count per league (separate query for efficiency)
+    league_ids = [r.league_id for r in tournament_rows]
+    participants_by_league = {}
+    if league_ids:
+        participants_query = text("""
+            SELECT
+                m.league_id,
+                COUNT(DISTINCT t.id) as participants_count
+            FROM matches m
+            JOIN teams t ON t.id = m.home_team_id OR t.id = m.away_team_id
+            WHERE m.league_id = ANY(:lids)
+            GROUP BY m.league_id
+        """)
+        participants_result = await session.execute(participants_query, {"lids": league_ids})
+        participants_by_league = {r.league_id: r.participants_count for r in participants_result.fetchall()}
+
+    tournaments = []
+    cups_count, intl_count, friendly_count = 0, 0, 0
+
+    for r in tournament_rows:
+        total = r.total_matches or 0
+        with_stats = r.with_stats or 0
+        with_odds = r.with_odds or 0
+
+        tournaments.append({
+            "league_id": r.league_id,
+            "name": r.name,
+            "country": r.country,
+            "kind": r.kind,
+            "priority": r.priority,
+            "stats": {
+                "total_matches": total,
+                "matches_30d": r.matches_30d or 0,
+                "seasons_range": [r.first_season, r.last_season] if r.first_season else None,
+                "last_match": r.last_match.isoformat() + "Z" if r.last_match else None,
+                "next_match": r.next_match.isoformat() + "Z" if r.next_match else None,
+                "with_stats_pct": round(with_stats * 100 / total, 1) if total > 0 else None,
+                "with_odds_pct": round(with_odds * 100 / total, 1) if total > 0 else None,
+                "participants_count": participants_by_league.get(r.league_id, 0)
+            }
+        })
+
+        if r.kind == "cup":
+            cups_count += 1
+        elif r.kind == "international":
+            intl_count += 1
+        elif r.kind == "friendly":
+            friendly_count += 1
+
+    return {
+        "tournaments": tournaments,
+        "totals": {
+            "tournaments_count": len(tournaments),
+            "cups_count": cups_count,
+            "international_count": intl_count,
+            "friendly_count": friendly_count
+        }
     }
