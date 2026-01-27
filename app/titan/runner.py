@@ -96,6 +96,9 @@ class TitanRunner:
             "with_xi_depth": 0,  # Tier 1d XI depth found
             "pit_violations": 0,
             "skipped_no_odds": 0,
+            "rematerialized": 0,  # Re-materialized from internal sources (no API call)
+            "odds_history_newer": 0,  # Fresher odds found in odds_history
+            "skipped_pit_refresh": 0,  # Skipped refresh because snapshot >= kickoff
             "errors": [],
         }
 
@@ -118,6 +121,20 @@ class TitanRunner:
 
                 if result["status"] == "already_extracted":
                     stats["already_extracted"] += 1
+                    # Re-materialization counters (when already_extracted but refreshed)
+                    if result.get("rematerialized"):
+                        stats["rematerialized"] += 1
+                        stats["materialized"] += 1
+                    if result.get("odds_history_newer"):
+                        stats["odds_history_newer"] += 1
+                    if result.get("skipped_pit_refresh"):
+                        stats["skipped_pit_refresh"] += 1
+                    if result.get("with_xg"):
+                        stats["with_xg"] += 1
+                    if result.get("with_lineup"):
+                        stats["with_lineup"] += 1
+                    if result.get("with_xi_depth"):
+                        stats["with_xi_depth"] += 1
                 elif result["status"] == "extracted":
                     stats["extracted_success"] += 1
                     if result.get("materialized"):
@@ -143,7 +160,8 @@ class TitanRunner:
 
         logger.info(
             f"TITAN Runner complete: {stats['extracted_success']} extracted, "
-            f"{stats['materialized']} materialized, {stats['extracted_failed']} failed"
+            f"{stats['materialized']} materialized, {stats['extracted_failed']} failed, "
+            f"{stats['rematerialized']} rematerialized, {stats['odds_history_newer']} odds_history_newer"
         )
 
         return stats
@@ -237,7 +255,17 @@ class TitanRunner:
         )
 
         if await self.job_manager.check_idempotency(idempotency_key):
-            logger.debug(f"Match {external_id}: already extracted (pre-check)")
+            logger.debug(f"Match {external_id}: already extracted (pre-check), attempting re-materialization")
+            # Already extracted → NO API call, but re-materialize from internal sources
+            if not dry_run:
+                try:
+                    remat_result = await self._rematerialize_from_internal(match, kickoff_utc)
+                    return {
+                        "status": "already_extracted",
+                        **remat_result,
+                    }
+                except Exception as e:
+                    logger.warning(f"Match {external_id}: re-materialization failed: {e}")
             return {"status": "already_extracted"}
 
         # 2. Extract odds (only if not already done)
@@ -363,6 +391,256 @@ class TitanRunner:
                 return {"status": "pit_violation", "reason": str(e)}
 
         return {"status": "extracted", "materialized": False, "dry_run": True}
+
+    async def _fetch_latest_odds_from_history(
+        self,
+        internal_match_id: int,
+        kickoff_utc: datetime,
+    ) -> Optional["OddsFeatures"]:
+        """Fetch the latest odds snapshot from public.odds_history.
+
+        PIT-safe: Only returns snapshots where recorded_at < kickoff_utc.
+        Skips quarantined/tainted rows.
+
+        Args:
+            internal_match_id: public.matches.id
+            kickoff_utc: Match kickoff time (aware UTC)
+
+        Returns:
+            OddsFeatures built from the latest clean snapshot, or None.
+        """
+        query = text("""
+            SELECT odds_home, odds_draw, odds_away, recorded_at
+            FROM public.odds_history
+            WHERE match_id = :match_id
+              AND recorded_at < :kickoff
+              AND (quarantined IS NOT TRUE)
+              AND (tainted IS NOT TRUE)
+              AND odds_home IS NOT NULL
+              AND odds_draw IS NOT NULL
+              AND odds_away IS NOT NULL
+            ORDER BY recorded_at DESC
+            LIMIT 1
+        """)
+        result = await self.session.execute(query, {
+            "match_id": internal_match_id,
+            "kickoff": kickoff_utc,
+        })
+        row = result.fetchone()
+        if not row:
+            return None
+
+        odds_home, odds_draw, odds_away, recorded_at = row
+        return self.materializer.build_odds_features(
+            odds_home=odds_home,
+            odds_draw=odds_draw,
+            odds_away=odds_away,
+            captured_at=recorded_at,
+        )
+
+    async def _get_current_fm_odds_captured_at(
+        self,
+        external_id: int,
+    ) -> Optional[datetime]:
+        """Get current odds_captured_at from feature_matrix for staleness comparison."""
+        query = text(f"""
+            SELECT odds_captured_at
+            FROM {self.schema}.feature_matrix
+            WHERE match_id = :match_id
+        """)
+        result = await self.session.execute(query, {"match_id": external_id})
+        row = result.fetchone()
+        return row[0] if row else None
+
+    async def _rematerialize_from_internal(
+        self,
+        match: dict,
+        kickoff_utc: datetime,
+    ) -> dict:
+        """Re-materialize feature_matrix row from internal sources (no API call).
+
+        Called when odds extraction was already done (idempotency hit) but:
+        - odds_history may have a fresher snapshot than feature_matrix.odds_captured_at
+        - xG/form/H2H/lineup/xi_depth can always be recalculated (internal reads)
+
+        This closes the "freshness gap" where feature_matrix gets stale because
+        the idempotency pre-check prevented any update.
+
+        Returns:
+            Dict with rematerialization details for stats tracking.
+        """
+        external_id = match["external_id"]
+        result = {
+            "rematerialized": False,
+            "odds_history_newer": False,
+            "skipped_pit_refresh": False,
+            "with_xg": False,
+            "with_lineup": False,
+            "with_xi_depth": False,
+        }
+
+        # 1. Check if odds_history has a fresher snapshot
+        current_fm_captured = await self._get_current_fm_odds_captured_at(external_id)
+        history_odds = await self._fetch_latest_odds_from_history(
+            internal_match_id=match["id"],
+            kickoff_utc=kickoff_utc,
+        )
+
+        odds_features = None
+        if history_odds:
+            if current_fm_captured is None:
+                # No FM row yet (shouldn't happen if already_extracted, but defensive)
+                odds_features = history_odds
+                result["odds_history_newer"] = True
+            else:
+                # Ensure both are tz-aware for comparison
+                fm_ts = current_fm_captured
+                if fm_ts.tzinfo is None:
+                    fm_ts = fm_ts.replace(tzinfo=timezone.utc)
+                hist_ts = history_odds.captured_at
+                if hist_ts.tzinfo is None:
+                    hist_ts = hist_ts.replace(tzinfo=timezone.utc)
+
+                # Only use history odds if they're meaningfully newer (> 30 min)
+                delta_minutes = (hist_ts - fm_ts).total_seconds() / 60
+                if delta_minutes > 30:
+                    # PIT check: snapshot must be before kickoff
+                    if hist_ts < kickoff_utc:
+                        odds_features = history_odds
+                        result["odds_history_newer"] = True
+                        logger.info(
+                            f"Match {external_id}: odds_history is {delta_minutes:.0f}min newer "
+                            f"({fm_ts.isoformat()} → {hist_ts.isoformat()})"
+                        )
+                    else:
+                        result["skipped_pit_refresh"] = True
+                        logger.debug(
+                            f"Match {external_id}: odds_history snapshot >= kickoff, skipping PIT"
+                        )
+
+        # If no fresher odds from history, use existing FM odds (read back from DB)
+        # We still want to re-materialize xG/form/H2H/lineup/xi to refresh those timestamps
+        if odds_features is None:
+            # Read current odds from feature_matrix to pass through
+            current_odds = await self._read_current_fm_odds(external_id)
+            if current_odds is None:
+                logger.debug(f"Match {external_id}: no odds in FM or history, skip rematerialization")
+                return result
+            odds_features = current_odds
+
+        # 2. Compute all internal tiers (same as fresh extraction path)
+        form_home = None
+        form_away = None
+        try:
+            form_home = await self.materializer.compute_form_features(
+                team_id=match["home_team_id"],
+                kickoff_utc=kickoff_utc,
+            )
+            form_away = await self.materializer.compute_form_features(
+                team_id=match["away_team_id"],
+                kickoff_utc=kickoff_utc,
+            )
+        except Exception as e:
+            logger.warning(f"Remat form failed for match {external_id}: {e}")
+
+        h2h = None
+        try:
+            h2h = await self.materializer.compute_h2h_features(
+                home_team_id=match["home_team_id"],
+                away_team_id=match["away_team_id"],
+                kickoff_utc=kickoff_utc,
+            )
+        except Exception as e:
+            logger.warning(f"Remat H2H failed for match {external_id}: {e}")
+
+        xg = None
+        try:
+            xg = await self.materializer.compute_xg_last5_features(
+                home_team_id=match["home_team_id"],
+                away_team_id=match["away_team_id"],
+                kickoff_utc=kickoff_utc,
+            )
+        except Exception as e:
+            logger.warning(f"Remat xG failed for match {external_id}: {e}")
+
+        lineup = None
+        try:
+            lineup = await self.materializer.compute_lineup_features(
+                match_id=match["id"],
+                kickoff_utc=kickoff_utc,
+            )
+        except Exception as e:
+            logger.warning(f"Remat lineup failed for match {external_id}: {e}")
+
+        xi_depth = None
+        try:
+            xi_depth = await self.materializer.compute_xi_depth_features(
+                match_id=match["id"],
+                kickoff_utc=kickoff_utc,
+                home_formation=lineup.sofascore_home_formation if lineup else None,
+                away_formation=lineup.sofascore_away_formation if lineup else None,
+            )
+        except Exception as e:
+            logger.warning(f"Remat XI depth failed for match {external_id}: {e}")
+
+        # 3. Materialize (upsert)
+        try:
+            inserted = await self.materializer.insert_row(
+                match_id=external_id,
+                kickoff_utc=kickoff_utc,
+                competition_id=match["competition_id"],
+                season=match["season"],
+                home_team_id=match["home_team_id"],
+                away_team_id=match["away_team_id"],
+                odds=odds_features,
+                form_home=form_home,
+                form_away=form_away,
+                h2h=h2h,
+                xg=xg,
+                lineup=lineup,
+                xi_depth=xi_depth,
+            )
+            result["rematerialized"] = inserted
+            result["with_xg"] = xg is not None
+            result["with_lineup"] = lineup is not None
+            result["with_xi_depth"] = xi_depth is not None
+            logger.info(
+                f"Match {external_id}: re-materialized "
+                f"(odds_newer={result['odds_history_newer']}, xg={xg is not None}, "
+                f"lineup={lineup is not None}, xi={xi_depth is not None})"
+            )
+        except PITViolationError as e:
+            logger.error(f"Remat PIT violation for match {external_id}: {e}")
+
+        return result
+
+    async def _read_current_fm_odds(
+        self,
+        external_id: int,
+    ) -> Optional["OddsFeatures"]:
+        """Read current odds from feature_matrix to use as passthrough during re-materialization."""
+        from app.titan.materializers.feature_matrix import OddsFeatures
+        query = text(f"""
+            SELECT odds_home_close, odds_draw_close, odds_away_close, odds_captured_at
+            FROM {self.schema}.feature_matrix
+            WHERE match_id = :match_id
+              AND odds_captured_at IS NOT NULL
+        """)
+        result = await self.session.execute(query, {"match_id": external_id})
+        row = result.fetchone()
+        if not row or row[0] is None:
+            return None
+
+        captured_at = row[3]
+        if captured_at and captured_at.tzinfo is None:
+            captured_at = captured_at.replace(tzinfo=timezone.utc)
+
+        return self.materializer.build_odds_features(
+            odds_home=float(row[0]),
+            odds_draw=float(row[1]),
+            odds_away=float(row[2]),
+            captured_at=captured_at,
+        )
 
     def _parse_odds_from_extraction(self, extraction) -> Optional[dict]:
         """Parse odds from API-Football extraction response.
@@ -514,6 +792,9 @@ def main():
     print(f"  Extracted (new):    {stats['extracted_success']}")
     print(f"  Extraction failed:  {stats['extracted_failed']}")
     print(f"  Materialized:       {stats['materialized']}")
+    print(f"  Re-materialized:    {stats['rematerialized']}")
+    print(f"  Odds history newer: {stats['odds_history_newer']}")
+    print(f"  Skipped PIT refresh:{stats['skipped_pit_refresh']}")
     print(f"  With xG (Tier 1b):  {stats['with_xg']}")
     print(f"  With lineup (1c):   {stats['with_lineup']}")
     print(f"  With XI depth (1d): {stats['with_xi_depth']}")
