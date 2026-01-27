@@ -1054,7 +1054,7 @@ async def patch_league(
 
     for key, value in sanitized.items():
         if key in ("tags", "rules_json"):
-            set_parts.append(f"{key} = :{key}::jsonb")
+            set_parts.append(f"{key} = CAST(:{key} AS jsonb)")
             params[key] = json.dumps(value)
         else:
             set_parts.append(f"{key} = :{key}")
