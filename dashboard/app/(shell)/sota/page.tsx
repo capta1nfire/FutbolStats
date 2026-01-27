@@ -10,6 +10,7 @@ import {
   usePageSize,
   useSotaView,
   useLeagueVisibility,
+  useFeatureCoverage,
 } from "@/lib/hooks";
 import {
   DataQualityCheck,
@@ -30,9 +31,14 @@ import {
   CoverageRangeFilter,
   FeatureCoverageLeague,
   LeagueFilterPanel,
+  FeatureCoverageDetailDrawer,
   SOTA_COLUMN_OPTIONS,
   SOTA_DEFAULT_VISIBILITY,
 } from "@/components/sota";
+import {
+  parseCellParam,
+  buildCellParam,
+} from "@/lib/types/feature-coverage-detail";
 import {
   parseStringId,
   buildSearchParams,
@@ -72,6 +78,13 @@ function SotaPageContent() {
     () => parseStringId(searchParams.get("id")),
     [searchParams]
   );
+
+  // Parse URL state - cell selection for feature coverage detail drawer
+  const cellSelection = useMemo(
+    () => parseCellParam(searchParams.get("cell")),
+    [searchParams]
+  );
+  const cellDrawerOpen = cellSelection !== null;
 
   // UI state (non-URL)
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
@@ -157,14 +170,15 @@ function SotaPageContent() {
 
   // Build URL with current filters
   const buildUrl = useCallback(
-    (overrides: { id?: string | null }) => {
+    (overrides: { id?: string | null; cell?: string | null }) => {
       const params = buildSearchParams({
         id: overrides.id === undefined ? selectedCheckId : overrides.id,
+        cell: overrides.cell === undefined ? searchParams.get("cell") : overrides.cell,
       });
       const search = params.toString();
       return `${BASE_PATH}${search ? `?${search}` : ""}`;
     },
-    [selectedCheckId]
+    [selectedCheckId, searchParams]
   );
 
   // Handle row click - update URL with router.replace (no history entry)
@@ -179,6 +193,25 @@ function SotaPageContent() {
   const handleCloseDrawer = useCallback(() => {
     router.replace(buildUrl({ id: null }), { scroll: false });
   }, [router, buildUrl]);
+
+  // Handle cell click in Feature Coverage Matrix - open detail drawer
+  const handleCellClick = useCallback(
+    (featureKey: string, leagueId: number) => {
+      router.replace(
+        buildUrl({ cell: buildCellParam(featureKey, leagueId) }),
+        { scroll: false }
+      );
+    },
+    [router, buildUrl]
+  );
+
+  // Handle cell detail drawer close
+  const handleCellDrawerClose = useCallback(() => {
+    router.replace(buildUrl({ cell: null }), { scroll: false });
+  }, [router, buildUrl]);
+
+  // Feature coverage data for detail drawer (shared TanStack Query cache - no double fetch)
+  const { data: featureCoverageData } = useFeatureCoverage();
 
   // Handlers for Customize Columns
   const handleCustomizeColumnsClick = useCallback(() => {
@@ -261,9 +294,25 @@ function SotaPageContent() {
     return checks.slice(start, start + pageSize);
   }, [checks, currentPage, pageSize]);
 
+  // Handle view change — close drawers and clean URL params from the abandoned view
+  const handleViewChange = useCallback(
+    (nextView: typeof activeView) => {
+      setActiveView(nextView);
+      if (nextView === "features") {
+        // Leaving enrichment → clear ?id=
+        router.replace(buildUrl({ id: null }), { scroll: false });
+      } else {
+        // Leaving features → clear ?cell=
+        router.replace(buildUrl({ cell: null }), { scroll: false });
+      }
+      setCustomizeColumnsOpen(false);
+    },
+    [setActiveView, router, buildUrl]
+  );
+
   // Header content with view tabs
   const headerContent = (
-    <SotaViewTabs activeView={activeView} onViewChange={setActiveView} />
+    <SotaViewTabs activeView={activeView} onViewChange={handleViewChange} />
   );
 
   return (
@@ -378,6 +427,7 @@ function SotaPageContent() {
               onTotalFeaturesChange={handleTotalFeaturesChange}
               enabledTiers={enabledTiers}
               coverageRangeFilter={coverageRangeFilter}
+              onCellClick={handleCellClick}
             />
             <Pagination
               currentPage={featuresCurrentPage}
@@ -391,13 +441,25 @@ function SotaPageContent() {
         )}
       </div>
 
-      {/* Detail Drawer (inline on desktop, sheet on mobile) */}
-      <DataQualityDetailDrawer
-        check={selectedCheck ?? null}
-        open={drawerOpen}
-        onClose={handleCloseDrawer}
-        isLoading={isLoadingDetail}
-      />
+      {/* Detail Drawer — only in Enrichment view */}
+      {activeView === "enrichment" && (
+        <DataQualityDetailDrawer
+          check={selectedCheck ?? null}
+          open={drawerOpen}
+          onClose={handleCloseDrawer}
+          isLoading={isLoadingDetail}
+        />
+      )}
+
+      {/* Feature Coverage Detail Drawer (Features view only) */}
+      {activeView === "features" && (
+        <FeatureCoverageDetailDrawer
+          selection={cellSelection}
+          open={cellDrawerOpen}
+          onClose={handleCellDrawerClose}
+          coverageData={featureCoverageData?.data ?? null}
+        />
+      )}
     </div>
   );
 }
@@ -422,7 +484,8 @@ function SotaLoading() {
  *
  * URL patterns:
  * - /sota - hub view
- * - /sota?id=dq_understat_coverage_ft_14d - with drawer open
+ * - /sota?id=dq_understat_coverage_ft_14d - with enrichment drawer open
+ * - /sota?cell=home_goals_scored_avg:39 - with feature coverage detail drawer open
  */
 export default function SotaPage() {
   return (

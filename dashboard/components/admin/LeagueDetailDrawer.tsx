@@ -15,6 +15,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Loader } from "@/components/ui/loader";
+import { IconTabs } from "@/components/ui/icon-tabs";
+import { Pencil, BarChart3, Calendar } from "lucide-react";
 import { useAdminLeague, useAdminLeagueDetail } from "@/lib/hooks";
 import { useAdminLeagueMutation } from "@/lib/hooks/use-admin-league-mutation";
 import { cn } from "@/lib/utils";
@@ -36,27 +38,23 @@ const KIND_OPTIONS = ["league", "cup", "international", "friendly"] as const;
 
 type DrawerTab = "edit" | "stats" | "matches";
 
+const LEAGUE_TABS = [
+  { id: "edit", icon: <Pencil />, label: "Edit" },
+  { id: "stats", icon: <BarChart3 />, label: "Stats" },
+  { id: "matches", icon: <Calendar />, label: "Matches" },
+];
+
 export function LeagueDetailDrawer({ leagueId, onClose }: LeagueDetailDrawerProps) {
   const { data, isLoading } = useAdminLeague(leagueId);
   const [activeTab, setActiveTab] = useState<DrawerTab>("edit");
 
   const tabBar = data ? (
-    <div className="flex gap-1 border-b border-border pb-0">
-      {(["edit", "stats", "matches"] as const).map((tab) => (
-        <button
-          key={tab}
-          onClick={() => setActiveTab(tab)}
-          className={cn(
-            "px-3 py-1.5 text-xs font-medium border-b-2 transition-colors -mb-px",
-            activeTab === tab
-              ? "border-foreground text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          )}
-        >
-          {tab === "edit" ? "Edit" : tab === "stats" ? "Stats" : "Matches"}
-        </button>
-      ))}
-    </div>
+    <IconTabs
+      tabs={LEAGUE_TABS}
+      value={activeTab}
+      onValueChange={(v) => setActiveTab(v as DrawerTab)}
+      className="w-full"
+    />
   ) : undefined;
 
   return (

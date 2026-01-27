@@ -100,17 +100,26 @@ export function DetailDrawer({
   }
 
   return (
-    <aside
-      className={cn(
-        "bg-sidebar flex flex-col transition-smooth",
-        variant === "overlay"
-          ? "absolute right-0 top-0 h-full w-[400px] z-30 shadow-elevation-left"
-          : "w-[320px]",
-        className
+    <>
+      {/* Invisible backdrop — click outside closes drawer (overlay only) */}
+      {variant === "overlay" && (
+        <div
+          className="absolute inset-0 z-20"
+          onClick={onClose}
+          aria-hidden="true"
+        />
       )}
-      role="complementary"
-      aria-label={title || "Details panel"}
-    >
+      <aside
+        className={cn(
+          "bg-sidebar flex flex-col transition-smooth",
+          variant === "overlay"
+            ? "absolute right-0 top-0 h-full w-[400px] z-30 shadow-elevation-left"
+            : "w-[320px]",
+          className
+        )}
+        role="complementary"
+        aria-label={title || "Details panel"}
+      >
       {/* Header */}
       <div className="h-14 flex items-center px-4 shrink-0 relative">
         <h2 className="text-sm font-semibold text-foreground truncate absolute left-1/2 -translate-x-1/2">
@@ -142,5 +151,6 @@ export function DetailDrawer({
         </div>
       </ScrollArea>
     </aside>
+    </>
   );
 }
