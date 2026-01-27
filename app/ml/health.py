@@ -118,7 +118,7 @@ async def build_ml_health_data(session: AsyncSession) -> dict:
     data["freshness"] = await _safe_query(
         "freshness",
         lambda: _query_freshness(session),
-        {"age_hours_now": {}, "lead_time_hours": {}, "status": "unknown"},
+        {"age_hours_now": {}, "lead_time_hours": {}, "historical_7d": {"age_hours_now": {}, "lead_time_hours": {}}, "status": "unknown"},
         degraded_sections,
     )
 
@@ -372,99 +372,121 @@ async def _query_pit_compliance(session: AsyncSession) -> dict:
 
 async def _query_freshness(session: AsyncSession) -> dict:
     """
-    Query data freshness with two metrics:
-    - age_hours_now: time since capture until NOW (early warning for pipeline down)
-    - lead_time_hours: time from capture to kickoff (operational context)
+    Query data freshness with two scopes:
+
+    1. **upcoming** (P0 — used for status & fuel_gauge):
+       Only NS matches with kickoff in the next 48h.
+       This is the "early warning" signal: if the pipeline stops refreshing,
+       upcoming matches will have stale odds/xG and p95 will spike.
+
+    2. **historical_7d** (P1 — observability only):
+       All matches with kickoff in the last 7 days (including FT).
+       NOT used for status/fuel_gauge — provided for dashboards and debugging.
+
+    Each scope reports:
+    - age_hours_now: NOW() - captured_at  (staleness)
+    - lead_time_hours: kickoff_utc - captured_at  (operational context)
     """
-    # Age hours now (early warning)
-    age_query = text("""
-        SELECT
-            'odds' as tier,
-            ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (
-                ORDER BY EXTRACT(EPOCH FROM (NOW() - odds_captured_at))/3600
-            )::numeric, 1) as p50,
-            ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (
-                ORDER BY EXTRACT(EPOCH FROM (NOW() - odds_captured_at))/3600
-            )::numeric, 1) as p95,
-            ROUND(MAX(EXTRACT(EPOCH FROM (NOW() - odds_captured_at))/3600)::numeric, 1) as max
-        FROM titan.feature_matrix
-        WHERE odds_captured_at IS NOT NULL
-          AND kickoff_utc >= NOW() - INTERVAL '7 days'
 
-        UNION ALL
+    def _build_age_query(where_clause: str) -> str:
+        return f"""
+            SELECT
+                'odds' as tier,
+                ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (
+                    ORDER BY EXTRACT(EPOCH FROM (NOW() - odds_captured_at))/3600
+                )::numeric, 1) as p50,
+                ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (
+                    ORDER BY EXTRACT(EPOCH FROM (NOW() - odds_captured_at))/3600
+                )::numeric, 1) as p95,
+                ROUND(MAX(EXTRACT(EPOCH FROM (NOW() - odds_captured_at))/3600)::numeric, 1) as max,
+                COUNT(*) as n
+            FROM titan.feature_matrix
+            WHERE odds_captured_at IS NOT NULL
+              AND {where_clause}
 
-        SELECT
-            'xg' as tier,
-            ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (
-                ORDER BY EXTRACT(EPOCH FROM (NOW() - xg_captured_at))/3600
-            )::numeric, 1) as p50,
-            ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (
-                ORDER BY EXTRACT(EPOCH FROM (NOW() - xg_captured_at))/3600
-            )::numeric, 1) as p95,
-            ROUND(MAX(EXTRACT(EPOCH FROM (NOW() - xg_captured_at))/3600)::numeric, 1) as max
-        FROM titan.feature_matrix
-        WHERE xg_captured_at IS NOT NULL
-          AND kickoff_utc >= NOW() - INTERVAL '7 days'
-    """)
+            UNION ALL
 
-    result = await session.execute(age_query)
-    age_rows = result.fetchall()
+            SELECT
+                'xg' as tier,
+                ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (
+                    ORDER BY EXTRACT(EPOCH FROM (NOW() - xg_captured_at))/3600
+                )::numeric, 1) as p50,
+                ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (
+                    ORDER BY EXTRACT(EPOCH FROM (NOW() - xg_captured_at))/3600
+                )::numeric, 1) as p95,
+                ROUND(MAX(EXTRACT(EPOCH FROM (NOW() - xg_captured_at))/3600)::numeric, 1) as max,
+                COUNT(*) as n
+            FROM titan.feature_matrix
+            WHERE xg_captured_at IS NOT NULL
+              AND {where_clause}
+        """
 
-    age_hours_now = {}
-    for row in age_rows:
-        if row.tier:
-            age_hours_now[row.tier] = {
-                "p50": float(row.p50) if row.p50 is not None else None,
-                "p95": float(row.p95) if row.p95 is not None else None,
-                "max": float(row.max) if row.max is not None else None,
-            }
+    def _build_lead_query(where_clause: str) -> str:
+        return f"""
+            SELECT
+                'odds' as tier,
+                ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (
+                    ORDER BY EXTRACT(EPOCH FROM (kickoff_utc - odds_captured_at))/3600
+                )::numeric, 1) as p50,
+                ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (
+                    ORDER BY EXTRACT(EPOCH FROM (kickoff_utc - odds_captured_at))/3600
+                )::numeric, 1) as p95,
+                ROUND(MAX(EXTRACT(EPOCH FROM (kickoff_utc - odds_captured_at))/3600)::numeric, 1) as max,
+                COUNT(*) as n
+            FROM titan.feature_matrix
+            WHERE odds_captured_at IS NOT NULL
+              AND {where_clause}
 
-    # Lead time hours (context)
-    lead_query = text("""
-        SELECT
-            'odds' as tier,
-            ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (
-                ORDER BY EXTRACT(EPOCH FROM (kickoff_utc - odds_captured_at))/3600
-            )::numeric, 1) as p50,
-            ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (
-                ORDER BY EXTRACT(EPOCH FROM (kickoff_utc - odds_captured_at))/3600
-            )::numeric, 1) as p95,
-            ROUND(MAX(EXTRACT(EPOCH FROM (kickoff_utc - odds_captured_at))/3600)::numeric, 1) as max
-        FROM titan.feature_matrix
-        WHERE odds_captured_at IS NOT NULL
-          AND kickoff_utc >= NOW() - INTERVAL '7 days'
+            UNION ALL
 
-        UNION ALL
+            SELECT
+                'xg' as tier,
+                ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (
+                    ORDER BY EXTRACT(EPOCH FROM (kickoff_utc - xg_captured_at))/3600
+                )::numeric, 1) as p50,
+                ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (
+                    ORDER BY EXTRACT(EPOCH FROM (kickoff_utc - xg_captured_at))/3600
+                )::numeric, 1) as p95,
+                ROUND(MAX(EXTRACT(EPOCH FROM (kickoff_utc - xg_captured_at))/3600)::numeric, 1) as max,
+                COUNT(*) as n
+            FROM titan.feature_matrix
+            WHERE xg_captured_at IS NOT NULL
+              AND {where_clause}
+        """
 
-        SELECT
-            'xg' as tier,
-            ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (
-                ORDER BY EXTRACT(EPOCH FROM (kickoff_utc - xg_captured_at))/3600
-            )::numeric, 1) as p50,
-            ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (
-                ORDER BY EXTRACT(EPOCH FROM (kickoff_utc - xg_captured_at))/3600
-            )::numeric, 1) as p95,
-            ROUND(MAX(EXTRACT(EPOCH FROM (kickoff_utc - xg_captured_at))/3600)::numeric, 1) as max
-        FROM titan.feature_matrix
-        WHERE xg_captured_at IS NOT NULL
-          AND kickoff_utc >= NOW() - INTERVAL '7 days'
-    """)
+    def _parse_rows(rows) -> dict:
+        result = {}
+        for row in rows:
+            if row.tier:
+                result[row.tier] = {
+                    "p50": float(row.p50) if row.p50 is not None else None,
+                    "p95": float(row.p95) if row.p95 is not None else None,
+                    "max": float(row.max) if row.max is not None else None,
+                    "n": int(row.n) if row.n is not None else 0,
+                }
+        return result
 
-    result = await session.execute(lead_query)
-    lead_rows = result.fetchall()
+    # --- Scope 1: Upcoming (P0 — used for status & fuel_gauge) ---
+    upcoming_where = "kickoff_utc BETWEEN NOW() AND NOW() + INTERVAL '48 hours'"
 
-    lead_time_hours = {}
-    for row in lead_rows:
-        if row.tier:
-            lead_time_hours[row.tier] = {
-                "p50": float(row.p50) if row.p50 is not None else None,
-                "p95": float(row.p95) if row.p95 is not None else None,
-                "max": float(row.max) if row.max is not None else None,
-            }
+    result = await session.execute(text(_build_age_query(upcoming_where)))
+    upcoming_age = _parse_rows(result.fetchall())
 
-    # Determine status based on age_hours_now (early warning)
-    odds_p95 = age_hours_now.get("odds", {}).get("p95")
-    xg_p95 = age_hours_now.get("xg", {}).get("p95")
+    result = await session.execute(text(_build_lead_query(upcoming_where)))
+    upcoming_lead = _parse_rows(result.fetchall())
+
+    # --- Scope 2: Historical 7d (P1 — observability only) ---
+    historical_where = "kickoff_utc >= NOW() - INTERVAL '7 days'"
+
+    result = await session.execute(text(_build_age_query(historical_where)))
+    historical_age = _parse_rows(result.fetchall())
+
+    result = await session.execute(text(_build_lead_query(historical_where)))
+    historical_lead = _parse_rows(result.fetchall())
+
+    # --- Status based on UPCOMING only (early warning) ---
+    odds_p95 = upcoming_age.get("odds", {}).get("p95")
+    xg_p95 = upcoming_age.get("xg", {}).get("p95")
 
     status = "ok"
     if odds_p95 and odds_p95 > 24:
@@ -477,8 +499,12 @@ async def _query_freshness(session: AsyncSession) -> dict:
         status = "warn"
 
     return {
-        "age_hours_now": age_hours_now,
-        "lead_time_hours": lead_time_hours,
+        "age_hours_now": upcoming_age,
+        "lead_time_hours": upcoming_lead,
+        "historical_7d": {
+            "age_hours_now": historical_age,
+            "lead_time_hours": historical_lead,
+        },
         "status": status,
     }
 
