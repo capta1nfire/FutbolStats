@@ -98,6 +98,11 @@ SOFASCORE_OVERRIDES: dict[int, list[str]] = {
     59: ["Preston", "Preston North End"],
     74: ["Sheffield Wednesday", "Sheffield Wed"],
     1838: ["Wrexham"],
+    # Colombia — name changes and Sofascore variants
+    1141: ["Alianza Petrolera", "Alianza FC", "Alianza Valledupar", "Alianza Valledupar FC"],
+    1132: ["Chico", "Boyacá Chicó", "Boyacá Chicó FC", "Chicó FC"],
+    # Peru — abbreviation variants
+    2539: ["UTC", "Universidad Técnica de Cajamarca"],
 }
 
 
