@@ -5400,11 +5400,12 @@ async def sota_sofascore_refs_sync() -> dict:
         from app.jobs.tracking import record_job_run as record_job_run_db
 
         async with AsyncSessionLocal() as session:
-            # Run with 72h lookahead, 2 days back, max 200 matches
+            # Run with 72h lookahead, 7 days back, max 200 matches
+            # P1a: days_back raised from 2→7 to catch matches missed by short window/downtime
             stats = await sync_sofascore_refs(
                 session,
                 hours=72,
-                days_back=2,
+                days_back=7,
                 limit=200,
             )
             metrics.update(stats)
