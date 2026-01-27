@@ -21,7 +21,7 @@ from app.config import get_settings
 from app.database import close_db, get_async_session, init_db, AsyncSessionLocal, get_pool_status
 from app.etl import APIFootballProvider, ETLPipeline
 from app.etl.competitions import ALL_LEAGUE_IDS, COMPETITIONS
-from app.etl.sota_constants import SOFASCORE_SUPPORTED_LEAGUES
+from app.etl.sota_constants import SOFASCORE_SUPPORTED_LEAGUES, UNDERSTAT_SUPPORTED_LEAGUES
 from app.features import FeatureEngineer
 from app.ml import XGBoostEngine
 from app.ml.persistence import load_active_model, persist_model_snapshot
@@ -8454,9 +8454,10 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
         }
 
     # 1) Understat coverage: FT matches in last 14 days with xG data
+    understat_league_ids = ",".join(str(lid) for lid in UNDERSTAT_SUPPORTED_LEAGUES)
     try:
         res = await session.execute(
-            text("""
+            text(f"""
                 SELECT
                     COUNT(*) FILTER (WHERE mut.match_id IS NOT NULL) AS with_xg,
                     COUNT(*) AS total_ft
@@ -8464,7 +8465,7 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
                 LEFT JOIN match_understat_team mut ON m.id = mut.match_id
                 WHERE m.status IN ('FT', 'AET', 'PEN')
                   AND m.date >= NOW() - INTERVAL '14 days'
-                  AND m.league_id IN (39, 140, 135, 78, 61)
+                  AND m.league_id IN ({understat_league_ids})
             """)
         )
         row = res.first()
@@ -13816,10 +13817,11 @@ async def _build_data_quality_checks(session: AsyncSession) -> list[dict]:
     # =========================================================================
 
     # 6) Understat coverage: FT matches in last 14d (Top-5 leagues) with xG
+    understat_league_ids = ",".join(str(lid) for lid in UNDERSTAT_SUPPORTED_LEAGUES)
     try:
         res = await session.execute(
             text(
-                """
+                f"""
                 SELECT
                     COUNT(*) FILTER (WHERE mut.match_id IS NOT NULL) AS with_xg,
                     COUNT(*) AS total_ft
@@ -13827,7 +13829,7 @@ async def _build_data_quality_checks(session: AsyncSession) -> list[dict]:
                 LEFT JOIN match_understat_team mut ON m.id = mut.match_id
                 WHERE m.status IN ('FT', 'AET', 'PEN')
                   AND m.date >= NOW() - INTERVAL '14 days'
-                  AND m.league_id IN (39, 140, 135, 78, 61)
+                  AND m.league_id IN ({understat_league_ids})
                 """
             )
         )

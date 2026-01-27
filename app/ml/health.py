@@ -14,6 +14,8 @@ from typing import Any, Callable, Coroutine
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.etl.sota_constants import UNDERSTAT_SUPPORTED_LEAGUES
+
 logger = logging.getLogger(__name__)
 
 # Season definitions (fixed ranges - European football seasons Aug-Jul)
@@ -181,7 +183,8 @@ async def _query_sota_stats_coverage(session: AsyncSession) -> dict:
     XGBoost model ran with 0% shots/corners coverage in 23/24.
     """
     # Coverage by season
-    season_query = text("""
+    _understat_ids = ",".join(str(lid) for lid in UNDERSTAT_SUPPORTED_LEAGUES)
+    season_query = text(f"""
         SELECT
             CASE
                 WHEN date >= '2023-08-01' AND date < '2024-08-01' THEN '23/24'
@@ -191,7 +194,7 @@ async def _query_sota_stats_coverage(session: AsyncSession) -> dict:
             COUNT(*) as total_matches_ft,
             ROUND(100.0 * COUNT(*) FILTER (
                 WHERE stats IS NOT NULL
-                AND stats::text != '{}'
+                AND stats::text != '{{}}'
                 AND (stats->>'_no_stats') IS NULL
             ) / NULLIF(COUNT(*), 0), 1) as with_stats_pct,
             ROUND(100.0 * COUNT(*) FILTER (
@@ -203,7 +206,7 @@ async def _query_sota_stats_coverage(session: AsyncSession) -> dict:
         FROM matches
         WHERE status IN ('FT', 'AET', 'PEN')
           AND date >= '2023-08-01'
-          AND league_id IN (140, 39, 135, 78, 61)
+          AND league_id IN ({_understat_ids})
         GROUP BY 1
         ORDER BY 1
     """)
@@ -222,18 +225,19 @@ async def _query_sota_stats_coverage(session: AsyncSession) -> dict:
             }
 
     # Coverage by league (current season only)
-    league_query = text("""
+    _understat_ids = ",".join(str(lid) for lid in UNDERSTAT_SUPPORTED_LEAGUES)
+    league_query = text(f"""
         SELECT
             league_id,
             ROUND(100.0 * COUNT(*) FILTER (
                 WHERE stats IS NOT NULL
-                AND stats::text != '{}'
+                AND stats::text != '{{}}'
                 AND (stats->>'_no_stats') IS NULL
             ) / NULLIF(COUNT(*), 0), 1) as with_stats_pct
         FROM matches
         WHERE status IN ('FT', 'AET', 'PEN')
           AND date >= '2025-08-01'
-          AND league_id IN (140, 39, 135, 78, 61)
+          AND league_id IN ({_understat_ids})
         GROUP BY league_id
         ORDER BY with_stats_pct DESC
     """)

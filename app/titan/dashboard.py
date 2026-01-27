@@ -14,6 +14,8 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 
+from app.etl.sota_constants import SOFASCORE_SUPPORTED_LEAGUES
+
 
 def _utc_now() -> datetime:
     """Get current UTC timestamp (timezone-aware) for TIMESTAMPTZ compatibility."""
@@ -176,8 +178,9 @@ async def _get_sofascore_metrics(session: AsyncSession, schema: str, now: dateti
     }
 
     try:
-        # 1. ref_coverage_pct: refs / matches in target window (MVP leagues)
-        ref_coverage_query = await session.execute(text("""
+        # 1. ref_coverage_pct: refs / matches in target window (SOTA supported leagues)
+        _sofascore_ids = ",".join(str(lid) for lid in SOFASCORE_SUPPORTED_LEAGUES)
+        ref_coverage_query = await session.execute(text(f"""
             SELECT
                 COUNT(DISTINCT m.id) as total_matches,
                 COUNT(DISTINCT mer.match_id) as matches_with_ref
@@ -186,7 +189,7 @@ async def _get_sofascore_metrics(session: AsyncSession, schema: str, now: dateti
                 ON m.id = mer.match_id AND mer.source = 'sofascore'
             WHERE m.date > NOW() - INTERVAL '7 days'
               AND m.date < NOW() + INTERVAL '7 days'
-              AND m.league_id IN (140, 39, 135)
+              AND m.league_id IN ({_sofascore_ids})
         """))
         ref_row = ref_coverage_query.fetchone()
         total_matches = ref_row[0] or 0

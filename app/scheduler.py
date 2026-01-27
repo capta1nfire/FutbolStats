@@ -52,8 +52,9 @@ from app.telemetry.sentry import sentry_job_context, capture_exception as sentry
 
 logger = logging.getLogger(__name__)
 
-# Top 5 European leagues (core)
-TOP5_LEAGUES = [39, 140, 135, 78, 61]  # EPL, La Liga, Serie A, Bundesliga, Ligue 1
+# Top 5 European leagues (core) — imported from single source of truth
+from app.etl.sota_constants import UNDERSTAT_SUPPORTED_LEAGUES
+TOP5_LEAGUES = list(UNDERSTAT_SUPPORTED_LEAGUES)
 
 # Extended leagues for lineup monitoring (more volume)
 EXTENDED_LEAGUES = [
