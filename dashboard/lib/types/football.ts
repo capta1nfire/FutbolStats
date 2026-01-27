@@ -161,6 +161,8 @@ export interface RecentMatch {
   status: string;
   home_team: string;
   away_team: string;
+  home_team_id?: number;
+  away_team_id?: number;
   score: string | null;
   league_id?: number;
 }

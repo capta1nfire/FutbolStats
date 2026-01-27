@@ -128,6 +128,7 @@ function StatsTable({
  */
 function RecentMatchesList({
   matches,
+  onTeamSelect,
 }: {
   matches: {
     match_id: number;
@@ -136,8 +137,11 @@ function RecentMatchesList({
     status: string;
     home_team: string;
     away_team: string;
+    home_team_id?: number;
+    away_team_id?: number;
     score: string | null;
   }[];
+  onTeamSelect?: (teamId: number) => void;
 }) {
   if (!matches || matches.length === 0) {
     return (
@@ -165,7 +169,27 @@ function RecentMatchesList({
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm text-foreground truncate">
-                {match.home_team} vs {match.away_team}
+                {match.home_team_id && onTeamSelect ? (
+                  <button
+                    onClick={() => onTeamSelect(match.home_team_id!)}
+                    className="hover:text-primary hover:underline transition-colors"
+                  >
+                    {match.home_team}
+                  </button>
+                ) : (
+                  <span>{match.home_team}</span>
+                )}
+                <span className="text-muted-foreground"> vs </span>
+                {match.away_team_id && onTeamSelect ? (
+                  <button
+                    onClick={() => onTeamSelect(match.away_team_id!)}
+                    className="hover:text-primary hover:underline transition-colors"
+                  >
+                    {match.away_team}
+                  </button>
+                ) : (
+                  <span>{match.away_team}</span>
+                )}
               </p>
             </div>
             <div className="shrink-0 text-right">
@@ -342,7 +366,7 @@ export function GroupDetail({
             <Calendar className="h-4 w-4 text-muted-foreground" />
             <h2 className="text-sm font-semibold text-foreground">Recent Matches (All Leagues)</h2>
           </div>
-          <RecentMatchesList matches={recent_matches} />
+          <RecentMatchesList matches={recent_matches} onTeamSelect={onTeamSelect} />
         </div>
 
         {/* Standings Placeholder */}

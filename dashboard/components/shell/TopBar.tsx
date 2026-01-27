@@ -1,6 +1,7 @@
 "use client";
 
-import { ChevronDown, User, Circle } from "lucide-react";
+import Link from "next/link";
+import { ChevronDown, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AlertsBell } from "./AlertsBell";
 
@@ -33,15 +34,18 @@ export function TopBar() {
           <span className="font-semibold text-foreground">FutbolStats</span>
         </div>
 
-        {/* Site Switcher (mock) */}
+        {/* Site Switcher - links to Football */}
         <Button
           variant="ghost"
           size="sm"
           className="text-muted-foreground hover:text-foreground gap-1"
+          asChild
         >
-          <SoccerBallIcon className="w-4 h-4 text-primary" />
-          Football
-          <ChevronDown className="h-4 w-4" strokeWidth={1.5} />
+          <Link href="/football">
+            <SoccerBallIcon className="w-4 h-4 text-primary" />
+            Football
+            <ChevronDown className="h-4 w-4" strokeWidth={1.5} />
+          </Link>
         </Button>
       </div>
 
