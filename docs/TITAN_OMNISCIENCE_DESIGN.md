@@ -1167,9 +1167,20 @@ xi_formation_mismatch_flag, xi_depth_captured_at, tier1d_complete
 ### FASE 3B-2: Entity Resolution + LLM Extraction (Pendiente)
 - [ ] Implementar fuzzy matching (equipos, jugadores, ligas)
 - [ ] Crear tablas de aliases (team_aliases, player_aliases)
+- [ ] Integrar **diccionario global de aliases/normalización** (seed inicial + mantenimiento) para todos los matchers (incl. SofaScore refs)
 - [ ] Integrar Gemini para extraccion de texto no estructurado
 - [ ] Cola de revision manual para entidades ambiguas
 - [ ] Dashboard de entidades no resueltas
+
+**Nota (importante): Diccionario global de aliases/normalización (existente)**
+- **Problema real**: fuentes como SofaScore fallan el matching por variaciones (acentos, guiones, formatos), p.ej. `Bodø/Glimt` vs `Bodo/Glimt`, `Paris Saint-Germain` vs `Paris Saint Germain`.
+- **Acción**: antes de “inventar” aliases nuevos, **reusar el diccionario global ya existente** como seed y como fuente de verdad operativa.
+- **Assets actuales en repo** (referencia):
+  - `data/fduk_team_aliases.json` (aliases conocidos)
+  - `app/llm/team_aliases.py` (normalización/aliases usados por el backend)
+- **Cómo se usa en Titan**:
+  - Poblar/actualizar `titan.entity_aliases` desde ese diccionario (migración/job idempotente).
+  - Forzar que los matchers (entity resolution, SofaScore refs, etc.) consulten primero `entity_aliases` y apliquen normalización Unicode (NFKD + strip diacríticos) antes del fuzzy.
 
 ### FASE 4: Scale to 100+ fuentes
 - [ ] Agregar 50 casas de apuestas regionales
