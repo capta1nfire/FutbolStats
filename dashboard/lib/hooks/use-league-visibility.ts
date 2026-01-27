@@ -34,6 +34,8 @@ export function useLeagueVisibility() {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (typeof parsed === "object" && parsed !== null) {
+          // Hydration-safe: we intentionally sync client state post-mount.
+          // eslint-disable-next-line react-hooks/set-state-in-effect
           setLeagueVisibilityState(parsed);
         }
       }

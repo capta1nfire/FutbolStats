@@ -81,6 +81,8 @@ export function FilterPanel({
 
   // Update expanded groups when groups change (e.g., switching views)
   useEffect(() => {
+    // We intentionally sync derived state when the set of groups changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setExpandedGroups(groups.map((g) => g.id));
   }, [groups]);
 

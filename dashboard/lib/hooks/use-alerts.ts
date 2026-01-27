@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useCallback, useRef } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Alert,
   AlertsResponse,
@@ -104,12 +104,7 @@ function saveSeenAlertIds(ids: Set<number>): void {
  */
 export function useAlerts(): UseAlertsResult {
   const queryClient = useQueryClient();
-  const seenIdsRef = useRef<Set<number>>(new Set());
-
-  // Initialize seen IDs from localStorage on mount
-  useEffect(() => {
-    seenIdsRef.current = loadSeenAlertIds();
-  }, []);
+  const [seenIds, setSeenIds] = useState<Set<number>>(() => loadSeenAlertIds());
 
   // Query for alerts
   const query = useQuery({
@@ -146,21 +141,29 @@ export function useAlerts(): UseAlertsResult {
 
   // Mark alerts as "seen" (for toast deduplication)
   const markAsSeen = useCallback((ids: number[]) => {
-    for (const id of ids) {
-      seenIdsRef.current.add(id);
-    }
-    saveSeenAlertIds(seenIdsRef.current);
+    if (ids.length === 0) return;
+    setSeenIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        next.add(id);
+      }
+      saveSeenAlertIds(next);
+      return next;
+    });
   }, []);
 
   // Calculate new critical alerts (not yet shown as toast)
-  const newCriticalAlerts =
-    query.data?.items.filter(
+  const newCriticalAlerts = useMemo(() => {
+    const items = query.data?.items ?? [];
+    if (items.length === 0) return [];
+    return items.filter(
       (alert) =>
         alert.severity === "critical" &&
         alert.status === "firing" &&
         !alert.is_read &&
-        !seenIdsRef.current.has(alert.id)
-    ) ?? [];
+        !seenIds.has(alert.id)
+    );
+  }, [query.data?.items, seenIds]);
 
   return {
     alerts: query.data?.items ?? [],

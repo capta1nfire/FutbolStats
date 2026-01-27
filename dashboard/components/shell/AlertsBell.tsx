@@ -8,6 +8,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { useHasMounted } from "@/lib/hooks";
 import { useAlerts } from "@/lib/hooks/use-alerts";
 import { Alert, AlertSeverity } from "@/lib/types/alerts";
 import { cn } from "@/lib/utils";
@@ -123,7 +124,7 @@ function AlertItem({ alert, onMarkRead }: { alert: Alert; onMarkRead: (id: numbe
  * - Mark all as read button
  */
 export function AlertsBell() {
-  const [mounted, setMounted] = useState(false);
+  const mounted = useHasMounted();
   const [open, setOpen] = useState(false);
   const {
     alerts,
@@ -137,11 +138,6 @@ export function AlertsBell() {
   } = useAlerts();
   const { toast } = useToast();
   const shownToastIdsRef = useRef<Set<number>>(new Set());
-
-  // Prevent hydration mismatch - only render Popover on client
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   // Show toast for new critical alerts
   useEffect(() => {

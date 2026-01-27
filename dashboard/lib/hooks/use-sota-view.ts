@@ -27,6 +27,8 @@ export function useSotaView() {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored === "enrichment" || stored === "features") {
+        // Hydration-safe: we intentionally sync client state post-mount.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setActiveViewState(stored);
       }
     } catch {

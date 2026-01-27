@@ -46,13 +46,39 @@ export default function MLHealthPage() {
   const handleCopyJson = useCallback(async () => {
     if (!data) return;
     try {
-      await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+      // Safety: if backend ever returns a JSON string, copy it as valid JSON (no extra quotes)
+      let textToCopy: string;
+      if (typeof data === "string") {
+        try {
+          const parsed = JSON.parse(data) as unknown;
+          textToCopy = JSON.stringify(parsed, null, 2);
+        } catch {
+          // Not valid JSON string; copy raw
+          textToCopy = data;
+        }
+      } else {
+        textToCopy = JSON.stringify(data, null, 2);
+      }
+
+      await navigator.clipboard.writeText(textToCopy);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
       // Fallback for older browsers
       const textArea = document.createElement("textarea");
-      textArea.value = JSON.stringify(data, null, 2);
+      let fallbackText: string;
+      if (typeof data === "string") {
+        try {
+          const parsed = JSON.parse(data) as unknown;
+          fallbackText = JSON.stringify(parsed, null, 2);
+        } catch {
+          fallbackText = data;
+        }
+      } else {
+        fallbackText = JSON.stringify(data, null, 2);
+      }
+
+      textArea.value = fallbackText;
       document.body.appendChild(textArea);
       textArea.select();
       document.execCommand("copy");
