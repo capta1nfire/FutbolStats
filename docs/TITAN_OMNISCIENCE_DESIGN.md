@@ -1172,15 +1172,32 @@ xi_formation_mismatch_flag, xi_depth_captured_at, tier1d_complete
 - [ ] Cola de revision manual para entidades ambiguas
 - [ ] Dashboard de entidades no resueltas
 
+**PRINCIPIO CLAVE: Reusar antes de crear**
+
+> Si no está documentado, no existe. Si no existe, se duplica.
+> Antes de crear cualquier componente nuevo de normalización o alias, **buscar primero en los assets existentes**.
+> Este principio aplica a Owner, ATI y Master por igual.
+
 **Nota (importante): Diccionario global de aliases/normalización (existente)**
 - **Problema real**: fuentes como SofaScore fallan el matching por variaciones (acentos, guiones, formatos), p.ej. `Bodø/Glimt` vs `Bodo/Glimt`, `Paris Saint-Germain` vs `Paris Saint Germain`.
-- **Acción**: antes de “inventar” aliases nuevos, **reusar el diccionario global ya existente** como seed y como fuente de verdad operativa.
-- **Assets actuales en repo** (referencia):
-  - `data/fduk_team_aliases.json` (aliases conocidos)
-  - `app/llm/team_aliases.py` (normalización/aliases usados por el backend)
+- **Acción**: antes de "inventar" aliases nuevos, **reusar el diccionario global ya existente** como seed y como fuente de verdad operativa.
+- **Assets actuales en repo** (referencia — INVENTARIO COMPLETO):
+
+  | Asset | Archivo | Propósito | Usado por |
+  |-------|---------|-----------|-----------|
+  | Aliases por liga (fuente de verdad) | `data/fduk_team_aliases.json` (v2.1.0) | Variantes de nombre → `external_id`, agrupado por liga. 12 secciones: EPL, LaLiga, SerieA, Bundesliga, Ligue1, Championship, Argentina, Saudi, Turkey, Portugal, Brazil, Colombia | `sofascore_aliases.py`, entity resolution |
+  | Alias index cross-provider | `app/etl/sofascore_aliases.py` | Invierte `fduk_team_aliases.json` por `team_id` → índice bidireccional `normalized_name → set[aliases]`. Incluye `SOFASCORE_OVERRIDES` para equipos no cubiertos por fduk | `calculate_team_similarity()` en refs matching |
+  | Normalización de nombres | `app/etl/sofascore_provider.py` → `normalize_team_name()` | NFKD + Nordic chars + puntuación→espacio + strip tokens org (fc, sc, etc.). NO strip `real`/`united`/`city` | Refs matching, alias index |
+  | Alias LLM (apodos culturales) | `app/llm/team_aliases.py` | Apodos ("Merengues", "Culés") para narrativas LLM. **NO usar para matching** — Sofascore no usa apodos | Narrativas LLM únicamente |
+  | Config thresholds | `app/config.py` → `SOFASCORE_REFS_THRESHOLD`, `SOFASCORE_REFS_THRESHOLD_OVERRIDES` | Umbral configurable por liga via env var Railway (sin deploy) | `sota_jobs.py` refs sync |
+
 - **Cómo se usa en Titan**:
   - Poblar/actualizar `titan.entity_aliases` desde ese diccionario (migración/job idempotente).
   - Forzar que los matchers (entity resolution, SofaScore refs, etc.) consulten primero `entity_aliases` y apliquen normalización Unicode (NFKD + strip diacríticos) antes del fuzzy.
+- **Flujo para agregar un alias nuevo**:
+  1. Detectar gap via near-miss logs (`[SOFASCORE_REFS] Near-miss:` en Railway)
+  2. Agregar variante a `data/fduk_team_aliases.json` (sección de liga correspondiente) o a `SOFASCORE_OVERRIDES` en `sofascore_aliases.py`
+  3. NO crear diccionarios paralelos. Si la variante es de una liga nueva, agregar nueva sección a `fduk_team_aliases.json`
 
 ### FASE 4: Scale to 100+ fuentes
 - [ ] Agregar 50 casas de apuestas regionales
