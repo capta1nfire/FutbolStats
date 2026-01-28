@@ -15076,9 +15076,17 @@ async def ia_features_preview(
 
         prediction_dict = {}
         if prediction:
+            # Calculate selection and confidence from probabilities
+            probs = {
+                "home": prediction.home_prob,
+                "draw": prediction.draw_prob,
+                "away": prediction.away_prob,
+            }
+            selection = max(probs, key=probs.get)
+            confidence = probs[selection]
             prediction_dict = {
-                "selection": prediction.predicted_result,
-                "confidence": prediction.confidence,
+                "selection": selection,
+                "confidence": confidence,
                 "home_prob": prediction.home_prob,
                 "draw_prob": prediction.draw_prob,
                 "away_prob": prediction.away_prob,
@@ -15374,9 +15382,17 @@ async def ia_features_playground(
 
         prediction_dict = {}
         if prediction:
+            # Calculate selection and confidence from probabilities
+            probs = {
+                "home": prediction.home_prob,
+                "draw": prediction.draw_prob,
+                "away": prediction.away_prob,
+            }
+            selection = max(probs, key=probs.get)
+            confidence = probs[selection]
             prediction_dict = {
-                "selection": prediction.predicted_result,
-                "confidence": prediction.confidence,
+                "selection": selection,
+                "confidence": confidence,
                 "home_prob": prediction.home_prob,
                 "draw_prob": prediction.draw_prob,
                 "away_prob": prediction.away_prob,
