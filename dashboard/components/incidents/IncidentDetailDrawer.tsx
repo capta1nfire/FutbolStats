@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Incident, INCIDENT_TYPE_LABELS } from "@/lib/types";
 import { useIsDesktop } from "@/lib/hooks";
 import { DetailDrawer } from "@/components/shell";
@@ -384,6 +384,20 @@ export function IncidentDetailDrawer({
       done: step.done ?? false
     }))
   );
+
+  // Sync local state when incident changes (useState initializer only runs once)
+  const incidentId = incident?.id;
+  useEffect(() => {
+    setLocalStatus(incident?.status || "active");
+    setRunbookSteps(
+      (incident?.runbook?.steps || []).map(step => ({
+        id: step.id,
+        text: step.text,
+        done: step.done ?? false,
+      }))
+    );
+    setActiveTab("details");
+  }, [incidentId]); // eslint-disable-line react-hooks/exhaustive-deps
   const incidentTitle = incident
     ? `Incident #${incident.id}`
     : "Incident Details";
