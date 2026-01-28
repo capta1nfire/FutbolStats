@@ -19821,178 +19821,178 @@ async def _detect_active_incidents(session) -> list[dict]:
 
 async def _upsert_incidents(session, detected: list[dict]) -> None:
     """
-    Upsert detected incidents into ops_incidents table.
+    Upsert detected incidents into ops_incidents table (batch, set-based).
 
-    - INSERT new incidents with timeline "created" event.
+    Single INSERT...ON CONFLICT DO UPDATE — no Python loops, no N+1 queries.
+
+    - INSERT new incidents with timeline "created" event (built in SQL).
     - UPDATE existing: refresh title/description/details/severity, set last_seen_at.
     - REOPEN resolved incidents that reappear (status → active, timeline "reopened").
     - Does NOT touch user-set acknowledged status (unless reopening from resolved).
     """
+    if not detected:
+        return
+
     import json as _json
     now = datetime.utcnow()
     now_iso = now.isoformat() + "Z"
 
+    # Build parallel arrays for unnest (ABE: text[] for JSONB to avoid asyncpg type issues)
+    ids: list[int] = []
+    sources: list[str] = []
+    source_keys: list[str] = []
+    severities: list[str] = []
+    types: list[str] = []
+    titles: list[str] = []
+    descriptions: list[str | None] = []
+    details_json: list[str | None] = []
+    runbook_urls: list[str | None] = []
+    titles_short: list[str] = []  # for "created" timeline message
+
     for inc in detected:
-        inc_id = inc["id"]
-        # Check if exists
-        result = await session.execute(
-            text("SELECT id, status, timeline FROM ops_incidents WHERE id = :id"),
-            {"id": inc_id},
+        ids.append(inc["id"])
+        sources.append(inc["source"])
+        source_keys.append(inc["source_key"])
+        severities.append(inc["severity"])
+        types.append(inc["type"])
+        titles.append(inc["title"])
+        descriptions.append(inc.get("description"))
+        details_json.append(
+            _json.dumps(inc["details"]) if inc.get("details") else None
         )
-        existing = result.mappings().first()
+        runbook_urls.append(inc.get("runbook_url"))
+        titles_short.append(inc["title"][:100])
 
-        if existing is None:
-            # INSERT new incident
-            timeline_event = _json.dumps([{
-                "ts": now_iso,
-                "message": f"Incident detected: {inc['title'][:100]}",
-                "actor": "system",
-                "action": "created",
-            }])
-            await session.execute(
-                text("""
-                    INSERT INTO ops_incidents
-                        (id, source, source_key, severity, status, type, title,
-                         description, details, runbook_url, timeline,
-                         created_at, last_seen_at, updated_at)
-                    VALUES
-                        (:id, :source, :source_key, :severity, 'active', :type, :title,
-                         :description, CAST(:details AS jsonb), :runbook_url, CAST(:timeline AS jsonb),
-                         :now, :now, :now)
-                    ON CONFLICT (source, source_key) DO NOTHING
-                """),
-                {
-                    "id": inc_id,
-                    "source": inc["source"],
-                    "source_key": inc["source_key"],
-                    "severity": inc["severity"],
-                    "type": inc["type"],
-                    "title": inc["title"],
-                    "description": inc.get("description"),
-                    "details": _json.dumps(inc.get("details")) if inc.get("details") else None,
-                    "runbook_url": inc.get("runbook_url"),
-                    "timeline": timeline_event,
-                    "now": now,
-                },
+    await session.execute(
+        text("""
+            WITH data AS (
+                SELECT *
+                FROM unnest(
+                    :ids    ::BIGINT[],
+                    :sources ::TEXT[],
+                    :source_keys ::TEXT[],
+                    :severities  ::TEXT[],
+                    :types       ::TEXT[],
+                    :titles      ::TEXT[],
+                    :descriptions ::TEXT[],
+                    :details_json ::TEXT[],
+                    :runbook_urls ::TEXT[],
+                    :titles_short ::TEXT[]
+                ) AS t(id, source, source_key, severity, type, title,
+                       description, details_json, runbook_url, title_short)
             )
-        else:
-            # UPDATE existing — refresh mutable fields + last_seen_at
-            old_status = existing["status"]
-            old_timeline = existing["timeline"] or []
-            if isinstance(old_timeline, str):
-                old_timeline = _json.loads(old_timeline)
-
-            new_timeline = list(old_timeline)
-
-            # Reopen if was resolved and reappears
-            if old_status == "resolved":
-                new_timeline.append({
-                    "ts": now_iso,
-                    "message": f"Incident reopened (detected again)",
-                    "actor": "system",
-                    "action": "reopened",
-                })
-                await session.execute(
-                    text("""
-                        UPDATE ops_incidents
-                        SET severity = :severity, status = 'active',
-                            title = :title, description = :description,
-                            details = CAST(:details AS jsonb), runbook_url = :runbook_url,
-                            timeline = CAST(:timeline AS jsonb),
-                            last_seen_at = :now, resolved_at = NULL, updated_at = :now
-                        WHERE id = :id
-                    """),
-                    {
-                        "id": inc_id,
-                        "severity": inc["severity"],
-                        "title": inc["title"],
-                        "description": inc.get("description"),
-                        "details": _json.dumps(inc.get("details")) if inc.get("details") else None,
-                        "runbook_url": inc.get("runbook_url"),
-                        "timeline": _json.dumps(new_timeline),
-                        "now": now,
-                    },
-                )
-            else:
-                # Active or acknowledged — just refresh mutable fields + heartbeat
-                await session.execute(
-                    text("""
-                        UPDATE ops_incidents
-                        SET severity = :severity,
-                            title = :title, description = :description,
-                            details = CAST(:details AS jsonb), runbook_url = :runbook_url,
-                            last_seen_at = :now, updated_at = :now
-                        WHERE id = :id
-                    """),
-                    {
-                        "id": inc_id,
-                        "severity": inc["severity"],
-                        "title": inc["title"],
-                        "description": inc.get("description"),
-                        "details": _json.dumps(inc.get("details")) if inc.get("details") else None,
-                        "runbook_url": inc.get("runbook_url"),
-                        "now": now,
-                    },
-                )
+            INSERT INTO ops_incidents
+                (id, source, source_key, severity, status, type, title,
+                 description, details, runbook_url, timeline,
+                 created_at, last_seen_at, updated_at)
+            SELECT
+                d.id, d.source, d.source_key, d.severity, 'active', d.type, d.title,
+                d.description,
+                CASE WHEN d.details_json IS NOT NULL
+                     THEN d.details_json::jsonb ELSE NULL END,
+                d.runbook_url,
+                jsonb_build_array(jsonb_build_object(
+                    'ts',      :now_iso,
+                    'message', 'Incident detected: ' || d.title_short,
+                    'actor',   'system',
+                    'action',  'created'
+                )),
+                :now, :now, :now
+            FROM data d
+            ON CONFLICT (source, source_key) DO UPDATE SET
+                severity     = EXCLUDED.severity,
+                title        = EXCLUDED.title,
+                description  = EXCLUDED.description,
+                details      = EXCLUDED.details,
+                runbook_url  = EXCLUDED.runbook_url,
+                last_seen_at = EXCLUDED.last_seen_at,
+                updated_at   = EXCLUDED.updated_at,
+                status = CASE
+                    WHEN ops_incidents.status = 'resolved' THEN 'active'
+                    ELSE ops_incidents.status
+                END,
+                resolved_at = CASE
+                    WHEN ops_incidents.status = 'resolved' THEN NULL
+                    ELSE ops_incidents.resolved_at
+                END,
+                acknowledged_at = CASE
+                    WHEN ops_incidents.status = 'resolved' THEN NULL
+                    ELSE ops_incidents.acknowledged_at
+                END,
+                timeline = CASE
+                    WHEN ops_incidents.status = 'resolved' THEN
+                        COALESCE(ops_incidents.timeline, '[]'::jsonb)
+                        || jsonb_build_array(jsonb_build_object(
+                            'ts',      :now_iso,
+                            'message', 'Incident reopened (detected again)',
+                            'actor',   'system',
+                            'action',  'reopened'
+                        ))
+                    ELSE ops_incidents.timeline
+                END
+        """),
+        {
+            "ids": ids,
+            "sources": sources,
+            "source_keys": source_keys,
+            "severities": severities,
+            "types": types,
+            "titles": titles,
+            "descriptions": descriptions,
+            "details_json": details_json,
+            "runbook_urls": runbook_urls,
+            "titles_short": titles_short,
+            "now": now,
+            "now_iso": now_iso,
+        },
+    )
 
     await session.commit()
 
 
 async def _auto_resolve_stale_incidents(session) -> int:
     """
-    Auto-resolve incidents not seen within grace window.
+    Auto-resolve incidents not seen within grace window (single UPDATE, no loops).
 
     Only resolves active/acknowledged incidents where last_seen_at is older
-    than RESOLVE_GRACE_MINUTES. Appends "auto_resolved" timeline event.
+    than RESOLVE_GRACE_MINUTES. Appends "auto_resolved" timeline event in SQL.
 
     Returns count of auto-resolved incidents.
     """
-    import json as _json
     now = datetime.utcnow()
     now_iso = now.isoformat() + "Z"
     grace_cutoff = now - timedelta(minutes=_RESOLVE_GRACE_MINUTES)
 
-    # Find stale incidents
     result = await session.execute(
         text("""
-            SELECT id, timeline FROM ops_incidents
+            UPDATE ops_incidents
+            SET status      = 'resolved',
+                resolved_at = :now,
+                updated_at  = :now,
+                timeline    = COALESCE(timeline, '[]'::jsonb)
+                              || jsonb_build_array(jsonb_build_object(
+                                  'ts',      :now_iso,
+                                  'message', :resolve_msg,
+                                  'actor',   'system',
+                                  'action',  'auto_resolved'
+                              ))
             WHERE status IN ('active', 'acknowledged')
               AND last_seen_at < :cutoff
+            RETURNING id
         """),
-        {"cutoff": grace_cutoff},
+        {
+            "now": now,
+            "now_iso": now_iso,
+            "resolve_msg": f"Auto-resolved (not seen for {_RESOLVE_GRACE_MINUTES}+ min)",
+            "cutoff": grace_cutoff,
+        },
     )
-    stale = result.mappings().all()
+    resolved_ids = result.fetchall()
 
-    if not stale:
-        return 0
+    if resolved_ids:
+        await session.commit()
 
-    for row in stale:
-        old_timeline = row["timeline"] or []
-        if isinstance(old_timeline, str):
-            old_timeline = _json.loads(old_timeline)
-        new_timeline = list(old_timeline)
-        new_timeline.append({
-            "ts": now_iso,
-            "message": f"Auto-resolved (not seen for {_RESOLVE_GRACE_MINUTES}+ min)",
-            "actor": "system",
-            "action": "auto_resolved",
-        })
-        await session.execute(
-            text("""
-                UPDATE ops_incidents
-                SET status = 'resolved', resolved_at = :now, updated_at = :now,
-                    timeline = CAST(:timeline AS jsonb)
-                WHERE id = :id
-            """),
-            {
-                "id": row["id"],
-                "now": now,
-                "timeline": _json.dumps(new_timeline),
-            },
-        )
-
-    await session.commit()
-    return len(stale)
+    return len(resolved_ids)
 
 
 async def _aggregate_incidents(session) -> list[dict]:
