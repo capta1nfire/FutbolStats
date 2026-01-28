@@ -116,15 +116,42 @@ export function adaptIncident(raw: unknown): Incident | null {
     result.description = raw.description;
   }
 
-  // Optional: updated_at → use for acknowledgedAt if status is acknowledged/resolved
-  const updatedAt = raw.updated_at;
-  if (typeof updatedAt === "string") {
-    if (status === "acknowledged" || status === "resolved") {
-      result.acknowledgedAt = updatedAt;
+  // Optional: acknowledged_at (persisted from PATCH endpoint)
+  if (typeof raw.acknowledged_at === "string") {
+    result.acknowledgedAt = raw.acknowledged_at;
+  } else {
+    // Legacy fallback: infer from updated_at
+    const updatedAt = raw.updated_at;
+    if (typeof updatedAt === "string") {
+      if (status === "acknowledged" || status === "resolved") {
+        result.acknowledgedAt = updatedAt;
+      }
     }
-    if (status === "resolved") {
+  }
+
+  // Optional: resolved_at (persisted from PATCH or auto-resolve)
+  if (typeof raw.resolved_at === "string") {
+    result.resolvedAt = raw.resolved_at;
+  } else {
+    const updatedAt = raw.updated_at;
+    if (typeof updatedAt === "string" && status === "resolved") {
       result.resolvedAt = updatedAt;
     }
+  }
+
+  // Optional: timeline (persisted history events)
+  if (Array.isArray(raw.timeline) && raw.timeline.length > 0) {
+    result.timeline = raw.timeline
+      .filter(
+        (e: unknown) =>
+          isObject(e) && typeof e.ts === "string" && typeof e.message === "string"
+      )
+      .map((e: Record<string, unknown>) => ({
+        ts: e.ts as string,
+        message: e.message as string,
+        ...(typeof e.actor === "string" ? { actor: e.actor as "system" | "user" } : {}),
+        ...(typeof e.action === "string" ? { action: e.action } : {}),
+      }));
   }
 
   // Optional: runbook_url → create simple runbook

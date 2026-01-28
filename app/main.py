@@ -8344,10 +8344,10 @@ async def _calculate_jobs_health_summary(session) -> dict:
     alerts_count = 0
 
     # Helper: compute stable incident_id for a job (same hash as _aggregate_incidents)
-    # Uses "scheduler:" prefix to match make_id("scheduler", job_key) in _aggregate_incidents
+    # Uses "jobs:" prefix — canonical: id = md5("jobs:<job_key>")
     def _job_incident_id(job_key: str) -> int:
         import hashlib
-        h = hashlib.md5(f"scheduler:{job_key}".encode()).hexdigest()
+        h = hashlib.md5(f"jobs:{job_key}".encode()).hexdigest()
         return int(h[:8], 16)
 
     # Add incident_id to each job for deep-linking from dashboard
@@ -19608,49 +19608,48 @@ _incidents_cache = {
 }
 
 
-async def _aggregate_incidents(session) -> list[dict]:
+_RESOLVE_GRACE_MINUTES = 30  # Auto-resolve after 30 min not seen (per ABE guardrail)
+
+
+def _make_incident_id(source: str, key: str) -> int:
+    """Generate stable incident ID from source + key (MD5 first 8 hex → int)."""
+    import hashlib
+    h = hashlib.md5(f"{source}:{key}".encode()).hexdigest()
+    return int(h[:8], 16)
+
+
+async def _detect_active_incidents(session) -> list[dict]:
     """
-    Aggregate incidents from multiple sources into a unified list.
+    Detect currently active incidents from all sources.
 
-    Sources:
-    1. Sentry issues (from cached ops data)
-    2. Health alerts (predictions, jobs, fastpath, budget)
-    3. System-level incidents (from ops health checks)
+    Returns list of dicts with: id, source, source_key, severity, type, title,
+    description, runbook_url, details.
 
-    Returns list of incidents sorted by created_at DESC.
+    This is the "detection" phase only — does NOT persist anything.
     """
     incidents = []
     now = datetime.utcnow()
     now_iso = now.isoformat() + "Z"
 
-    # Helper to generate stable incident ID from source + key
-    def make_id(source: str, key: str) -> int:
-        import hashlib
-        h = hashlib.md5(f"{source}:{key}".encode()).hexdigest()
-        return int(h[:8], 16)  # First 8 hex chars → int
-
     # =========================================================================
-    # OPTIMIZATION: Launch HTTP-only sources as tasks (no DB session needed)
-    # so they run concurrently with sequential DB queries below.
-    # IMPORTANT: Do NOT parallelize DB queries on the same AsyncSession.
+    # OPTIMIZATION: Launch HTTP-only sources as tasks
     # =========================================================================
     import asyncio
     sentry_task = asyncio.create_task(_fetch_sentry_health())
 
     # =========================================================================
-    # SOURCE 1: Sentry Issues (from health API) — await task started above
+    # SOURCE 1: Sentry Issues
     # =========================================================================
     try:
         sentry_data = await sentry_task
         if sentry_data.get("status") != "degraded":
             top_issues = sentry_data.get("top_issues", [])
-            for issue in top_issues[:10]:  # Limit to top 10
+            for issue in top_issues[:10]:
                 title = issue.get("title", "Unknown Sentry Issue")
                 level = issue.get("level", "error")
                 count = issue.get("count", 0)
                 last_seen = issue.get("last_seen")
 
-                # Map Sentry level to severity
                 severity = "warning"
                 if level in ("error", "fatal"):
                     severity = "critical"
@@ -19659,33 +19658,22 @@ async def _aggregate_incidents(session) -> list[dict]:
                 else:
                     severity = "info"
 
-                # Sentry Performance Issues have level=info but are real problems
                 _PERF_KEYWORDS = ("consecutive db", "n+1", "slow db", "slow http",
                                   "large http", "large render", "file io on main")
                 if level == "info" and any(k in title.lower() for k in _PERF_KEYWORDS):
                     severity = "warning"
 
-                # Determine status based on recency
-                status = "active"
-                if last_seen:
-                    try:
-                        from datetime import timedelta
-                        last_dt = datetime.fromisoformat(last_seen.replace("Z", ""))
-                        if now - last_dt > timedelta(hours=24):
-                            status = "resolved"
-                    except Exception:
-                        pass
-
+                source_key = title[:50]
                 incidents.append({
-                    "id": make_id("sentry", title[:50]),
+                    "id": _make_incident_id("sentry", source_key),
+                    "source": "sentry",
+                    "source_key": source_key,
                     "severity": severity,
-                    "status": status,
                     "type": "sentry",
                     "title": title[:80],
                     "description": f"Sentry: {count} events. Level: {level}."[:200],
-                    "created_at": last_seen or now_iso,
-                    "updated_at": last_seen or now_iso,
                     "runbook_url": None,
+                    "details": {"level": level, "count": count, "last_seen": last_seen},
                 })
     except Exception as e:
         logger.warning(f"Could not fetch Sentry incidents: {e}")
@@ -19696,7 +19684,6 @@ async def _aggregate_incidents(session) -> list[dict]:
     try:
         pred_health = await _calculate_predictions_health(session)
         status_val = pred_health.get("status", "ok")
-        # Backend may use "warn" - normalize to "warning"
         if status_val in ("warn", "warning", "critical"):
             reason = pred_health.get("status_reason", "Predictions health degraded")
             ns_missing = pred_health.get("ns_matches_next_48h_missing_prediction", 0)
@@ -19705,15 +19692,15 @@ async def _aggregate_incidents(session) -> list[dict]:
             severity = "warning" if status_val == "warn" else status_val
 
             incidents.append({
-                "id": make_id("predictions", "health"),
+                "id": _make_incident_id("predictions", "health"),
+                "source": "predictions",
+                "source_key": "health",
                 "severity": severity,
-                "status": "active",
                 "type": "predictions",
                 "title": f"Predictions coverage at {coverage}%"[:80],
                 "description": f"{reason}. {ns_missing}/{ns_total} NS matches missing predictions."[:200],
-                "created_at": now_iso,
-                "updated_at": now_iso,
                 "runbook_url": "docs/OPS_RUNBOOK.md#predictions-health",
+                "details": {"coverage_pct": coverage, "ns_missing": ns_missing, "ns_total": ns_total},
             })
     except Exception as e:
         logger.warning(f"Could not check predictions health: {e}")
@@ -19723,38 +19710,29 @@ async def _aggregate_incidents(session) -> list[dict]:
     # =========================================================================
     try:
         jobs_health = await _calculate_jobs_health_summary(session)
-        overall_status = jobs_health.get("status", "ok")
 
-        # Check individual jobs
         for job_name in ["stats_backfill", "odds_sync", "fastpath"]:
             job_data = jobs_health.get(job_name, {})
             job_status = job_data.get("status", "ok")
-            # Backend uses "warn"/"red" but dashboard expects "warning"/"critical"
             if job_status in ("warn", "warning", "red", "critical"):
                 mins_since = job_data.get("minutes_since_success")
                 help_url = job_data.get("help_url")
 
-                # Normalize backend status to dashboard severity
                 severity = {
-                    "warn": "warning",
-                    "warning": "warning",
-                    "red": "critical",
-                    "critical": "critical",
+                    "warn": "warning", "warning": "warning",
+                    "red": "critical", "critical": "critical",
                 }.get(job_status, "warning")
                 time_str = f"{int(mins_since)}m" if mins_since and mins_since < 60 else (
                     f"{int(mins_since/60)}h" if mins_since else "unknown"
                 )
 
-                # Build enriched description with operational context
                 job_labels = {
                     "stats_backfill": "Stats Backfill",
                     "odds_sync": "Odds Sync",
                     "fastpath": "Fast-Path Narratives",
                 }
                 expected_intervals = {
-                    "stats_backfill": 120,
-                    "odds_sync": 720,
-                    "fastpath": 5,
+                    "stats_backfill": 120, "odds_sync": 720, "fastpath": 5,
                 }
                 job_label = job_labels.get(job_name, job_name)
                 expected_min = expected_intervals.get(job_name)
@@ -19763,7 +19741,6 @@ async def _aggregate_incidents(session) -> list[dict]:
                 last_success_at = job_data.get("last_success_at")
                 data_source = job_data.get("source", "unknown")
 
-                # Enriched description
                 desc_parts = [f"Job '{job_label}' last succeeded {time_str} ago (status: {job_status})."]
                 if expected_min:
                     desc_parts.append(f"Expected interval: {expected_min}min.")
@@ -19772,9 +19749,7 @@ async def _aggregate_incidents(session) -> list[dict]:
                 if backlog_ready is not None:
                     desc_parts.append(f"Backlog ready: {backlog_ready}.")
                 desc_parts.append(f"Source: {data_source}.")
-                enriched_description = " ".join(desc_parts)
 
-                # Details dict for Copy JSON
                 details = {
                     "job_key": job_name,
                     "job_label": job_label,
@@ -19790,15 +19765,15 @@ async def _aggregate_incidents(session) -> list[dict]:
                 if backlog_ready is not None:
                     details["backlog_ready"] = backlog_ready
 
+                # Canonical: id = md5("jobs:<job_name>"), source="jobs"
                 incidents.append({
-                    "id": make_id("scheduler", job_name),
+                    "id": _make_incident_id("jobs", job_name),
+                    "source": "jobs",
+                    "source_key": job_name,
                     "severity": severity,
-                    "status": "active",
                     "type": "scheduler",
                     "title": f"Job '{job_label}' unhealthy"[:80],
-                    "description": enriched_description[:300],
-                    "created_at": now_iso,
-                    "updated_at": now_iso,
+                    "description": " ".join(desc_parts)[:300],
                     "runbook_url": help_url,
                     "details": details,
                 })
@@ -19811,7 +19786,6 @@ async def _aggregate_incidents(session) -> list[dict]:
     try:
         fp_health = await _calculate_fastpath_health(session)
         fp_status = fp_health.get("status", "ok")
-        # Backend uses "warn"/"red" - normalize to "warning"/"critical"
         if fp_status in ("warn", "warning", "red", "critical"):
             error_rate = fp_health.get("last_60m", {}).get("error_rate_pct", 0)
             in_queue = fp_health.get("last_60m", {}).get("in_queue", 0)
@@ -19819,15 +19793,15 @@ async def _aggregate_incidents(session) -> list[dict]:
             severity = {"warn": "warning", "warning": "warning", "red": "critical", "critical": "critical"}.get(fp_status, "warning")
 
             incidents.append({
-                "id": make_id("fastpath", "health"),
+                "id": _make_incident_id("fastpath", "health"),
+                "source": "fastpath",
+                "source_key": "health",
                 "severity": severity,
-                "status": "active",
                 "type": "llm",
                 "title": f"Fastpath error rate {error_rate}%"[:80],
                 "description": f"{reason}. Queue: {in_queue}."[:200],
-                "created_at": now_iso,
-                "updated_at": now_iso,
                 "runbook_url": "docs/OPS_RUNBOOK.md#fastpath-health",
+                "details": {"error_rate_pct": error_rate, "in_queue": in_queue},
             })
     except Exception as e:
         logger.warning(f"Could not check fastpath health: {e}")
@@ -19837,13 +19811,255 @@ async def _aggregate_incidents(session) -> list[dict]:
     # =========================================================================
     # TODO: implement _fetch_api_football_budget() to enable this source
 
-    # Sort by severity (critical first) then by created_at DESC
-    severity_order = {"critical": 0, "warning": 1, "info": 2}
-    incidents.sort(key=lambda x: (severity_order.get(x["severity"], 2), x["created_at"]), reverse=False)
-    # Reverse to get DESC order for created_at within same severity
-    incidents.sort(key=lambda x: severity_order.get(x["severity"], 2))
-
     return incidents
+
+
+async def _upsert_incidents(session, detected: list[dict]) -> None:
+    """
+    Upsert detected incidents into ops_incidents table.
+
+    - INSERT new incidents with timeline "created" event.
+    - UPDATE existing: refresh title/description/details/severity, set last_seen_at.
+    - REOPEN resolved incidents that reappear (status → active, timeline "reopened").
+    - Does NOT touch user-set acknowledged status (unless reopening from resolved).
+    """
+    import json as _json
+    now = datetime.utcnow()
+    now_iso = now.isoformat() + "Z"
+
+    for inc in detected:
+        inc_id = inc["id"]
+        # Check if exists
+        result = await session.execute(
+            text("SELECT id, status, timeline FROM ops_incidents WHERE id = :id"),
+            {"id": inc_id},
+        )
+        existing = result.mappings().first()
+
+        if existing is None:
+            # INSERT new incident
+            timeline_event = _json.dumps([{
+                "ts": now_iso,
+                "message": f"Incident detected: {inc['title'][:100]}",
+                "actor": "system",
+                "action": "created",
+            }])
+            await session.execute(
+                text("""
+                    INSERT INTO ops_incidents
+                        (id, source, source_key, severity, status, type, title,
+                         description, details, runbook_url, timeline,
+                         created_at, last_seen_at, updated_at)
+                    VALUES
+                        (:id, :source, :source_key, :severity, 'active', :type, :title,
+                         :description, :details::jsonb, :runbook_url, :timeline::jsonb,
+                         :now, :now, :now)
+                    ON CONFLICT (source, source_key) DO NOTHING
+                """),
+                {
+                    "id": inc_id,
+                    "source": inc["source"],
+                    "source_key": inc["source_key"],
+                    "severity": inc["severity"],
+                    "type": inc["type"],
+                    "title": inc["title"],
+                    "description": inc.get("description"),
+                    "details": _json.dumps(inc.get("details")) if inc.get("details") else None,
+                    "runbook_url": inc.get("runbook_url"),
+                    "timeline": timeline_event,
+                    "now": now,
+                },
+            )
+        else:
+            # UPDATE existing — refresh mutable fields + last_seen_at
+            old_status = existing["status"]
+            old_timeline = existing["timeline"] or []
+            if isinstance(old_timeline, str):
+                old_timeline = _json.loads(old_timeline)
+
+            new_timeline = list(old_timeline)
+
+            # Reopen if was resolved and reappears
+            if old_status == "resolved":
+                new_timeline.append({
+                    "ts": now_iso,
+                    "message": f"Incident reopened (detected again)",
+                    "actor": "system",
+                    "action": "reopened",
+                })
+                await session.execute(
+                    text("""
+                        UPDATE ops_incidents
+                        SET severity = :severity, status = 'active',
+                            title = :title, description = :description,
+                            details = :details::jsonb, runbook_url = :runbook_url,
+                            timeline = :timeline::jsonb,
+                            last_seen_at = :now, resolved_at = NULL, updated_at = :now
+                        WHERE id = :id
+                    """),
+                    {
+                        "id": inc_id,
+                        "severity": inc["severity"],
+                        "title": inc["title"],
+                        "description": inc.get("description"),
+                        "details": _json.dumps(inc.get("details")) if inc.get("details") else None,
+                        "runbook_url": inc.get("runbook_url"),
+                        "timeline": _json.dumps(new_timeline),
+                        "now": now,
+                    },
+                )
+            else:
+                # Active or acknowledged — just refresh mutable fields + heartbeat
+                await session.execute(
+                    text("""
+                        UPDATE ops_incidents
+                        SET severity = :severity,
+                            title = :title, description = :description,
+                            details = :details::jsonb, runbook_url = :runbook_url,
+                            last_seen_at = :now, updated_at = :now
+                        WHERE id = :id
+                    """),
+                    {
+                        "id": inc_id,
+                        "severity": inc["severity"],
+                        "title": inc["title"],
+                        "description": inc.get("description"),
+                        "details": _json.dumps(inc.get("details")) if inc.get("details") else None,
+                        "runbook_url": inc.get("runbook_url"),
+                        "now": now,
+                    },
+                )
+
+    await session.commit()
+
+
+async def _auto_resolve_stale_incidents(session) -> int:
+    """
+    Auto-resolve incidents not seen within grace window.
+
+    Only resolves active/acknowledged incidents where last_seen_at is older
+    than RESOLVE_GRACE_MINUTES. Appends "auto_resolved" timeline event.
+
+    Returns count of auto-resolved incidents.
+    """
+    import json as _json
+    now = datetime.utcnow()
+    now_iso = now.isoformat() + "Z"
+    grace_cutoff = now - timedelta(minutes=_RESOLVE_GRACE_MINUTES)
+
+    # Find stale incidents
+    result = await session.execute(
+        text("""
+            SELECT id, timeline FROM ops_incidents
+            WHERE status IN ('active', 'acknowledged')
+              AND last_seen_at < :cutoff
+        """),
+        {"cutoff": grace_cutoff},
+    )
+    stale = result.mappings().all()
+
+    if not stale:
+        return 0
+
+    for row in stale:
+        old_timeline = row["timeline"] or []
+        if isinstance(old_timeline, str):
+            old_timeline = _json.loads(old_timeline)
+        new_timeline = list(old_timeline)
+        new_timeline.append({
+            "ts": now_iso,
+            "message": f"Auto-resolved (not seen for {_RESOLVE_GRACE_MINUTES}+ min)",
+            "actor": "system",
+            "action": "auto_resolved",
+        })
+        await session.execute(
+            text("""
+                UPDATE ops_incidents
+                SET status = 'resolved', resolved_at = :now, updated_at = :now,
+                    timeline = :timeline::jsonb
+                WHERE id = :id
+            """),
+            {
+                "id": row["id"],
+                "now": now,
+                "timeline": _json.dumps(new_timeline),
+            },
+        )
+
+    await session.commit()
+    return len(stale)
+
+
+async def _aggregate_incidents(session) -> list[dict]:
+    """
+    Aggregate incidents from multiple sources, persist to ops_incidents,
+    and return the full list from DB.
+
+    Flow:
+    1. Detect active incidents from all sources
+    2. Upsert into ops_incidents (create/update/reopen)
+    3. Auto-resolve stale incidents (grace window)
+    4. Read all non-resolved from DB and return as dicts
+    """
+    # Phase 1: Detect
+    detected = await _detect_active_incidents(session)
+
+    # Phase 2: Upsert
+    try:
+        await _upsert_incidents(session, detected)
+    except Exception as e:
+        logger.error(f"Failed to upsert incidents: {e}")
+        # Rollback and continue with read-only
+        await session.rollback()
+
+    # Phase 3: Auto-resolve stale
+    try:
+        resolved_count = await _auto_resolve_stale_incidents(session)
+        if resolved_count > 0:
+            logger.info(f"Auto-resolved {resolved_count} stale incidents (grace={_RESOLVE_GRACE_MINUTES}m)")
+    except Exception as e:
+        logger.warning(f"Failed to auto-resolve incidents: {e}")
+        await session.rollback()
+
+    # Phase 4: Read all from DB
+    try:
+        result = await session.execute(
+            text("""
+                SELECT id, source, source_key, severity, status, type, title,
+                       description, details, runbook_url, timeline,
+                       created_at, last_seen_at, acknowledged_at, resolved_at, updated_at
+                FROM ops_incidents
+                ORDER BY
+                    CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
+                    created_at DESC
+            """)
+        )
+        rows = result.mappings().all()
+        incidents = []
+        for row in rows:
+            inc = {
+                "id": row["id"],
+                "severity": row["severity"],
+                "status": row["status"],
+                "type": row["type"],
+                "title": row["title"],
+                "description": row["description"] or "",
+                "created_at": row["created_at"].isoformat() + "Z" if row["created_at"] else None,
+                "updated_at": row["updated_at"].isoformat() + "Z" if row["updated_at"] else None,
+                "runbook_url": row["runbook_url"],
+                "details": row["details"],
+                "timeline": row["timeline"] or [],
+                "acknowledged_at": row["acknowledged_at"].isoformat() + "Z" if row["acknowledged_at"] else None,
+                "resolved_at": row["resolved_at"].isoformat() + "Z" if row["resolved_at"] else None,
+                "source": row["source"],
+                "last_seen_at": row["last_seen_at"].isoformat() + "Z" if row["last_seen_at"] else None,
+            }
+            incidents.append(inc)
+        return incidents
+    except Exception as e:
+        logger.error(f"Failed to read incidents from DB: {e}")
+        # Fallback: return detected incidents as dicts (ephemeral, like before)
+        return detected
 
 
 @app.get("/dashboard/incidents.json")
@@ -19968,3 +20184,95 @@ async def get_incidents_dashboard(
             "pages": pages,
         },
     }
+
+
+@app.patch("/dashboard/incidents/{incident_id}")
+async def patch_incident(
+    incident_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Update incident status (acknowledge/resolve).
+
+    Body: {"status": "acknowledged"|"resolved"}
+
+    - Persists status change to ops_incidents.
+    - Sets acknowledged_at / resolved_at timestamps.
+    - Appends timeline event with actor="user".
+
+    Auth: X-Dashboard-Token header required.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    import json as _json
+
+    body = await request.json()
+    new_status = body.get("status")
+    if new_status not in ("acknowledged", "resolved"):
+        raise HTTPException(status_code=400, detail="status must be 'acknowledged' or 'resolved'")
+
+    # Fetch current incident
+    result = await session.execute(
+        text("SELECT id, status, timeline FROM ops_incidents WHERE id = :id"),
+        {"id": incident_id},
+    )
+    row = result.mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    current_status = row["status"]
+    if current_status == new_status:
+        return {"ok": True, "message": f"Already {new_status}"}
+
+    # Validate transition
+    if new_status == "acknowledged" and current_status != "active":
+        raise HTTPException(status_code=400, detail="Can only acknowledge active incidents")
+    if new_status == "resolved" and current_status == "resolved":
+        raise HTTPException(status_code=400, detail="Already resolved")
+
+    now = datetime.utcnow()
+    now_iso = now.isoformat() + "Z"
+
+    # Build timeline event
+    old_timeline = row["timeline"] or []
+    if isinstance(old_timeline, str):
+        old_timeline = _json.loads(old_timeline)
+    new_timeline = list(old_timeline)
+    new_timeline.append({
+        "ts": now_iso,
+        "message": f"Status changed: {current_status} → {new_status}",
+        "actor": "user",
+        "action": new_status,
+    })
+
+    # Update
+    if new_status == "acknowledged":
+        await session.execute(
+            text("""
+                UPDATE ops_incidents
+                SET status = 'acknowledged', acknowledged_at = :now,
+                    updated_at = :now, timeline = :timeline::jsonb
+                WHERE id = :id
+            """),
+            {"id": incident_id, "now": now, "timeline": _json.dumps(new_timeline)},
+        )
+    elif new_status == "resolved":
+        await session.execute(
+            text("""
+                UPDATE ops_incidents
+                SET status = 'resolved', resolved_at = :now,
+                    updated_at = :now, timeline = :timeline::jsonb
+                WHERE id = :id
+            """),
+            {"id": incident_id, "now": now, "timeline": _json.dumps(new_timeline)},
+        )
+
+    await session.commit()
+
+    # Invalidate cache
+    _incidents_cache["data"] = None
+    _incidents_cache["timestamp"] = 0
+
+    return {"ok": True, "status": new_status, "updated_at": now_iso}

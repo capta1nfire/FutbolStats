@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Incident, INCIDENT_TYPE_LABELS } from "@/lib/types";
-import { useIsDesktop } from "@/lib/hooks";
+import { useIsDesktop, patchIncidentStatus } from "@/lib/hooks";
+import { useQueryClient } from "@tanstack/react-query";
 import { DetailDrawer } from "@/components/shell";
 import {
   Sheet,
@@ -50,7 +51,8 @@ function IncidentTabContent({
   localStatus,
   setLocalStatus,
   runbookSteps,
-  setRunbookSteps
+  setRunbookSteps,
+  onStatusChange,
 }: {
   incident: Incident;
   activeTab: string;
@@ -58,8 +60,10 @@ function IncidentTabContent({
   setLocalStatus: (status: Incident["status"]) => void;
   runbookSteps: Array<{ id: string; text: string; done: boolean }>;
   setRunbookSteps: React.Dispatch<React.SetStateAction<Array<{ id: string; text: string; done: boolean }>>>;
+  onStatusChange?: (newStatus: "acknowledged" | "resolved") => Promise<void>;
 }) {
   const [copied, setCopied] = useState(false);
+  const [patching, setPatching] = useState(false);
 
   const handleCopyJson = async () => {
     const payload = {
@@ -98,15 +102,25 @@ function IncidentTabContent({
     minute: "2-digit",
   });
 
-  const handleAcknowledge = () => {
-    if (localStatus === "active") {
+  const handleAcknowledge = async () => {
+    if (localStatus === "active" && !patching) {
+      setPatching(true);
       setLocalStatus("acknowledged");
+      if (onStatusChange) {
+        await onStatusChange("acknowledged");
+      }
+      setPatching(false);
     }
   };
 
-  const handleResolve = () => {
-    if (localStatus !== "resolved") {
+  const handleResolve = async () => {
+    if (localStatus !== "resolved" && !patching) {
+      setPatching(true);
       setLocalStatus("resolved");
+      if (onStatusChange) {
+        await onStatusChange("resolved");
+      }
+      setPatching(false);
     }
   };
 
@@ -221,28 +235,23 @@ function IncidentTabContent({
               variant="outline"
               size="sm"
               onClick={handleAcknowledge}
-              disabled={localStatus !== "active"}
+              disabled={localStatus !== "active" || patching}
               className="flex-1"
             >
               <CheckCircle2 className="h-4 w-4 mr-2" />
-              Acknowledge
+              {patching && localStatus === "acknowledged" ? "Saving..." : "Acknowledge"}
             </Button>
             <Button
               variant="default"
               size="sm"
               onClick={handleResolve}
-              disabled={localStatus === "resolved"}
+              disabled={localStatus === "resolved" || patching}
               className="flex-1"
             >
               <CheckCircle2 className="h-4 w-4 mr-2" />
-              Resolve
+              {patching && localStatus === "resolved" ? "Saving..." : "Resolve"}
             </Button>
           </div>
-
-          {/* Phase 0 notice */}
-          <p className="text-xs text-muted-foreground text-center italic">
-            Actions are UI mock only - not persisted in Phase 0
-          </p>
         </div>
       )}
 
@@ -309,14 +318,25 @@ function IncidentTabContent({
                     <div className="w-4 h-4 rounded-full bg-background border-2 border-border shrink-0 z-10" />
                     <div className="flex-1 pb-2">
                       <p className="text-sm text-foreground">{event.message}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {eventTime.toLocaleString("en-US", {
-                          month: "short",
-                          day: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">
+                          {eventTime.toLocaleString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                        {event.actor && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                            event.actor === "user"
+                              ? "bg-primary/10 text-primary"
+                              : "bg-muted text-muted-foreground"
+                          }`}>
+                            {event.actor}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -332,7 +352,13 @@ function IncidentTabContent({
 /**
  * Incident Detail Content - used for mobile sheet (tabs + content together)
  */
-function IncidentDetailContentMobile({ incident }: { incident: Incident }) {
+function IncidentDetailContentMobile({
+  incident,
+  onStatusChange,
+}: {
+  incident: Incident;
+  onStatusChange?: (newStatus: "acknowledged" | "resolved") => Promise<void>;
+}) {
   const [activeTab, setActiveTab] = useState("details");
   const [localStatus, setLocalStatus] = useState(incident.status);
   const [runbookSteps, setRunbookSteps] = useState(
@@ -358,6 +384,7 @@ function IncidentDetailContentMobile({ incident }: { incident: Incident }) {
         setLocalStatus={setLocalStatus}
         runbookSteps={runbookSteps}
         setRunbookSteps={setRunbookSteps}
+        onStatusChange={onStatusChange}
       />
     </div>
   );
@@ -375,6 +402,7 @@ export function IncidentDetailDrawer({
   onClose,
 }: IncidentDetailDrawerProps) {
   const isDesktop = useIsDesktop();
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("details");
   const [localStatus, setLocalStatus] = useState(incident?.status || "active");
   const [runbookSteps, setRunbookSteps] = useState(
@@ -398,6 +426,17 @@ export function IncidentDetailDrawer({
     );
     setActiveTab("details");
   }, [incidentId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist status change to backend and refetch incidents
+  const handleStatusChange = useCallback(async (newStatus: "acknowledged" | "resolved") => {
+    if (!incident) return;
+    const result = await patchIncidentStatus(incident.id, newStatus);
+    if (result.ok) {
+      // Invalidate incidents query to refetch with updated data
+      queryClient.invalidateQueries({ queryKey: ["incidents-api"] });
+    }
+  }, [incident, queryClient]);
+
   const incidentTitle = incident
     ? `Incident #${incident.id}`
     : "Incident Details";
@@ -428,6 +467,7 @@ export function IncidentDetailDrawer({
             setLocalStatus={setLocalStatus}
             runbookSteps={runbookSteps}
             setRunbookSteps={setRunbookSteps}
+            onStatusChange={handleStatusChange}
           />
         ) : (
           <p className="text-muted-foreground text-sm">
@@ -450,7 +490,7 @@ export function IncidentDetailDrawer({
         <ScrollArea className="h-[calc(100vh-60px)]">
           <div className="p-4">
             {incident ? (
-              <IncidentDetailContentMobile incident={incident} />
+              <IncidentDetailContentMobile incident={incident} onStatusChange={handleStatusChange} />
             ) : (
               <p className="text-muted-foreground text-sm">
                 Select an incident to view details

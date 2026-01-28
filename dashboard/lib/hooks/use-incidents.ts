@@ -220,6 +220,30 @@ export function useIncidentsApi(options?: {
 }
 
 /**
+ * Patch incident status via proxy endpoint.
+ * Calls PATCH /api/incidents/{id} with {status: "acknowledged"|"resolved"}.
+ */
+export async function patchIncidentStatus(
+  incidentId: number,
+  newStatus: "acknowledged" | "resolved"
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const response = await fetch(`/api/incidents/${incidentId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: newStatus }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      return { ok: false, error: data.detail || data.error || `HTTP ${response.status}` };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
  * Hook to fetch incidents with optional filters (mock fallback)
  * @deprecated Use useIncidentsApi for real data with mock fallback
  */

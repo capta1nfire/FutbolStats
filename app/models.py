@@ -1074,6 +1074,49 @@ class OpsAlert(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class OpsIncident(SQLModel, table=True):
+    """
+    Persistent incidents from _aggregate_incidents().
+
+    Sources: sentry, predictions, jobs, fastpath, budget.
+    Supports acknowledge/resolve with timeline tracking.
+    Auto-resolve with grace window to avoid flapping.
+    """
+
+    __tablename__ = "ops_incidents"
+    __table_args__ = (
+        UniqueConstraint("source", "source_key", name="uq_ops_incidents_source_key"),
+    )
+
+    # Stable ID from make_id() hash
+    id: int = Field(primary_key=True, description="MD5 hash first 8 hex as int")
+
+    # Source identification
+    source: str = Field(max_length=30, index=True, description="sentry|predictions|jobs|fastpath|budget")
+    source_key: str = Field(max_length=100, description="Key within source for dedup")
+
+    # Severity and status
+    severity: str = Field(max_length=20, description="critical|warning|info")
+    status: str = Field(default="active", max_length=20, description="active|acknowledged|resolved")
+    type: str = Field(max_length=30, description="Backend type: sentry|predictions|scheduler|llm|api_budget")
+
+    # Content
+    title: str = Field(max_length=200)
+    description: Optional[str] = Field(default=None)
+    details: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    runbook_url: Optional[str] = Field(default=None, max_length=500)
+
+    # Timeline: [{ts, message, actor, action}]
+    timeline: list = Field(default_factory=list, sa_column=Column(JSON, nullable=False, server_default="[]"))
+
+    # Timestamps
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="First detection (never overwritten)")
+    last_seen_at: datetime = Field(default_factory=datetime.utcnow, description="Last time source reported")
+    acknowledged_at: Optional[datetime] = Field(default=None)
+    resolved_at: Optional[datetime] = Field(default=None)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class TeamOverride(SQLModel, table=True):
     """
     Team identity overrides for display purposes.

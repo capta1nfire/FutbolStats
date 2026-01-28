@@ -550,6 +550,51 @@ WHERE league_id = 39;
 
 ---
 
+## ops_incidents
+
+Persistencia de incidentes operacionales. Creada por migración `migrations/ops_001_create_incidents.sql`.
+
+| Columna | Tipo | Nullable | Default | Descripción |
+|---------|------|----------|---------|-------------|
+| `id` | BIGINT | NO | — | PK. Hash estable: `md5("<source>:<source_key>")[:8]` como int |
+| `source` | VARCHAR(30) | NO | — | Fuente: `sentry`, `predictions`, `jobs`, `fastpath`, `budget` |
+| `source_key` | VARCHAR(100) | NO | — | Clave dentro de la fuente (ej: `stats_backfill`, `health`) |
+| `severity` | VARCHAR(20) | NO | — | `critical`, `warning`, `info` |
+| `status` | VARCHAR(20) | NO | `'active'` | `active`, `acknowledged`, `resolved` |
+| `type` | VARCHAR(30) | NO | — | Tipo backend: `sentry`, `predictions`, `scheduler`, `llm`, `api_budget` |
+| `title` | VARCHAR(200) | NO | — | Título del incidente |
+| `description` | TEXT | SÍ | NULL | Descripción detallada |
+| `details` | JSONB | SÍ | NULL | Contexto operacional (max ~16KB en app) |
+| `runbook_url` | VARCHAR(500) | SÍ | NULL | URL al runbook relevante |
+| `timeline` | JSONB | NO | `'[]'` | Array de `{ts, message, actor, action}`. actor: `system`\|`user`. action: `created`\|`acknowledged`\|`resolved`\|`reopened`\|`auto_resolved`\|`updated` |
+| `created_at` | TIMESTAMPTZ | NO | `NOW()` | Primera detección (nunca se sobreescribe) |
+| `last_seen_at` | TIMESTAMPTZ | NO | `NOW()` | Última vez que la fuente reportó este incidente |
+| `acknowledged_at` | TIMESTAMPTZ | SÍ | NULL | Cuándo el usuario hizo acknowledge |
+| `resolved_at` | TIMESTAMPTZ | SÍ | NULL | Cuándo se resolvió (usuario o auto) |
+| `updated_at` | TIMESTAMPTZ | NO | `NOW()` | Última modificación de cualquier tipo |
+
+**Constraints:**
+- `UNIQUE (source, source_key)` — para upsert idempotente
+- PK `id` derivado de `md5(source:source_key)`
+
+**Índices:**
+- `idx_ops_incidents_status` — filtro por status
+- `idx_ops_incidents_source` — filtro por fuente
+- `idx_ops_incidents_created_at` — ordenamiento DESC
+- `idx_ops_incidents_status_resolved` — parcial WHERE `status = 'resolved'` (para purge)
+
+**Lógica clave:**
+- **Upsert**: Cada ciclo de `_aggregate_incidents()` detecta → upsert (INSERT o UPDATE `last_seen_at`)
+- **Auto-resolve**: Incidentes no vistos en 30 min → `status='resolved'`, timeline append `auto_resolved`
+- **Reopen**: Incidente resuelto que reaparece → `status='active'`, `resolved_at=NULL`, timeline append `reopened`
+- **PATCH**: Dashboard puede cambiar status a `acknowledged`/`resolved` via `PATCH /dashboard/incidents/{id}`
+- **Purge**: Job diario (04:30 UTC) elimina resueltos con `resolved_at > 30 días`, safety cap 50,000 filas
+
+**Poblado por:** `_aggregate_incidents()` en `app/main.py`, PATCH endpoint
+**Usado por:** `/dashboard/incidents.json`, `/dashboard/incidents/{id}` (PATCH), Dashboard Incidents page
+
+---
+
 ## Otras tablas (no documentadas en detalle)
 
 | Tabla | Schema | Descripción |
@@ -568,8 +613,9 @@ WHERE league_id = 39;
 | `model_performance_logs` | public | Logs de performance del modelo ML |
 | `model_snapshots` | public | Snapshots de modelos ML |
 | `odds_snapshots` | public | Snapshots de odds (bulk) |
-| `ops_alerts` | public | Alertas operacionales |
+| `ops_alerts` | public | Alertas operacionales (Grafana webhooks) |
 | `ops_audit_log` | public | Log de auditoría operacional |
+| `ops_incidents` | public | Incidentes persistentes (documentada arriba) |
 | `ops_daily_rollups` | public | Rollups diarios de operaciones |
 | `pit_reports` | public | Reportes PIT (Point-in-Time) |
 | `player_stats_rolling` | public | Stats rolling de jugadores |

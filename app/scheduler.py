@@ -4316,6 +4316,51 @@ async def llm_raw_output_cleanup():
         logger.error(f"LLM raw output cleanup failed: {e}")
 
 
+async def ops_incidents_purge():
+    """
+    Daily purge of old resolved incidents from ops_incidents.
+
+    Retention: 30 days after resolved_at.
+    Safety cap: abort if > 50,000 rows (prevents accidental mass delete).
+    Logs purge count to job_runs metrics.
+    """
+    logger.info("Starting ops_incidents purge...")
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Safety check: count before delete
+            count_result = await session.execute(text("""
+                SELECT COUNT(*) AS cnt FROM ops_incidents
+                WHERE status = 'resolved'
+                  AND resolved_at IS NOT NULL
+                  AND resolved_at < NOW() - INTERVAL '30 days'
+            """))
+            to_purge = count_result.scalar() or 0
+
+            if to_purge == 0:
+                logger.info("ops_incidents purge: nothing to purge")
+                return
+
+            if to_purge > 50000:
+                logger.error(f"ops_incidents purge: SAFETY CAP — {to_purge} rows exceed 50,000 limit. Aborting.")
+                return
+
+            result = await session.execute(text("""
+                DELETE FROM ops_incidents
+                WHERE status = 'resolved'
+                  AND resolved_at IS NOT NULL
+                  AND resolved_at < NOW() - INTERVAL '30 days'
+                RETURNING id
+            """))
+            purged = len(result.fetchall())
+            await session.commit()
+
+            logger.info(f"ops_incidents purge: deleted {purged} resolved incidents (>30d)")
+
+    except Exception as e:
+        logger.error(f"ops_incidents purge failed: {e}")
+
+
 async def daily_alpha_progress_snapshot() -> dict:
     """
     Daily Alpha Progress snapshot - captures progress state for auditing.
@@ -6041,6 +6086,17 @@ def start_scheduler(ml_engine):
         trigger=CronTrigger(day_of_week="sun", hour=5, minute=0),
         id="llm_raw_output_cleanup",
         name="Weekly LLM Raw Output Cleanup (14d TTL)",
+        replace_existing=True,
+    )
+
+    # Daily Ops Incidents Purge: 04:30 UTC
+    # Deletes resolved incidents older than 30 days
+    # Safety cap: aborts if > 50,000 rows to prevent mass deletion
+    scheduler.add_job(
+        ops_incidents_purge,
+        trigger=CronTrigger(hour=4, minute=30),
+        id="ops_incidents_purge",
+        name="Daily Ops Incidents Purge (30d TTL)",
         replace_existing=True,
     )
 

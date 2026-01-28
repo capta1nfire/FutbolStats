@@ -25,6 +25,8 @@ export interface RunbookStep {
 export interface TimelineEvent {
   ts: string; // ISO timestamp
   message: string;
+  actor?: "system" | "user"; // who performed the action
+  action?: string; // created|acknowledged|resolved|reopened|auto_resolved|updated
 }
 
 export interface Incident {
