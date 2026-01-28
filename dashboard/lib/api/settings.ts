@@ -388,3 +388,239 @@ export interface IaFeaturesUpdatePayload {
   temperature?: number;
   max_tokens?: number;
 }
+
+// ============================================================================
+// IA Features: Visibility Types & Parsers (Fase 2)
+// ============================================================================
+
+/**
+ * Prompt template response
+ */
+export interface PromptTemplateResponse {
+  version: string;
+  promptTemplate: string;
+  charCount: number;
+  notes: string;
+}
+
+/**
+ * Parse prompt template from API response
+ */
+export function parsePromptTemplate(response: unknown): PromptTemplateResponse | null {
+  if (!isObject(response)) return null;
+
+  const version = typeof response.version === "string" ? response.version : "unknown";
+  const promptTemplate =
+    typeof response.prompt_template === "string" ? response.prompt_template : "";
+  const charCount = typeof response.char_count === "number" ? response.char_count : 0;
+  const notes = typeof response.notes === "string" ? response.notes : "";
+
+  return { version, promptTemplate, charCount, notes };
+}
+
+/**
+ * Match data for preview
+ */
+export interface PreviewMatchData {
+  matchId: number;
+  homeTeam: string;
+  awayTeam: string;
+  homeTeamId: number;
+  awayTeamId: number;
+  leagueName: string;
+  date: string;
+  homeGoals: number;
+  awayGoals: number;
+  venue: { name?: string; city?: string };
+  stats: Record<string, unknown>;
+  prediction: Record<string, unknown>;
+  events: unknown[];
+  marketOdds: Record<string, number>;
+}
+
+/**
+ * Payload preview response
+ */
+export interface PayloadPreviewResponse {
+  matchId: number;
+  matchLabel: string;
+  status: string;
+  promptPreview: string;
+  matchData: PreviewMatchData;
+}
+
+/**
+ * Parse payload preview from API response
+ */
+export function parsePayloadPreview(response: unknown): PayloadPreviewResponse | null {
+  if (!isObject(response)) return null;
+
+  const matchId = typeof response.match_id === "number" ? response.match_id : 0;
+  const matchLabel = typeof response.match_label === "string" ? response.match_label : "";
+  const status = typeof response.status === "string" ? response.status : "";
+  const promptPreview =
+    typeof response.prompt_preview === "string" ? response.prompt_preview : "";
+
+  const rawMatchData = response.match_data;
+  if (!isObject(rawMatchData)) return null;
+
+  const matchData: PreviewMatchData = {
+    matchId: typeof rawMatchData.match_id === "number" ? rawMatchData.match_id : 0,
+    homeTeam: typeof rawMatchData.home_team === "string" ? rawMatchData.home_team : "",
+    awayTeam: typeof rawMatchData.away_team === "string" ? rawMatchData.away_team : "",
+    homeTeamId: typeof rawMatchData.home_team_id === "number" ? rawMatchData.home_team_id : 0,
+    awayTeamId: typeof rawMatchData.away_team_id === "number" ? rawMatchData.away_team_id : 0,
+    leagueName: typeof rawMatchData.league_name === "string" ? rawMatchData.league_name : "",
+    date: typeof rawMatchData.date === "string" ? rawMatchData.date : "",
+    homeGoals: typeof rawMatchData.home_goals === "number" ? rawMatchData.home_goals : 0,
+    awayGoals: typeof rawMatchData.away_goals === "number" ? rawMatchData.away_goals : 0,
+    venue: isObject(rawMatchData.venue) ? (rawMatchData.venue as { name?: string; city?: string }) : {},
+    stats: isObject(rawMatchData.stats) ? (rawMatchData.stats as Record<string, unknown>) : {},
+    prediction: isObject(rawMatchData.prediction) ? (rawMatchData.prediction as Record<string, unknown>) : {},
+    events: Array.isArray(rawMatchData.events) ? rawMatchData.events : [],
+    marketOdds: isObject(rawMatchData.market_odds) ? (rawMatchData.market_odds as Record<string, number>) : {},
+  };
+
+  return { matchId, matchLabel, status, promptPreview, matchData };
+}
+
+/**
+ * Call history item
+ */
+export interface CallHistoryItem {
+  matchId: number;
+  matchLabel: string;
+  generatedAt: string | null;
+  model: string | null;
+  promptVersion: string | null;
+  tokensIn: number;
+  tokensOut: number;
+  latencyMs: number | null;
+  execMs: number | null;
+  costUsd: number;
+  status: string;
+  auditUrl: string;
+}
+
+/**
+ * Call history response
+ */
+export interface CallHistoryResponse {
+  items: CallHistoryItem[];
+  total: number;
+  limit: number;
+}
+
+/**
+ * Parse call history from API response
+ */
+export function parseCallHistory(response: unknown): CallHistoryResponse | null {
+  if (!isObject(response)) return null;
+
+  const rawItems = response.items;
+  if (!Array.isArray(rawItems)) return null;
+
+  const items: CallHistoryItem[] = [];
+  for (const item of rawItems) {
+    if (!isObject(item)) continue;
+
+    items.push({
+      matchId: typeof item.match_id === "number" ? item.match_id : 0,
+      matchLabel: typeof item.match_label === "string" ? item.match_label : "",
+      generatedAt: typeof item.generated_at === "string" ? item.generated_at : null,
+      model: typeof item.model === "string" ? item.model : null,
+      promptVersion: typeof item.prompt_version === "string" ? item.prompt_version : null,
+      tokensIn: typeof item.tokens_in === "number" ? item.tokens_in : 0,
+      tokensOut: typeof item.tokens_out === "number" ? item.tokens_out : 0,
+      latencyMs: typeof item.latency_ms === "number" ? item.latency_ms : null,
+      execMs: typeof item.exec_ms === "number" ? item.exec_ms : null,
+      costUsd: typeof item.cost_usd === "number" ? item.cost_usd : 0,
+      status: typeof item.status === "string" ? item.status : "unknown",
+      auditUrl: typeof item.audit_url === "string" ? item.audit_url : "",
+    });
+  }
+
+  const total = typeof response.total === "number" ? response.total : items.length;
+  const limit = typeof response.limit === "number" ? response.limit : 20;
+
+  return { items, total, limit };
+}
+
+// ============================================================================
+// IA Features: Playground Types & Parsers (Fase 3)
+// ============================================================================
+
+/**
+ * Playground request payload
+ */
+export interface PlaygroundRequest {
+  match_id: number;
+  temperature?: number;
+  max_tokens?: number;
+  model?: string;
+}
+
+/**
+ * Playground response
+ */
+export interface PlaygroundResponse {
+  narrative: {
+    title: string;
+    body: string;
+    keyFactors?: unknown[];
+  };
+  modelUsed: string;
+  metrics: {
+    tokensIn: number;
+    tokensOut: number;
+    latencyMs: number;
+    costUsd: number;
+  };
+  warnings: string[];
+  rateLimit: {
+    remaining: number;
+    resetAt: string;
+  };
+}
+
+/**
+ * Parse playground response from API
+ */
+export function parsePlaygroundResponse(response: unknown): PlaygroundResponse | null {
+  if (!isObject(response)) return null;
+
+  const rawNarrative = response.narrative;
+  if (!isObject(rawNarrative)) return null;
+
+  const narrative = {
+    title: typeof rawNarrative.title === "string" ? rawNarrative.title : "",
+    body: typeof rawNarrative.body === "string" ? rawNarrative.body : "",
+    keyFactors: Array.isArray(rawNarrative.key_factors) ? rawNarrative.key_factors : undefined,
+  };
+
+  const modelUsed = typeof response.model_used === "string" ? response.model_used : "";
+
+  const rawMetrics = response.metrics;
+  if (!isObject(rawMetrics)) return null;
+
+  const metrics = {
+    tokensIn: typeof rawMetrics.tokens_in === "number" ? rawMetrics.tokens_in : 0,
+    tokensOut: typeof rawMetrics.tokens_out === "number" ? rawMetrics.tokens_out : 0,
+    latencyMs: typeof rawMetrics.latency_ms === "number" ? rawMetrics.latency_ms : 0,
+    costUsd: typeof rawMetrics.cost_usd === "number" ? rawMetrics.cost_usd : 0,
+  };
+
+  const warnings = Array.isArray(response.warnings)
+    ? response.warnings.filter((w): w is string => typeof w === "string")
+    : [];
+
+  const rawRateLimit = response.rate_limit;
+  const rateLimit = isObject(rawRateLimit)
+    ? {
+        remaining: typeof rawRateLimit.remaining === "number" ? rawRateLimit.remaining : 0,
+        resetAt: typeof rawRateLimit.reset_at === "string" ? rawRateLimit.reset_at : "",
+      }
+    : { remaining: 0, resetAt: "" };
+
+  return { narrative, modelUsed, metrics, warnings, rateLimit };
+}

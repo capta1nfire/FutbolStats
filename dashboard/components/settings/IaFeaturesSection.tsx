@@ -3,6 +3,10 @@
 import { useState, useEffect } from "react";
 import { useIaFeatures } from "@/lib/hooks";
 import { SettingsSectionHeader } from "./SettingsSectionHeader";
+import { PromptTemplateViewer } from "./PromptTemplateViewer";
+import { PayloadPreview } from "./PayloadPreview";
+import { CallHistoryList } from "./CallHistoryList";
+import { LLMPlayground } from "./LLMPlayground";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -311,6 +315,26 @@ export function IaFeaturesSection() {
             </Button>
           </div>
         )}
+
+        {/* Divider before visibility section */}
+        <div className="border-t border-border pt-6 mt-6" />
+
+        {/* LLM Visibility Section (Fase 2) */}
+        <div className="space-y-4">
+          <h3 className="text-sm font-medium text-muted-foreground">LLM Visibility</h3>
+
+          {/* Prompt Template Viewer */}
+          <PromptTemplateViewer />
+
+          {/* Payload Preview */}
+          <PayloadPreview />
+
+          {/* Call History */}
+          <CallHistoryList />
+
+          {/* LLM Playground (Fase 3) */}
+          <LLMPlayground />
+        </div>
       </div>
     </div>
   );

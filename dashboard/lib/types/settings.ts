@@ -181,3 +181,123 @@ export interface IaFeaturesUpdatePayload {
   temperature?: number;
   max_tokens?: number;
 }
+
+// =============================================================================
+// IA Features: Visibility Types (Fase 2)
+// =============================================================================
+
+/**
+ * Prompt template response
+ */
+export interface PromptTemplateResponse {
+  version: string;
+  prompt_template: string;
+  char_count: number;
+  notes: string;
+}
+
+/**
+ * Match data for preview
+ */
+export interface PreviewMatchData {
+  match_id: number;
+  home_team: string;
+  away_team: string;
+  home_team_id: number;
+  away_team_id: number;
+  league_name: string;
+  date: string;
+  home_goals: number;
+  away_goals: number;
+  venue: { name?: string; city?: string };
+  stats: Record<string, unknown>;
+  prediction: Record<string, unknown>;
+  events: unknown[];
+  market_odds: Record<string, number>;
+  derived_facts: Record<string, unknown>;
+  narrative_style: Record<string, unknown>;
+}
+
+/**
+ * Payload preview response
+ */
+export interface PayloadPreviewResponse {
+  match_id: number;
+  match_label: string;
+  status: string;
+  prompt_preview: string;
+  match_data: PreviewMatchData;
+}
+
+/**
+ * Call history item
+ */
+export interface CallHistoryItem {
+  match_id: number;
+  match_label: string;
+  generated_at: string | null;
+  model: string | null;
+  prompt_version: string | null;
+  tokens_in: number;
+  tokens_out: number;
+  latency_ms: number | null;
+  exec_ms: number | null;
+  cost_usd: number;
+  status: string;
+  audit_url: string;
+}
+
+/**
+ * Call history response
+ */
+export interface CallHistoryResponse {
+  items: CallHistoryItem[];
+  total: number;
+  limit: number;
+}
+
+/**
+ * Match option for select dropdowns
+ */
+export interface MatchOption {
+  id: number;
+  label: string;
+  status: string;
+}
+
+// =============================================================================
+// IA Features: Playground Types (Fase 3)
+// =============================================================================
+
+/**
+ * Playground request payload
+ */
+export interface PlaygroundRequest {
+  match_id: number;
+  temperature?: number;
+  max_tokens?: number;
+  model?: string;
+}
+
+/**
+ * Playground response
+ */
+export interface PlaygroundResponse {
+  narrative: {
+    title: string;
+    body: string;
+    key_factors?: unknown[];
+  };
+  model_used: string;
+  metrics: {
+    tokens_in: number;
+    tokens_out: number;
+    latency_ms: number;
+    cost_usd: number;
+  };
+  warnings: string[];
+  rate_limit: {
+    remaining: number;
+    reset_at: string;
+  };
+}

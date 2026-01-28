@@ -14925,6 +14925,581 @@ async def dashboard_settings_ia_features_patch(request: Request):
         raise HTTPException(status_code=500, detail="Failed to update IA features config")
 
 
+# -----------------------------------------------------------------------------
+# IA Features: Visibility Endpoints (Fase 2)
+# -----------------------------------------------------------------------------
+
+
+@app.get("/dashboard/settings/ia-features/prompt-template.json")
+async def ia_features_prompt_template(request: Request):
+    """
+    Returns the current LLM prompt template for narrative generation.
+
+    Auth: X-Dashboard-Token required.
+
+    Returns:
+    - version: Current prompt version (e.g., "v11")
+    - prompt_template: Full prompt string (with placeholders)
+    - char_count: Character count
+    - notes: Description
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    try:
+        from app.llm.narrative_generator import build_narrative_prompt
+
+        # Build prompt with dummy data to show template structure
+        dummy_match_data = {
+            "match_id": 0,
+            "home_team": "{HOME_TEAM}",
+            "away_team": "{AWAY_TEAM}",
+            "home_team_id": None,
+            "away_team_id": None,
+            "league_name": "{LEAGUE}",
+            "date": "{DATE}",
+            "home_goals": 0,
+            "away_goals": 0,
+            "venue": {"name": "{VENUE}", "city": "{CITY}"},
+            "stats": {
+                "home": {"possession": "{POSS_H}", "shots": "{SHOTS_H}"},
+                "away": {"possession": "{POSS_A}", "shots": "{SHOTS_A}"},
+            },
+            "prediction": {
+                "selection": "{SELECTION}",
+                "confidence": 0.0,
+                "home_prob": 0.0,
+                "draw_prob": 0.0,
+                "away_prob": 0.0,
+            },
+            "events": [],
+            "market_odds": {"home": 0.0, "draw": 0.0, "away": 0.0},
+            "derived_facts": {},
+            "narrative_style": {},
+        }
+
+        prompt, _, _ = build_narrative_prompt(dummy_match_data)
+
+        return {
+            "version": "v11",
+            "prompt_template": prompt,
+            "char_count": len(prompt),
+            "notes": "Prompt v11 para narrativas post-partido. Placeholders marcados con {PLACEHOLDER}.",
+        }
+
+    except Exception as e:
+        logger.error(f"[SETTINGS] prompt-template error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get prompt template")
+
+
+@app.get("/dashboard/settings/ia-features/preview/{match_id}.json")
+async def ia_features_preview(
+    request: Request,
+    match_id: int,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Preview the LLM payload for a specific match (without calling the LLM).
+
+    Auth: X-Dashboard-Token required.
+
+    Returns:
+    - match_id: Match ID
+    - match_label: "Home vs Away"
+    - prompt_preview: Full prompt that would be sent to LLM
+    - match_data: Structured data used to build the prompt
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    try:
+        from sqlalchemy.orm import selectinload
+        from app.llm.narrative_generator import build_narrative_prompt
+
+        # Get match with teams
+        result = await session.execute(
+            select(Match)
+            .options(selectinload(Match.home_team), selectinload(Match.away_team))
+            .where(Match.id == match_id)
+        )
+        match = result.scalar_one_or_none()
+
+        if not match:
+            raise HTTPException(status_code=404, detail=f"Match {match_id} not found")
+
+        # Get prediction
+        pred_result = await session.execute(
+            select(Prediction)
+            .where(Prediction.match_id == match_id)
+            .order_by(Prediction.created_at.desc())
+            .limit(1)
+        )
+        prediction = pred_result.scalar_one_or_none()
+
+        # Get odds from odds_history
+        odds_result = await session.execute(
+            select(OddsHistory)
+            .where(OddsHistory.match_id == match_id)
+            .order_by(OddsHistory.recorded_at.desc())
+            .limit(1)
+        )
+        odds_row = odds_result.scalar_one_or_none()
+
+        # Build match_data dict
+        home_name = match.home_team.name if match.home_team else "Local"
+        away_name = match.away_team.name if match.away_team else "Visitante"
+
+        # Stats come from match.stats JSON field
+        stats_dict = {"home": {}, "away": {}}
+        if match.stats:
+            stats_dict = match.stats
+
+        # Events come from match.events JSON field (limit to 10)
+        events_list = []
+        if match.events:
+            events_list = match.events[:10]
+
+        # Market odds from odds_history or match.odds_*
+        market_odds = {}
+        if odds_row:
+            market_odds = {
+                "home": odds_row.home_odds,
+                "draw": odds_row.draw_odds,
+                "away": odds_row.away_odds,
+            }
+        elif match.odds_home:
+            market_odds = {
+                "home": match.odds_home,
+                "draw": match.odds_draw,
+                "away": match.odds_away,
+            }
+
+        prediction_dict = {}
+        if prediction:
+            prediction_dict = {
+                "selection": prediction.predicted_result,
+                "confidence": prediction.confidence,
+                "home_prob": prediction.home_prob,
+                "draw_prob": prediction.draw_prob,
+                "away_prob": prediction.away_prob,
+            }
+
+        # Get league name from COMPETITIONS constant
+        league_name = ""
+        league_info = COMPETITIONS.get(match.league_id)
+        if league_info:
+            league_name = league_info.get("name", "")
+
+        match_data = {
+            "match_id": match.id,
+            "home_team": home_name,
+            "away_team": away_name,
+            "home_team_id": match.home_team_id,
+            "away_team_id": match.away_team_id,
+            "league_name": league_name,
+            "date": match.date.isoformat() if match.date else "",
+            "home_goals": match.home_goals or 0,
+            "away_goals": match.away_goals or 0,
+            "venue": {"name": match.venue_name, "city": match.venue_city} if match.venue_name else {},
+            "stats": stats_dict,
+            "prediction": prediction_dict,
+            "events": events_list,
+            "market_odds": market_odds,
+            "derived_facts": {},
+            "narrative_style": {},
+        }
+
+        # Build prompt
+        prompt, _, _ = build_narrative_prompt(match_data)
+
+        return {
+            "match_id": match.id,
+            "match_label": f"{home_name} vs {away_name}",
+            "status": match.status,
+            "prompt_preview": prompt,
+            "match_data": match_data,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[SETTINGS] preview error for match {match_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate preview")
+
+
+@app.get("/dashboard/settings/ia-features/call-history.json")
+async def ia_features_call_history(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Returns recent LLM narrative generation calls from post_match_audits.
+
+    Auth: X-Dashboard-Token required.
+
+    Query params:
+    - limit: Max items to return (default 20, max 100)
+
+    Returns:
+    - items: List of recent narrative generations with metrics
+    - total: Total count of narratives generated
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    try:
+        from app.config import LLM_MODELS
+
+        # Query recent audits with narratives
+        query = (
+            select(
+                PostMatchAudit.outcome_id,
+                PostMatchAudit.llm_narrative_model,
+                PostMatchAudit.llm_narrative_tokens_in,
+                PostMatchAudit.llm_narrative_tokens_out,
+                PostMatchAudit.llm_narrative_delay_ms,
+                PostMatchAudit.llm_narrative_exec_ms,
+                PostMatchAudit.llm_narrative_generated_at,
+                PostMatchAudit.llm_narrative_status,
+                PostMatchAudit.llm_prompt_version,
+                Match.id.label("match_id"),
+                Team.name.label("home_team_name"),
+            )
+            .join(PredictionOutcome, PostMatchAudit.outcome_id == PredictionOutcome.id)
+            .join(Match, PredictionOutcome.match_id == Match.id)
+            .join(Team, Match.home_team_id == Team.id)
+            .where(PostMatchAudit.llm_narrative_generated_at.isnot(None))
+            .order_by(PostMatchAudit.llm_narrative_generated_at.desc())
+            .limit(limit)
+        )
+
+        result = await session.execute(query)
+        rows = result.all()
+
+        # Get away team names separately
+        match_ids = [r.match_id for r in rows]
+        away_query = (
+            select(Match.id, Team.name.label("away_team_name"))
+            .join(Team, Match.away_team_id == Team.id)
+            .where(Match.id.in_(match_ids))
+        )
+        away_result = await session.execute(away_query)
+        away_names = {r.id: r.away_team_name for r in away_result.all()}
+
+        # Count total
+        count_query = select(func.count()).select_from(PostMatchAudit).where(
+            PostMatchAudit.llm_narrative_generated_at.isnot(None)
+        )
+        total = (await session.execute(count_query)).scalar() or 0
+
+        items = []
+        for row in rows:
+            # Calculate cost
+            model_key = row.llm_narrative_model or "gemini-2.5-flash-lite"
+            model_info = LLM_MODELS.get(model_key, LLM_MODELS.get("gemini-2.5-flash-lite", {}))
+            tokens_in = row.llm_narrative_tokens_in or 0
+            tokens_out = row.llm_narrative_tokens_out or 0
+            cost_usd = (
+                (tokens_in * model_info.get("input_price_per_1m", 0.10) / 1_000_000)
+                + (tokens_out * model_info.get("output_price_per_1m", 0.40) / 1_000_000)
+            )
+
+            away_name = away_names.get(row.match_id, "Visitante")
+
+            items.append({
+                "match_id": row.match_id,
+                "match_label": f"{row.home_team_name} vs {away_name}",
+                "generated_at": row.llm_narrative_generated_at.isoformat() if row.llm_narrative_generated_at else None,
+                "model": row.llm_narrative_model,
+                "prompt_version": row.llm_prompt_version,
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "latency_ms": row.llm_narrative_delay_ms,
+                "exec_ms": row.llm_narrative_exec_ms,
+                "cost_usd": round(cost_usd, 6),
+                "status": row.llm_narrative_status or "success",
+                "audit_url": f"/dashboard/ops/llm_audit/{row.match_id}.json",
+            })
+
+        return {
+            "items": items,
+            "total": total,
+            "limit": limit,
+        }
+
+    except Exception as e:
+        logger.error(f"[SETTINGS] call-history error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get call history")
+
+
+# Rate limiting for playground (in-memory, resets on restart)
+_playground_rate_limits: dict[str, list[datetime]] = {}
+
+
+def _check_playground_rate_limit(token: str) -> tuple[bool, int, datetime]:
+    """
+    Check rate limit for playground endpoint.
+
+    Returns: (allowed, remaining, reset_at)
+    """
+    now = datetime.utcnow()
+    hour_ago = now - timedelta(hours=1)
+
+    # Clean old calls
+    calls = _playground_rate_limits.get(token, [])
+    calls = [c for c in calls if c > hour_ago]
+
+    if len(calls) >= 10:
+        reset_at = calls[0] + timedelta(hours=1)
+        return False, 0, reset_at
+
+    calls.append(now)
+    _playground_rate_limits[token] = calls
+    return True, 10 - len(calls), now + timedelta(hours=1)
+
+
+class PlaygroundRequest(BaseModel):
+    """Request body for playground endpoint."""
+
+    match_id: int = Field(..., description="Match ID to generate narrative for")
+    temperature: float | None = Field(default=None, ge=0.0, le=1.0, description="Temperature (0.0-1.0)")
+    max_tokens: int | None = Field(default=None, ge=100, le=131072, description="Max tokens")
+    model: str | None = Field(default=None, description="Model to use")
+
+
+@app.post("/dashboard/settings/ia-features/playground")
+async def ia_features_playground(
+    request: Request,
+    body: PlaygroundRequest,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    LLM Playground: Generate a narrative for a match with custom parameters.
+
+    Auth: X-Dashboard-Token required.
+    Rate limit: 10 calls/hour per token.
+
+    This endpoint actually calls the LLM and incurs costs.
+    Narratives generated here are NOT persisted to the database.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    try:
+        from sqlalchemy.orm import selectinload
+        from app.llm.narrative_generator import build_narrative_prompt
+        from app.config import LLM_MODELS, get_ia_features_config
+        import time as time_module
+
+        # Get token for rate limiting
+        token = request.headers.get("X-Dashboard-Token", "anonymous")
+
+        # Check rate limit
+        allowed, remaining, reset_at = _check_playground_rate_limit(token)
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": "Rate limit exceeded (10 calls/hour)",
+                    "rate_limit": {
+                        "remaining": 0,
+                        "reset_at": reset_at.isoformat(),
+                    },
+                },
+            )
+
+        # Validate match exists
+        result = await session.execute(
+            select(Match)
+            .options(selectinload(Match.home_team), selectinload(Match.away_team))
+            .where(Match.id == body.match_id)
+        )
+        match = result.scalar_one_or_none()
+
+        if not match:
+            raise HTTPException(status_code=404, detail=f"Match {body.match_id} not found")
+
+        # Validate match is finished
+        if match.status not in ("FT", "AET", "PEN"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Match must be finished (status: {match.status})"
+            )
+
+        # Validate match has stats
+        if not match.stats:
+            raise HTTPException(
+                status_code=400,
+                detail="Match has no stats available"
+            )
+
+        # Get prediction
+        pred_result = await session.execute(
+            select(Prediction)
+            .where(Prediction.match_id == body.match_id)
+            .order_by(Prediction.created_at.desc())
+            .limit(1)
+        )
+        prediction = pred_result.scalar_one_or_none()
+
+        # Get odds
+        odds_result = await session.execute(
+            select(OddsHistory)
+            .where(OddsHistory.match_id == body.match_id)
+            .order_by(OddsHistory.recorded_at.desc())
+            .limit(1)
+        )
+        odds_row = odds_result.scalar_one_or_none()
+
+        # Build match_data dict
+        home_name = match.home_team.name if match.home_team else "Local"
+        away_name = match.away_team.name if match.away_team else "Visitante"
+
+        events_list = match.events[:10] if match.events else []
+
+        market_odds = {}
+        if odds_row:
+            market_odds = {
+                "home": odds_row.home_odds,
+                "draw": odds_row.draw_odds,
+                "away": odds_row.away_odds,
+            }
+        elif match.odds_home:
+            market_odds = {
+                "home": match.odds_home,
+                "draw": match.odds_draw,
+                "away": match.odds_away,
+            }
+
+        prediction_dict = {}
+        if prediction:
+            prediction_dict = {
+                "selection": prediction.predicted_result,
+                "confidence": prediction.confidence,
+                "home_prob": prediction.home_prob,
+                "draw_prob": prediction.draw_prob,
+                "away_prob": prediction.away_prob,
+            }
+
+        # Get league name
+        league_name = ""
+        league_info = COMPETITIONS.get(match.league_id)
+        if league_info:
+            league_name = league_info.get("name", "")
+
+        match_data = {
+            "match_id": match.id,
+            "home_team": home_name,
+            "away_team": away_name,
+            "home_team_id": match.home_team_id,
+            "away_team_id": match.away_team_id,
+            "league_name": league_name,
+            "date": match.date.isoformat() if match.date else "",
+            "home_goals": match.home_goals or 0,
+            "away_goals": match.away_goals or 0,
+            "venue": {"name": match.venue_name, "city": match.venue_city} if match.venue_name else {},
+            "stats": match.stats,
+            "prediction": prediction_dict,
+            "events": events_list,
+            "market_odds": market_odds,
+            "derived_facts": {},
+            "narrative_style": {},
+        }
+
+        # Get current config for defaults
+        ia_config = await get_ia_features_config(session)
+
+        # Resolve parameters
+        model_to_use = body.model or ia_config.get("primary_model", "gemini-2.5-flash-lite")
+        temperature_to_use = body.temperature if body.temperature is not None else ia_config.get("temperature", 0.7)
+        max_tokens_to_use = body.max_tokens or ia_config.get("max_tokens", 4096)
+
+        # Validate model exists
+        if model_to_use not in LLM_MODELS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown model: {model_to_use}"
+            )
+
+        model_info = LLM_MODELS[model_to_use]
+
+        # Build prompt
+        prompt, _, _ = build_narrative_prompt(match_data)
+
+        # Generate narrative using GeminiClient directly
+        # (Playground only supports Gemini models for now)
+        from app.llm.gemini_client import GeminiClient
+        from app.llm.narrative_generator import parse_json_response
+
+        start_time = time_module.time()
+
+        # Create Gemini client and generate
+        client = GeminiClient()
+        try:
+            result = await client.generate(
+                prompt=prompt,
+                max_tokens=max_tokens_to_use,
+                temperature=temperature_to_use,
+            )
+        finally:
+            await client.close()
+
+        latency_ms = int((time_module.time() - start_time) * 1000)
+
+        if result.status != "COMPLETED":
+            raise HTTPException(
+                status_code=500,
+                detail=f"LLM generation failed: {result.error or result.status}"
+            )
+
+        tokens_in = result.tokens_in
+        tokens_out = result.tokens_out
+
+        parsed = parse_json_response(result.text)
+
+        if not parsed:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to parse LLM response"
+            )
+
+        # Calculate cost
+        cost_usd = (
+            (tokens_in * model_info.get("input_price_per_1m", 0.10) / 1_000_000)
+            + (tokens_out * model_info.get("output_price_per_1m", 0.40) / 1_000_000)
+        )
+
+        # Extract narrative
+        narrative_data = parsed.get("narrative", {})
+
+        return {
+            "narrative": {
+                "title": narrative_data.get("title", ""),
+                "body": narrative_data.get("body", ""),
+                "key_factors": narrative_data.get("key_factors", []),
+            },
+            "model_used": model_to_use,
+            "metrics": {
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "latency_ms": latency_ms,
+                "cost_usd": round(cost_usd, 6),
+            },
+            "warnings": [],
+            "rate_limit": {
+                "remaining": remaining,
+                "reset_at": reset_at.isoformat(),
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[SETTINGS] playground error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate narrative")
+
+
 # =============================================================================
 # DASHBOARD PREDICTIONS (read-only, for ops dashboard)
 # =============================================================================
