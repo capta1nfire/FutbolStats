@@ -8934,96 +8934,83 @@ async def _calculate_predictions_health(session) -> dict:
 
     Smart logic: If there are no upcoming NS matches scheduled, we don't
     raise WARN/RED for stale predictions (false positive in low-activity periods).
+
+    PERF: Single CTE query replaces 8 sequential queries (fixes N+1 pattern).
     """
     now = datetime.utcnow()
 
-    # 1) Last prediction saved (for any match)
-    res = await session.execute(
-        text("SELECT MAX(created_at) FROM predictions")
-    )
-    last_pred_at = res.scalar()
-
-    # 2) Predictions saved in last 24h
+    # Single consolidated query using CTEs (8 queries → 1)
     res = await session.execute(
         text("""
-            SELECT COUNT(*) FROM predictions
-            WHERE created_at > NOW() - INTERVAL '24 hours'
-        """)
-    )
-    preds_last_24h = int(res.scalar() or 0)
-
-    # 3) Predictions saved today (UTC)
-    res = await session.execute(
-        text("""
-            SELECT COUNT(*) FROM predictions
-            WHERE created_at::date = CURRENT_DATE
-        """)
-    )
-    preds_today = int(res.scalar() or 0)
-
-    # 4) FT matches in last 48h
-    res = await session.execute(
-        text("""
-            SELECT COUNT(*) FROM matches
-            WHERE status IN ('FT', 'AET', 'PEN')
-              AND date > NOW() - INTERVAL '48 hours'
-        """)
-    )
-    ft_48h = int(res.scalar() or 0)
-
-    # 5) FT matches in last 48h MISSING prediction
-    res = await session.execute(
-        text("""
-            SELECT COUNT(*) FROM matches m
-            WHERE m.status IN ('FT', 'AET', 'PEN')
-              AND m.date > NOW() - INTERVAL '48 hours'
-              AND NOT EXISTS (
-                  SELECT 1 FROM predictions p WHERE p.match_id = m.id
+            WITH
+              pred_stats AS (
+                SELECT
+                  MAX(created_at) as last_pred_at,
+                  COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') as preds_last_24h,
+                  COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE) as preds_today
+                FROM predictions
+              ),
+              ft_with_pred AS (
+                SELECT
+                  m.id,
+                  p.id as pred_id
+                FROM matches m
+                LEFT JOIN predictions p ON p.match_id = m.id
+                WHERE m.status IN ('FT', 'AET', 'PEN')
+                  AND m.date > NOW() - INTERVAL '48 hours'
+              ),
+              ft_stats AS (
+                SELECT
+                  COUNT(*) as ft_48h,
+                  COUNT(*) FILTER (WHERE pred_id IS NULL) as ft_48h_missing
+                FROM ft_with_pred
+              ),
+              ns_with_pred AS (
+                SELECT
+                  m.id,
+                  m.date,
+                  p.id as pred_id
+                FROM matches m
+                LEFT JOIN predictions p ON p.match_id = m.id
+                WHERE m.status = 'NS'
+                  AND m.date > NOW()
+              ),
+              ns_stats AS (
+                SELECT
+                  COUNT(*) FILTER (WHERE date <= NOW() + INTERVAL '48 hours') as ns_next_48h,
+                  COUNT(*) FILTER (WHERE date <= NOW() + INTERVAL '48 hours' AND pred_id IS NULL) as ns_next_48h_missing,
+                  MIN(date) as next_ns_date
+                FROM ns_with_pred
               )
+            SELECT
+              pred_stats.last_pred_at,
+              pred_stats.preds_last_24h,
+              pred_stats.preds_today,
+              ft_stats.ft_48h,
+              ft_stats.ft_48h_missing,
+              ns_stats.ns_next_48h,
+              ns_stats.ns_next_48h_missing,
+              ns_stats.next_ns_date
+            FROM pred_stats, ft_stats, ns_stats
         """)
     )
-    ft_48h_missing = int(res.scalar() or 0)
+    row = res.fetchone()
 
-    # 6) Coverage percentage
+    # Extract values from single row result
+    last_pred_at = row[0]
+    preds_last_24h = int(row[1] or 0)
+    preds_today = int(row[2] or 0)
+    ft_48h = int(row[3] or 0)
+    ft_48h_missing = int(row[4] or 0)
+    ns_next_48h = int(row[5] or 0)
+    ns_next_48h_missing = int(row[6] or 0)
+    next_ns_date = row[7]
+
+    # Coverage percentages
     coverage_48h_pct = 0.0
     if ft_48h > 0:
         coverage_48h_pct = round(((ft_48h - ft_48h_missing) / ft_48h) * 100, 1)
 
-    # 7) NS matches in next 48h (for smart alerting)
-    res = await session.execute(
-        text("""
-            SELECT COUNT(*) FROM matches
-            WHERE status = 'NS'
-              AND date > NOW()
-              AND date <= NOW() + INTERVAL '48 hours'
-        """)
-    )
-    ns_next_48h = int(res.scalar() or 0)
-
-    # 8) Next NS match date (for visibility)
-    res = await session.execute(
-        text("""
-            SELECT MIN(date) FROM matches
-            WHERE status = 'NS' AND date > NOW()
-        """)
-    )
-    next_ns_date = res.scalar()
-
-    # 9) NS matches in next 48h MISSING prediction (key metric!)
-    res = await session.execute(
-        text("""
-            SELECT COUNT(*) FROM matches m
-            WHERE m.status = 'NS'
-              AND m.date > NOW()
-              AND m.date <= NOW() + INTERVAL '48 hours'
-              AND NOT EXISTS (
-                  SELECT 1 FROM predictions p WHERE p.match_id = m.id
-              )
-        """)
-    )
-    ns_next_48h_missing = int(res.scalar() or 0)
-
-    # 10) NS coverage percentage (upcoming matches with predictions)
     ns_coverage_pct = 100.0
     if ns_next_48h > 0:
         ns_coverage_pct = round(((ns_next_48h - ns_next_48h_missing) / ns_next_48h) * 100, 1)
@@ -9229,35 +9216,39 @@ async def _calculate_fastpath_health(session) -> dict:
     db_unavailable = False
 
     try:
-        # Get most recent tick from DB
+        # PERF: Single query for tick stats (2 queries → 1)
         res = await session.execute(
             text("""
-                SELECT tick_at, selected, refreshed, ready, enqueued, completed, errors, skipped
-                FROM fastpath_ticks
-                ORDER BY tick_at DESC
-                LIMIT 1
+                WITH recent_tick AS (
+                    SELECT tick_at, selected, refreshed, ready, enqueued, completed, errors, skipped
+                    FROM fastpath_ticks
+                    ORDER BY tick_at DESC
+                    LIMIT 1
+                ),
+                hour_stats AS (
+                    SELECT
+                        COUNT(*) as total,
+                        COUNT(*) FILTER (WHERE selected > 0 OR enqueued > 0 OR completed > 0) as with_activity
+                    FROM fastpath_ticks
+                    WHERE tick_at > NOW() - INTERVAL '1 hour'
+                )
+                SELECT
+                    rt.tick_at, rt.selected, rt.refreshed, rt.ready, rt.enqueued, rt.completed, rt.errors, rt.skipped,
+                    hs.total, hs.with_activity
+                FROM hour_stats hs
+                LEFT JOIN recent_tick rt ON true
             """)
         )
         row = res.fetchone()
         if row:
-            last_tick_at = row[0]
-            last_tick_result = {
-                "selected": row[1], "refreshed": row[2], "stats_ready": row[3],
-                "enqueued": row[4], "completed": row[5], "errors": row[6], "skipped": row[7]
-            }
-
-        # Get tick counts from last hour
-        res = await session.execute(
-            text("""
-                SELECT COUNT(*), COUNT(*) FILTER (WHERE selected > 0 OR enqueued > 0 OR completed > 0)
-                FROM fastpath_ticks
-                WHERE tick_at > NOW() - INTERVAL '1 hour'
-            """)
-        )
-        counts = res.fetchone()
-        if counts:
-            ticks_total = counts[0] or 0
-            ticks_with_activity = counts[1] or 0
+            if row[0]:  # tick_at exists
+                last_tick_at = row[0]
+                last_tick_result = {
+                    "selected": row[1], "refreshed": row[2], "stats_ready": row[3],
+                    "enqueued": row[4], "completed": row[5], "errors": row[6], "skipped": row[7]
+                }
+            ticks_total = row[8] or 0
+            ticks_with_activity = row[9] or 0
     except Exception as db_err:
         # DB unavailable - mark as red status (don't use in-memory fallback in prod)
         logger.warning(f"fastpath_ticks DB unavailable: {db_err}")
