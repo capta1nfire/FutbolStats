@@ -15132,8 +15132,10 @@ async def ia_features_preview(
         raise
     except Exception as e:
         import traceback
-        logger.error(f"[SETTINGS] preview error for match {match_id}: {e}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail="Failed to generate preview")
+        error_detail = f"{type(e).__name__}: {e}"
+        tb = traceback.format_exc()
+        logger.error(f"[SETTINGS] preview error for match {match_id}: {error_detail}\n{tb}")
+        raise HTTPException(status_code=500, detail=f"Preview error: {error_detail}")
 
 
 @app.get("/dashboard/settings/ia-features/call-history.json")
