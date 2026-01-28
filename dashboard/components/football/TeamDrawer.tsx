@@ -350,7 +350,7 @@ export function TeamDrawer({ teamId, open, onClose }: TeamDrawerProps) {
     <DetailDrawer
       open={open}
       onClose={onClose}
-      title={data?.team?.name || `Team ${teamId || ""}`}
+      title={`Team ${teamId || ""}`}
       variant="overlay"
     >
       {content}
