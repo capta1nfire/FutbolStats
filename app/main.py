@@ -15096,7 +15096,7 @@ async def ia_features_preview(
         league_name = ""
         league_info = COMPETITIONS.get(match.league_id)
         if league_info:
-            league_name = league_info.get("name", "")
+            league_name = league_info.name or ""
 
         match_data = {
             "match_id": match.id,
@@ -15131,11 +15131,8 @@ async def ia_features_preview(
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        error_detail = f"{type(e).__name__}: {e}"
-        tb = traceback.format_exc()
-        logger.error(f"[SETTINGS] preview error for match {match_id}: {error_detail}\n{tb}")
-        raise HTTPException(status_code=500, detail=f"Preview error: {error_detail}")
+        logger.error(f"[SETTINGS] preview error for match {match_id}: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate preview")
 
 
 @app.get("/dashboard/settings/ia-features/call-history.json")
@@ -15405,7 +15402,7 @@ async def ia_features_playground(
         league_name = ""
         league_info = COMPETITIONS.get(match.league_id)
         if league_info:
-            league_name = league_info.get("name", "")
+            league_name = league_info.name or ""
 
         match_data = {
             "match_id": match.id,
