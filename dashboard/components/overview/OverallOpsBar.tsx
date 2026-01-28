@@ -155,7 +155,8 @@ export function OverallOpsBar({
               return (
                 <Tooltip key={domain}>
                   <TooltipTrigger asChild>
-                    <div
+                    <button
+                      type="button"
                       className={cn(
                         "flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium border shrink-0",
                         alertColors.bg,
@@ -163,14 +164,13 @@ export function OverallOpsBar({
                         alert.incident_id ? "cursor-pointer hover:opacity-80 transition-opacity" : "cursor-default"
                       )}
                       onClick={alert.incident_id ? () => router.push(`/incidents?id=${alert.incident_id}`) : undefined}
-                      role={alert.incident_id ? "link" : undefined}
                     >
                       <AlertTriangle className={cn("h-3 w-3", alertColors.text)} />
                       <span className={alertColors.text}>
                         Jobs: {alert.label}
                         {additionalAlerts > 0 && ` +${additionalAlerts}`}
                       </span>
-                    </div>
+                    </button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="max-w-xs">
                     <div className="space-y-1">
