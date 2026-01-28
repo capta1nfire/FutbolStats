@@ -19892,12 +19892,12 @@ async def _upsert_incidents(session, detected: list[dict]) -> None:
                      THEN d.details_json::jsonb ELSE NULL END,
                 d.runbook_url,
                 jsonb_build_array(jsonb_build_object(
-                    'ts',      :now_iso,
+                    'ts',      :now_iso ::TEXT,
                     'message', 'Incident detected: ' || d.title_short,
                     'actor',   'system',
                     'action',  'created'
                 )),
-                :now, :now, :now
+                :now ::TIMESTAMPTZ, :now ::TIMESTAMPTZ, :now ::TIMESTAMPTZ
             FROM data d
             ON CONFLICT (source, source_key) DO UPDATE SET
                 severity     = EXCLUDED.severity,
@@ -19923,7 +19923,7 @@ async def _upsert_incidents(session, detected: list[dict]) -> None:
                     WHEN ops_incidents.status = 'resolved' THEN
                         COALESCE(ops_incidents.timeline, '[]'::jsonb)
                         || jsonb_build_array(jsonb_build_object(
-                            'ts',      :now_iso,
+                            'ts',      :now_iso ::TEXT,
                             'message', 'Incident reopened (detected again)',
                             'actor',   'system',
                             'action',  'reopened'
@@ -19967,17 +19967,17 @@ async def _auto_resolve_stale_incidents(session) -> int:
         text("""
             UPDATE ops_incidents
             SET status      = 'resolved',
-                resolved_at = :now,
-                updated_at  = :now,
+                resolved_at = :now ::TIMESTAMPTZ,
+                updated_at  = :now ::TIMESTAMPTZ,
                 timeline    = COALESCE(timeline, '[]'::jsonb)
                               || jsonb_build_array(jsonb_build_object(
-                                  'ts',      :now_iso,
-                                  'message', :resolve_msg,
+                                  'ts',      :now_iso ::TEXT,
+                                  'message', :resolve_msg ::TEXT,
                                   'actor',   'system',
                                   'action',  'auto_resolved'
                               ))
             WHERE status IN ('active', 'acknowledged')
-              AND last_seen_at < :cutoff
+              AND last_seen_at < :cutoff ::TIMESTAMPTZ
             RETURNING id
         """),
         {
