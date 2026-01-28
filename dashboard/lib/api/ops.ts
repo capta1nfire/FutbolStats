@@ -533,6 +533,7 @@ export interface OpsJobItem {
   minutes_since_success?: number;
   source?: string;
   help_url?: string;
+  incident_id?: number; // Stable ID for deep-linking to /incidents?id=
   // Job-specific fields
   ft_pending?: number; // stats_backfill
   backlog_ready?: number; // fastpath
@@ -549,6 +550,7 @@ export interface OpsJobTopAlert {
   reason: string;
   minutes_since_success: number | null;
   runbook_url?: string;
+  incident_id?: number; // Stable ID for deep-linking to /incidents?id=
 }
 
 /**

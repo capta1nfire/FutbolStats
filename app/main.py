@@ -8343,6 +8343,16 @@ async def _calculate_jobs_health_summary(session) -> dict:
     top_alert = None
     alerts_count = 0
 
+    # Helper: compute stable incident_id for a job (same hash as _aggregate_incidents)
+    def _job_incident_id(job_key: str) -> int:
+        import hashlib
+        h = hashlib.md5(f"jobs:{job_key}".encode()).hexdigest()
+        return int(h[:8], 16)
+
+    # Add incident_id to each job for deep-linking from dashboard
+    for _jk, _jd in [("stats_backfill", stats_health), ("odds_sync", odds_health), ("fastpath", fastpath_health)]:
+        _jd["incident_id"] = _job_incident_id(_jk)
+
     if overall in ("warn", "red"):
         # Collect all jobs with their severity for ranking
         job_alerts = []
@@ -8383,6 +8393,7 @@ async def _calculate_jobs_health_summary(session) -> dict:
                     "reason": reason,
                     "minutes_since_success": minutes_since,
                     "runbook_url": job_data.get("help_url"),
+                    "incident_id": _job_incident_id(job_key),
                     # Sort key: red=2, warn=1; then by minutes_since_success desc
                     "_sort_key": (2 if job_status_val == "red" else 1, minutes_since or 0),
                 })
@@ -8398,6 +8409,7 @@ async def _calculate_jobs_health_summary(session) -> dict:
                 "reason": worst["reason"],
                 "minutes_since_success": worst["minutes_since_success"],
                 "runbook_url": worst["runbook_url"],
+                "incident_id": worst["incident_id"],
             }
 
     result = {

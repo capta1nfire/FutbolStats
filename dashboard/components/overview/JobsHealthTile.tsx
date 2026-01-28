@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { OpsJobsHealth, OpsJobItem } from "@/lib/api/ops";
 import { ApiBudgetStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -42,7 +43,7 @@ function formatMinutes(minutes: number | undefined): string {
 /**
  * Individual job row
  */
-function JobRow({ name, job }: { name: string; job: OpsJobItem | null }) {
+function JobRow({ name, job, onIncidentClick }: { name: string; job: OpsJobItem | null; onIncidentClick?: (id: number) => void }) {
   if (!job) {
     return (
       <div className="flex items-center justify-between py-1.5">
@@ -51,6 +52,8 @@ function JobRow({ name, job }: { name: string; job: OpsJobItem | null }) {
       </div>
     );
   }
+
+  const hasIncident = job.incident_id && job.status !== "ok";
 
   return (
     <div className="flex items-center justify-between py-1.5">
@@ -62,16 +65,14 @@ function JobRow({ name, job }: { name: string; job: OpsJobItem | null }) {
         <span className={cn("text-xs tabular-nums", statusColors[job.status])}>
           {formatMinutes(job.minutes_since_success)}
         </span>
-        {job.help_url && (
-          <a
-            href={job.help_url}
-            target="_blank"
-            rel="noopener noreferrer"
+        {hasIncident && onIncidentClick && (
+          <button
+            onClick={() => onIncidentClick(job.incident_id!)}
             className="text-muted-foreground hover:text-primary transition-colors"
-            aria-label={`Help for ${name}`}
+            aria-label={`View incident for ${name}`}
           >
             <ExternalLink className="h-3 w-3" />
-          </a>
+          </button>
         )}
       </div>
     </div>
@@ -89,6 +90,7 @@ export function JobsHealthTile({
   className,
   isMockFallback = false,
 }: JobsHealthTileProps) {
+  const router = useRouter();
   const isDegraded = !jobs || isMockFallback;
   const displayStatus: ApiBudgetStatus = jobs?.status ?? "degraded";
 
@@ -96,6 +98,10 @@ export function JobsHealthTile({
   const healthyCount = [jobs?.stats_backfill, jobs?.odds_sync, jobs?.fastpath]
     .filter((j) => j?.status === "ok")
     .length;
+
+  const handleIncidentClick = (incidentId: number) => {
+    router.push(`/incidents?id=${incidentId}`);
+  };
 
   return (
     <div
@@ -109,17 +115,6 @@ export function JobsHealthTile({
         <div className="flex items-center gap-2">
           <Clock className="h-4 w-4 text-primary" />
           <h3 className="text-sm font-semibold text-foreground">Jobs</h3>
-          {jobs?.runbook_url && (
-            <a
-              href={jobs.runbook_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-muted-foreground hover:text-primary transition-colors"
-              aria-label="Jobs runbook"
-            >
-              <ExternalLink className="h-3 w-3" />
-            </a>
-          )}
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">
@@ -135,9 +130,9 @@ export function JobsHealthTile({
 
       {/* Jobs list */}
       <div className="divide-y divide-border">
-        <JobRow name="Stats Backfill" job={jobs?.stats_backfill ?? null} />
-        <JobRow name="Odds Sync" job={jobs?.odds_sync ?? null} />
-        <JobRow name="Fastpath" job={jobs?.fastpath ?? null} />
+        <JobRow name="Stats Backfill" job={jobs?.stats_backfill ?? null} onIncidentClick={handleIncidentClick} />
+        <JobRow name="Odds Sync" job={jobs?.odds_sync ?? null} onIncidentClick={handleIncidentClick} />
+        <JobRow name="Fastpath" job={jobs?.fastpath ?? null} onIncidentClick={handleIncidentClick} />
       </div>
 
       {/* Degraded indicator */}

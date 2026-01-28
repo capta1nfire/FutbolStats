@@ -1,9 +1,10 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { ApiBudgetStatus } from "@/lib/types";
 import { OpsFreshness, OpsJobsHealth } from "@/lib/api/ops";
 import { cn } from "@/lib/utils";
-import { Activity, RefreshCw, AlertTriangle, ExternalLink } from "lucide-react";
+import { Activity, RefreshCw, AlertTriangle } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -108,6 +109,7 @@ export function OverallOpsBar({
   className,
   onRefresh,
 }: OverallOpsBarProps) {
+  const router = useRouter();
   const overallStatus = getOverallStatus(statuses);
   const colors = statusColors[overallStatus];
 
@@ -155,10 +157,13 @@ export function OverallOpsBar({
                   <TooltipTrigger asChild>
                     <div
                       className={cn(
-                        "flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium border cursor-default shrink-0",
+                        "flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium border shrink-0",
                         alertColors.bg,
-                        alert.severity === "red" ? "border-red-500/30" : "border-yellow-500/30"
+                        alert.severity === "red" ? "border-red-500/30" : "border-yellow-500/30",
+                        alert.incident_id ? "cursor-pointer hover:opacity-80 transition-opacity" : "cursor-default"
                       )}
+                      onClick={alert.incident_id ? () => router.push(`/incidents?id=${alert.incident_id}`) : undefined}
+                      role={alert.incident_id ? "link" : undefined}
                     >
                       <AlertTriangle className={cn("h-3 w-3", alertColors.text)} />
                       <span className={alertColors.text}>
@@ -176,15 +181,10 @@ export function OverallOpsBar({
                           Last success: {formatMinutes(alert.minutes_since_success)} ago
                         </p>
                       )}
-                      {alert.runbook_url && (
-                        <a
-                          href={alert.runbook_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-primary hover:underline"
-                        >
-                          Runbook <ExternalLink className="h-3 w-3" />
-                        </a>
+                      {alert.incident_id && (
+                        <p className="text-xs text-primary">
+                          Click to view incident details
+                        </p>
                       )}
                     </div>
                   </TooltipContent>
