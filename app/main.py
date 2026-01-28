@@ -8344,9 +8344,10 @@ async def _calculate_jobs_health_summary(session) -> dict:
     alerts_count = 0
 
     # Helper: compute stable incident_id for a job (same hash as _aggregate_incidents)
+    # Uses "scheduler:" prefix to match make_id("scheduler", job_key) in _aggregate_incidents
     def _job_incident_id(job_key: str) -> int:
         import hashlib
-        h = hashlib.md5(f"jobs:{job_key}".encode()).hexdigest()
+        h = hashlib.md5(f"scheduler:{job_key}".encode()).hexdigest()
         return int(h[:8], 16)
 
     # Add incident_id to each job for deep-linking from dashboard
