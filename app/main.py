@@ -427,7 +427,7 @@ async def _calculate_standings_from_results(session, league_id: int, season: int
     stats = {}
     for team_id, team_data in teams.items():
         stats[team_id] = {
-            "team_id": team_data["external_id"],
+            "team_id": team_data["id"],  # Use internal ID, not external_id
             "team_name": team_data["name"],
             "team_logo": team_data["logo_url"],
             "points": 0,
@@ -557,7 +557,7 @@ async def _generate_placeholder_standings(session, league_id: int, season: int) 
     # This reflects the actual roster including promotions/relegations
     new_season_result = await session.execute(
         text("""
-            SELECT DISTINCT t.external_id, t.name, t.logo_url
+            SELECT DISTINCT t.id, t.name, t.logo_url
             FROM teams t
             JOIN matches m ON (t.id = m.home_team_id OR t.id = m.away_team_id)
             WHERE m.league_id = :league_id
@@ -569,7 +569,7 @@ async def _generate_placeholder_standings(session, league_id: int, season: int) 
     )
     for row in new_season_result.fetchall():
         teams_data.append({
-            "external_id": row[0],
+            "id": row[0],  # Use internal ID
             "name": row[1],
             "logo_url": row[2],
         })
@@ -604,7 +604,7 @@ async def _generate_placeholder_standings(session, league_id: int, season: int) 
                         relegated_teams.append(s.get("team_name"))
                         continue  # Skip relegated teams
                 teams_data.append({
-                    "external_id": s.get("team_id"),
+                    "id": s.get("team_id"),  # Note: may be external_id from old data, will be translated later
                     "name": s.get("team_name"),
                     "logo_url": s.get("team_logo"),
                 })
@@ -617,7 +617,7 @@ async def _generate_placeholder_standings(session, league_id: int, season: int) 
     if not teams_data:
         result = await session.execute(
             text("""
-                SELECT DISTINCT t.external_id, t.name, t.logo_url
+                SELECT DISTINCT t.id, t.name, t.logo_url
                 FROM teams t
                 JOIN matches m ON (t.id = m.home_team_id OR t.id = m.away_team_id)
                 WHERE m.league_id = :league_id
@@ -629,7 +629,7 @@ async def _generate_placeholder_standings(session, league_id: int, season: int) 
         )
         for row in result.fetchall():
             teams_data.append({
-                "external_id": row[0],
+                "id": row[0],  # Use internal ID
                 "name": row[1],
                 "logo_url": row[2],
             })
@@ -643,9 +643,9 @@ async def _generate_placeholder_standings(session, league_id: int, season: int) 
     for idx, team in enumerate(teams_data, start=1):
         standings.append({
             "position": idx,
-            "team_id": team["external_id"],
+            "team_id": team["id"],  # Use internal ID
             "team_name": team["name"],
-            "team_logo": team["logo_url"],
+            "team_logo": team.get("logo_url"),
             "points": 0,
             "played": 0,
             "won": 0,
@@ -3001,13 +3001,14 @@ async def get_match_details(
     away_league_points = None
 
     # Only use standings for club teams when cache hit
+    # Note: standings now use internal team_id (teams.id), not external_id
     if home_team and home_team.team_type == "club" and standings:
         try:
             for standing in standings:
-                if home_team and standing.get("team_id") == home_team.external_id:
+                if home_team and standing.get("team_id") == home_team.id:
                     home_position = standing.get("position")
                     home_league_points = standing.get("points")
-                if away_team and standing.get("team_id") == away_team.external_id:
+                if away_team and standing.get("team_id") == away_team.id:
                     away_position = standing.get("position")
                     away_league_points = standing.get("points")
         except Exception as e:
@@ -3728,6 +3729,19 @@ async def get_league_standings(
         standings = await apply_team_overrides_to_standings(
             session, standings, league_id, season
         )
+
+        # Translate external_id (API-Football) to internal id
+        # This ensures team_id in response matches teams.id, not teams.external_id
+        external_ids = [s.get("team_id") for s in standings if s.get("team_id")]
+        if external_ids:
+            result = await session.execute(
+                select(Team.id, Team.external_id).where(Team.external_id.in_(external_ids))
+            )
+            ext_to_internal = {row.external_id: row.id for row in result.all()}
+            for standing in standings:
+                ext_id = standing.get("team_id")
+                if ext_id and ext_id in ext_to_internal:
+                    standing["team_id"] = ext_to_internal[ext_id]
 
         elapsed_ms = int((time.time() - _t_start) * 1000)
         logger.info(f"[PERF] get_standings league_id={league_id} season={season} source={source} time_ms={elapsed_ms}")
