@@ -3801,7 +3801,7 @@ async def run_audit(
 
     except Exception as e:
         logger.error(f"Audit failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Audit failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Audit failed. Check server logs for details.")
 
 
 @app.get("/audit/summary", response_model=AuditSummaryResponse)
@@ -3967,7 +3967,7 @@ async def get_recalibration_status(
         return RecalibrationStatusResponse(**status)
     except Exception as e:
         logger.error(f"Error getting recalibration status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to get recalibration status")
 
 
 @app.get("/recalibration/team-adjustments", response_model=list[TeamAdjustmentResponse])
@@ -3987,7 +3987,7 @@ async def get_team_adjustments(
         return [TeamAdjustmentResponse(**adj) for adj in adjustments]
     except Exception as e:
         logger.error(f"Error getting team adjustments: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to get team adjustments")
 
 
 @app.post("/recalibration/calculate-adjustments")
@@ -4008,7 +4008,7 @@ async def calculate_team_adjustments(
         return result
     except Exception as e:
         logger.error(f"Error calculating adjustments: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to calculate adjustments")
 
 
 @app.get("/recalibration/league-drift")
@@ -4031,7 +4031,7 @@ async def get_league_drift(
         return result
     except Exception as e:
         logger.error(f"Error detecting league drift: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to detect league drift")
 
 
 @app.get("/recalibration/odds-movement")
@@ -4056,7 +4056,7 @@ async def get_odds_movements(
         return result
     except Exception as e:
         logger.error(f"Error checking odds movements: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to check odds movements")
 
 
 @app.get("/recalibration/odds-movement/{match_id}")
@@ -4077,7 +4077,7 @@ async def get_match_odds_movement(
         return result
     except Exception as e:
         logger.error(f"Error checking match odds movement: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to check match odds movement")
 
 
 @app.get("/recalibration/lineup/{match_external_id}")
@@ -4110,7 +4110,7 @@ async def check_match_lineup(
         return result
     except Exception as e:
         logger.error(f"Error checking match lineup: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to check match lineup")
 
 
 @app.get("/matches/{match_id}/lineup")
@@ -4186,7 +4186,7 @@ async def get_model_snapshots(
         ]
     except Exception as e:
         logger.error(f"Error getting snapshots: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to get model snapshots")
 
 
 @app.post("/recalibration/create-baseline")
@@ -4237,7 +4237,7 @@ async def create_baseline_snapshot(
         raise
     except Exception as e:
         logger.error(f"Error creating baseline: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to create baseline snapshot")
 
 
 # ============================================================================
@@ -16639,7 +16639,7 @@ async def predictions_rerun(request: Request, body: PredictionRerunRequest):
 
         except Exception as e:
             logger.error(f"[RERUN] Predictions rerun failed: {e}")
-            raise HTTPException(status_code=500, detail=f"Rerun failed: {str(e)}")
+            raise HTTPException(status_code=500, detail="Rerun failed. Check server logs for details.")
 
 
 def _compute_prediction_stats(preds: dict, label: str) -> dict:
