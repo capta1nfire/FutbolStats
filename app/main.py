@@ -10211,8 +10211,8 @@ _sentry_health_cache: dict = {
 }
 
 # Sentry API thresholds for status determination
-_SENTRY_CRITICAL_THRESHOLD_1H = 5  # new_issues_1h >= 5 → critical
-_SENTRY_WARNING_THRESHOLD_24H = 20  # new_issues_24h >= 20 → warning
+_SENTRY_CRITICAL_THRESHOLD_1H = 3  # active_issues_1h >= 3 → critical
+_SENTRY_WARNING_THRESHOLD_24H = 1  # active_issues_24h >= 1 → warning
 
 
 async def _fetch_sentry_health() -> dict:
