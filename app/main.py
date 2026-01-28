@@ -19636,7 +19636,6 @@ async def _aggregate_incidents(session) -> list[dict]:
     # =========================================================================
     import asyncio
     sentry_task = asyncio.create_task(_fetch_sentry_health())
-    budget_task = asyncio.create_task(_fetch_api_football_budget())
 
     # =========================================================================
     # SOURCE 1: Sentry Issues (from health API) — await task started above
@@ -19823,10 +19822,12 @@ async def _aggregate_incidents(session) -> list[dict]:
         logger.warning(f"Could not check fastpath health: {e}")
 
     # =========================================================================
-    # SOURCE 5: API Budget — await task started above
+    # SOURCE 5: API Budget
+    # NOTE: _fetch_api_football_budget() is not yet implemented as a standalone
+    # async function. This source is a no-op until it is created.
     # =========================================================================
     try:
-        budget_data = await budget_task
+        budget_data = await _fetch_api_football_budget()
         budget_status = budget_data.get("status", "ok")
         # Backend may use "warn" - normalize to "warning"
         if budget_status in ("warn", "warning", "critical"):
