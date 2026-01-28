@@ -19659,6 +19659,12 @@ async def _aggregate_incidents(session) -> list[dict]:
                 else:
                     severity = "info"
 
+                # Sentry Performance Issues have level=info but are real problems
+                _PERF_KEYWORDS = ("consecutive db", "n+1", "slow db", "slow http",
+                                  "large http", "large render", "file io on main")
+                if level == "info" and any(k in title.lower() for k in _PERF_KEYWORDS):
+                    severity = "warning"
+
                 # Determine status based on recency
                 status = "active"
                 if last_seen:
