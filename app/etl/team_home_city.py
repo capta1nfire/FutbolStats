@@ -270,13 +270,29 @@ async def _geocode_venue(
         if not results:
             return None
 
-        # Find best match by country
+        # Country alias mapping (API-Football uses constituent countries)
+        country_aliases = {
+            "england": ["united kingdom", "england"],
+            "scotland": ["united kingdom", "scotland"],
+            "wales": ["united kingdom", "wales"],
+            "northern-ireland": ["united kingdom", "northern ireland"],
+            "usa": ["united states", "usa"],
+            "south-korea": ["south korea", "korea"],
+            "czech-republic": ["czech republic", "czechia"],
+            "north-macedonia": ["north macedonia", "macedonia"],
+            "ivory-coast": ["ivory coast", "côte d'ivoire"],
+        }
         country_lower = country.lower()
+        match_terms = country_aliases.get(country_lower, [country_lower])
+
+        # Find best match by country — NO fallback to avoid wrong-country results
         for r in results:
             r_country = (r.get("country") or "").lower()
             r_admin1 = (r.get("admin1") or "").lower()
-            if (country_lower in r_country or r_country in country_lower
-                    or country_lower in r_admin1):
+            if any(
+                term in r_country or r_country in term or term in r_admin1
+                for term in match_terms
+            ):
                 city = r.get("admin2") or r.get("admin1") or r.get("name")
                 if city:
                     return {
@@ -286,16 +302,10 @@ async def _geocode_venue(
                         "lon": r.get("longitude"),
                     }
 
-        # Fallback: first result
-        r = results[0]
-        city = r.get("admin2") or r.get("admin1") or r.get("name")
-        if city:
-            return {
-                "city": city,
-                "timezone": r.get("timezone"),
-                "lat": r.get("latitude"),
-                "lon": r.get("longitude"),
-            }
+        # No country match found — return None instead of wrong-country result
+        logger.debug(
+            f"[CASCADE] Geocode for '{venue_name}': no result matched country '{country}'"
+        )
 
     except Exception as e:
         logger.warning(f"[CASCADE] Geocode error for '{venue_name}': {e}")
