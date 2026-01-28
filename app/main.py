@@ -19816,6 +19816,57 @@ async def _detect_active_incidents(session) -> list[dict]:
     # =========================================================================
     # TODO: implement _fetch_api_football_budget() to enable this source
 
+    # =========================================================================
+    # SOURCE 6: Team Profile Coverage (data quality)
+    # Excludes nationals from denominator (source='excluded_national')
+    # =========================================================================
+    try:
+        profile_result = await session.execute(text("""
+            WITH active_clubs AS (
+                SELECT DISTINCT t.id
+                FROM teams t
+                JOIN matches m ON t.id = m.home_team_id OR t.id = m.away_team_id
+                WHERE t.team_type = 'club'
+                  AND t.country IS NOT NULL
+                  AND m.date >= NOW() - INTERVAL '30 days'
+            )
+            SELECT
+                COUNT(*) AS total,
+                COUNT(thcp.team_id) AS with_profile
+            FROM active_clubs ac
+            LEFT JOIN team_home_city_profile thcp
+              ON ac.id = thcp.team_id
+              AND thcp.source != 'excluded_national'
+        """))
+        profile_row = profile_result.fetchone()
+        if profile_row and profile_row[0] > 0:
+            total_clubs = profile_row[0]
+            with_profile = profile_row[1]
+            coverage_pct = round(with_profile / total_clubs * 100, 1)
+
+            if coverage_pct < 80:
+                incidents.append({
+                    "id": _make_incident_id("data_quality", "team_profile_coverage"),
+                    "source": "data_quality",
+                    "source_key": "team_profile_coverage",
+                    "severity": "warning",
+                    "type": "data_quality",
+                    "title": f"Team profile coverage {coverage_pct}% (target 80%)"[:80],
+                    "description": (
+                        f"{total_clubs - with_profile} of {total_clubs} active clubs "
+                        f"missing home city profile. Run cascade sync."
+                    )[:200],
+                    "runbook_url": None,
+                    "details": {
+                        "coverage_pct": coverage_pct,
+                        "total_clubs": total_clubs,
+                        "with_profile": with_profile,
+                        "missing": total_clubs - with_profile,
+                    },
+                })
+    except Exception as e:
+        logger.warning(f"Could not check team profile coverage: {e}")
+
     return incidents
 
 

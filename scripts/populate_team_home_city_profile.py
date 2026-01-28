@@ -480,31 +480,123 @@ async def main(
     return stats
 
 
+async def main_cascade(
+    mode: str = "delta",
+    limit: int = 200,
+    llm: bool = False,
+    dry_run: bool = False,
+    verbose: bool = False,
+):
+    """
+    Run the fallback cascade pipeline (new mode).
+
+    Delegates to app.etl.team_home_city.run_cascade_batch().
+    """
+    if verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        raise ValueError("DATABASE_URL environment variable not set")
+
+    if database_url.startswith("postgresql://"):
+        database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+    engine = create_async_engine(database_url, echo=False)
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    try:
+        from app.etl.team_home_city import run_cascade_batch
+
+        async with async_session() as session:
+            metrics = await run_cascade_batch(
+                session,
+                mode=mode,
+                limit=limit,
+                llm_enabled=llm,
+                dry_run=dry_run,
+            )
+
+        logger.info("=" * 60)
+        logger.info("CASCADE RESULTS:")
+        logger.info("=" * 60)
+        for key, value in metrics.items():
+            logger.info(f"  {key}: {value}")
+        logger.info("=" * 60)
+
+        return metrics
+    finally:
+        await engine.dispose()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Populate team_home_city_profile for bio-adaptability"
     )
-    parser.add_argument(
+
+    # Sub-commands: legacy (default) vs cascade
+    subparsers = parser.add_subparsers(dest="command", help="Mode of operation")
+
+    # Legacy mode (default when no subcommand given)
+    legacy_parser = subparsers.add_parser("legacy", help="Original venue_city-only mode")
+    legacy_parser.add_argument(
         "--limit", type=int, default=500, help="Limit teams to process (default: 500)"
     )
-    parser.add_argument(
+    legacy_parser.add_argument(
         "--mock", action="store_true", help="Use mock data for testing"
     )
-    parser.add_argument(
+    legacy_parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be done without making changes"
     )
-    parser.add_argument(
+    legacy_parser.add_argument(
         "--active-only", action="store_true", help="Only process teams with matches in last 30 days"
     )
-    parser.add_argument(
+    legacy_parser.add_argument(
         "-v", "--verbose", action="store_true", help="Verbose logging"
     )
+
+    # Cascade mode (new)
+    cascade_parser = subparsers.add_parser("cascade", help="Fallback cascade pipeline")
+    cascade_parser.add_argument(
+        "--mode", choices=["delta", "full"], default="delta",
+        help="delta=missing+llm_candidates, full=all active clubs (default: delta)"
+    )
+    cascade_parser.add_argument(
+        "--limit", type=int, default=200, help="Max teams per run (default: 200)"
+    )
+    cascade_parser.add_argument(
+        "--llm", action="store_true", help="Enable LLM (Gemini) as fallback step"
+    )
+    cascade_parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be done without persisting"
+    )
+    cascade_parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Verbose logging"
+    )
+
+    # Also support old-style flags at root level for backward compat
+    parser.add_argument("--limit", type=int, default=500, help=argparse.SUPPRESS)
+    parser.add_argument("--mock", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--dry-run", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--active-only", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("-v", "--verbose", action="store_true", help=argparse.SUPPRESS)
+
     args = parser.parse_args()
 
-    asyncio.run(main(
-        use_mock=args.mock,
-        limit=args.limit,
-        verbose=args.verbose,
-        dry_run=args.dry_run,
-        active_only=args.active_only,
-    ))
+    if args.command == "cascade":
+        asyncio.run(main_cascade(
+            mode=args.mode,
+            limit=args.limit,
+            llm=args.llm,
+            dry_run=args.dry_run,
+            verbose=args.verbose,
+        ))
+    else:
+        # Legacy mode (default or explicit "legacy")
+        asyncio.run(main(
+            use_mock=args.mock,
+            limit=args.limit,
+            verbose=args.verbose,
+            dry_run=args.dry_run,
+            active_only=args.active_only,
+        ))

@@ -60,6 +60,9 @@ function mapIncidentType(backendType: string): IncidentType {
       return "high_latency";
     case "api_budget":
       return "api_error";
+    case "data_quality":
+    case "team_profile":
+      return "data_inconsistency";
     default:
       return "other";
   }

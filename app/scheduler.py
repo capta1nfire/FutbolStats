@@ -5408,6 +5408,67 @@ async def sota_venue_geo_expand() -> dict:
         return {"status": "error", "error": str(e), "duration_ms": duration_ms}
 
 
+async def sota_team_home_city_sync() -> dict:
+    """
+    Daily sync of team_home_city_profile via fallback cascade.
+
+    Full mode on Sundays, delta otherwise.
+    Cascade: venue_city -> venue_name geocoding -> LLM candidate -> manual overrides.
+
+    Frequency: Daily 05:00 UTC (avoids ops_incidents_purge at 04:30)
+    Guardrail: TEAM_PROFILE_SYNC_ENABLED env var (default off)
+    """
+    import time as _time
+    from datetime import datetime
+
+    start_time = _time.time()
+    started_at = datetime.utcnow()
+    job_name = "sota_team_home_city_sync"
+
+    # Check if enabled (default off)
+    if os.environ.get("TEAM_PROFILE_SYNC_ENABLED", "false").lower() in ("false", "0", "no"):
+        logger.debug(f"[{job_name}] Disabled via env var (set TEAM_PROFILE_SYNC_ENABLED=true)")
+        return {"status": "disabled"}
+
+    try:
+        from app.etl.team_home_city import run_cascade_batch
+        from app.jobs.tracking import record_job_run as record_job_run_db
+
+        # Full on Sundays (weekday 6), delta otherwise
+        mode = "full" if datetime.utcnow().weekday() == 6 else "delta"
+        llm_enabled = os.environ.get("TEAM_PROFILE_LLM_ENABLED", "false").lower() in ("true", "1")
+
+        async with AsyncSessionLocal() as session:
+            metrics = await run_cascade_batch(
+                session, mode=mode, limit=200, llm_enabled=llm_enabled,
+            )
+
+            duration_ms = (_time.time() - start_time) * 1000
+            status = "ok" if metrics.get("errors", 0) == 0 else "partial"
+            await record_job_run_db(session, job_name, status, started_at, metrics=metrics)
+
+        record_job_run(job=job_name, status=status, duration_ms=duration_ms)
+
+        logger.info(
+            f"[{job_name}] Complete ({mode}): resolved={metrics.get('resolved', 0)}, "
+            f"unresolved={metrics.get('unresolved', 0)}, errors={metrics.get('errors', 0)}"
+        )
+        return {**metrics, "status": status, "duration_ms": duration_ms}
+
+    except Exception as e:
+        duration_ms = (_time.time() - start_time) * 1000
+        logger.error(f"[{job_name}] Failed: {e}", exc_info=True)
+        sentry_capture_exception(e, job_id=job_name)
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        try:
+            from app.jobs.tracking import record_job_run as record_job_run_db
+            async with AsyncSessionLocal() as session:
+                await record_job_run_db(session, job_name, "error", started_at, error=str(e))
+        except Exception:
+            pass
+        return {"status": "error", "error": str(e), "duration_ms": duration_ms}
+
+
 async def sota_sofascore_refs_sync() -> dict:
     """
     Sync Sofascore refs (match_external_refs) for upcoming matches.
@@ -6179,6 +6240,20 @@ def start_scheduler(ml_engine):
         trigger=CronTrigger(hour=3, minute=0),
         id="sota_venue_geo_expand",
         name="SOTA Venue Geo Expand (daily 03:00 UTC)",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=24 * 3600,  # 24h grace for daily job
+    )
+
+    # SOTA: Team Home City Sync - daily at 05:00 UTC
+    # Cascade pipeline: venue_city -> venue_name geocoding -> LLM -> overrides
+    # Guardrail: TEAM_PROFILE_SYNC_ENABLED (default off)
+    scheduler.add_job(
+        sota_team_home_city_sync,
+        trigger=CronTrigger(hour=5, minute=0),
+        id="sota_team_home_city_sync",
+        name="SOTA Team Home City Sync (daily 05:00 UTC)",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
