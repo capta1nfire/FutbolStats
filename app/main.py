@@ -19852,7 +19852,7 @@ async def _upsert_incidents(session, detected: list[dict]) -> None:
                          created_at, last_seen_at, updated_at)
                     VALUES
                         (:id, :source, :source_key, :severity, 'active', :type, :title,
-                         :description, :details::jsonb, :runbook_url, :timeline::jsonb,
+                         :description, CAST(:details AS jsonb), :runbook_url, CAST(:timeline AS jsonb),
                          :now, :now, :now)
                     ON CONFLICT (source, source_key) DO NOTHING
                 """),
@@ -19892,8 +19892,8 @@ async def _upsert_incidents(session, detected: list[dict]) -> None:
                         UPDATE ops_incidents
                         SET severity = :severity, status = 'active',
                             title = :title, description = :description,
-                            details = :details::jsonb, runbook_url = :runbook_url,
-                            timeline = :timeline::jsonb,
+                            details = CAST(:details AS jsonb), runbook_url = :runbook_url,
+                            timeline = CAST(:timeline AS jsonb),
                             last_seen_at = :now, resolved_at = NULL, updated_at = :now
                         WHERE id = :id
                     """),
@@ -19915,7 +19915,7 @@ async def _upsert_incidents(session, detected: list[dict]) -> None:
                         UPDATE ops_incidents
                         SET severity = :severity,
                             title = :title, description = :description,
-                            details = :details::jsonb, runbook_url = :runbook_url,
+                            details = CAST(:details AS jsonb), runbook_url = :runbook_url,
                             last_seen_at = :now, updated_at = :now
                         WHERE id = :id
                     """),
@@ -19976,7 +19976,7 @@ async def _auto_resolve_stale_incidents(session) -> int:
             text("""
                 UPDATE ops_incidents
                 SET status = 'resolved', resolved_at = :now, updated_at = :now,
-                    timeline = :timeline::jsonb
+                    timeline = CAST(:timeline AS jsonb)
                 WHERE id = :id
             """),
             {
@@ -20253,7 +20253,7 @@ async def patch_incident(
             text("""
                 UPDATE ops_incidents
                 SET status = 'acknowledged', acknowledged_at = :now,
-                    updated_at = :now, timeline = :timeline::jsonb
+                    updated_at = :now, timeline = CAST(:timeline AS jsonb)
                 WHERE id = :id
             """),
             {"id": incident_id, "now": now, "timeline": _json.dumps(new_timeline)},
@@ -20263,7 +20263,7 @@ async def patch_incident(
             text("""
                 UPDATE ops_incidents
                 SET status = 'resolved', resolved_at = :now,
-                    updated_at = :now, timeline = :timeline::jsonb
+                    updated_at = :now, timeline = CAST(:timeline AS jsonb)
                 WHERE id = :id
             """),
             {"id": incident_id, "now": now, "timeline": _json.dumps(new_timeline)},
