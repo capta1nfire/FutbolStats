@@ -20036,6 +20036,19 @@ async def _aggregate_incidents(session) -> list[dict]:
         )
         rows = result.mappings().all()
         incidents = []
+
+        def _ts_iso(dt) -> str | None:
+            """Serialize TIMESTAMPTZ to ISO 8601 with Z suffix (no +00:00 duplication)."""
+            if dt is None:
+                return None
+            s = dt.isoformat()
+            # asyncpg returns aware datetimes with +00:00; replace with Z for JS compat
+            if s.endswith("+00:00"):
+                s = s[:-6] + "Z"
+            elif not s.endswith("Z"):
+                s += "Z"
+            return s
+
         for row in rows:
             inc = {
                 "id": row["id"],
@@ -20044,15 +20057,15 @@ async def _aggregate_incidents(session) -> list[dict]:
                 "type": row["type"],
                 "title": row["title"],
                 "description": row["description"] or "",
-                "created_at": row["created_at"].isoformat() + "Z" if row["created_at"] else None,
-                "updated_at": row["updated_at"].isoformat() + "Z" if row["updated_at"] else None,
+                "created_at": _ts_iso(row["created_at"]),
+                "updated_at": _ts_iso(row["updated_at"]),
                 "runbook_url": row["runbook_url"],
                 "details": row["details"],
                 "timeline": row["timeline"] or [],
-                "acknowledged_at": row["acknowledged_at"].isoformat() + "Z" if row["acknowledged_at"] else None,
-                "resolved_at": row["resolved_at"].isoformat() + "Z" if row["resolved_at"] else None,
+                "acknowledged_at": _ts_iso(row["acknowledged_at"]),
+                "resolved_at": _ts_iso(row["resolved_at"]),
                 "source": row["source"],
-                "last_seen_at": row["last_seen_at"].isoformat() + "Z" if row["last_seen_at"] else None,
+                "last_seen_at": _ts_iso(row["last_seen_at"]),
             }
             incidents.append(inc)
         return incidents
