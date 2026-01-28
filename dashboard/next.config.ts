@@ -8,6 +8,11 @@ const nextConfig: NextConfig = {
         hostname: "media.api-sports.io",
         pathname: "/football/teams/**",
       },
+      {
+        protocol: "https",
+        hostname: "upload.wikimedia.org",
+        pathname: "/wikipedia/**",
+      },
     ],
   },
 };
