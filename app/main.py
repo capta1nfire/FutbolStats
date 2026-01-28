@@ -19630,10 +19630,19 @@ async def _aggregate_incidents(session) -> list[dict]:
         return int(h[:8], 16)  # First 8 hex chars → int
 
     # =========================================================================
-    # SOURCE 1: Sentry Issues (from health API)
+    # OPTIMIZATION: Launch HTTP-only sources as tasks (no DB session needed)
+    # so they run concurrently with sequential DB queries below.
+    # IMPORTANT: Do NOT parallelize DB queries on the same AsyncSession.
+    # =========================================================================
+    import asyncio
+    sentry_task = asyncio.create_task(_fetch_sentry_health())
+    budget_task = asyncio.create_task(_fetch_api_football_budget())
+
+    # =========================================================================
+    # SOURCE 1: Sentry Issues (from health API) — await task started above
     # =========================================================================
     try:
-        sentry_data = await _fetch_sentry_health()
+        sentry_data = await sentry_task
         if sentry_data.get("status") != "degraded":
             top_issues = sentry_data.get("top_issues", [])
             for issue in top_issues[:10]:  # Limit to top 10
@@ -19772,7 +19781,7 @@ async def _aggregate_incidents(session) -> list[dict]:
                     details["backlog_ready"] = backlog_ready
 
                 incidents.append({
-                    "id": make_id("jobs", job_name),
+                    "id": make_id("scheduler", job_name),
                     "severity": severity,
                     "status": "active",
                     "type": "scheduler",
@@ -19814,10 +19823,10 @@ async def _aggregate_incidents(session) -> list[dict]:
         logger.warning(f"Could not check fastpath health: {e}")
 
     # =========================================================================
-    # SOURCE 5: API Budget
+    # SOURCE 5: API Budget — await task started above
     # =========================================================================
     try:
-        budget_data = await _fetch_api_football_budget()
+        budget_data = await budget_task
         budget_status = budget_data.get("status", "ok")
         # Backend may use "warn" - normalize to "warning"
         if budget_status in ("warn", "warning", "critical"):
