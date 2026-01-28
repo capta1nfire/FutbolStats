@@ -137,6 +137,11 @@ export function adaptIncident(raw: unknown): Incident | null {
     };
   }
 
+  // Optional: details (operational context dict)
+  if (isObject(raw.details)) {
+    result.details = raw.details as Record<string, unknown>;
+  }
+
   return result;
 }
 

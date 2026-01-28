@@ -45,6 +45,7 @@ export interface Incident {
   timeline?: TimelineEvent[];
   acknowledgedAt?: string; // ISO timestamp
   resolvedAt?: string; // ISO timestamp
+  details?: Record<string, unknown>; // Operational context from backend
 }
 
 export interface IncidentFilters {

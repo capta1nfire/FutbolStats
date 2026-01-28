@@ -19713,16 +19713,62 @@ async def _aggregate_incidents(session) -> list[dict]:
                     f"{int(mins_since/60)}h" if mins_since else "unknown"
                 )
 
+                # Build enriched description with operational context
+                job_labels = {
+                    "stats_backfill": "Stats Backfill",
+                    "odds_sync": "Odds Sync",
+                    "fastpath": "Fast-Path Narratives",
+                }
+                expected_intervals = {
+                    "stats_backfill": 120,
+                    "odds_sync": 720,
+                    "fastpath": 5,
+                }
+                job_label = job_labels.get(job_name, job_name)
+                expected_min = expected_intervals.get(job_name)
+                ft_pending = job_data.get("ft_pending")
+                backlog_ready = job_data.get("backlog_ready")
+                last_success_at = job_data.get("last_success_at")
+                data_source = job_data.get("source", "unknown")
+
+                # Enriched description
+                desc_parts = [f"Job '{job_label}' last succeeded {time_str} ago (status: {job_status})."]
+                if expected_min:
+                    desc_parts.append(f"Expected interval: {expected_min}min.")
+                if ft_pending is not None:
+                    desc_parts.append(f"FT pending stats: {ft_pending}.")
+                if backlog_ready is not None:
+                    desc_parts.append(f"Backlog ready: {backlog_ready}.")
+                desc_parts.append(f"Source: {data_source}.")
+                enriched_description = " ".join(desc_parts)
+
+                # Details dict for Copy JSON
+                details = {
+                    "job_key": job_name,
+                    "job_label": job_label,
+                    "status": job_status,
+                    "minutes_since_success": mins_since,
+                    "expected_interval_min": expected_min,
+                    "last_success_at": last_success_at,
+                    "source": data_source,
+                    "runbook_url": help_url,
+                }
+                if ft_pending is not None:
+                    details["ft_pending"] = ft_pending
+                if backlog_ready is not None:
+                    details["backlog_ready"] = backlog_ready
+
                 incidents.append({
                     "id": make_id("jobs", job_name),
                     "severity": severity,
                     "status": "active",
                     "type": "scheduler",
-                    "title": f"Job '{job_name}' unhealthy"[:80],
-                    "description": f"Last success: {time_str} ago. Status: {job_status}."[:200],
+                    "title": f"Job '{job_label}' unhealthy"[:80],
+                    "description": enriched_description[:300],
                     "created_at": now_iso,
                     "updated_at": now_iso,
                     "runbook_url": help_url,
+                    "details": details,
                 })
     except Exception as e:
         logger.warning(f"Could not check jobs health: {e}")

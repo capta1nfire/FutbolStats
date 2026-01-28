@@ -24,6 +24,8 @@ import {
   BookOpen,
   History,
   Info,
+  Copy,
+  Check,
 } from "lucide-react";
 
 /** Tab definitions for incident detail drawer */
@@ -57,6 +59,36 @@ function IncidentTabContent({
   runbookSteps: Array<{ id: string; text: string; done: boolean }>;
   setRunbookSteps: React.Dispatch<React.SetStateAction<Array<{ id: string; text: string; done: boolean }>>>;
 }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyJson = async () => {
+    const payload = {
+      id: incident.id,
+      type: incident.type,
+      severity: incident.severity,
+      status: localStatus,
+      title: incident.title,
+      description: incident.description,
+      createdAt: incident.createdAt,
+      ...(incident.details ? { details: incident.details } : {}),
+    };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback for older browsers
+      const text = JSON.stringify(payload, null, 2);
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
   const createdAt = new Date(incident.createdAt);
   const formattedCreated = createdAt.toLocaleString("en-US", {
     weekday: "short",
@@ -136,6 +168,51 @@ function IncidentTabContent({
               <span className="text-muted-foreground">Incident ID:</span>{" "}
               <span className="text-foreground font-mono">{incident.id}</span>
             </div>
+          </div>
+
+          {/* Operational Details */}
+          {incident.details && Object.keys(incident.details).length > 0 && (
+            <div className="space-y-2 pt-3 border-t border-border">
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Operational Details
+              </span>
+              <div className="bg-background rounded-lg p-3 space-y-1.5">
+                {Object.entries(incident.details).map(([key, value]) => (
+                  <div key={key} className="flex justify-between text-xs gap-2">
+                    <span className="text-muted-foreground font-mono shrink-0">
+                      {key}
+                    </span>
+                    <span className="text-foreground font-mono text-right truncate">
+                      {value === null || value === undefined
+                        ? "—"
+                        : String(value)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Copy JSON */}
+          <div className="pt-3 border-t border-border">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCopyJson}
+              className="w-full"
+            >
+              {copied ? (
+                <>
+                  <Check className="h-4 w-4 mr-2 text-green-500" />
+                  Copied!
+                </>
+              ) : (
+                <>
+                  <Copy className="h-4 w-4 mr-2" />
+                  Copy JSON
+                </>
+              )}
+            </Button>
           </div>
 
           {/* Action buttons */}
