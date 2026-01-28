@@ -8,6 +8,7 @@ import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
 import { IconTabs } from "@/components/ui/icon-tabs";
 import { getCountryIsoCode } from "@/lib/utils/country-flags";
+import { toast } from "sonner";
 import {
   RefreshCw,
   AlertTriangle,
@@ -346,11 +347,28 @@ export function TeamDrawer({ teamId, open, onClose }: TeamDrawerProps) {
     );
   }
 
+  const handleCopyId = () => {
+    if (teamId) {
+      navigator.clipboard.writeText(String(teamId));
+      toast.success("Team ID copied");
+    }
+  };
+
   return (
     <DetailDrawer
       open={open}
       onClose={onClose}
-      title={`Team ${teamId || ""}`}
+      title={
+        <span>
+          Team{" "}
+          <button
+            onClick={handleCopyId}
+            className="text-primary hover:opacity-80 transition-opacity"
+          >
+            {teamId}
+          </button>
+        </span>
+      }
       variant="overlay"
     >
       {content}

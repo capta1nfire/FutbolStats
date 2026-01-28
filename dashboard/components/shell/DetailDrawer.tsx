@@ -11,7 +11,7 @@ export type DrawerVariant = "inline" | "overlay";
 interface DetailDrawerProps {
   open: boolean;
   onClose: () => void;
-  title?: string;
+  title?: ReactNode;
   children?: ReactNode;
   className?: string;
   /** Ref to element that should receive focus when drawer closes */
@@ -118,7 +118,7 @@ export function DetailDrawer({
           className
         )}
         role="complementary"
-        aria-label={title || "Details panel"}
+        aria-label="Details panel"
       >
       {/* Header */}
       <div className="h-14 flex items-center px-4 shrink-0 relative">
