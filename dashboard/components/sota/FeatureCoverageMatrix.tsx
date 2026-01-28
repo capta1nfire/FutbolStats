@@ -86,50 +86,48 @@ function CoverageCell({
   const totalLabel = isProd ? "Total (FT):" : "Total (TITAN):";
 
   return (
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <div
-            className={cn(
-              "text-center text-sm tabular-nums",
-              onCellClick ? "cursor-pointer hover:bg-emerald-500/15 rounded px-1.5 py-0.5" : "cursor-default",
-              getCoverageColor(pct)
-            )}
-            role={onCellClick ? "button" : undefined}
-            tabIndex={onCellClick ? 0 : undefined}
-            onClick={() => onCellClick?.(featureKey, leagueId)}
-            onKeyDown={
-              onCellClick
-                ? (e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      onCellClick(featureKey, leagueId);
-                    }
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div
+          className={cn(
+            "text-center text-sm tabular-nums",
+            onCellClick ? "cursor-pointer hover:bg-emerald-500/15 rounded px-1.5 py-0.5" : "cursor-default",
+            getCoverageColor(pct)
+          )}
+          role={onCellClick ? "button" : undefined}
+          tabIndex={onCellClick ? 0 : undefined}
+          onClick={() => onCellClick?.(featureKey, leagueId)}
+          onKeyDown={
+            onCellClick
+              ? (e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onCellClick(featureKey, leagueId);
                   }
-                : undefined
-            }
-          >
-            {formatPct(pct)}
+                }
+              : undefined
+          }
+        >
+          {formatPct(pct)}
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="text-xs">
+        <div className="space-y-1">
+          <div className="font-medium">{featureKey}</div>
+          <div className="text-muted-foreground">
+            {leagueName} · {windowKey}
           </div>
-        </TooltipTrigger>
-        <TooltipContent side="top" className="text-xs">
-          <div className="space-y-1">
-            <div className="font-medium">{featureKey}</div>
-            <div className="text-muted-foreground">
-              {leagueName} · {windowKey}
-            </div>
-            <div className="grid grid-cols-2 gap-x-3 text-muted-foreground">
-              <span>Coverage:</span>
-              <span className="text-foreground">{formatPct(pct)}</span>
-              <span>Non-null:</span>
-              <span className="text-foreground">{n.toLocaleString()}</span>
-              <span>{totalLabel}</span>
-              <span className="text-foreground">{matchesTotal.toLocaleString()}</span>
-            </div>
+          <div className="grid grid-cols-2 gap-x-3 text-muted-foreground">
+            <span>Coverage:</span>
+            <span className="text-foreground">{formatPct(pct)}</span>
+            <span>Non-null:</span>
+            <span className="text-foreground">{n.toLocaleString()}</span>
+            <span>{totalLabel}</span>
+            <span className="text-foreground">{matchesTotal.toLocaleString()}</span>
           </div>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+        </div>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -323,6 +321,7 @@ export function FeatureCoverageMatrix({
   const columnsPerLeague = windows.length + 2; // windows + Total + N
 
   return (
+    <TooltipProvider delayDuration={150}>
     <div className={cn("flex-1 flex flex-col overflow-hidden", className)}>
       {/* Single scroll container for both header and body - syncs horizontal scroll */}
       <div className="flex-1 overflow-auto">
@@ -520,5 +519,6 @@ export function FeatureCoverageMatrix({
       </div>
 
     </div>
+    </TooltipProvider>
   );
 }

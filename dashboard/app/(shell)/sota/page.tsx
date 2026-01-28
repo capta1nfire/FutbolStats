@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useCallback, useMemo } from "react";
+import { Suspense, useState, useCallback, useMemo, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   useDataQualityChecksApi,
@@ -73,16 +73,19 @@ function SotaPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const rawIdParam = searchParams.get("id");
+  const rawCellParam = searchParams.get("cell");
+
   // Parse URL state - ID is string for backend compatibility
   const selectedCheckId = useMemo(
-    () => parseStringId(searchParams.get("id")),
-    [searchParams]
+    () => parseStringId(rawIdParam),
+    [rawIdParam]
   );
 
   // Parse URL state - cell selection for feature coverage detail drawer
   const cellSelection = useMemo(
-    () => parseCellParam(searchParams.get("cell")),
-    [searchParams]
+    () => parseCellParam(rawCellParam),
+    [rawCellParam]
   );
   const cellDrawerOpen = cellSelection !== null;
 
@@ -173,13 +176,60 @@ function SotaPageContent() {
     (overrides: { id?: string | null; cell?: string | null }) => {
       const params = buildSearchParams({
         id: overrides.id === undefined ? selectedCheckId : overrides.id,
-        cell: overrides.cell === undefined ? searchParams.get("cell") : overrides.cell,
+        cell: overrides.cell === undefined ? rawCellParam : overrides.cell,
       });
       const search = params.toString();
       return `${BASE_PATH}${search ? `?${search}` : ""}`;
     },
-    [selectedCheckId, searchParams]
+    [selectedCheckId, rawCellParam]
   );
+
+  // P1: Make URL state truly shareable by syncing the persisted view (localStorage) with query params.
+  // - ?id=... should force Enrichment view
+  // - ?cell=... should force Features view
+  // - if both exist, prefer ?id=... and clear ?cell=... to avoid ambiguous UI state
+  useEffect(() => {
+    const hasId = selectedCheckId !== null;
+    const hasCell = cellSelection !== null;
+
+    if (!hasId && !hasCell) return;
+
+    if (hasId && hasCell) {
+      if (activeView !== "enrichment") setActiveView("enrichment");
+      if (rawCellParam) {
+        router.replace(buildUrl({ cell: null }), { scroll: false });
+      }
+      setCustomizeColumnsOpen(false);
+      return;
+    }
+
+    if (hasId && activeView !== "enrichment") {
+      setActiveView("enrichment");
+      if (rawCellParam) {
+        router.replace(buildUrl({ cell: null }), { scroll: false });
+      }
+      setCustomizeColumnsOpen(false);
+      return;
+    }
+
+    if (hasCell && activeView !== "features") {
+      setActiveView("features");
+      if (rawIdParam) {
+        router.replace(buildUrl({ id: null }), { scroll: false });
+      }
+      setCustomizeColumnsOpen(false);
+    }
+  }, [
+    activeView,
+    buildUrl,
+    cellSelection,
+    rawCellParam,
+    rawIdParam,
+    router,
+    selectedCheckId,
+    setActiveView,
+    setCustomizeColumnsOpen,
+  ]);
 
   // Handle row click - update URL with router.replace (no history entry)
   const handleRowClick = useCallback(

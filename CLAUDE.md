@@ -5,8 +5,9 @@ Sistema de predicciones de fútbol con ML y narrativas LLM.
 ## Roles del Proyecto
 - **David**: Owner/Usuario del producto
 - **ABE** (Auditor Backend): Director técnico del backend. No escribe código.
+- **ATI** (Auditor TITAN): Director técnico de TITAN Omniscience. No escribe código. Audita y dirige temas de TITAN y temas backend relacionados/inferidos a TITAN (ingesta, scraping, matching, aliases, PIT, feature_matrix).
 - **ADB** (Auditor Dashboard): Director técnico del dashboard. No escribe código.
-- **Master**: Codificador backend - ejecuta código, deploys, debugging según instrucciones de ABE
+- **Master**: Codificador backend - ejecuta código, deploys, debugging según instrucciones de ABE **y/o ATI** (cuando el tema es TITAN o relacionado)
 - **Claude**: Codificador dashboard - implementa UI según instrucciones de ADB
 
 > **Para auditores nuevos**: Ver `docs/AUDITOR_ONBOARDING.md` para contexto completo, roles, flujo de comunicación y estado del proyecto.

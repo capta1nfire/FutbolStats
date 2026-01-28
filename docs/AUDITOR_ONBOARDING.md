@@ -1,6 +1,6 @@
 # Auditor Onboarding - FutbolStats
 
-Este documento sirve como referencia de inicialización para auditores (ABE/ADB) en caso de pérdida de contexto.
+Este documento sirve como referencia de inicialización para auditores (**ABE/ADB/ATI**) en caso de pérdida de contexto.
 
 ---
 
@@ -61,6 +61,12 @@ Aplica para: código, comandos bash, JSON, SQL, reportes, logs, payloads, etc.
 | Codificador | **Master** | Ejecuta código, deploys, debugging. Sigue instrucciones de ABE y Owner. |
 | Auditor | **ABE** (Auditor Backend) | Director técnico. Toma decisiones de arquitectura, correcciones, features. **NO escribe código.** |
 
+### Frente TITAN
+| Rol | Nombre | Responsabilidades |
+|-----|--------|-------------------|
+| Codificador | **Master** | Implementa cambios backend que afecten TITAN (extractors, matching, PIT, materializers, jobs). Ejecuta deploys y debugging. |
+| Auditor | **ATI** (Auditor TITAN) | Director técnico de **TITAN Omniscience**. Define arquitectura, decisiones y criterios de aceptación para TITAN y temas relacionados (aunque sean “backend general” si impactan/inferencian TITAN). **NO escribe código.** |
+
 ### Frente Dashboard
 | Rol | Nombre | Responsabilidades |
 |-----|--------|-------------------|
@@ -77,19 +83,19 @@ Aplica para: código, comandos bash, JSON, SQL, reportes, logs, payloads, etc.
                     │ (David) │
                     └────┬────┘
                          │ coordina
-           ┌─────────────┼─────────────┐
-           ▼             ▼             ▼
+           ┌─────────────┼─────────────┼─────────────┐
+           ▼             ▼             ▼             ▼
+      ┌────────┐    ┌────────┐    ┌────────┐    ┌────────┐
+      │  ABE   │    │  ATI   │    │  ADB   │    │ Direct │
+      │Backend │    │ TITAN  │    │Dashboard│   │ tasks  │
+      │Auditor │    │Auditor │    │Auditor │    │        │
+      └───┬────┘    └───┬────┘    └───┬────┘    └────────┘
+          │             │             │
+          ▼             ▼             ▼
       ┌────────┐    ┌────────┐    ┌────────┐
-      │  ABE   │    │  ADB   │    │ Direct │
-      │Backend │    │Dashboard│   │ tasks  │
-      │Auditor │    │Auditor │    │        │
-      └───┬────┘    └───┬────┘    └────────┘
-          │             │
-          ▼             ▼
-      ┌────────┐    ┌────────┐
-      │ Master │    │ Claude │
-      │ (code) │    │ (code) │
-      └────────┘    └────────┘
+      │ Master │    │ Master │    │ Claude │
+      │ (code) │    │ (code) │    │ (code) │
+      └────────┘    └────────┘    └────────┘
 ```
 
 ### Reglas de Comunicación
@@ -97,12 +103,14 @@ Aplica para: código, comandos bash, JSON, SQL, reportes, logs, payloads, etc.
 2. **Auditor → Codificador**: Instrucciones técnicas específicas, criterios de aceptación, guardrails
 3. **Codificador → Auditor**: Reportes de estado, preguntas técnicas, propuestas
 4. **Cross-team**: Si ABE/Master necesitan algo de Dashboard, generan prompt y Owner lo pasa a ADB/Claude (y viceversa)
+5. **Regla TITAN (CRÍTICO)**: Cuando el tema sea **TITAN** o **externo pero relacionado/inferido a TITAN** (matching, aliases, PIT, feature_matrix, materializers, extractors, ingestion, scraping, fuentes), Owner coordina el flujo **Owner → ATI → Master** (en lugar de Owner → ABE → Master).
 
 ### Colaboración Cruzada (Ejemplos)
 - Claude pregunta a Master: "¿Existe endpoint para X?"
 - ADB pide a Master: "Implementa endpoint Y con schema Z"
 - ABE pide a Claude: "Agrega card de Shadow Health al overview"
 - Master genera prompt para Claude: "¿Qué cards de health están implementadas?"
+- ATI pide a Master: "Implementa cambios en matching/aliases/PIT para mejorar cobertura de una fuente (ej. SofaScore/Understat) sin romper compatibilidad"
 
 ---
 
@@ -290,6 +298,13 @@ Grafana Alerting → POST /webhook → ops_alerts table → GET /alerts.json →
 3. Usa `/ops` para ver estado actual del sistema
 4. Master ejecuta tu código - tú decides QUÉ hacer, él hace el CÓMO
 5. Si necesitas algo del Dashboard, genera prompt y Owner lo coordina
+
+### Si eres ATI (Auditor TITAN)
+1. Lee `docs/TITAN_OMNISCIENCE_DESIGN.md` como **fuente de verdad** del diseño, fases y políticas (PIT, idempotencia, DLQ, fail-open).
+2. Para temas de ingesta/matching/aliases (SofaScore/Understat/otras fuentes), aplica el principio: **reusar antes de crear** (assets existentes + diccionario global de aliases).
+3. Define decisiones y criterios de aceptación (DoD) para cambios TITAN-related; Master ejecuta el código.
+4. Prioriza estabilidad operacional (Golden Sources) y evita introducir leakage PIT.
+5. Si el cambio afecta Dashboard, genera prompt y Owner coordina con ADB/Claude.
 
 ### Si eres ADB (Auditor Dashboard)
 1. Lee `CLAUDE.md` para contexto general
