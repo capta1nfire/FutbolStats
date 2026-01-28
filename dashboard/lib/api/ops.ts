@@ -613,6 +613,7 @@ function parseJobTopAlert(raw: unknown): OpsJobTopAlert | undefined {
     reason,
     minutes_since_success: typeof raw.minutes_since_success === "number" ? raw.minutes_since_success : null,
     runbook_url: typeof raw.runbook_url === "string" ? raw.runbook_url : undefined,
+    incident_id: typeof raw.incident_id === "number" ? raw.incident_id : undefined,
   };
 }
 
