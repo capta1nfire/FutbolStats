@@ -5,7 +5,7 @@ from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import JSON, Column, LargeBinary, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -1420,3 +1420,19 @@ class MatchSofascoreLineup(SQLModel, table=True):
 
     # Point-in-time tracking
     captured_at: datetime = Field(default_factory=datetime.utcnow, description="When snapshot was captured (UTC)")
+
+
+class OpsSetting(SQLModel, table=True):
+    """
+    Dynamic configuration settings for ops dashboard.
+
+    Key-value store with JSONB values for flexible configuration.
+    Used for IA Features settings, feature flags, and other runtime config.
+    """
+
+    __tablename__ = "ops_settings"
+
+    key: str = Field(max_length=100, primary_key=True, description="Setting identifier (e.g., 'ia_features')")
+    value: dict = Field(sa_column=Column(JSONB, nullable=False), description="Configuration as JSON object")
+    updated_at: datetime = Field(default_factory=datetime.utcnow, description="Last update timestamp (UTC)")
+    updated_by: str = Field(max_length=50, default="system", description="Who updated (user email or 'system')")

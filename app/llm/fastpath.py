@@ -21,7 +21,7 @@ from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.config import get_settings
+from app.config import get_settings, get_ia_features_config, should_generate_narratives
 from app.models import Match, Prediction, PostMatchAudit, PredictionOutcome, Team
 from app.teams.overrides import preload_team_overrides, resolve_team_display
 from app.llm.narrative_generator import (
@@ -216,6 +216,36 @@ class FastPathService:
         Returns:
             Dict with metrics: selected, refreshed, ready, enqueued, completed, errors
         """
+        # Check dynamic config: should we generate narratives?
+        try:
+            ia_config = await get_ia_features_config(self.session)
+            if not should_generate_narratives(ia_config, self.settings):
+                logger.info("[FASTPATH] Narratives disabled via ops_settings, skipping tick")
+                return {
+                    "selected": 0,
+                    "refreshed": 0,
+                    "stats_ready": 0,
+                    "enqueued": 0,
+                    "completed": 0,
+                    "errors": 0,
+                    "skipped": True,
+                    "skip_reason": "narratives_disabled",
+                }
+        except Exception as e:
+            logger.warning(f"[FASTPATH] Failed to read ops_settings, using env fallback: {e}")
+            # Fallback to env check only
+            if not self.settings.FASTPATH_ENABLED:
+                return {
+                    "selected": 0,
+                    "refreshed": 0,
+                    "stats_ready": 0,
+                    "enqueued": 0,
+                    "completed": 0,
+                    "errors": 0,
+                    "skipped": True,
+                    "skip_reason": "fastpath_disabled_env",
+                }
+
         now = datetime.utcnow()
         lookback = now - timedelta(minutes=self.settings.FASTPATH_LOOKBACK_MINUTES)
 

@@ -14,6 +14,7 @@ import {
   Cpu,
   ToggleLeft,
   Users,
+  Brain,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -30,6 +31,7 @@ const sectionIcons: Record<SettingsSection, React.ReactNode> = {
   model_versions: <Cpu className="h-4 w-4" strokeWidth={1.5} />,
   feature_flags: <ToggleLeft className="h-4 w-4" strokeWidth={1.5} />,
   users: <Users className="h-4 w-4" strokeWidth={1.5} />,
+  ia_features: <Brain className="h-4 w-4" strokeWidth={1.5} />,
 };
 
 export function SettingsNav({

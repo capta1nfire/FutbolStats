@@ -268,3 +268,123 @@ export function extractSettingsMetadata(response: unknown): SettingsMetadata {
     cacheAgeSeconds: typeof response.cache_age_seconds === "number" ? response.cache_age_seconds : 0,
   };
 }
+
+// ============================================================================
+// IA Features Types & Parser
+// ============================================================================
+
+/**
+ * LLM Model info from backend catalog
+ */
+export interface LlmModelInfo {
+  id: string;
+  displayName: string;
+  provider: string;
+  inputPrice: number; // per 1M tokens
+  outputPrice: number; // per 1M tokens
+  maxTokens: number;
+}
+
+/**
+ * IA Features configuration
+ */
+export interface IaFeaturesConfig {
+  narrativesEnabled: boolean | null; // null = inherit from env
+  narrativeFeedbackEnabled: boolean; // Read-only placeholder
+  primaryModel: string;
+  temperature: number;
+  maxTokens: number;
+  effectiveEnabled: boolean; // Resolved value after inheritance
+  envFastpathEnabled: boolean; // For "Inherit" display
+  availableModels: LlmModelInfo[];
+}
+
+/**
+ * IA Features response
+ */
+export interface IaFeaturesResponse extends SettingsMetadata {
+  config: IaFeaturesConfig;
+}
+
+/**
+ * Parse IA Features from API response
+ */
+export function parseIaFeatures(response: unknown): IaFeaturesResponse | null {
+  if (!isObject(response)) return null;
+
+  const data = response.data;
+  if (!isObject(data)) return null;
+
+  // Parse narratives_enabled (can be null, true, or false)
+  const narrativesEnabled =
+    data.narratives_enabled === null
+      ? null
+      : typeof data.narratives_enabled === "boolean"
+        ? data.narratives_enabled
+        : null;
+
+  const narrativeFeedbackEnabled =
+    typeof data.narrative_feedback_enabled === "boolean"
+      ? data.narrative_feedback_enabled
+      : false;
+
+  const primaryModel =
+    typeof data.primary_model === "string" ? data.primary_model : "gemini-2.5-flash-lite";
+
+  const temperature =
+    typeof data.temperature === "number" ? data.temperature : 0.7;
+
+  const maxTokens =
+    typeof data.max_tokens === "number" ? data.max_tokens : 4096;
+
+  const effectiveEnabled =
+    typeof data.effective_enabled === "boolean" ? data.effective_enabled : false;
+
+  const envFastpathEnabled =
+    typeof data.env_fastpath_enabled === "boolean" ? data.env_fastpath_enabled : false;
+
+  // Parse available models
+  const availableModels: LlmModelInfo[] = [];
+  if (Array.isArray(data.available_models)) {
+    for (const model of data.available_models) {
+      if (!isObject(model)) continue;
+      const id = typeof model.id === "string" ? model.id : "";
+      if (!id) continue;
+
+      availableModels.push({
+        id,
+        displayName: typeof model.display_name === "string" ? model.display_name : id,
+        provider: typeof model.provider === "string" ? model.provider : "unknown",
+        inputPrice: typeof model.input_price === "number" ? model.input_price : 0,
+        outputPrice: typeof model.output_price === "number" ? model.output_price : 0,
+        maxTokens: typeof model.max_tokens === "number" ? model.max_tokens : 4096,
+      });
+    }
+  }
+
+  const metadata = extractSettingsMetadata(response);
+
+  return {
+    ...metadata,
+    config: {
+      narrativesEnabled,
+      narrativeFeedbackEnabled,
+      primaryModel,
+      temperature,
+      maxTokens,
+      effectiveEnabled,
+      envFastpathEnabled,
+      availableModels,
+    },
+  };
+}
+
+/**
+ * IA Features update payload
+ */
+export interface IaFeaturesUpdatePayload {
+  narratives_enabled?: boolean | null;
+  primary_model?: string;
+  temperature?: number;
+  max_tokens?: number;
+}

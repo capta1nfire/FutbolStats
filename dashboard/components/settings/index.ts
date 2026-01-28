@@ -9,3 +9,4 @@ export { ApiKeysSection } from "./ApiKeysSection";
 export { ModelVersionsSection } from "./ModelVersionsSection";
 export { FeatureFlagsSection } from "./FeatureFlagsSection";
 export { UsersSection } from "./UsersSection";
+export { IaFeaturesSection } from "./IaFeaturesSection";

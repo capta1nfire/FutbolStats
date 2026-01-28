@@ -168,3 +168,109 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings()
+
+
+# ============================================================================
+# LLM Models Catalog (Single Source of Truth for pricing and capabilities)
+# ============================================================================
+
+LLM_MODELS: dict = {
+    "gemini-2.5-flash-lite": {
+        "provider": "gemini",
+        "display_name": "Gemini 2.5 Flash-Lite",
+        "model_id": "gemini-2.5-flash-lite",
+        "input_price_per_1m": 0.10,
+        "output_price_per_1m": 0.40,
+        "max_tokens": 8192,
+        "default_temperature": 0.7,
+    },
+    "gemini-2.5-flash": {
+        "provider": "gemini",
+        "display_name": "Gemini 2.5 Flash",
+        "model_id": "gemini-2.5-flash",
+        "input_price_per_1m": 0.30,
+        "output_price_per_1m": 2.50,
+        "max_tokens": 8192,
+        "default_temperature": 0.7,
+    },
+    "gemini-2.0-flash": {
+        "provider": "gemini",
+        "display_name": "Gemini 2.0 Flash",
+        "model_id": "gemini-2.0-flash",
+        "input_price_per_1m": 0.10,
+        "output_price_per_1m": 0.40,
+        "max_tokens": 8192,
+        "default_temperature": 0.7,
+    },
+    "kimi-k2.5": {
+        "provider": "moonshot",
+        "display_name": "Kimi K2.5",
+        "model_id": "kimi-k2.5",
+        "input_price_per_1m": 0.60,
+        "output_price_per_1m": 2.50,
+        "max_tokens": 131072,
+        "default_temperature": 0.6,
+    },
+    "qwen-vllm": {
+        "provider": "runpod",
+        "display_name": "Qwen vLLM (RunPod)",
+        "model_id": "qwen-vllm",
+        "input_price_per_1m": 0.00,  # RunPod is per-second, not per-token
+        "output_price_per_1m": 0.00,
+        "max_tokens": 4096,
+        "default_temperature": 0.7,
+    },
+}
+
+
+async def get_ia_features_config(session) -> dict:
+    """
+    Get IA Features configuration from ops_settings.
+
+    Priority: ops_settings > env vars > defaults
+
+    Returns dict with:
+      - narratives_enabled: bool | None (None = inherit from env)
+      - narrative_feedback_enabled: bool
+      - primary_model: str (model key from LLM_MODELS)
+      - temperature: float
+      - max_tokens: int
+    """
+    from sqlalchemy import text
+
+    # Defaults (fallback if no DB entry)
+    defaults = {
+        "narratives_enabled": None,  # Will inherit from FASTPATH_ENABLED
+        "narrative_feedback_enabled": False,
+        "primary_model": "gemini-2.5-flash-lite",
+        "temperature": 0.7,
+        "max_tokens": 4096,
+    }
+
+    try:
+        result = await session.execute(
+            text("SELECT value FROM ops_settings WHERE key = 'ia_features'")
+        )
+        row = result.fetchone()
+        if row and row[0]:
+            config = row[0]
+            # Merge with defaults (in case new fields added)
+            return {**defaults, **config}
+    except Exception:
+        pass
+
+    return defaults
+
+
+def should_generate_narratives(ia_config: dict, env_settings: Settings) -> bool:
+    """
+    Determine if narratives should be generated.
+
+    3-state logic:
+      - ia_config['narratives_enabled'] = True  → always generate (override)
+      - ia_config['narratives_enabled'] = False → never generate (override)
+      - ia_config['narratives_enabled'] = None  → inherit from env (FASTPATH_ENABLED)
+    """
+    if ia_config.get("narratives_enabled") is None:
+        return env_settings.FASTPATH_ENABLED
+    return ia_config.get("narratives_enabled", False)

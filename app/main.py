@@ -14742,6 +14742,190 @@ async def dashboard_settings_model_versions(request: Request):
 
 
 # =============================================================================
+# IA FEATURES SETTINGS (dynamic LLM configuration)
+# =============================================================================
+
+_ia_features_cache: dict = {"data": None, "timestamp": 0, "ttl": 30}
+
+
+@app.get("/dashboard/settings/ia-features.json")
+async def dashboard_settings_ia_features_get(request: Request):
+    """
+    Get IA Features configuration.
+
+    Auth: X-Dashboard-Token required.
+    TTL: 30s cache (short for config changes).
+
+    Returns:
+      - narratives_enabled: bool | null (null = inherit from env)
+      - narrative_feedback_enabled: bool (placeholder for Phase 2)
+      - primary_model: str (model key from LLM_MODELS)
+      - temperature: float
+      - max_tokens: int
+      - available_models: list of model info with pricing
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    now = time.time()
+    cache = _ia_features_cache
+    generated_at = datetime.utcnow().isoformat() + "Z"
+
+    # Check cache
+    if cache["data"] and (now - cache["timestamp"]) < cache["ttl"]:
+        return {
+            "generated_at": cache["data"]["generated_at"],
+            "cached": True,
+            "cache_age_seconds": round(now - cache["timestamp"], 1),
+            "data": cache["data"]["payload"],
+        }
+
+    try:
+        from app.config import get_ia_features_config, LLM_MODELS
+
+        async with AsyncSessionLocal() as session:
+            ia_config = await get_ia_features_config(session)
+
+        # Build available_models list from catalog
+        available_models = [
+            {
+                "id": model_id,
+                "display_name": info["display_name"],
+                "provider": info["provider"],
+                "input_price": info["input_price_per_1m"],
+                "output_price": info["output_price_per_1m"],
+                "max_tokens": info["max_tokens"],
+            }
+            for model_id, info in LLM_MODELS.items()
+        ]
+
+        # Compute effective state (for UI display)
+        effective_enabled = ia_config.get("narratives_enabled")
+        if effective_enabled is None:
+            effective_enabled = settings.FASTPATH_ENABLED
+
+        payload = {
+            **ia_config,
+            "effective_enabled": effective_enabled,  # Resolved value after inheritance
+            "env_fastpath_enabled": settings.FASTPATH_ENABLED,  # For "Inherit" display
+            "available_models": available_models,
+        }
+
+        # Update cache
+        cache["data"] = {"generated_at": generated_at, "payload": payload}
+        cache["timestamp"] = now
+
+        return {
+            "generated_at": generated_at,
+            "cached": False,
+            "cache_age_seconds": 0,
+            "data": payload,
+        }
+
+    except Exception as e:
+        logger.error(f"[SETTINGS] ia-features GET error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch IA features config")
+
+
+@app.patch("/dashboard/settings/ia-features.json")
+async def dashboard_settings_ia_features_patch(request: Request):
+    """
+    Update IA Features configuration.
+
+    Auth: X-Dashboard-Token required.
+
+    Allowed fields:
+      - narratives_enabled: bool | null
+      - primary_model: str (must be valid key in LLM_MODELS)
+      - temperature: float (0.0 - 1.0)
+      - max_tokens: int (100 - 131072)
+
+    Note: narrative_feedback_enabled is read-only (Phase 2 placeholder).
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    from app.config import get_ia_features_config, LLM_MODELS
+    from sqlalchemy import text
+
+    # Whitelist of updatable fields
+    allowed_fields = {"narratives_enabled", "primary_model", "temperature", "max_tokens"}
+    updates = {k: v for k, v in body.items() if k in allowed_fields}
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+
+    # Validate primary_model if provided
+    if "primary_model" in updates:
+        if updates["primary_model"] not in LLM_MODELS:
+            valid_models = list(LLM_MODELS.keys())
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid model. Valid options: {valid_models}"
+            )
+
+    # Validate temperature if provided
+    if "temperature" in updates:
+        temp = updates["temperature"]
+        if not isinstance(temp, (int, float)) or temp < 0.0 or temp > 1.0:
+            raise HTTPException(status_code=400, detail="temperature must be 0.0 - 1.0")
+
+    # Validate max_tokens if provided
+    if "max_tokens" in updates:
+        tokens = updates["max_tokens"]
+        if not isinstance(tokens, int) or tokens < 100 or tokens > 131072:
+            raise HTTPException(status_code=400, detail="max_tokens must be 100 - 131072")
+
+    # Validate narratives_enabled (must be bool or null)
+    if "narratives_enabled" in updates:
+        val = updates["narratives_enabled"]
+        if val is not None and not isinstance(val, bool):
+            raise HTTPException(status_code=400, detail="narratives_enabled must be true, false, or null")
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Get current config
+            current = await get_ia_features_config(session)
+
+            # Merge updates
+            new_config = {**current, **updates}
+
+            # Upsert ops_settings
+            await session.execute(
+                text("""
+                    INSERT INTO ops_settings (key, value, updated_at, updated_by)
+                    VALUES ('ia_features', :value, NOW(), 'dashboard')
+                    ON CONFLICT (key) DO UPDATE SET
+                        value = :value,
+                        updated_at = NOW(),
+                        updated_by = 'dashboard'
+                """),
+                {"value": json.dumps(new_config)}
+            )
+            await session.commit()
+
+            # Invalidate cache
+            _ia_features_cache["data"] = None
+
+            logger.info(f"[SETTINGS] IA Features updated: {updates}")
+
+            return {
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+                "data": new_config,
+                "updated_fields": list(updates.keys()),
+            }
+
+    except Exception as e:
+        logger.error(f"[SETTINGS] ia-features PATCH error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update IA features config")
+
+
+# =============================================================================
 # DASHBOARD PREDICTIONS (read-only, for ops dashboard)
 # =============================================================================
 

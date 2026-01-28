@@ -12,6 +12,7 @@ import {
   ModelVersionsSection,
   FeatureFlagsSection,
   UsersSection,
+  IaFeaturesSection,
 } from "@/components/settings";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AlertTriangle, RefreshCw } from "lucide-react";
@@ -89,6 +90,8 @@ function SettingsContent({
       return <FeatureFlagsSection />;
     case "users":
       return <UsersSection />;
+    case "ia_features":
+      return <IaFeaturesSection />;
     default:
       return (
         <div className="flex items-center justify-center h-64">

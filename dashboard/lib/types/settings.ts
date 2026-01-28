@@ -11,7 +11,8 @@ export type SettingsSection =
   | "api_keys"
   | "model_versions"
   | "feature_flags"
-  | "users";
+  | "users"
+  | "ia_features";
 
 export type Environment = "prod" | "staging" | "local";
 
@@ -91,6 +92,7 @@ export const SETTINGS_SECTION_LABELS: Record<SettingsSection, string> = {
   model_versions: "Model Versions",
   feature_flags: "Feature Flags",
   users: "Users & Permissions",
+  ia_features: "IA Features",
 };
 
 /**
@@ -104,6 +106,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   "model_versions",
   "feature_flags",
   "users",
+  "ia_features",
 ];
 
 /**
@@ -136,3 +139,45 @@ export const USER_ROLE_LABELS: Record<UserRole, string> = {
  * All user roles
  */
 export const USER_ROLES: UserRole[] = ["admin", "readonly"];
+
+/**
+ * LLM Model info from backend catalog
+ */
+export interface LlmModelInfo {
+  id: string;
+  display_name: string;
+  provider: string;
+  input_price: number; // per 1M tokens
+  output_price: number; // per 1M tokens
+  max_tokens: number;
+}
+
+/**
+ * Narratives enabled state (3-state: true/false/null)
+ * null = inherit from env var FASTPATH_ENABLED
+ */
+export type NarrativesEnabledState = boolean | null;
+
+/**
+ * IA Features configuration
+ */
+export interface IaFeaturesConfig {
+  narratives_enabled: NarrativesEnabledState;
+  narrative_feedback_enabled: boolean; // Read-only placeholder
+  primary_model: string;
+  temperature: number;
+  max_tokens: number;
+  effective_enabled: boolean; // Resolved value after inheritance
+  env_fastpath_enabled: boolean; // For "Inherit" display
+  available_models: LlmModelInfo[];
+}
+
+/**
+ * IA Features update payload (partial)
+ */
+export interface IaFeaturesUpdatePayload {
+  narratives_enabled?: NarrativesEnabledState;
+  primary_model?: string;
+  temperature?: number;
+  max_tokens?: number;
+}

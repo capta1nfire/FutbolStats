@@ -7,6 +7,7 @@
 
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   SettingsSummary,
@@ -24,9 +25,13 @@ import {
   parseSettingsSummary,
   parseFeatureFlags,
   parseModelVersions,
+  parseIaFeatures,
   SettingsSummary as ApiSettingsSummary,
   FeatureFlagsResponse,
   ModelVersionsResponse,
+  IaFeaturesResponse,
+  IaFeaturesConfig,
+  IaFeaturesUpdatePayload,
 } from "@/lib/api/settings";
 
 // ============================================================================
@@ -251,4 +256,98 @@ export function useUsers(filters?: UsersFilters) {
     queryKey: ["settings", "users", filters],
     queryFn: () => getUsersMock(filters),
   });
+}
+
+// ============================================================================
+// IA Features Hook
+// ============================================================================
+
+async function fetchIaFeaturesApi(): Promise<IaFeaturesResponse | null> {
+  try {
+    const response = await fetch("/api/settings/ia-features", {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return parseIaFeatures(data);
+  } catch {
+    return null;
+  }
+}
+
+async function updateIaFeaturesApi(
+  payload: IaFeaturesUpdatePayload
+): Promise<{ success: boolean; error?: string; data?: IaFeaturesConfig }> {
+  try {
+    const response = await fetch("/api/settings/ia-features", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return { success: false, error: data.error || `Error ${response.status}` };
+    }
+
+    // Parse the updated config from response
+    const parsed = parseIaFeatures({ data: data.data, generated_at: data.generated_at });
+    return { success: true, data: parsed?.config };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+}
+
+export interface UseIaFeaturesResult {
+  data: IaFeaturesConfig | null;
+  isLoading: boolean;
+  error: Error | null;
+  refetch: () => void;
+  update: (payload: IaFeaturesUpdatePayload) => Promise<{ success: boolean; error?: string }>;
+  isUpdating: boolean;
+}
+
+/**
+ * Fetch and update IA Features configuration
+ */
+export function useIaFeatures(): UseIaFeaturesResult {
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  const query = useQuery({
+    queryKey: ["settings", "iaFeatures"],
+    queryFn: async () => {
+      const response = await fetchIaFeaturesApi();
+      return response?.config ?? null;
+    },
+    staleTime: 30 * 1000, // 30 seconds (config changes should be visible quickly)
+    throwOnError: false,
+  });
+
+  const update = async (payload: IaFeaturesUpdatePayload) => {
+    setIsUpdating(true);
+    try {
+      const result = await updateIaFeaturesApi(payload);
+      if (result.success) {
+        // Refetch to get updated data
+        await query.refetch();
+      }
+      return { success: result.success, error: result.error };
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  return {
+    data: query.data ?? null,
+    isLoading: query.isLoading,
+    error: query.error as Error | null,
+    refetch: () => query.refetch(),
+    update,
+    isUpdating,
+  };
 }
