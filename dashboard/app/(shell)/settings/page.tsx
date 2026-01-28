@@ -125,10 +125,10 @@ export default function SettingsPage() {
       />
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden bg-background">
-        {/* Content */}
-        <ScrollArea className="flex-1">
-          <div className="p-6 max-w-3xl">
+      <div className="flex-1 flex flex-col min-h-0 bg-background">
+        {/* Content - ScrollArea needs explicit height */}
+        <ScrollArea className="flex-1 h-full">
+          <div className="p-6 max-w-3xl pb-12">
             <SettingsContent
               section={activeSection}
               isLoading={isLoading}
