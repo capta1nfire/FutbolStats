@@ -152,44 +152,65 @@ export function OverallOpsBar({
               const alertColors = alert.severity === "red" ? statusColors.critical : statusColors.warning;
               const additionalAlerts = (jobs.alerts_count ?? 1) - 1;
 
-              return (
-                <Tooltip key={domain}>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      className={cn(
-                        "flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium border shrink-0",
-                        alertColors.bg,
-                        alert.severity === "red" ? "border-red-500/30" : "border-yellow-500/30",
-                        alert.incident_id ? "cursor-pointer hover:opacity-80 transition-opacity" : "cursor-default"
-                      )}
-                      onClick={alert.incident_id ? () => router.push(`/incidents?id=${alert.incident_id}`) : undefined}
-                    >
-                      <AlertTriangle className={cn("h-3 w-3", alertColors.text)} />
-                      <span className={alertColors.text}>
-                        Jobs: {alert.label}
-                        {additionalAlerts > 0 && ` +${additionalAlerts}`}
-                      </span>
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" className="max-w-xs">
-                    <div className="space-y-1">
-                      <p className="font-medium">{alert.label}</p>
-                      <p className="text-muted-foreground">{alert.reason}</p>
-                      {alert.minutes_since_success !== null && (
-                        <p className="text-muted-foreground">
-                          Last success: {formatMinutes(alert.minutes_since_success)} ago
-                        </p>
-                      )}
-                      {alert.incident_id && (
-                        <p className="text-xs text-primary">
-                          Click to view incident details
-                        </p>
-                      )}
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
-              );
+              {
+                const chipEl = (
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium border shrink-0",
+                      alertColors.bg,
+                      alert.severity === "red" ? "border-red-500/30" : "border-yellow-500/30",
+                    )}
+                  >
+                    <AlertTriangle className={cn("h-3 w-3", alertColors.text)} />
+                    <span className={alertColors.text}>
+                      Jobs: {alert.label}
+                      {additionalAlerts > 0 && ` +${additionalAlerts}`}
+                    </span>
+                  </span>
+                );
+
+                const wrappedChip = alert.incident_id ? (
+                  <button
+                    key={domain}
+                    type="button"
+                    className="cursor-pointer hover:opacity-80 transition-opacity shrink-0"
+                    onClick={() => router.push(`/incidents?id=${alert.incident_id}`)}
+                  >
+                    <Tooltip>
+                      <TooltipTrigger asChild>{chipEl}</TooltipTrigger>
+                      <TooltipContent side="bottom" className="max-w-xs">
+                        <div className="space-y-1">
+                          <p className="font-medium">{alert.label}</p>
+                          <p className="text-muted-foreground">{alert.reason}</p>
+                          {alert.minutes_since_success !== null && (
+                            <p className="text-muted-foreground">
+                              Last success: {formatMinutes(alert.minutes_since_success)} ago
+                            </p>
+                          )}
+                          <p className="text-xs text-primary">Click to view incident details</p>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </button>
+                ) : (
+                  <Tooltip key={domain}>
+                    <TooltipTrigger asChild>{chipEl}</TooltipTrigger>
+                    <TooltipContent side="bottom" className="max-w-xs">
+                      <div className="space-y-1">
+                        <p className="font-medium">{alert.label}</p>
+                        <p className="text-muted-foreground">{alert.reason}</p>
+                        {alert.minutes_since_success !== null && (
+                          <p className="text-muted-foreground">
+                            Last success: {formatMinutes(alert.minutes_since_success)} ago
+                          </p>
+                        )}
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                );
+
+                return wrappedChip;
+              }
             }
 
             // Default chip for other domains or Jobs OK
