@@ -8298,11 +8298,16 @@ async def _calculate_jobs_health_summary(session) -> dict:
     try:
         ft_pending = int(stats_backfill_ft_pending_gauge._value.get() or 0)
         stats_health["ft_pending"] = ft_pending
-        # Escalate status based on pending count
-        if ft_pending > 10:
-            stats_health["status"] = "red"
-        elif ft_pending > 5 and stats_health["status"] == "ok":
-            stats_health["status"] = "warn"
+        # Idle override: if no pending work, job is healthy regardless of timer
+        if ft_pending == 0:
+            stats_health["status"] = "ok"
+            stats_health["note"] = "idle_no_pending"
+        else:
+            # Escalate status based on pending count
+            if ft_pending > 10:
+                stats_health["status"] = "red"
+            elif ft_pending > 5 and stats_health["status"] == "ok":
+                stats_health["status"] = "warn"
     except Exception:
         stats_health["ft_pending"] = None
 
