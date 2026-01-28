@@ -15131,7 +15131,8 @@ async def ia_features_preview(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[SETTINGS] preview error for match {match_id}: {e}")
+        import traceback
+        logger.error(f"[SETTINGS] preview error for match {match_id}: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="Failed to generate preview")
 
 
