@@ -48,6 +48,8 @@ export interface Incident {
   acknowledgedAt?: string; // ISO timestamp
   resolvedAt?: string; // ISO timestamp
   details?: Record<string, unknown>; // Operational context from backend
+  source?: string; // Origin system: sentry|jobs|predictions|llm|api_budget
+  sourceKey?: string; // Identifier within source (e.g. job name, sentry issue hash)
 }
 
 export interface IncidentFilters {

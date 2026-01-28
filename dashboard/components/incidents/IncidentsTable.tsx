@@ -7,7 +7,7 @@ import { DataTable, ColumnOption } from "@/components/tables";
 import { SeverityBadge } from "./SeverityBadge";
 import { IncidentStatusChip } from "./IncidentStatusChip";
 import { formatDistanceToNow } from "@/lib/utils";
-import { ExternalLink } from "lucide-react";
+
 
 interface IncidentsTableProps {
   data: Incident[];
@@ -29,7 +29,7 @@ export const INCIDENTS_COLUMN_OPTIONS: ColumnOption[] = [
   { id: "title", label: "Title", enableHiding: false },
   { id: "type", label: "Type", enableHiding: true },
   { id: "createdAt", label: "Created", enableHiding: true },
-  { id: "entity", label: "Related", enableHiding: true },
+  { id: "entity", label: "Source", enableHiding: true },
 ];
 
 /**
@@ -93,16 +93,18 @@ export function IncidentsTable({
       },
       {
         id: "entity",
-        header: "Related",
-        cell: ({ row }) =>
-          row.original.entity ? (
-            <span className="text-primary text-xs flex items-center gap-1">
-              {row.original.entity.kind} #{row.original.entity.id}
-              <ExternalLink className="h-3 w-3" />
-            </span>
-          ) : (
-            <span className="text-muted-foreground">-</span>
-          ),
+        header: "Source",
+        cell: ({ row }) => {
+          const { source, sourceKey } = row.original;
+          if (source) {
+            return (
+              <span className="text-xs font-mono text-muted-foreground">
+                {source}{sourceKey ? `:${sourceKey}` : ""}
+              </span>
+            );
+          }
+          return <span className="text-muted-foreground">-</span>;
+        },
         enableSorting: false,
       },
     ],

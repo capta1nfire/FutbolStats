@@ -164,6 +164,14 @@ export function adaptIncident(raw: unknown): Incident | null {
     };
   }
 
+  // Optional: source / source_key (origin system identifier)
+  if (typeof raw.source === "string" && raw.source.length > 0) {
+    result.source = raw.source;
+  }
+  if (typeof raw.source_key === "string" && raw.source_key.length > 0) {
+    result.sourceKey = raw.source_key;
+  }
+
   // Optional: details (operational context dict)
   if (isObject(raw.details)) {
     result.details = raw.details as Record<string, unknown>;
