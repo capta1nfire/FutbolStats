@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { ApiBudgetStatus } from "@/lib/types";
 import { OpsFreshness, OpsJobsHealth } from "@/lib/api/ops";
 import { cn } from "@/lib/utils";
@@ -109,7 +109,6 @@ export function OverallOpsBar({
   className,
   onRefresh,
 }: OverallOpsBarProps) {
-  const router = useRouter();
   const overallStatus = getOverallStatus(statuses);
   const colors = statusColors[overallStatus];
 
@@ -152,65 +151,57 @@ export function OverallOpsBar({
               const alertColors = alert.severity === "red" ? statusColors.critical : statusColors.warning;
               const additionalAlerts = (jobs.alerts_count ?? 1) - 1;
 
-              {
-                const chipEl = (
-                  <span
-                    className={cn(
-                      "inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium border shrink-0",
-                      alertColors.bg,
-                      alert.severity === "red" ? "border-red-500/30" : "border-yellow-500/30",
-                    )}
-                  >
-                    <AlertTriangle className={cn("h-3 w-3", alertColors.text)} />
-                    <span className={alertColors.text}>
-                      Jobs: {alert.label}
-                      {additionalAlerts > 0 && ` +${additionalAlerts}`}
-                    </span>
+              const chipContent = (
+                <>
+                  <AlertTriangle className={cn("h-3 w-3", alertColors.text)} />
+                  <span className={alertColors.text}>
+                    Jobs: {alert.label}
+                    {additionalAlerts > 0 && ` +${additionalAlerts}`}
                   </span>
-                );
+                </>
+              );
 
-                const wrappedChip = alert.incident_id ? (
-                  <button
+              const chipClasses = cn(
+                "inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium border shrink-0",
+                alertColors.bg,
+                alert.severity === "red" ? "border-red-500/30" : "border-yellow-500/30",
+              );
+
+              // If incident_id exists, render as Link (no tooltip to avoid Radix conflicts)
+              if (alert.incident_id) {
+                return (
+                  <Link
                     key={domain}
-                    type="button"
-                    className="cursor-pointer hover:opacity-80 transition-opacity shrink-0"
-                    onClick={() => router.push(`/incidents?id=${alert.incident_id}`)}
+                    href={`/incidents?id=${alert.incident_id}`}
+                    className={cn(chipClasses, "hover:opacity-80 transition-opacity no-underline")}
+                    title={`${alert.label} — ${alert.reason}. Click to view incident.`}
                   >
-                    <Tooltip>
-                      <TooltipTrigger asChild>{chipEl}</TooltipTrigger>
-                      <TooltipContent side="bottom" className="max-w-xs">
-                        <div className="space-y-1">
-                          <p className="font-medium">{alert.label}</p>
-                          <p className="text-muted-foreground">{alert.reason}</p>
-                          {alert.minutes_since_success !== null && (
-                            <p className="text-muted-foreground">
-                              Last success: {formatMinutes(alert.minutes_since_success)} ago
-                            </p>
-                          )}
-                          <p className="text-xs text-primary">Click to view incident details</p>
-                        </div>
-                      </TooltipContent>
-                    </Tooltip>
-                  </button>
-                ) : (
-                  <Tooltip key={domain}>
-                    <TooltipTrigger asChild>{chipEl}</TooltipTrigger>
-                    <TooltipContent side="bottom" className="max-w-xs">
-                      <div className="space-y-1">
-                        <p className="font-medium">{alert.label}</p>
-                        <p className="text-muted-foreground">{alert.reason}</p>
-                        {alert.minutes_since_success !== null && (
-                          <p className="text-muted-foreground">
-                            Last success: {formatMinutes(alert.minutes_since_success)} ago
-                          </p>
-                        )}
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
+                    {chipContent}
+                  </Link>
                 );
-
-                return wrappedChip;
               }
+
+              // No incident_id: show tooltip only
+              return (
+                <Tooltip key={domain}>
+                  <TooltipTrigger asChild>
+                    <span className={chipClasses}>
+                      {chipContent}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-xs">
+                    <div className="space-y-1">
+                      <p className="font-medium">{alert.label}</p>
+                      <p className="text-muted-foreground">{alert.reason}</p>
+                      {alert.minutes_since_success !== null && (
+                        <p className="text-muted-foreground">
+                          Last success: {formatMinutes(alert.minutes_since_success)} ago
+                        </p>
+                      )}
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              );
             }
 
             // Default chip for other domains or Jobs OK
