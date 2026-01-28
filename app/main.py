@@ -15063,9 +15063,9 @@ async def ia_features_preview(
         market_odds = {}
         if odds_row:
             market_odds = {
-                "home": odds_row.home_odds,
-                "draw": odds_row.draw_odds,
-                "away": odds_row.away_odds,
+                "home": odds_row.odds_home,
+                "draw": odds_row.odds_draw,
+                "away": odds_row.odds_away,
             }
         elif match.odds_home:
             market_odds = {
@@ -15361,9 +15361,9 @@ async def ia_features_playground(
         market_odds = {}
         if odds_row:
             market_odds = {
-                "home": odds_row.home_odds,
-                "draw": odds_row.draw_odds,
-                "away": odds_row.away_odds,
+                "home": odds_row.odds_home,
+                "draw": odds_row.odds_draw,
+                "away": odds_row.odds_away,
             }
         elif match.odds_home:
             market_odds = {
