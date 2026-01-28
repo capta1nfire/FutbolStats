@@ -91,15 +91,15 @@ function StatsSummary({ stats }: { stats: { total_matches: number; wins: number;
       </div>
       <div className="bg-card border border-border rounded-lg p-3">
         <p className="text-xs text-muted-foreground">Wins</p>
-        <p className="text-xl font-semibold text-green-500">{stats.wins}</p>
+        <p className="text-xl font-semibold text-[var(--status-success-text)]">{stats.wins}</p>
       </div>
       <div className="bg-card border border-border rounded-lg p-3">
         <p className="text-xs text-muted-foreground">Draws</p>
-        <p className="text-xl font-semibold text-yellow-500">{stats.draws}</p>
+        <p className="text-xl font-semibold text-muted-foreground">{stats.draws}</p>
       </div>
       <div className="bg-card border border-border rounded-lg p-3">
         <p className="text-xs text-muted-foreground">Losses</p>
-        <p className="text-xl font-semibold text-red-400">{stats.losses}</p>
+        <p className="text-xl font-semibold text-[var(--status-error-text)]">{stats.losses}</p>
       </div>
     </div>
   );
@@ -137,7 +137,7 @@ function TeamsList({
             <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">
               <span>{team.total_matches} matches</span>
               {team.matches_25_26 > 0 && (
-                <span className="text-green-500">{team.matches_25_26} in 25/26</span>
+                <span className="text-[var(--status-success-text)]">{team.matches_25_26} in 25/26</span>
               )}
             </div>
             {team.competitions.length > 0 && (
@@ -243,7 +243,7 @@ export function NationalTeamsCountryDetail({
     return (
       <div className="h-full flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 text-center max-w-md">
-          <AlertTriangle className="h-12 w-12 text-yellow-400" />
+          <AlertTriangle className="h-12 w-12 text-[var(--status-warning-text)]" />
           <div>
             <h2 className="text-lg font-semibold text-foreground mb-2">
               National Teams Data Unavailable

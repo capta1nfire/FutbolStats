@@ -23,7 +23,7 @@ import type { TournamentEntry } from "@/lib/types";
 function TournamentFlag({ country, size = 16 }: { country: string | null; size?: number }) {
   if (!country) {
     // International tournament - show globe
-    return <Globe className="text-blue-500" style={{ width: size, height: size }} />;
+    return <Globe className="text-[var(--tag-blue-text)]" style={{ width: size, height: size }} />;
   }
 
   const isoCode = getCountryIsoCode(country);
@@ -47,9 +47,9 @@ function TournamentFlag({ country, size = 16 }: { country: string | null; size?:
  */
 function KindBadge({ kind }: { kind: string }) {
   const colors: Record<string, string> = {
-    international: "bg-blue-500/10 text-blue-500 border-blue-500/20",
-    cup: "bg-amber-500/10 text-amber-500 border-amber-500/20",
-    friendly: "bg-gray-500/10 text-gray-400 border-gray-500/20",
+    international: "bg-[var(--tag-blue-bg)] text-[var(--tag-blue-text)] border-[var(--tag-blue-border)]",
+    cup: "bg-[var(--tag-orange-bg)] text-[var(--tag-orange-text)] border-[var(--tag-orange-border)]",
+    friendly: "bg-[var(--tag-gray-bg)] text-[var(--tag-gray-text)] border-[var(--tag-gray-border)]",
   };
 
   return (
@@ -64,9 +64,9 @@ function KindBadge({ kind }: { kind: string }) {
  */
 function PriorityBadge({ priority }: { priority: string }) {
   const colors: Record<string, string> = {
-    high: "bg-green-500/10 text-green-500",
-    medium: "bg-yellow-500/10 text-yellow-500",
-    low: "bg-gray-500/10 text-gray-400",
+    high: "bg-[var(--status-success-bg)] text-[var(--status-success-text)]",
+    medium: "bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]",
+    low: "bg-[var(--tag-gray-bg)] text-[var(--tag-gray-text)]",
   };
 
   return (
@@ -119,7 +119,7 @@ function TournamentRow({
               {stats.total_matches.toLocaleString()} matches
             </span>
             {stats.matches_30d > 0 && (
-              <span className="text-green-500">{stats.matches_30d} in 30d</span>
+              <span className="text-[var(--status-success-text)]">{stats.matches_30d} in 30d</span>
             )}
             {stats.participants_count > 0 && (
               <span className="flex items-center gap-1">
@@ -144,7 +144,7 @@ function TournamentRow({
                 </span>
               )}
               {nextMatch && (
-                <span className="text-green-500">
+                <span className="text-[var(--status-success-text)]">
                   Next: {nextMatch.toLocaleDateString([], { month: "short", day: "numeric" })}
                 </span>
               )}
@@ -185,7 +185,7 @@ export function TournamentsList({ onLeagueSelect }: TournamentsListProps) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 text-center max-w-md">
-          <AlertTriangle className="h-12 w-12 text-yellow-400" />
+          <AlertTriangle className="h-12 w-12 text-[var(--status-warning-text)]" />
           <div>
             <h2 className="text-lg font-semibold text-foreground mb-2">
               Tournaments Data Unavailable
@@ -232,7 +232,7 @@ export function TournamentsList({ onLeagueSelect }: TournamentsListProps) {
         {international.length > 0 && (
           <div className="space-y-3">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
-              <Globe className="h-4 w-4 text-blue-500" />
+              <Globe className="h-4 w-4 text-[var(--tag-blue-text)]" />
               International Tournaments ({international.length})
             </h2>
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
@@ -270,7 +270,7 @@ export function TournamentsList({ onLeagueSelect }: TournamentsListProps) {
         {friendly.length > 0 && (
           <div className="space-y-3">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
-              <Users className="h-4 w-4 text-gray-400" />
+              <Users className="h-4 w-4 text-muted-foreground" />
               Friendly Matches ({friendly.length})
             </h2>
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">

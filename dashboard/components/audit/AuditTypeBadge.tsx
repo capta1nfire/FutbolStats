@@ -27,39 +27,39 @@ const typeConfig: Record<
 > = {
   job_run: {
     icon: Play,
-    className: "bg-green-500/20 text-green-400 border-green-500/30",
+    className: "bg-[var(--tag-blue-bg)] text-[var(--tag-blue-text)] border-[var(--tag-blue-border)]",
   },
   prediction_generated: {
     icon: Brain,
-    className: "bg-purple-500/20 text-purple-400 border-purple-500/30",
+    className: "bg-[var(--tag-purple-bg)] text-[var(--tag-purple-text)] border-[var(--tag-purple-border)]",
   },
   prediction_frozen: {
     icon: Lock,
-    className: "bg-cyan-500/20 text-cyan-400 border-cyan-500/30",
+    className: "bg-[var(--tag-cyan-bg)] text-[var(--tag-cyan-text)] border-[var(--tag-cyan-border)]",
   },
   incident_ack: {
     icon: CheckCircle,
-    className: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+    className: "bg-[var(--tag-blue-bg)] text-[var(--tag-blue-text)] border-[var(--tag-blue-border)]",
   },
   incident_resolve: {
     icon: XCircle,
-    className: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+    className: "bg-[var(--tag-cyan-bg)] text-[var(--tag-cyan-text)] border-[var(--tag-cyan-border)]",
   },
   config_changed: {
     icon: Settings,
-    className: "bg-orange-500/20 text-orange-400 border-orange-500/30",
+    className: "bg-[var(--tag-orange-bg)] text-[var(--tag-orange-text)] border-[var(--tag-orange-border)]",
   },
   data_quality_check: {
     icon: Shield,
-    className: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30",
+    className: "bg-[var(--tag-indigo-bg)] text-[var(--tag-indigo-text)] border-[var(--tag-indigo-border)]",
   },
   system: {
     icon: Server,
-    className: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+    className: "bg-[var(--tag-gray-bg)] text-[var(--tag-gray-text)] border-[var(--tag-gray-border)]",
   },
   user_action: {
     icon: User,
-    className: "bg-pink-500/20 text-pink-400 border-pink-500/30",
+    className: "bg-[var(--tag-pink-bg)] text-[var(--tag-pink-text)] border-[var(--tag-pink-border)]",
   },
 };
 

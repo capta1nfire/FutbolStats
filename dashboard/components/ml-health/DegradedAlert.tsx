@@ -17,12 +17,12 @@ export function DegradedAlert({ error }: DegradedAlertProps) {
     : error;
 
   return (
-    <div className="p-3 bg-orange-500/10 border border-orange-500/20 rounded flex items-start gap-2">
-      <AlertTriangle className="h-4 w-4 text-orange-400 shrink-0 mt-0.5" />
+    <div className="p-3 bg-[var(--status-warning-bg)] border border-[var(--status-warning-border)] rounded flex items-start gap-2">
+      <AlertTriangle className="h-4 w-4 text-[var(--status-warning-text)] shrink-0 mt-0.5" />
       <div className="min-w-0">
-        <p className="text-sm font-medium text-orange-400">Section Degraded</p>
+        <p className="text-sm font-medium text-[var(--status-warning-text)]">Section Degraded</p>
         {truncatedError && (
-          <p className="text-xs text-orange-400/80 truncate">{truncatedError}</p>
+          <p className="text-xs text-[var(--status-warning-text)] opacity-80 truncate">{truncatedError}</p>
         )}
       </div>
     </div>

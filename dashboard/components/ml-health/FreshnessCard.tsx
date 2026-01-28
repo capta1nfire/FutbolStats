@@ -140,12 +140,12 @@ function StatPill({
     <div
       className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${
         highlight
-          ? "bg-yellow-500/10 border border-yellow-500/20"
+          ? "bg-[var(--status-warning-bg)] border border-[var(--status-warning-border)]"
           : "bg-muted/50"
       }`}
     >
       <span className="text-muted-foreground">{label}:</span>
-      <span className={`tabular-nums font-medium ${highlight ? "text-yellow-400" : "text-foreground"}`}>
+      <span className={`tabular-nums font-medium ${highlight ? "text-[var(--status-warning-text)]" : "text-foreground"}`}>
         {value}
       </span>
     </div>

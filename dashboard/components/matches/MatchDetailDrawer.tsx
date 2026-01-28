@@ -159,7 +159,7 @@ function VenueWeatherSection({ match }: { match: MatchSummary }) {
 /** Standings row component */
 function StandingsRow({ row, isHighlighted }: { row: StandingEntry; isHighlighted?: boolean }) {
   return (
-    <div className={`grid grid-cols-[24px_1fr_28px_28px_28px_28px_40px_32px_28px] gap-1 items-center font-condensed text-sm px-1 py-1.5 rounded transition-colors ${isHighlighted ? "bg-[#05254d] hover:bg-[#05254d]" : "hover:bg-muted/30"}`}>
+    <div className={`grid grid-cols-[24px_1fr_28px_28px_28px_28px_40px_32px_28px] gap-1 items-center font-condensed text-sm px-1 py-1.5 rounded transition-colors ${isHighlighted ? "bg-[var(--row-selected)] hover:bg-[var(--row-selected)]" : "hover:bg-muted/30"}`}>
       <span className="text-muted-foreground text-center">{row.position}</span>
       <span className="text-foreground truncate">{row.teamName}</span>
       <span className="text-muted-foreground text-center">{row.played}</span>

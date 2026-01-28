@@ -45,7 +45,7 @@ export function PredictionsPerformanceCard({
           Predictions Performance ({data.totalPredictions} predictions)
         </h3>
         {isDegraded && (
-          <span className="text-xs text-yellow-400 bg-yellow-500/10 px-2 py-0.5 rounded">
+          <span className="text-xs text-[var(--status-warning-text)] bg-[var(--status-warning-bg)] px-2 py-0.5 rounded">
             degraded
           </span>
         )}
@@ -129,9 +129,9 @@ interface MetricItemProps {
 function MetricItem({ label, value, variant = "default" }: MetricItemProps) {
   const variantClasses = {
     default: "text-foreground",
-    success: "text-green-400",
-    warning: "text-yellow-400",
-    error: "text-red-400",
+    success: "text-[var(--status-success-text)]",
+    warning: "text-[var(--status-warning-text)]",
+    error: "text-[var(--status-error-text)]",
   };
 
   return (
@@ -161,7 +161,7 @@ function LeagueRow({ league }: LeagueRowProps) {
       </span>
       <div className="flex gap-3">
         <span className="text-muted-foreground">n={league.n}</span>
-        <span className={league.accuracy >= 40 ? "text-green-400" : "text-foreground"}>
+        <span className={league.accuracy >= 40 ? "text-[var(--status-success-text)]" : "text-foreground"}>
           {league.accuracy.toFixed(1)}%
         </span>
         <span className="text-foreground">
@@ -188,11 +188,11 @@ function CalibrationBin({ bin }: CalibrationBinProps) {
 
   if (error !== null) {
     if (Math.abs(error) <= 0.05) {
-      bgColor = "bg-green-500/30";
+      bgColor = "bg-[var(--status-success-bg)]";
     } else if (Math.abs(error) <= 0.1) {
-      bgColor = "bg-yellow-500/30";
+      bgColor = "bg-[var(--status-warning-bg)]";
     } else {
-      bgColor = "bg-red-500/30";
+      bgColor = "bg-[var(--status-error-bg)]";
     }
   }
 

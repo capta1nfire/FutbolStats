@@ -256,7 +256,7 @@ function StandingsTable({
                 <td className="text-center py-1.5 px-2 text-muted-foreground">{entry.lost}</td>
                 <td className={cn(
                   "text-center py-1.5 px-2 font-medium",
-                  entry.goalDiff > 0 ? "text-green-500" : entry.goalDiff < 0 ? "text-red-500" : "text-muted-foreground"
+                  entry.goalDiff > 0 ? "text-[var(--status-success-text)]" : entry.goalDiff < 0 ? "text-[var(--status-error-text)]" : "text-muted-foreground"
                 )}>
                   {entry.goalDiff > 0 ? `+${entry.goalDiff}` : entry.goalDiff}
                 </td>
@@ -269,7 +269,7 @@ function StandingsTable({
                           key={i}
                           className={cn(
                             "w-2 h-2 rounded-full",
-                            ch === "W" ? "bg-green-500" : ch === "D" ? "bg-yellow-500" : ch === "L" ? "bg-red-500" : "bg-muted"
+                            ch === "W" ? "bg-[var(--status-success-text)]" : ch === "D" ? "bg-muted-foreground" : ch === "L" ? "bg-[var(--status-error-text)]" : "bg-muted"
                           )}
                         />
                       ))}
@@ -316,7 +316,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
     return (
       <div className="h-full flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 text-center max-w-md">
-          <AlertTriangle className="h-12 w-12 text-yellow-400" />
+          <AlertTriangle className="h-12 w-12 text-[var(--status-warning-text)]" />
           <div>
             <h2 className="text-lg font-semibold text-foreground mb-2">
               League Data Unavailable
@@ -375,9 +375,9 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
 
         {/* Group Info */}
         {group && (
-          <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4">
+          <div className="bg-[var(--tag-purple-bg)] border border-[var(--tag-purple-border)] rounded-lg p-4">
             <div className="flex items-center gap-2">
-              <Users className="h-4 w-4 text-purple-500" />
+              <Users className="h-4 w-4 text-[var(--tag-purple-text)]" />
               <span className="text-sm font-medium text-foreground">Part of Group</span>
             </div>
             <p className="text-sm text-muted-foreground mt-1">
@@ -411,7 +411,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
         {titan && (
           <div className="bg-card border border-border rounded-lg p-4">
             <div className="flex items-center gap-2 mb-3">
-              <TrendingUp className="h-4 w-4 text-purple-500" />
+              <TrendingUp className="h-4 w-4 text-[var(--tag-purple-text)]" />
               <h2 className="text-sm font-semibold text-foreground">TITAN Coverage</h2>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -471,10 +471,10 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
               </span>
             )}
             {standingsData?.isPlaceholder && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-600">Placeholder</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]">Placeholder</span>
             )}
             {standingsData?.isCalculated && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600">Calculated</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--status-info-bg)] text-[var(--status-info-text)]">Calculated</span>
             )}
           </div>
           {isStandingsLoading ? (

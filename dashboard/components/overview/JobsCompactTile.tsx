@@ -18,9 +18,9 @@ interface JobsCompactTileProps {
 }
 
 const statusDot: Record<ApiBudgetStatus, string> = {
-  ok: "bg-green-500",
-  warning: "bg-yellow-500",
-  critical: "bg-red-500",
+  ok: "bg-[var(--status-success-text)]",
+  warning: "bg-[var(--status-warning-text)]",
+  critical: "bg-[var(--status-error-text)]",
   degraded: "bg-orange-500",
 };
 

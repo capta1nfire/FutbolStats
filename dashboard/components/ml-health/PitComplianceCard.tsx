@@ -38,9 +38,9 @@ export function PitComplianceCard({ data }: PitComplianceCardProps) {
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           {hasViolations ? (
-            <ShieldAlert className="h-4 w-4 text-red-400" />
+            <ShieldAlert className="h-4 w-4 text-[var(--status-error-text)]" />
           ) : (
-            <ShieldCheck className="h-4 w-4 text-green-400" />
+            <ShieldCheck className="h-4 w-4 text-[var(--status-success-text)]" />
           )}
           <h3 className="text-sm font-semibold text-foreground">PIT Compliance</h3>
         </div>
@@ -68,7 +68,7 @@ export function PitComplianceCard({ data }: PitComplianceCardProps) {
         <div className="text-center">
           <p
             className={`text-2xl font-semibold tabular-nums ${
-              hasViolations ? "text-red-400" : "text-green-400"
+              hasViolations ? "text-[var(--status-error-text)]" : "text-[var(--status-success-text)]"
             }`}
           >
             {(data.violations ?? 0).toLocaleString()}
@@ -80,7 +80,7 @@ export function PitComplianceCard({ data }: PitComplianceCardProps) {
         <div className="text-center">
           <p
             className={`text-2xl font-semibold tabular-nums ${
-              hasViolations ? "text-red-400" : "text-green-400"
+              hasViolations ? "text-[var(--status-error-text)]" : "text-[var(--status-success-text)]"
             }`}
           >
             {(data.violation_pct ?? 0).toFixed(1)}%
@@ -91,7 +91,7 @@ export function PitComplianceCard({ data }: PitComplianceCardProps) {
 
       {/* Warning message if violations */}
       {hasViolations && (
-        <div className="mt-4 p-2 bg-red-500/10 border border-red-500/20 rounded text-sm text-red-400">
+        <div className="mt-4 p-2 bg-[var(--status-error-bg)] border border-[var(--status-error-border)] rounded text-sm text-[var(--status-error-text)]">
           {data.violations} PIT violation{data.violations !== 1 ? "s" : ""} detected
         </div>
       )}

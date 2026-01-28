@@ -36,9 +36,9 @@ function FastpathSummaryTab() {
   }
 
   const statusColors = {
-    ok: "text-green-400",
-    warning: "text-yellow-400",
-    critical: "text-red-400",
+    ok: "text-[var(--status-success-text)]",
+    warning: "text-[var(--status-warning-text)]",
+    critical: "text-[var(--status-error-text)]",
     degraded: "text-orange-400",
   };
 

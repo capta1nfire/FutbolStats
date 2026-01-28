@@ -12,9 +12,9 @@ interface PredictionsHealthTileProps {
 }
 
 const statusDot: Record<ApiBudgetStatus, string> = {
-  ok: "bg-green-500",
-  warning: "bg-yellow-500",
-  critical: "bg-red-500",
+  ok: "bg-[var(--status-success-text)]",
+  warning: "bg-[var(--status-warning-text)]",
+  critical: "bg-[var(--status-error-text)]",
   degraded: "bg-orange-500",
 };
 
@@ -22,9 +22,9 @@ const statusDot: Record<ApiBudgetStatus, string> = {
  * Format coverage percentage with color
  */
 function getCoverageColor(pct: number, warnThreshold: number, redThreshold: number): string {
-  if (pct >= warnThreshold) return "text-green-400";
-  if (pct >= redThreshold) return "text-yellow-400";
-  return "text-red-400";
+  if (pct >= warnThreshold) return "text-[var(--status-success-text)]";
+  if (pct >= redThreshold) return "text-[var(--status-warning-text)]";
+  return "text-[var(--status-error-text)]";
 }
 
 /**
@@ -64,7 +64,7 @@ export function PredictionsHealthTile({
           <h3 className="text-sm font-semibold text-foreground">Predictions</h3>
         </div>
         {displayStatus === "ok" ? (
-          <span className="h-2.5 w-2.5 rounded-full bg-green-500" title="OK" />
+          <span className="h-2.5 w-2.5 rounded-full bg-[var(--status-success-text)]" title="OK" />
         ) : (
           <span className={cn("h-2.5 w-2.5 rounded-full", statusDot[displayStatus])} />
         )}

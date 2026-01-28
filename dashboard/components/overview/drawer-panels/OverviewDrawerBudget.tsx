@@ -35,9 +35,9 @@ function BudgetSummaryTab() {
   }
 
   const statusColors = {
-    ok: "text-green-400",
-    warning: "text-yellow-400",
-    critical: "text-red-400",
+    ok: "text-[var(--status-success-text)]",
+    warning: "text-[var(--status-warning-text)]",
+    critical: "text-[var(--status-error-text)]",
     degraded: "text-orange-400",
   };
 
@@ -77,9 +77,9 @@ function BudgetSummaryTab() {
         <div className="h-2 bg-muted rounded-full overflow-hidden">
           <div
             className={`h-full transition-all ${
-              usagePercent > 90 ? "bg-red-500" :
-              usagePercent > 70 ? "bg-yellow-500" :
-              "bg-green-500"
+              usagePercent > 90 ? "bg-[var(--status-error-text)]" :
+              usagePercent > 70 ? "bg-[var(--status-warning-text)]" :
+              "bg-[var(--status-success-text)]"
             }`}
             style={{ width: `${Math.min(usagePercent, 100)}%` }}
           />

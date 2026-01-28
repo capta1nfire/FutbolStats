@@ -18,9 +18,9 @@ interface FastpathCompactTileProps {
 }
 
 const statusDot: Record<ApiBudgetStatus, string> = {
-  ok: "bg-green-500",
-  warning: "bg-yellow-500",
-  critical: "bg-red-500",
+  ok: "bg-[var(--status-success-text)]",
+  warning: "bg-[var(--status-warning-text)]",
+  critical: "bg-[var(--status-error-text)]",
   degraded: "bg-orange-500",
 };
 
@@ -117,7 +117,7 @@ export function FastpathCompactTile({
               <div className="text-center cursor-default">
                 <div className={cn(
                   "text-lg font-bold tabular-nums",
-                  errorRate > 10 ? "text-red-400" : errorRate > 5 ? "text-yellow-400" : "text-foreground"
+                  errorRate > 10 ? "text-[var(--status-error-text)]" : errorRate > 5 ? "text-[var(--status-warning-text)]" : "text-foreground"
                 )}>
                   {errorRate.toFixed(0)}%
                 </div>

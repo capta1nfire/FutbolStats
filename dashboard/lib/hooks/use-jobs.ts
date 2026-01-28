@@ -241,14 +241,14 @@ export function useJobRuns(filters?: JobFilters) {
  * Hook to fetch a single job run by ID
  */
 export function useJobRun(id: number | null) {
-  return useQuery<JobRun | undefined, Error>({
+  return useQuery<JobRun | null, Error>({
     queryKey: ["jobRun", id],
     queryFn: async () => {
       await simulateDelay();
       if (mockConfig.scenario === "error") {
         throw new Error("Failed to fetch job run");
       }
-      return id ? getJobRunMock(id) : undefined;
+      return id ? (getJobRunMock(id) ?? null) : null;
     },
     enabled: mockConfig.useMockData && id !== null,
   });

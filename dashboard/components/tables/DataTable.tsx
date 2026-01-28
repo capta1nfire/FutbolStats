@@ -43,6 +43,10 @@ interface DataTableProps<TData> {
  * Uses ColumnDef<T> directly from TanStack Table - no custom API.
  * Handles: sticky header, sorting, row selection, loading/empty/error states.
  *
+ * Density: All tables share the same spacing (header px-3 pt-3 pb-2, cell px-3 py-2.5).
+ * Visual differences (e.g. Matches 2-line rows vs Jobs 1-line) are achieved via cell
+ * content layout (flex-col), not via density presets. See ADS spec §3.4 for rationale.
+ *
  * UX Features:
  * - Keyboard navigation: Arrow keys move between rows
  * - Enter key triggers onRowClick for focused row

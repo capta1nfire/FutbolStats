@@ -16,17 +16,17 @@ interface StatusBadgeProps {
 function getStatusColors(status: MLHealthStatus | null): string {
   switch (status) {
     case "ok":
-      return "bg-green-500/20 text-green-400 border-green-500/30";
+      return "bg-[var(--status-success-bg)] text-[var(--status-success-text)] border-[var(--status-success-border)]";
     case "warn":
-      return "bg-yellow-500/20 text-yellow-400 border-yellow-500/30";
+      return "bg-[var(--status-warning-bg)] text-[var(--status-warning-text)] border-[var(--status-warning-border)]";
     case "error":
-      return "bg-red-500/20 text-red-400 border-red-500/30";
+      return "bg-[var(--status-error-bg)] text-[var(--status-error-text)] border-[var(--status-error-border)]";
     case "partial":
-      return "bg-orange-500/20 text-orange-400 border-orange-500/30";
+      return "bg-[var(--status-warning-bg)] text-[var(--status-warning-text)] border-[var(--status-warning-border)]";
     case "not_ready":
-      return "bg-gray-500/20 text-gray-400 border-gray-500/30";
+      return "bg-muted/50 text-muted-foreground border-border";
     default:
-      return "bg-gray-500/20 text-gray-400 border-gray-500/30";
+      return "bg-muted/50 text-muted-foreground border-border";
   }
 }
 

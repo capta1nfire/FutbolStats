@@ -91,7 +91,7 @@ function DataQualityTabContent({ check, activeTab }: { check: DataQualityCheckDe
             <div className="flex items-center gap-2 text-sm">
               <AlertCircle className="h-4 w-4 text-muted-foreground" />
               <span className="text-muted-foreground">Affected Items:</span>
-              <span className={check.affectedCount > 0 ? "text-yellow-400" : "text-foreground"}>
+              <span className={check.affectedCount > 0 ? "text-[var(--status-warning-text)]" : "text-foreground"}>
                 {check.affectedCount}
               </span>
             </div>
@@ -136,7 +136,7 @@ function DataQualityTabContent({ check, activeTab }: { check: DataQualityCheckDe
                     </p>
                   </div>
                   {item.details?.reason && (
-                    <span className="text-xs text-yellow-400">
+                    <span className="text-xs text-[var(--status-warning-text)]">
                       {item.details.reason}
                     </span>
                   )}
@@ -172,10 +172,10 @@ function DataQualityTabContent({ check, activeTab }: { check: DataQualityCheckDe
                     <div
                       className={`w-4 h-4 rounded-full shrink-0 z-10 border-2 ${
                         entry.status === "passing"
-                          ? "bg-green-500/20 border-green-500"
+                          ? "bg-[var(--status-success-bg)] border-[var(--status-success-text)]"
                           : entry.status === "warning"
-                          ? "bg-yellow-500/20 border-yellow-500"
-                          : "bg-red-500/20 border-red-500"
+                          ? "bg-[var(--status-warning-bg)] border-[var(--status-warning-text)]"
+                          : "bg-[var(--status-error-bg)] border-[var(--status-error-text)]"
                       }`}
                     />
                     <div className="flex-1 pb-2">

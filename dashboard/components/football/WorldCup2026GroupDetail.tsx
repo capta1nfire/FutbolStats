@@ -114,7 +114,7 @@ function StandingsTable({
                 <td className="py-2 px-2 text-center text-muted-foreground">{entry.won}</td>
                 <td className="py-2 px-2 text-center text-muted-foreground">{entry.drawn}</td>
                 <td className="py-2 px-2 text-center text-muted-foreground">{entry.lost}</td>
-                <td className={`py-2 px-2 text-center ${entry.goal_diff > 0 ? "text-green-500" : entry.goal_diff < 0 ? "text-red-400" : "text-muted-foreground"}`}>
+                <td className={`py-2 px-2 text-center ${entry.goal_diff > 0 ? "text-[var(--status-success-text)]" : entry.goal_diff < 0 ? "text-[var(--status-error-text)]" : "text-muted-foreground"}`}>
                   {entry.goal_diff > 0 ? `+${entry.goal_diff}` : entry.goal_diff}
                 </td>
                 <td className="py-2 px-2 text-center font-semibold text-foreground">{entry.points}</td>
@@ -237,7 +237,7 @@ export function WorldCup2026GroupDetail({
     return (
       <div className="h-full flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 text-center max-w-md">
-          <AlertTriangle className="h-12 w-12 text-yellow-400" />
+          <AlertTriangle className="h-12 w-12 text-[var(--status-warning-text)]" />
           <div>
             <h2 className="text-lg font-semibold text-foreground mb-2">
               Group Data Unavailable
@@ -287,17 +287,17 @@ export function WorldCup2026GroupDetail({
 
         {/* Status Badge */}
         {data.status === "not_ready" && (
-          <div className="flex items-center gap-2 px-3 py-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
-            <Clock className="h-4 w-4 text-yellow-500" />
-            <span className="text-sm text-yellow-500">
+          <div className="flex items-center gap-2 px-3 py-2 bg-[var(--status-warning-bg)] border border-[var(--status-warning-border)] rounded-lg">
+            <Clock className="h-4 w-4 text-[var(--status-warning-text)]" />
+            <span className="text-sm text-[var(--status-warning-text)]">
               Group data not yet available
             </span>
           </div>
         )}
         {data.status === "disabled" && (
-          <div className="flex items-center gap-2 px-3 py-2 bg-gray-500/10 border border-gray-500/20 rounded-lg">
-            <XCircle className="h-4 w-4 text-gray-400" />
-            <span className="text-sm text-gray-400">
+          <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border border-border rounded-lg">
+            <XCircle className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm text-muted-foreground">
               Group feature disabled
             </span>
           </div>

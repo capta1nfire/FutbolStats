@@ -24,27 +24,27 @@ const categoryConfig: Record<
   coverage: {
     label: "Coverage",
     icon: BarChart3,
-    className: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+    className: "bg-[var(--tag-blue-bg)] text-[var(--tag-blue-text)] border-[var(--tag-blue-border)]",
   },
   consistency: {
     label: "Consistency",
     icon: RefreshCcw,
-    className: "bg-purple-500/20 text-purple-400 border-purple-500/30",
+    className: "bg-[var(--tag-purple-bg)] text-[var(--tag-purple-text)] border-[var(--tag-purple-border)]",
   },
   completeness: {
     label: "Completeness",
     icon: CheckSquare,
-    className: "bg-cyan-500/20 text-cyan-400 border-cyan-500/30",
+    className: "bg-[var(--tag-cyan-bg)] text-[var(--tag-cyan-text)] border-[var(--tag-cyan-border)]",
   },
   freshness: {
     label: "Freshness",
     icon: Clock,
-    className: "bg-orange-500/20 text-orange-400 border-orange-500/30",
+    className: "bg-[var(--tag-orange-bg)] text-[var(--tag-orange-text)] border-[var(--tag-orange-border)]",
   },
   odds: {
     label: "Odds",
     icon: TrendingUp,
-    className: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+    className: "bg-[var(--tag-cyan-bg)] text-[var(--tag-cyan-text)] border-[var(--tag-cyan-border)]",
   },
 };
 

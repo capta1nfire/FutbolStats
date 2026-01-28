@@ -17,10 +17,10 @@ export function OverviewDrawerSota({ tab }: OverviewDrawerSotaProps) {
 }
 
 const statusColors = {
-  ok: "bg-green-500",
-  warn: "bg-yellow-500",
-  red: "bg-red-500",
-  pending: "bg-blue-500",
+  ok: "bg-[var(--status-success-text)]",
+  warn: "bg-[var(--status-warning-text)]",
+  red: "bg-[var(--status-error-text)]",
+  pending: "bg-[var(--status-info-text)]",
   unavailable: "bg-muted",
 };
 

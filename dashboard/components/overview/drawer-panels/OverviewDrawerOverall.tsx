@@ -23,9 +23,9 @@ export function OverviewDrawerOverall({ tab }: OverviewDrawerOverallProps) {
 }
 
 const statusColors: Record<ApiBudgetStatus | "unknown", string> = {
-  ok: "text-green-400 bg-green-500/10",
-  warning: "text-yellow-400 bg-yellow-500/10",
-  critical: "text-red-400 bg-red-500/10",
+  ok: "text-[var(--status-success-text)] bg-[var(--status-success-bg)]",
+  warning: "text-[var(--status-warning-text)] bg-[var(--status-warning-bg)]",
+  critical: "text-[var(--status-error-text)] bg-[var(--status-error-bg)]",
   degraded: "text-orange-400 bg-orange-500/10",
   unknown: "text-muted-foreground bg-muted",
 };
@@ -138,7 +138,7 @@ function OverallSummaryTab() {
             </span>
           </div>
           {freshness.is_stale && (
-            <p className="text-xs text-yellow-400 mt-1">Data may be stale</p>
+            <p className="text-xs text-[var(--status-warning-text)] mt-1">Data may be stale</p>
           )}
         </div>
       )}

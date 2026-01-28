@@ -18,16 +18,16 @@ interface PredictionsCompactTileProps {
 }
 
 const statusDot: Record<ApiBudgetStatus, string> = {
-  ok: "bg-green-500",
-  warning: "bg-yellow-500",
-  critical: "bg-red-500",
+  ok: "bg-[var(--status-success-text)]",
+  warning: "bg-[var(--status-warning-text)]",
+  critical: "bg-[var(--status-error-text)]",
   degraded: "bg-orange-500",
 };
 
 function getCoverageColor(pct: number, warnThreshold: number, redThreshold: number): string {
-  if (pct >= warnThreshold) return "text-green-400";
-  if (pct >= redThreshold) return "text-yellow-400";
-  return "text-red-400";
+  if (pct >= warnThreshold) return "text-[var(--status-success-text)]";
+  if (pct >= redThreshold) return "text-[var(--status-warning-text)]";
+  return "text-[var(--status-error-text)]";
 }
 
 /**

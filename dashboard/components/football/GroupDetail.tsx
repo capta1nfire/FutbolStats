@@ -306,7 +306,7 @@ function GroupStandingsTable({
                 <td className="text-center py-1.5 px-2 text-muted-foreground">{entry.lost}</td>
                 <td className={cn(
                   "text-center py-1.5 px-2 font-medium",
-                  entry.goalDiff > 0 ? "text-green-500" : entry.goalDiff < 0 ? "text-red-500" : "text-muted-foreground"
+                  entry.goalDiff > 0 ? "text-[var(--status-success-text)]" : entry.goalDiff < 0 ? "text-[var(--status-error-text)]" : "text-muted-foreground"
                 )}>
                   {entry.goalDiff > 0 ? `+${entry.goalDiff}` : entry.goalDiff}
                 </td>
@@ -319,7 +319,7 @@ function GroupStandingsTable({
                           key={i}
                           className={cn(
                             "w-2 h-2 rounded-full",
-                            ch === "W" ? "bg-green-500" : ch === "D" ? "bg-yellow-500" : ch === "L" ? "bg-red-500" : "bg-muted"
+                            ch === "W" ? "bg-[var(--status-success-text)]" : ch === "D" ? "bg-muted-foreground" : ch === "L" ? "bg-[var(--status-error-text)]" : "bg-muted"
                           )}
                         />
                       ))}
@@ -378,10 +378,10 @@ function GroupStandingsSection({
           </span>
         )}
         {standingsData?.isPlaceholder && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-600">Placeholder</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]">Placeholder</span>
         )}
         {standingsData?.isCalculated && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600">Calculated</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--status-info-bg)] text-[var(--status-info-text)]">Calculated</span>
         )}
       </div>
 
@@ -455,7 +455,7 @@ export function GroupDetail({
     return (
       <div className="h-full flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 text-center max-w-md">
-          <AlertTriangle className="h-12 w-12 text-yellow-400" />
+          <AlertTriangle className="h-12 w-12 text-[var(--status-warning-text)]" />
           <div>
             <h2 className="text-lg font-semibold text-foreground mb-2">
               Group Data Unavailable
@@ -492,7 +492,7 @@ export function GroupDetail({
           </Button>
           <div className="flex-1">
             <div className="flex items-center gap-2">
-              <Users className="h-5 w-5 text-purple-500" />
+              <Users className="h-5 w-5 text-[var(--tag-purple-text)]" />
               <h1 className="text-lg font-semibold text-foreground">{group.name}</h1>
             </div>
             <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
@@ -516,8 +516,8 @@ export function GroupDetail({
           <span
             className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${
               is_active_all
-                ? "bg-green-500/10 text-green-500 border border-green-500/20"
-                : "bg-yellow-500/10 text-yellow-500 border border-yellow-500/20"
+                ? "bg-[var(--status-success-bg)] text-[var(--status-success-text)] border border-[var(--status-success-border)]"
+                : "bg-[var(--status-warning-bg)] text-[var(--status-warning-text)] border border-[var(--status-warning-border)]"
             }`}
           >
             {is_active_all ? "All Leagues Active" : "Partially Active"}
@@ -545,7 +545,7 @@ export function GroupDetail({
         {titan && (
           <div className="bg-card border border-border rounded-lg p-4">
             <div className="flex items-center gap-2 mb-3">
-              <TrendingUp className="h-4 w-4 text-purple-500" />
+              <TrendingUp className="h-4 w-4 text-[var(--tag-purple-text)]" />
               <h2 className="text-sm font-semibold text-foreground">TITAN Coverage (Aggregated)</h2>
             </div>
             <div className="grid grid-cols-3 gap-4">

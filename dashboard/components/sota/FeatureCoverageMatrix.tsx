@@ -30,9 +30,9 @@ function formatPct(pct: number): string {
  * - Red: < 70%
  */
 function getCoverageColor(pct: number): string {
-  if (pct >= 100) return "text-green-400";
-  if (pct >= 70) return "text-yellow-400";
-  return "text-red-400";
+  if (pct >= 100) return "text-[var(--status-success-text)]";
+  if (pct >= 70) return "text-[var(--status-warning-text)]";
+  return "text-[var(--status-error-text)]";
 }
 
 /**
@@ -41,8 +41,8 @@ function getCoverageColor(pct: number): string {
 function TierBadge({ badge }: { badge: string }) {
   const colors =
     badge === "PROD"
-      ? "bg-green-500/20 text-green-400 border-green-500/30"
-      : "bg-purple-500/20 text-purple-400 border-purple-500/30";
+      ? "bg-[var(--tag-blue-bg)] text-[var(--tag-blue-text)] border-[var(--tag-blue-border)]"
+      : "bg-[var(--tag-purple-bg)] text-[var(--tag-purple-text)] border-[var(--tag-purple-border)]";
 
   return (
     <span

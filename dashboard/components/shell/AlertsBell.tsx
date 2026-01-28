@@ -18,18 +18,18 @@ import { useToast } from "@/components/ui/use-toast";
  * Severity icon mapping
  */
 const severityIcons: Record<AlertSeverity, React.ReactNode> = {
-  critical: <AlertTriangle className="h-4 w-4 text-red-500" />,
-  warning: <AlertCircle className="h-4 w-4 text-yellow-500" />,
-  info: <Info className="h-4 w-4 text-blue-500" />,
+  critical: <AlertTriangle className="h-4 w-4 text-[var(--status-error-text)]" />,
+  warning: <AlertCircle className="h-4 w-4 text-[var(--status-warning-text)]" />,
+  info: <Info className="h-4 w-4 text-[var(--status-info-text)]" />,
 };
 
 /**
- * Severity badge colors
+ * Severity badge colors (ADS status tokens)
  */
 const severityColors: Record<AlertSeverity, string> = {
-  critical: "bg-red-500/20 text-red-400 border-red-500/30",
-  warning: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-  info: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  critical: "bg-[var(--status-error-bg)] text-[var(--status-error-text)] border-[var(--status-error-border)]",
+  warning: "bg-[var(--status-warning-bg)] text-[var(--status-warning-text)] border-[var(--status-warning-border)]",
+  info: "bg-[var(--status-info-bg)] text-[var(--status-info-text)] border-[var(--status-info-border)]",
 };
 
 /**
@@ -207,7 +207,7 @@ export function AlertsBell() {
           />
           {/* Badge */}
           {unreadCount > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-medium rounded-full flex items-center justify-center">
+            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-[var(--status-error-text)] text-white text-[10px] font-medium rounded-full flex items-center justify-center">
               {unreadCount > 99 ? "99+" : unreadCount}
             </span>
           )}

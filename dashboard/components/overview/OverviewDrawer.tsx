@@ -1,10 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
-import { X } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { useCallback, useMemo } from "react";
 import { useOverviewDrawer } from "@/lib/hooks/use-overview-drawer";
 import { OverviewTab } from "@/lib/overview-drawer";
+import { DetailDrawer } from "@/components/shell";
+import { IconTabs, IconTab } from "@/components/ui/icon-tabs";
+import {
+  Info,
+  AlertTriangle,
+  Clock,
+  HelpCircle,
+  ExternalLink,
+  TrendingUp,
+  List,
+} from "lucide-react";
 
 // Panel content components
 import {
@@ -22,6 +31,17 @@ import {
   OverviewDrawerIncidents,
 } from "./drawer-panels";
 
+/** Map tab keys to icons for IconTabs */
+const TAB_ICONS: Record<OverviewTab, React.ReactNode> = {
+  summary: <Info />,
+  issues: <AlertTriangle />,
+  timeline: <Clock />,
+  missing: <HelpCircle />,
+  movers: <TrendingUp />,
+  runs: <List />,
+  links: <ExternalLink />,
+};
+
 interface OverviewDrawerProps {
   className?: string;
 }
@@ -29,9 +49,9 @@ interface OverviewDrawerProps {
 /**
  * Overview Drawer
  *
- * Overlay drawer that shows detailed content for clicked tiles.
- * - Docked right, no backdrop
- * - Tabs for different views
+ * Uses DetailDrawer (canonical) for consistent styling.
+ * - Docked right, no backdrop (click-outside closes)
+ * - IconTabs for multi-tab panels
  * - ESC to close
  * - Deep-linkable via URL query params
  */
@@ -46,35 +66,24 @@ export function OverviewDrawer({ className }: OverviewDrawerProps) {
     closeDrawer,
   } = useOverviewDrawer();
 
-  const drawerRef = useRef<HTMLDivElement>(null);
-  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  // Build IconTabs from tabsMeta
+  const iconTabs: IconTab[] = useMemo(
+    () =>
+      tabsMeta.map((t) => ({
+        id: t.key,
+        icon: TAB_ICONS[t.key as OverviewTab] ?? <Info />,
+        label: t.label,
+      })),
+    [tabsMeta]
+  );
 
-  // Handle ESC key to close
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        closeDrawer();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, closeDrawer]);
-
-  // Focus management - focus close button when drawer opens
-  useEffect(() => {
-    if (isOpen && closeButtonRef.current) {
-      // Small delay to ensure drawer is rendered
-      setTimeout(() => {
-        closeButtonRef.current?.focus();
-      }, 100);
-    }
-  }, [isOpen, panel]);
+  const handleTabChange = useCallback(
+    (value: string) => setTab(value as OverviewTab),
+    [setTab]
+  );
 
   // Render panel content based on current panel
-  const renderPanelContent = useCallback(() => {
+  const panelContent = useMemo(() => {
     if (!panel || !tab) return null;
 
     switch (panel) {
@@ -107,66 +116,25 @@ export function OverviewDrawer({ className }: OverviewDrawerProps) {
     }
   }, [panel, tab]);
 
-  if (!isOpen) return null;
-
   return (
-    <div
-      ref={drawerRef}
-      className={cn(
-        "fixed top-14 right-0 bottom-0 w-[400px] z-40",
-        "bg-surface border-l border-border",
-        "flex flex-col",
-        "animate-in slide-in-from-right duration-200",
-        className
-      )}
-      role="dialog"
-      aria-modal="false"
-      aria-labelledby="drawer-title"
+    <DetailDrawer
+      open={isOpen}
+      onClose={closeDrawer}
+      title={panelMeta?.title ?? "Details"}
+      className={className}
+      fixedContent={
+        tabsMeta.length > 1 && tab ? (
+          <IconTabs
+            tabs={iconTabs}
+            value={tab}
+            onValueChange={handleTabChange}
+            showLabels
+            className="w-full"
+          />
+        ) : undefined
+      }
     >
-      {/* Header */}
-      <div className="h-12 flex items-center justify-between px-4 border-b border-border shrink-0">
-        <h2
-          id="drawer-title"
-          className="text-sm font-semibold text-foreground"
-        >
-          {panelMeta?.title ?? "Details"}
-        </h2>
-        <button
-          ref={closeButtonRef}
-          onClick={closeDrawer}
-          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-          aria-label="Close drawer"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-
-      {/* Tabs */}
-      {tabsMeta.length > 1 && (
-        <div className="px-4 py-2 border-b border-border shrink-0">
-          <div className="flex gap-1">
-            {tabsMeta.map((t) => (
-              <button
-                key={t.key}
-                onClick={() => setTab(t.key as OverviewTab)}
-                className={cn(
-                  "px-3 py-1.5 text-xs font-medium rounded-full transition-colors",
-                  t.isActive
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
-                )}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Content */}
-      <div className="flex-1 overflow-auto">
-        {renderPanelContent()}
-      </div>
-    </div>
+      {panelContent}
+    </DetailDrawer>
   );
 }

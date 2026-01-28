@@ -18,17 +18,17 @@ const statusConfig: Record<
   ok: {
     label: "OK",
     icon: CheckCircle2,
-    className: "bg-green-500/20 text-green-400 border-green-500/30 hover:bg-green-500/30",
+    className: "bg-[var(--status-success-bg)] text-[var(--status-success-text)] border-[var(--status-success-border)]",
   },
   warning: {
     label: "Warning",
     icon: AlertTriangle,
-    className: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30 hover:bg-yellow-500/30",
+    className: "bg-[var(--status-warning-bg)] text-[var(--status-warning-text)] border-[var(--status-warning-border)]",
   },
   stale: {
     label: "Stale",
     icon: Clock,
-    className: "bg-gray-500/20 text-gray-400 border-gray-500/30 hover:bg-gray-500/30",
+    className: "bg-[var(--status-warning-bg)] text-[var(--status-warning-text)] border-[var(--status-warning-border)]",
   },
 };
 

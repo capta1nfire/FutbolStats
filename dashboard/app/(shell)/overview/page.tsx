@@ -175,7 +175,7 @@ export default function OverviewPage() {
   };
 
   return (
-    <div className="h-full flex overflow-hidden">
+    <div className="h-full flex overflow-hidden relative">
       {/* Overview Drawer (URL-controlled) */}
       <OverviewDrawer />
 
@@ -212,7 +212,7 @@ export default function OverviewPage() {
                   Upcoming Matches
                 </span>
                 {isUpcomingDegraded && (
-                  <span className="text-[10px] text-yellow-400 bg-yellow-500/10 px-1.5 py-0.5 rounded">
+                  <span className="text-[10px] text-[var(--status-warning-text)] bg-[var(--status-warning-bg)] px-1.5 py-0.5 rounded">
                     mock
                   </span>
                 )}
@@ -236,7 +236,7 @@ export default function OverviewPage() {
                   Active Incidents
                 </span>
                 {isIncidentsDegraded && (
-                  <span className="text-[10px] text-yellow-400 bg-yellow-500/10 px-1.5 py-0.5 rounded">
+                  <span className="text-[10px] text-[var(--status-warning-text)] bg-[var(--status-warning-bg)] px-1.5 py-0.5 rounded">
                     mock
                   </span>
                 )}

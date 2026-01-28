@@ -232,9 +232,9 @@ function JobsPageContent() {
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-yellow-500/10 border border-yellow-500/20">
-                    <Database className="h-3.5 w-3.5 text-yellow-400" />
-                    <span className="text-[10px] text-yellow-400 font-medium">
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-[var(--status-warning-bg)] border border-[var(--status-warning-border)]">
+                    <Database className="h-3.5 w-3.5 text-[var(--status-warning-text)]" />
+                    <span className="text-[10px] text-[var(--status-warning-text)] font-medium">
                       mock
                     </span>
                   </div>

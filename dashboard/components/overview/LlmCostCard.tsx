@@ -18,9 +18,9 @@ interface LlmCostCardProps {
 }
 
 const statusColors: Record<ApiBudgetStatus, string> = {
-  ok: "bg-green-500/20 text-green-400 border-green-500/30",
-  warning: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-  critical: "bg-red-500/20 text-red-400 border-red-500/30",
+  ok: "bg-[var(--status-success-bg)] text-[var(--status-success-text)] border-[var(--status-success-border)]",
+  warning: "bg-[var(--status-warning-bg)] text-[var(--status-warning-text)] border-[var(--status-warning-border)]",
+  critical: "bg-[var(--status-error-bg)] text-[var(--status-error-text)] border-[var(--status-error-border)]",
   degraded: "bg-orange-500/20 text-orange-400 border-orange-500/30",
 };
 
@@ -205,7 +205,7 @@ export function LlmCostCard({
           </TooltipProvider>
         </h3>
         {displayStatus === "ok" ? (
-          <span className="h-2.5 w-2.5 rounded-full bg-green-500" title="OK" />
+          <span className="h-2.5 w-2.5 rounded-full bg-[var(--status-success-text)]" title="OK" />
         ) : (
           <span
             className={cn(

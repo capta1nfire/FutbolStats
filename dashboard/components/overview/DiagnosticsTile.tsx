@@ -22,17 +22,17 @@ function formatDelta(delta: number, suffix = "%"): string {
  * Get color for recommendation status
  */
 function getRecommendationColor(status: string): string {
-  if (status === "GO") return "text-green-400";
-  if (status === "NO_GO") return "text-red-400";
-  return "text-yellow-400";
+  if (status === "GO") return "text-[var(--status-success-text)]";
+  if (status === "NO_GO") return "text-[var(--status-error-text)]";
+  return "text-[var(--status-warning-text)]";
 }
 
 /**
  * Get color for sensor state
  */
 function getSensorStateColor(state: string): string {
-  if (state === "NOMINAL") return "text-green-400";
-  if (state === "CALIBRATING") return "text-yellow-400";
+  if (state === "NOMINAL") return "text-[var(--status-success-text)]";
+  if (state === "CALIBRATING") return "text-[var(--status-warning-text)]";
   if (state === "OVERFITTING_SUSPECTED") return "text-orange-400";
   return "text-muted-foreground";
 }
@@ -76,7 +76,7 @@ export function DiagnosticsTile({
             <Activity className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="text-xs font-medium text-foreground">Shadow Mode</span>
             {shadowMode?.state.enabled ? (
-              <span className="px-1 py-0.5 text-[9px] rounded bg-green-500/20 text-green-400 border border-green-500/30">
+              <span className="px-1 py-0.5 text-[9px] rounded bg-[var(--status-success-bg)] text-[var(--status-success-text)] border border-[var(--status-success-border)]">
                 ON
               </span>
             ) : (
@@ -102,7 +102,7 @@ export function DiagnosticsTile({
                   <span className="text-muted-foreground">Brier:</span>
                   <span className={cn(
                     "tabular-nums",
-                    shadowMode.metrics.delta_brier < 0 ? "text-green-400" : "text-red-400"
+                    shadowMode.metrics.delta_brier < 0 ? "text-[var(--status-success-text)]" : "text-[var(--status-error-text)]"
                   )}>
                     {formatDelta(shadowMode.metrics.delta_brier, "")}
                   </span>
@@ -111,7 +111,7 @@ export function DiagnosticsTile({
                   <span className="text-muted-foreground">Accuracy:</span>
                   <span className={cn(
                     "tabular-nums",
-                    shadowMode.metrics.delta_accuracy > 0 ? "text-green-400" : "text-red-400"
+                    shadowMode.metrics.delta_accuracy > 0 ? "text-[var(--status-success-text)]" : "text-[var(--status-error-text)]"
                   )}>
                     {formatDelta(shadowMode.metrics.delta_accuracy)}
                   </span>
@@ -134,7 +134,7 @@ export function DiagnosticsTile({
             <Activity className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="text-xs font-medium text-foreground">Sensor B</span>
             {sensorB?.is_ready ? (
-              <span className="px-1 py-0.5 text-[9px] rounded bg-green-500/20 text-green-400 border border-green-500/30">
+              <span className="px-1 py-0.5 text-[9px] rounded bg-[var(--status-success-bg)] text-[var(--status-success-text)] border border-[var(--status-success-border)]">
                 Ready
               </span>
             ) : (
@@ -160,7 +160,7 @@ export function DiagnosticsTile({
                   <span className="text-muted-foreground">Signal:</span>
                   <span className={cn(
                     "tabular-nums",
-                    sensorB.signal_score > 0 ? "text-green-400" : sensorB.signal_score < -3 ? "text-red-400" : "text-yellow-400"
+                    sensorB.signal_score > 0 ? "text-[var(--status-success-text)]" : sensorB.signal_score < -3 ? "text-[var(--status-error-text)]" : "text-[var(--status-warning-text)]"
                   )}>
                     {sensorB.signal_score.toFixed(2)}
                   </span>
@@ -173,7 +173,7 @@ export function DiagnosticsTile({
                   <span className="text-muted-foreground">Brier delta:</span>
                   <span className={cn(
                     "tabular-nums",
-                    sensorB.delta_brier < 0 ? "text-green-400" : "text-red-400"
+                    sensorB.delta_brier < 0 ? "text-[var(--status-success-text)]" : "text-[var(--status-error-text)]"
                   )}>
                     {sensorB.delta_brier > 0 ? "+" : ""}{sensorB.delta_brier.toFixed(3)}
                   </span>

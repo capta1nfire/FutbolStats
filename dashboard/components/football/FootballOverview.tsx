@@ -38,16 +38,16 @@ function SummaryCard({
         <div
           className={cn(
             "p-2 rounded-md",
-            variant === "live" && "bg-red-500/10",
-            variant === "success" && "bg-green-500/10",
+            variant === "live" && "bg-[var(--status-error-bg)]",
+            variant === "success" && "bg-[var(--status-success-bg)]",
             variant === "default" && "bg-muted"
           )}
         >
           <Icon
             className={cn(
               "h-5 w-5",
-              variant === "live" && "text-red-500",
-              variant === "success" && "text-green-500",
+              variant === "live" && "text-[var(--status-error-text)]",
+              variant === "success" && "text-[var(--status-success-text)]",
               variant === "default" && "text-muted-foreground"
             )}
             strokeWidth={1.5}
@@ -100,7 +100,7 @@ function UpcomingMatchRow({
       </div>
       {match.has_prediction && (
         <span title="Has prediction">
-          <TrendingUp className="h-4 w-4 text-green-500 shrink-0" />
+          <TrendingUp className="h-4 w-4 text-[var(--status-success-text)] shrink-0" />
         </span>
       )}
     </div>
@@ -156,8 +156,8 @@ function AlertCard({
   };
 }) {
   return (
-    <div className="flex items-start gap-3 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
-      <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
+    <div className="flex items-start gap-3 p-3 bg-[var(--status-warning-bg)] border border-[var(--status-warning-border)] rounded-lg">
+      <AlertTriangle className="h-4 w-4 text-[var(--status-warning-text)] shrink-0 mt-0.5" />
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-foreground">{alert.league_name}</p>
         <p className="text-xs text-muted-foreground">{alert.message}</p>
@@ -183,8 +183,8 @@ function TitanBadge({
   return (
     <div className="bg-card border border-border rounded-lg p-4">
       <div className="flex items-center gap-2 mb-3">
-        <div className="p-1.5 rounded-md bg-purple-500/10">
-          <TrendingUp className="h-4 w-4 text-purple-500" />
+        <div className="p-1.5 rounded-md bg-[var(--tag-purple-bg)]">
+          <TrendingUp className="h-4 w-4 text-[var(--tag-purple-text)]" />
         </div>
         <h3 className="text-sm font-semibold text-foreground">TITAN Coverage</h3>
       </div>
@@ -232,7 +232,7 @@ export function FootballOverview() {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 text-center max-w-md">
-          <AlertTriangle className="h-12 w-12 text-yellow-400" />
+          <AlertTriangle className="h-12 w-12 text-[var(--status-warning-text)]" />
           <div>
             <h2 className="text-lg font-semibold text-foreground mb-2">
               Football Overview Unavailable
@@ -309,7 +309,7 @@ export function FootballOverview() {
         {alerts && alerts.length > 0 && (
           <div className="space-y-3">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-yellow-500" />
+              <AlertTriangle className="h-4 w-4 text-[var(--status-warning-text)]" />
               Alerts ({alerts.length})
             </h2>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">

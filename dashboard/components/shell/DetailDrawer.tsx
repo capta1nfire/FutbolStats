@@ -113,7 +113,7 @@ export function DetailDrawer({
         className={cn(
           "bg-sidebar flex flex-col transition-smooth",
           variant === "overlay"
-            ? "absolute right-0 top-0 h-full w-[400px] z-30 shadow-elevation-left"
+            ? "absolute right-0 top-0 h-full w-[400px] z-30 shadow-drawer-left"
             : "w-[320px]",
           className
         )}

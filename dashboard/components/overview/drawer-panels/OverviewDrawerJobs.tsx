@@ -51,9 +51,9 @@ function JobsSummaryTab() {
   }
 
   const statusColors = {
-    ok: "text-green-400",
-    warning: "text-yellow-400",
-    critical: "text-red-400",
+    ok: "text-[var(--status-success-text)]",
+    warning: "text-[var(--status-warning-text)]",
+    critical: "text-[var(--status-error-text)]",
     degraded: "text-orange-400",
   };
 
@@ -78,13 +78,13 @@ function JobsSummaryTab() {
         <div className={cn(
           "rounded-lg p-3 border",
           jobs.top_alert.severity === "red"
-            ? "bg-red-500/10 border-red-500/30"
-            : "bg-yellow-500/10 border-yellow-500/30"
+            ? "bg-[var(--status-error-bg)] border-[var(--status-error-border)]"
+            : "bg-[var(--status-warning-bg)] border-[var(--status-warning-border)]"
         )}>
           <div className="flex items-start gap-2">
             <AlertCircle className={cn(
               "h-4 w-4 mt-0.5",
-              jobs.top_alert.severity === "red" ? "text-red-400" : "text-yellow-400"
+              jobs.top_alert.severity === "red" ? "text-[var(--status-error-text)]" : "text-[var(--status-warning-text)]"
             )} />
             <div>
               <p className="text-sm font-medium text-foreground">
@@ -125,9 +125,9 @@ function JobsSummaryTab() {
                   </span>
                 )}
                 {data.status === "ok" ? (
-                  <CheckCircle2 className="h-4 w-4 text-green-400" />
+                  <CheckCircle2 className="h-4 w-4 text-[var(--status-success-text)]" />
                 ) : (
-                  <XCircle className="h-4 w-4 text-yellow-400" />
+                  <XCircle className="h-4 w-4 text-[var(--status-warning-text)]" />
                 )}
               </div>
             ) : (

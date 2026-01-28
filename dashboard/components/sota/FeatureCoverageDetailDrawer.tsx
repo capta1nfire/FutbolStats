@@ -46,10 +46,10 @@ const DETAIL_TABS = [
 // ---------------------------------------------------------------------------
 
 function getCoverageColor(pct: number): string {
-  if (pct >= 95) return "text-green-400";
-  if (pct >= 80) return "text-green-400/70";
-  if (pct >= 50) return "text-yellow-400";
-  if (pct > 0) return "text-red-400";
+  if (pct >= 95) return "text-[var(--status-success-text)]";
+  if (pct >= 80) return "text-[var(--status-success-text)]/70";
+  if (pct >= 50) return "text-[var(--status-warning-text)]";
+  if (pct > 0) return "text-[var(--status-error-text)]";
   return "text-muted-foreground";
 }
 
@@ -145,8 +145,8 @@ function DetailTabContent({
                     className={cn(
                       "text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded",
                       feature.badge === "PROD"
-                        ? "bg-green-500/10 text-green-400"
-                        : "bg-blue-500/10 text-blue-400"
+                        ? "bg-[var(--tag-blue-bg)] text-[var(--tag-blue-text)]"
+                        : "bg-[var(--tag-indigo-bg)] text-[var(--tag-indigo-text)]"
                     )}
                   >
                     {feature.badge}
@@ -312,10 +312,10 @@ function DetailTabContent({
                       className={cn(
                         "text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded",
                         tournament.kind === "international"
-                          ? "bg-purple-500/10 text-purple-400"
+                          ? "bg-[var(--tag-purple-bg)] text-[var(--tag-purple-text)]"
                           : tournament.kind === "cup"
-                          ? "bg-amber-500/10 text-amber-400"
-                          : "bg-gray-500/10 text-gray-400"
+                          ? "bg-[var(--tag-orange-bg)] text-[var(--tag-orange-text)]"
+                          : "bg-[var(--tag-gray-bg)] text-[var(--tag-gray-text)]"
                       )}
                     >
                       {tournament.kind}
@@ -324,10 +324,10 @@ function DetailTabContent({
                       className={cn(
                         "text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded",
                         tournament.priority === "high"
-                          ? "bg-green-500/10 text-green-400"
+                          ? "bg-[var(--tag-blue-bg)] text-[var(--tag-blue-text)]"
                           : tournament.priority === "medium"
-                          ? "bg-yellow-500/10 text-yellow-400"
-                          : "bg-gray-500/10 text-gray-400"
+                          ? "bg-[var(--tag-orange-bg)] text-[var(--tag-orange-text)]"
+                          : "bg-[var(--tag-gray-bg)] text-[var(--tag-gray-text)]"
                       )}
                     >
                       {tournament.priority}

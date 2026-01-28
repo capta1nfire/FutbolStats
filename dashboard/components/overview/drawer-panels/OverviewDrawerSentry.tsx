@@ -49,9 +49,9 @@ function SentrySummaryTab() {
   }
 
   const statusColors = {
-    ok: "text-green-400",
-    warning: "text-yellow-400",
-    critical: "text-red-400",
+    ok: "text-[var(--status-success-text)]",
+    warning: "text-[var(--status-warning-text)]",
+    critical: "text-[var(--status-error-text)]",
     degraded: "text-orange-400",
   };
 
@@ -122,9 +122,9 @@ const rangeOptions: { value: SentryIssuesRange; label: string }[] = [
 ];
 
 const levelColors = {
-  error: "bg-red-500/20 text-red-400 border-red-500/30",
-  warning: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-  info: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  error: "bg-[var(--status-error-bg)] text-[var(--status-error-text)] border-[var(--status-error-border)]",
+  warning: "bg-[var(--status-warning-bg)] text-[var(--status-warning-text)] border-[var(--status-warning-border)]",
+  info: "bg-[var(--status-info-bg)] text-[var(--status-info-text)] border-[var(--status-info-border)]",
   debug: "bg-muted text-muted-foreground border-border",
 };
 
@@ -194,8 +194,8 @@ function SentryIssuesTab() {
 
       {/* Issues list */}
       {issues.length === 0 ? (
-        <div className="bg-green-500/10 rounded-lg p-4 text-center">
-          <p className="text-sm text-green-400">No issues in this time range</p>
+        <div className="bg-[var(--status-success-bg)] rounded-lg p-4 text-center">
+          <p className="text-sm text-[var(--status-success-text)]">No issues in this time range</p>
         </div>
       ) : (
         <div className="space-y-2">

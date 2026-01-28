@@ -99,7 +99,7 @@ export function DataQualityTable({
         header: "Affected",
         cell: ({ row }) =>
           row.original.affectedCount > 0 ? (
-            <span className="flex items-center gap-1 text-yellow-400">
+            <span className="flex items-center gap-1 text-[var(--status-warning-text)]">
               <AlertCircle className="h-3 w-3" />
               {row.original.affectedCount}
             </span>

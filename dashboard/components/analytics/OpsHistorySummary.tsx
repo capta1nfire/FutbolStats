@@ -37,7 +37,7 @@ export function OpsHistorySummary({
           Operations Summary ({summary.daysWithData} days)
         </h3>
         {isDegraded && (
-          <span className="text-xs text-yellow-400 bg-yellow-500/10 px-2 py-0.5 rounded">
+          <span className="text-xs text-[var(--status-warning-text)] bg-[var(--status-warning-bg)] px-2 py-0.5 rounded">
             degraded
           </span>
         )}
@@ -87,9 +87,9 @@ interface MetricItemProps {
 function MetricItem({ label, value, variant = "default" }: MetricItemProps) {
   const variantClasses = {
     default: "text-foreground",
-    success: "text-green-400",
-    warning: "text-yellow-400",
-    error: "text-red-400",
+    success: "text-[var(--status-success-text)]",
+    warning: "text-[var(--status-warning-text)]",
+    error: "text-[var(--status-error-text)]",
   };
 
   return (
@@ -112,11 +112,11 @@ function DayIndicator({ day }: DayIndicatorProps) {
 
   let bgColor = "bg-muted";
   if (hasData && !hasErrors) {
-    bgColor = "bg-green-500/30";
+    bgColor = "bg-[var(--status-success-bg)]";
   } else if (hasData && hasErrors) {
-    bgColor = "bg-yellow-500/30";
+    bgColor = "bg-[var(--status-warning-bg)]";
   } else if (!hasData) {
-    bgColor = "bg-red-500/30";
+    bgColor = "bg-[var(--status-error-bg)]";
   }
 
   const dateLabel = day.day.slice(5); // MM-DD

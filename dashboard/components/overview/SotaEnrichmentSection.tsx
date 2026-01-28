@@ -35,22 +35,22 @@ interface SotaEnrichmentSectionProps {
  * Status pill colors
  */
 const statusColors: Record<SotaEnrichmentStatus, string> = {
-  ok: "bg-green-500/10 text-green-400 border-green-500/20",
-  warn: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
-  red: "bg-red-500/10 text-red-400 border-red-500/20",
-  unavailable: "bg-gray-500/10 text-gray-400 border-gray-500/20",
-  pending: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+  ok: "bg-[var(--status-success-bg)] text-[var(--status-success-text)] border-[var(--status-success-border)]",
+  warn: "bg-[var(--status-warning-bg)] text-[var(--status-warning-text)] border-[var(--status-warning-border)]",
+  red: "bg-[var(--status-error-bg)] text-[var(--status-error-text)] border-[var(--status-error-border)]",
+  unavailable: "bg-muted/50 text-muted-foreground border-border",
+  pending: "bg-[var(--status-info-bg)] text-[var(--status-info-text)] border-[var(--status-info-border)]",
 };
 
 /**
  * Status dot colors for indicator
  */
 const statusDotColors: Record<SotaEnrichmentStatus, string> = {
-  ok: "bg-green-500",
-  warn: "bg-yellow-500",
-  red: "bg-red-500",
-  unavailable: "bg-gray-500",
-  pending: "bg-blue-500",
+  ok: "bg-[var(--status-success-text)]",
+  warn: "bg-[var(--status-warning-text)]",
+  red: "bg-[var(--status-error-text)]",
+  unavailable: "bg-muted-foreground",
+  pending: "bg-[var(--status-info-text)]",
 };
 
 /**
@@ -90,9 +90,9 @@ const componentDqLinks: Record<SotaEnrichmentKey, string> = {
  * Coverage color based on percentage
  */
 function getCoverageColor(pct: number): string {
-  if (pct >= 80) return "text-green-400";
-  if (pct >= 50) return "text-yellow-400";
-  return "text-red-400";
+  if (pct >= 80) return "text-[var(--status-success-text)]";
+  if (pct >= 50) return "text-[var(--status-warning-text)]";
+  return "text-[var(--status-error-text)]";
 }
 
 /**
@@ -228,9 +228,9 @@ export function SotaEnrichmentSection({
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-yellow-500/10 border border-yellow-500/20">
-                  <Database className="h-3.5 w-3.5 text-yellow-400" />
-                  <span className="text-[10px] text-yellow-400 font-medium">
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-[var(--status-warning-bg)] border border-[var(--status-warning-border)]">
+                  <Database className="h-3.5 w-3.5 text-[var(--status-warning-text)]" />
+                  <span className="text-[10px] text-[var(--status-warning-text)] font-medium">
                     mock
                   </span>
                 </div>

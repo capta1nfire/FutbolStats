@@ -38,9 +38,9 @@ function getProgressStatus(actual: number, target: number): "ok" | "warning" | "
 }
 
 const statusColors = {
-  ok: "text-green-400",
-  warning: "text-yellow-400",
-  critical: "text-red-400",
+  ok: "text-[var(--status-success-text)]",
+  warning: "text-[var(--status-warning-text)]",
+  critical: "text-[var(--status-error-text)]",
 };
 
 /**
@@ -88,7 +88,7 @@ export function ProgressCard({
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium rounded-full bg-green-500/20 text-green-400 border border-green-500/30">
+                <span className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium rounded-full bg-[var(--status-success-bg)] text-[var(--status-success-text)] border border-[var(--status-success-border)]">
                   <CheckCircle2 className="h-3 w-3" />
                   Ready
                 </span>

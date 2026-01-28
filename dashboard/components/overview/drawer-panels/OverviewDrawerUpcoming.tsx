@@ -64,7 +64,7 @@ function UpcomingSummaryTab() {
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>{match.leagueName}</span>
               {match.hasPrediction && (
-                <span className="px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded text-[10px]">
+                <span className="px-1.5 py-0.5 bg-[var(--status-success-bg)] text-[var(--status-success-text)] rounded text-[10px]">
                   Pred
                 </span>
               )}

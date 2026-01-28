@@ -19,19 +19,19 @@ const statusConfig: Record<
     label: "Passing",
     variant: "default",
     icon: CheckCircle2,
-    className: "bg-green-500/20 text-green-400 border-green-500/30 hover:bg-green-500/30",
+    className: "bg-[var(--status-success-bg)] text-[var(--status-success-text)] border-[var(--status-success-border)]",
   },
   warning: {
     label: "Warning",
     variant: "default",
     icon: AlertTriangle,
-    className: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30 hover:bg-yellow-500/30",
+    className: "bg-[var(--status-warning-bg)] text-[var(--status-warning-text)] border-[var(--status-warning-border)]",
   },
   failing: {
     label: "Failing",
     variant: "destructive",
     icon: XCircle,
-    className: "bg-red-500/20 text-red-400 border-red-500/30 hover:bg-red-500/30",
+    className: "bg-[var(--status-error-bg)] text-[var(--status-error-text)] border-[var(--status-error-border)]",
   },
 };
 

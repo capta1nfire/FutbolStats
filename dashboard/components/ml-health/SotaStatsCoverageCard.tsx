@@ -23,9 +23,9 @@ function formatPct(pct: number | undefined): string {
  */
 function getPctColor(pct: number | undefined): string {
   if (pct === undefined) return "text-muted-foreground";
-  if (pct >= 100) return "text-green-400";
-  if (pct >= 70) return "text-yellow-400";
-  return "text-red-400";
+  if (pct >= 100) return "text-[var(--status-success-text)]";
+  if (pct >= 70) return "text-[var(--status-warning-text)]";
+  return "text-[var(--status-error-text)]";
 }
 
 /**
@@ -100,7 +100,7 @@ export function SotaStatsCoverageCard({ data }: SotaStatsCoverageCardProps) {
                     <td className={`py-2 px-2 text-right tabular-nums ${getPctColor(stats.with_stats_pct)}`}>
                       {formatPct(stats.with_stats_pct)}
                     </td>
-                    <td className={`py-2 px-2 text-right tabular-nums ${stats.marked_no_stats_pct > 0 ? "text-yellow-400" : "text-muted-foreground"}`}>
+                    <td className={`py-2 px-2 text-right tabular-nums ${stats.marked_no_stats_pct > 0 ? "text-[var(--status-warning-text)]" : "text-muted-foreground"}`}>
                       {formatPct(stats.marked_no_stats_pct)}
                     </td>
                     <td className={`py-2 pl-2 text-right tabular-nums ${getPctColor(stats.shots_present_pct)}`}>

@@ -17,17 +17,17 @@ const statusConfig: Record<
   active: {
     label: "Active",
     icon: Circle,
-    className: "bg-red-500/20 text-red-400 border-red-500/30",
+    className: "bg-[var(--status-error-bg)] text-[var(--status-error-text)] border-[var(--status-error-border)]",
   },
   acknowledged: {
     label: "Acknowledged",
     icon: Clock,
-    className: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+    className: "bg-[var(--status-warning-bg)] text-[var(--status-warning-text)] border-[var(--status-warning-border)]",
   },
   resolved: {
     label: "Resolved",
     icon: CheckCircle2,
-    className: "bg-green-500/20 text-green-400 border-green-500/30",
+    className: "bg-[var(--status-success-bg)] text-[var(--status-success-text)] border-[var(--status-success-border)]",
   },
 };
 

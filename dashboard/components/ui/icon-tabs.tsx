@@ -104,7 +104,7 @@ function IconTabButton({ tab, isSelected, onSelect, showLabel = false }: IconTab
         // Layout
         "inline-flex items-center justify-center gap-1.5",
         showLabel ? "w-full px-3 py-1.5" : "w-full h-8 min-h-8 p-1",
-        "rounded",
+        "rounded-md",
         // Transitions
         "transition-[background-color,color] duration-150",
         // Focus state

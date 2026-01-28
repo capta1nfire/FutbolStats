@@ -137,7 +137,7 @@ export function WorldCup2026Groups({ onBack, onGroupSelect }: WorldCup2026Groups
     return (
       <div className="h-full flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 text-center max-w-md">
-          <AlertTriangle className="h-12 w-12 text-yellow-400" />
+          <AlertTriangle className="h-12 w-12 text-[var(--status-warning-text)]" />
           <div>
             <h2 className="text-lg font-semibold text-foreground mb-2">
               Groups Data Unavailable
@@ -187,17 +187,17 @@ export function WorldCup2026Groups({ onBack, onGroupSelect }: WorldCup2026Groups
 
         {/* Status Badge */}
         {data.status === "not_ready" && (
-          <div className="flex items-center gap-2 px-3 py-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
-            <Clock className="h-4 w-4 text-yellow-500" />
-            <span className="text-sm text-yellow-500">
+          <div className="flex items-center gap-2 px-3 py-2 bg-[var(--status-warning-bg)] border border-[var(--status-warning-border)] rounded-lg">
+            <Clock className="h-4 w-4 text-[var(--status-warning-text)]" />
+            <span className="text-sm text-[var(--status-warning-text)]">
               Groups not yet finalized
             </span>
           </div>
         )}
         {data.status === "disabled" && (
-          <div className="flex items-center gap-2 px-3 py-2 bg-gray-500/10 border border-gray-500/20 rounded-lg">
-            <XCircle className="h-4 w-4 text-gray-400" />
-            <span className="text-sm text-gray-400">
+          <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border border-border rounded-lg">
+            <XCircle className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm text-muted-foreground">
               Groups feature disabled
             </span>
           </div>

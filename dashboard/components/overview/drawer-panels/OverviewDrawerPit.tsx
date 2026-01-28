@@ -79,7 +79,7 @@ function PitSummaryTab() {
             </div>
           </div>
           {progress.ready_for_retest && (
-            <div className="flex items-center gap-2 text-green-400 text-sm">
+            <div className="flex items-center gap-2 text-[var(--status-success-text)] text-sm">
               <CheckCircle2 className="h-4 w-4" />
               <span>Ready for retest</span>
             </div>

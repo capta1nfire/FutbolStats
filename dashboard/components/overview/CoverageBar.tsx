@@ -18,9 +18,9 @@ export function CoverageBar({
 
   // Determine color based on coverage
   const getBarColor = () => {
-    if (clampedPct >= 90) return "bg-green-500";
-    if (clampedPct >= 70) return "bg-yellow-500";
-    return "bg-red-500";
+    if (clampedPct >= 90) return "bg-[var(--status-success-text)]";
+    if (clampedPct >= 70) return "bg-[var(--status-warning-text)]";
+    return "bg-[var(--status-error-text)]";
   };
 
   return (

@@ -7,7 +7,10 @@
     "dev:webpack": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "lint:visual": "node scripts/visual-lint.mjs",
+    "lint:visual:report": "node scripts/visual-lint.mjs --report",
+    "lint:all": "eslint && npx tsc --noEmit && node scripts/visual-lint.mjs"
   },
   "dependencies": {
     "@fontsource/barlow-condensed": "^5.2.8",

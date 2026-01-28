@@ -37,10 +37,10 @@ function IncidentsSummaryTab() {
   }
 
   const severityColors = {
-    critical: "bg-red-500/10 border-red-500/30 text-red-400",
-    high: "bg-orange-500/10 border-orange-500/30 text-orange-400",
-    medium: "bg-yellow-500/10 border-yellow-500/30 text-yellow-400",
-    low: "bg-blue-500/10 border-blue-500/30 text-blue-400",
+    critical: "bg-[var(--status-error-bg)] border-[var(--status-error-border)] text-[var(--status-error-text)]",
+    high: "bg-[var(--status-warning-bg)] border-[var(--status-warning-border)] text-[var(--status-warning-text)]",
+    medium: "bg-[var(--status-warning-bg)] border-[var(--status-warning-border)] text-[var(--status-warning-text)]",
+    low: "bg-[var(--status-info-bg)] border-[var(--status-info-border)] text-[var(--status-info-text)]",
   };
 
   return (
@@ -51,8 +51,8 @@ function IncidentsSummaryTab() {
       </div>
 
       {incidents.length === 0 ? (
-        <div className="bg-green-500/10 rounded-lg p-4 text-center">
-          <p className="text-sm text-green-400">No active incidents</p>
+        <div className="bg-[var(--status-success-bg)] rounded-lg p-4 text-center">
+          <p className="text-sm text-[var(--status-success-text)]">No active incidents</p>
         </div>
       ) : (
         <div className="space-y-2">

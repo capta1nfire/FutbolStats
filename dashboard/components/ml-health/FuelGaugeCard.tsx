@@ -21,11 +21,11 @@ function StatusIcon({ status }: { status: MLHealthStatus | null }) {
 
   switch (status) {
     case "ok":
-      return <CheckCircle className={cn(baseClass, "text-green-400")} />;
+      return <CheckCircle className={cn(baseClass, "text-[var(--status-success-text)]")} />;
     case "warn":
-      return <AlertTriangle className={cn(baseClass, "text-yellow-400")} />;
+      return <AlertTriangle className={cn(baseClass, "text-[var(--status-warning-text)]")} />;
     case "error":
-      return <XCircle className={cn(baseClass, "text-red-400")} />;
+      return <XCircle className={cn(baseClass, "text-[var(--status-error-text)]")} />;
     default:
       return <Fuel className={cn(baseClass, "text-muted-foreground")} />;
   }
@@ -100,7 +100,7 @@ export function FuelGaugeCard({
             {reasons.map((reason, idx) => (
               <li
                 key={idx}
-                className="text-sm text-yellow-400 flex items-start gap-2"
+                className="text-sm text-[var(--status-warning-text)] flex items-start gap-2"
               >
                 <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                 <span>{reason}</span>
@@ -112,7 +112,7 @@ export function FuelGaugeCard({
 
       {/* No issues message */}
       {reasons.length === 0 && status === "ok" && (
-        <div className="mb-4 flex items-center gap-2 text-green-400">
+        <div className="mb-4 flex items-center gap-2 text-[var(--status-success-text)]">
           <CheckCircle className="h-4 w-4" />
           <span className="text-sm">All systems operational</span>
         </div>
@@ -125,7 +125,7 @@ export function FuelGaugeCard({
           <span>As of: {formatDateTime(asOfUtc)}</span>
         )}
         {cached && (
-          <span className="px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded text-[10px]">
+          <span className="px-1.5 py-0.5 bg-[var(--status-info-bg)] text-[var(--status-info-text)] rounded text-[10px]">
             CACHED {cacheAgeSeconds !== null && `(${cacheAgeSeconds}s)`}
           </span>
         )}

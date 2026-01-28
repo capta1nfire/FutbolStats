@@ -25,9 +25,9 @@ interface WorldCup2026OverviewProps {
  */
 function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
-    not_ready: "bg-yellow-500/10 text-yellow-500 border-yellow-500/20",
-    ok: "bg-green-500/10 text-green-500 border-green-500/20",
-    disabled: "bg-gray-500/10 text-gray-400 border-gray-500/20",
+    not_ready: "bg-[var(--status-warning-bg)] text-[var(--status-warning-text)] border-[var(--status-warning-border)]",
+    ok: "bg-[var(--status-success-bg)] text-[var(--status-success-text)] border-[var(--status-success-border)]",
+    disabled: "bg-[var(--tag-gray-bg)] text-[var(--tag-gray-text)] border-[var(--tag-gray-border)]",
   };
 
   const labels: Record<string, string> = {
@@ -48,8 +48,8 @@ function StatusBadge({ status }: { status: string }) {
  */
 function AlertCard({ alert }: { alert: { type: string; message: string; value: number | null } }) {
   return (
-    <div className="flex items-start gap-3 bg-yellow-500/5 border border-yellow-500/20 rounded-lg p-3">
-      <AlertCircle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
+    <div className="flex items-start gap-3 bg-[var(--status-warning-bg)] border border-[var(--status-warning-border)] rounded-lg p-3">
+      <AlertCircle className="h-4 w-4 text-[var(--status-warning-text)] shrink-0 mt-0.5" />
       <div>
         <p className="text-sm text-foreground">{alert.message}</p>
         <p className="text-xs text-muted-foreground capitalize mt-0.5">
@@ -86,7 +86,7 @@ export function WorldCup2026Overview({ onGroupsClick }: WorldCup2026OverviewProp
     return (
       <div className="h-full flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 text-center max-w-md">
-          <AlertTriangle className="h-12 w-12 text-yellow-400" />
+          <AlertTriangle className="h-12 w-12 text-[var(--status-warning-text)]" />
           <div>
             <h2 className="text-lg font-semibold text-foreground mb-2">
               World Cup 2026 Data Unavailable
@@ -182,7 +182,7 @@ export function WorldCup2026Overview({ onGroupsClick }: WorldCup2026OverviewProp
         {alerts.length > 0 && (
           <div className="space-y-3">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 text-yellow-500" />
+              <AlertCircle className="h-4 w-4 text-[var(--status-warning-text)]" />
               Alerts ({alerts.length})
             </h2>
             <div className="space-y-2">

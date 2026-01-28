@@ -1,0 +1,53 @@
+{
+  "$schema": "Visual lint allowlist — exceptions to hardcode rules. Each entry must have reason + owner.",
+  "rules": [
+    {
+      "file": "components/football/**/*.tsx",
+      "pattern": "text-amber-500",
+      "reason": "Trophy icon decorative color (gold). Not a status or tag.",
+      "owner": "ADS"
+    },
+    {
+      "file": "components/ml-health/PredictionConfidenceCard.tsx",
+      "pattern": "bg-(yellow|gray|orange)-(400|600)",
+      "reason": "Tier distribution bars (data-viz: Gold/Silver/Copper). Not status.",
+      "owner": "ADS"
+    },
+    {
+      "file": "components/ml-health/PredictionConfidenceCard.tsx",
+      "pattern": "text-cyan-400",
+      "reason": "Decorative theme icon (prediction confidence).",
+      "owner": "ADS"
+    },
+    {
+      "file": "components/ml-health/FreshnessCard.tsx",
+      "pattern": "text-blue-400",
+      "reason": "Decorative theme icon (clock/freshness).",
+      "owner": "ADS"
+    },
+    {
+      "file": "components/ml-health/TitanCoverageCard.tsx",
+      "pattern": "text-purple-400",
+      "reason": "Decorative theme icon (TITAN layers).",
+      "owner": "ADS"
+    },
+    {
+      "file": "components/matches/MatchDetailDrawer.tsx",
+      "pattern": "text-blue-400",
+      "reason": "Weather/humidity decorative icon.",
+      "owner": "ADS"
+    },
+    {
+      "file": "components/sota/FeatureCoverageMatrix.tsx",
+      "pattern": "bg-emerald-500",
+      "reason": "Interactive hover on coverage cell (data-viz).",
+      "owner": "ADS"
+    },
+    {
+      "file": "components/ui/toast.tsx",
+      "pattern": "red-(300|400|50|600)",
+      "reason": "Radix toast destructive variant (shadcn upstream, do not modify).",
+      "owner": "ADS"
+    }
+  ]
+}

@@ -127,7 +127,7 @@ function StatsSummarySection({ stats }: { stats: TeamStats }) {
           <p className="text-xs text-muted-foreground">Matches</p>
         </div>
         <div className="bg-card border border-border rounded-lg p-2 text-center">
-          <p className="text-lg font-semibold text-green-500">{stats.wins}</p>
+          <p className="text-lg font-semibold text-[var(--status-success-text)]">{stats.wins}</p>
           <p className="text-xs text-muted-foreground">Wins</p>
         </div>
         <div className="bg-card border border-border rounded-lg p-2 text-center">
@@ -141,7 +141,7 @@ function StatsSummarySection({ stats }: { stats: TeamStats }) {
           <p className="text-xs text-muted-foreground">Draws</p>
         </div>
         <div>
-          <p className="text-sm font-medium text-red-400">{stats.losses}</p>
+          <p className="text-sm font-medium text-[var(--status-error-text)]">{stats.losses}</p>
           <p className="text-xs text-muted-foreground">Losses</p>
         </div>
         <div>
@@ -149,7 +149,7 @@ function StatsSummarySection({ stats }: { stats: TeamStats }) {
           <p className="text-xs text-muted-foreground">GF</p>
         </div>
         <div>
-          <p className={`text-sm font-medium ${goalDiff >= 0 ? "text-green-500" : "text-red-400"}`}>
+          <p className={`text-sm font-medium ${goalDiff >= 0 ? "text-[var(--status-success-text)]" : "text-[var(--status-error-text)]"}`}>
             {goalDiff >= 0 ? `+${goalDiff}` : goalDiff}
           </p>
           <p className="text-xs text-muted-foreground">GD</p>
@@ -207,9 +207,9 @@ function RecentFormSection({ form }: { form: TeamFormMatch[] }) {
   }
 
   const resultColors = {
-    W: "bg-green-500",
-    D: "bg-yellow-500",
-    L: "bg-red-500",
+    W: "bg-[var(--status-success-text)]",
+    D: "bg-muted-foreground",
+    L: "bg-[var(--status-error-text)]",
   };
 
   return (
@@ -286,7 +286,7 @@ export function TeamDrawer({ teamId, open, onClose }: TeamDrawerProps) {
   } else if (error || !data) {
     content = (
       <div className="flex flex-col items-center gap-4 text-center py-12">
-        <AlertTriangle className="h-10 w-10 text-yellow-400" />
+        <AlertTriangle className="h-10 w-10 text-[var(--status-warning-text)]" />
         <div>
           <p className="text-sm font-medium text-foreground mb-1">
             Team Data Unavailable

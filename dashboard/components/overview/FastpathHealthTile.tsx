@@ -12,9 +12,9 @@ interface FastpathHealthTileProps {
 }
 
 const statusDot: Record<ApiBudgetStatus, string> = {
-  ok: "bg-green-500",
-  warning: "bg-yellow-500",
-  critical: "bg-red-500",
+  ok: "bg-[var(--status-success-text)]",
+  warning: "bg-[var(--status-warning-text)]",
+  critical: "bg-[var(--status-error-text)]",
   degraded: "bg-orange-500",
 };
 
@@ -54,7 +54,7 @@ export function FastpathHealthTile({
             </span>
           )}
           {displayStatus === "ok" ? (
-            <span className="h-2.5 w-2.5 rounded-full bg-green-500" title="OK" />
+            <span className="h-2.5 w-2.5 rounded-full bg-[var(--status-success-text)]" title="OK" />
           ) : (
             <span className={cn("h-2.5 w-2.5 rounded-full", statusDot[displayStatus])} />
           )}
@@ -91,7 +91,7 @@ export function FastpathHealthTile({
         <div className="text-center">
           <div className={cn(
             "text-lg font-bold tabular-nums",
-            errorRate > 10 ? "text-red-400" : errorRate > 5 ? "text-yellow-400" : "text-foreground"
+            errorRate > 10 ? "text-[var(--status-error-text)]" : errorRate > 5 ? "text-[var(--status-warning-text)]" : "text-foreground"
           )}>
             {errorRate.toFixed(1)}%
           </div>
@@ -125,7 +125,7 @@ export function FastpathHealthTile({
             {Object.entries(fastpath.top_error_codes_60m).slice(0, 3).map(([code, count]) => (
               <div key={code} className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground truncate">{code}</span>
-                <span className="text-red-400 tabular-nums">{count}</span>
+                <span className="text-[var(--status-error-text)] tabular-nums">{count}</span>
               </div>
             ))}
           </div>

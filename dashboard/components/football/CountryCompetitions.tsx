@@ -79,7 +79,7 @@ function CompetitionCard({
           {/* Header */}
           <div className="flex items-center gap-2 mb-1">
             {isGroup ? (
-              <Users className="h-4 w-4 text-purple-500 shrink-0" />
+              <Users className="h-4 w-4 text-[var(--tag-purple-text)] shrink-0" />
             ) : (
               <Trophy className="h-4 w-4 text-amber-500 shrink-0" />
             )}
@@ -126,7 +126,7 @@ function CompetitionCard({
 
           {/* TITAN badge */}
           {competition.titan && competition.titan.tier1_pct !== null && (
-            <div className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 bg-purple-500/10 border border-purple-500/20 rounded text-xs text-purple-400">
+            <div className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 bg-[var(--tag-purple-bg)] border border-[var(--tag-purple-border)] rounded text-xs text-[var(--tag-purple-text)]">
               TITAN: {competition.titan.tier1_pct.toFixed(0)}% Tier 1
               <span className="text-muted-foreground">
                 ({competition.titan.tier1}/{competition.titan.total})
@@ -183,7 +183,7 @@ export function CountryCompetitions({
     return (
       <div className="h-full flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 text-center max-w-md">
-          <AlertTriangle className="h-12 w-12 text-yellow-400" />
+          <AlertTriangle className="h-12 w-12 text-[var(--status-warning-text)]" />
           <div>
             <h2 className="text-lg font-semibold text-foreground mb-2">
               Country Data Unavailable
@@ -229,7 +229,7 @@ export function CountryCompetitions({
         {groups.length > 0 && (
           <div className="space-y-3">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
-              <Users className="h-4 w-4 text-purple-500" />
+              <Users className="h-4 w-4 text-[var(--tag-purple-text)]" />
               Competition Groups ({groups.length})
             </h2>
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">

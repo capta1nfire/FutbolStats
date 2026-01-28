@@ -13,17 +13,17 @@ interface JobsHealthTileProps {
 }
 
 const statusColors: Record<ApiBudgetStatus, string> = {
-  ok: "text-green-400",
-  warning: "text-yellow-400",
-  critical: "text-red-400",
-  degraded: "text-orange-400",
+  ok: "text-[var(--status-success-text)]",
+  warning: "text-[var(--status-warning-text)]",
+  critical: "text-[var(--status-error-text)]",
+  degraded: "text-[var(--status-warning-text)]",
 };
 
 const statusDot: Record<ApiBudgetStatus, string> = {
-  ok: "bg-green-500",
-  warning: "bg-yellow-500",
-  critical: "bg-red-500",
-  degraded: "bg-orange-500",
+  ok: "bg-[var(--status-success-text)]",
+  warning: "bg-[var(--status-warning-text)]",
+  critical: "bg-[var(--status-error-text)]",
+  degraded: "bg-[var(--status-warning-text)]",
 };
 
 /**
@@ -121,7 +121,7 @@ export function JobsHealthTile({
             {healthyCount}/3 OK
           </span>
           {displayStatus === "ok" ? (
-            <span className="h-2.5 w-2.5 rounded-full bg-green-500" title="OK" />
+            <span className="h-2.5 w-2.5 rounded-full bg-[var(--status-success-text)]" title="OK" />
           ) : (
             <span className={cn("h-2.5 w-2.5 rounded-full", statusDot[displayStatus])} />
           )}

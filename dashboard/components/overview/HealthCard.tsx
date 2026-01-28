@@ -12,15 +12,15 @@ interface HealthCardProps {
 }
 
 const statusColors: Record<HealthStatus, string> = {
-  healthy: "border-green-500/30 bg-green-500/5",
-  warning: "border-yellow-500/30 bg-yellow-500/5",
-  critical: "border-red-500/30 bg-red-500/5",
+  healthy: "border-[var(--status-success-border)] bg-[var(--status-success-bg)]",
+  warning: "border-[var(--status-warning-border)] bg-[var(--status-warning-bg)]",
+  critical: "border-[var(--status-error-border)] bg-[var(--status-error-bg)]",
 };
 
 const statusDotColors: Record<HealthStatus, string> = {
-  healthy: "bg-green-500",
-  warning: "bg-yellow-500",
-  critical: "bg-red-500",
+  healthy: "bg-[var(--status-success-text)]",
+  warning: "bg-[var(--status-warning-text)]",
+  critical: "bg-[var(--status-error-text)]",
 };
 
 const trendIcons = {
@@ -30,8 +30,8 @@ const trendIcons = {
 };
 
 const trendColors = {
-  up: "text-green-500",
-  down: "text-red-500",
+  up: "text-[var(--status-success-text)]",
+  down: "text-[var(--status-error-text)]",
   stable: "text-muted-foreground",
 };
 

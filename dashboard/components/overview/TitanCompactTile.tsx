@@ -17,18 +17,18 @@ interface TitanCompactTileProps {
 }
 
 const statusColors: Record<TitanStatus, string> = {
-  ok: "text-green-400",
-  building: "text-yellow-400",
+  ok: "text-[var(--status-success-text)]",
+  building: "text-[var(--status-warning-text)]",
   warn: "text-orange-400",
-  error: "text-red-400",
+  error: "text-[var(--status-error-text)]",
   unavailable: "text-muted-foreground",
 };
 
 const statusBgColors: Record<TitanStatus, string> = {
-  ok: "bg-green-500/20",
-  building: "bg-yellow-500/20",
+  ok: "bg-[var(--status-success-bg)]",
+  building: "bg-[var(--status-warning-bg)]",
   warn: "bg-orange-500/20",
-  error: "bg-red-500/20",
+  error: "bg-[var(--status-error-bg)]",
   unavailable: "bg-muted/50",
 };
 
@@ -41,16 +41,16 @@ const statusLabels: Record<TitanStatus, string> = {
 };
 
 const jobStatusColors: Record<TitanJobStatus, string> = {
-  success: "text-green-400",
-  failed: "text-red-400",
+  success: "text-[var(--status-success-text)]",
+  failed: "text-[var(--status-error-text)]",
   never_run: "text-muted-foreground",
 };
 
 const progressBarColors: Record<TitanStatus, string> = {
-  ok: "bg-green-500",
-  building: "bg-yellow-500",
+  ok: "bg-[var(--status-success-text)]",
+  building: "bg-[var(--status-warning-text)]",
   warn: "bg-orange-500",
-  error: "bg-red-500",
+  error: "bg-[var(--status-error-text)]",
   unavailable: "bg-muted",
 };
 

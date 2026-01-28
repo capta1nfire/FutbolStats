@@ -49,9 +49,9 @@ function PredictionsSummaryTab() {
   }
 
   const statusColors = {
-    ok: "text-green-400",
-    warning: "text-yellow-400",
-    critical: "text-red-400",
+    ok: "text-[var(--status-success-text)]",
+    warning: "text-[var(--status-warning-text)]",
+    critical: "text-[var(--status-error-text)]",
     degraded: "text-orange-400",
   };
 
@@ -215,8 +215,8 @@ function PredictionsMissingTab() {
 
       {/* Missing matches list */}
       {matches.length === 0 ? (
-        <div className="bg-green-500/10 rounded-lg p-4 text-center">
-          <p className="text-sm text-green-400">No missing predictions</p>
+        <div className="bg-[var(--status-success-bg)] rounded-lg p-4 text-center">
+          <p className="text-sm text-[var(--status-success-text)]">No missing predictions</p>
           <p className="text-xs text-muted-foreground mt-1">
             All matches in the next {hours}h have predictions
           </p>
@@ -226,7 +226,7 @@ function PredictionsMissingTab() {
           {matches.map((match) => (
             <div
               key={match.fixture_id}
-              className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3"
+              className="bg-[var(--status-warning-bg)] border border-[var(--status-warning-border)] rounded-lg p-3"
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
@@ -241,10 +241,10 @@ function PredictionsMissingTab() {
                   className={cn(
                     "shrink-0 px-1.5 py-0.5 text-[10px] rounded",
                     match.hours_until_kickoff <= 2
-                      ? "bg-red-500/20 text-red-400"
+                      ? "bg-[var(--status-error-bg)] text-[var(--status-error-text)]"
                       : match.hours_until_kickoff <= 6
                         ? "bg-orange-500/20 text-orange-400"
-                        : "bg-yellow-500/20 text-yellow-400"
+                        : "bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]"
                   )}
                 >
                   {match.hours_until_kickoff}h

@@ -37,9 +37,9 @@ const statusPriority: Record<ApiBudgetStatus, number> = {
 };
 
 const statusColors: Record<ApiBudgetStatus | "unknown", { bg: string; text: string; dot: string }> = {
-  ok: { bg: "bg-green-500/15", text: "text-green-400", dot: "bg-green-500" },
-  warning: { bg: "bg-yellow-500/15", text: "text-yellow-400", dot: "bg-yellow-500" },
-  critical: { bg: "bg-red-500/15", text: "text-red-400", dot: "bg-red-500" },
+  ok: { bg: "bg-[var(--status-success-bg)]", text: "text-[var(--status-success-text)]", dot: "bg-[var(--status-success-text)]" },
+  warning: { bg: "bg-[var(--status-warning-bg)]", text: "text-[var(--status-warning-text)]", dot: "bg-[var(--status-warning-text)]" },
+  critical: { bg: "bg-[var(--status-error-bg)]", text: "text-[var(--status-error-text)]", dot: "bg-[var(--status-error-text)]" },
   degraded: { bg: "bg-orange-500/15", text: "text-orange-400", dot: "bg-orange-500" },
   unknown: { bg: "bg-muted", text: "text-muted-foreground", dot: "bg-muted-foreground" },
 };
@@ -164,7 +164,7 @@ export function OverallOpsBar({
               const chipClasses = cn(
                 "inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium border shrink-0",
                 alertColors.bg,
-                alert.severity === "red" ? "border-red-500/30" : "border-yellow-500/30",
+                alert.severity === "red" ? "border-[var(--status-error-border)]" : "border-[var(--status-warning-border)]",
               );
 
               // If incident_id exists, render as Link (no tooltip to avoid Radix conflicts)
@@ -238,7 +238,7 @@ export function OverallOpsBar({
               <TooltipTrigger asChild>
                 <span className={cn(
                   "text-xs tabular-nums cursor-default",
-                  freshness.is_stale ? "text-yellow-400" : "text-muted-foreground"
+                  freshness.is_stale ? "text-[var(--status-warning-text)]" : "text-muted-foreground"
                 )}>
                   {formatFreshness(freshness.cache_age_seconds)}
                   {freshness.is_stale && " (stale)"}

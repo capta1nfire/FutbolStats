@@ -35,9 +35,9 @@ const statusPriority: Record<ApiBudgetStatus, number> = {
  * invisible colors that blend with the background.
  */
 const statusColors: Record<ApiBudgetStatus | "unknown", { bg: string; text: string; border: string }> = {
-  ok: { bg: "bg-green-900/50", text: "text-green-400", border: "border-green-500/60" },
-  warning: { bg: "bg-yellow-900/50", text: "text-yellow-300", border: "border-yellow-500/60" },
-  critical: { bg: "bg-red-900/50", text: "text-red-400", border: "border-red-500/60" },
+  ok: { bg: "bg-[var(--status-success-bg)]", text: "text-[var(--status-success-text)]", border: "border-[var(--status-success-border)]" },
+  warning: { bg: "bg-[var(--status-warning-bg)]", text: "text-[var(--status-warning-text)]", border: "border-[var(--status-warning-border)]" },
+  critical: { bg: "bg-[var(--status-error-bg)]", text: "text-[var(--status-error-text)]", border: "border-[var(--status-error-border)]" },
   degraded: { bg: "bg-orange-900/50", text: "text-orange-300", border: "border-orange-500/60" },
   unknown: { bg: "bg-muted", text: "text-muted-foreground", border: "border-border" },
 };
@@ -206,7 +206,7 @@ export function OverallOpsTile({
                 {freshness.cache_age_seconds.toFixed(1)}s
               </span>
               {freshness.is_stale && (
-                <span className="px-1 py-0.5 text-[9px] font-medium rounded bg-yellow-900/50 text-yellow-300 border border-yellow-500/60">
+                <span className="px-1 py-0.5 text-[9px] font-medium rounded bg-[var(--status-warning-bg)] text-[var(--status-warning-text)] border border-[var(--status-warning-border)]">
                   stale
                 </span>
               )}

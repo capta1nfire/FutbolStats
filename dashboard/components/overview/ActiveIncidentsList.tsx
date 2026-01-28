@@ -18,9 +18,9 @@ const severityIcons = {
 };
 
 const severityColors = {
-  critical: "text-red-500 bg-red-500/10 border-red-500/30",
-  warning: "text-yellow-500 bg-yellow-500/10 border-yellow-500/30",
-  info: "text-blue-500 bg-blue-500/10 border-blue-500/30",
+  critical: "text-[var(--status-error-text)] bg-[var(--status-error-bg)] border-[var(--status-error-border)]",
+  warning: "text-[var(--status-warning-text)] bg-[var(--status-warning-bg)] border-[var(--status-warning-border)]",
+  info: "text-[var(--status-info-text)] bg-[var(--status-info-bg)] border-[var(--status-info-border)]",
 };
 
 export function ActiveIncidentsList({

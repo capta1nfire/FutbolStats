@@ -102,7 +102,7 @@ export default function MLHealthPage() {
     return (
       <div className="h-full flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-4 text-center max-w-md">
-          <AlertTriangle className="h-12 w-12 text-yellow-400" />
+          <AlertTriangle className="h-12 w-12 text-[var(--status-warning-text)]" />
           <div>
             <h2 className="text-lg font-semibold text-foreground mb-2">
               ML Health Data Unavailable
@@ -139,7 +139,7 @@ export default function MLHealthPage() {
           >
             {copied ? (
               <>
-                <Check className="h-4 w-4 text-green-400" />
+                <Check className="h-4 w-4 text-[var(--status-success-text)]" />
                 Copied
               </>
             ) : (

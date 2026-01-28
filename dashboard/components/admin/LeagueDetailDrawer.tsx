@@ -213,7 +213,7 @@ function LeagueForm({ league }: { league: AdminLeagueDetailCore }) {
             {mutation.isPending ? "Saving…" : "Save"}
           </Button>
           {mutation.isSuccess && (
-            <span className="text-xs text-green-600">
+            <span className="text-xs text-[var(--status-success-text)]">
               Saved{lastAuditId ? ` (audit #${lastAuditId})` : ""}
               {lastChanges.length > 0 && ` — ${lastChanges.join(", ")}`}
             </span>
@@ -409,10 +409,10 @@ function RecentMatchRow({ match }: { match: AdminLeagueRecentMatch }) {
           {match.status}
         </Badge>
         {match.has_stats && (
-          <span className="text-[10px] text-green-600" title="Has stats">S</span>
+          <span className="text-[10px] text-[var(--tag-blue-text)]" title="Has stats">S</span>
         )}
         {match.has_prediction && (
-          <span className="text-[10px] text-blue-600" title="Has prediction">P</span>
+          <span className="text-[10px] text-[var(--tag-indigo-text)]" title="Has prediction">P</span>
         )}
         <span className="text-muted-foreground text-[10px]">
           {new Date(match.date).toLocaleDateString()}

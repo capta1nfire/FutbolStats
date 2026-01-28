@@ -26,9 +26,9 @@ function getProgressStatus(actual: number, target: number): "ok" | "warning" | "
 }
 
 const statusColors = {
-  ok: "text-green-400",
-  warning: "text-yellow-400",
-  critical: "text-red-400",
+  ok: "text-[var(--status-success-text)]",
+  warning: "text-[var(--status-warning-text)]",
+  critical: "text-[var(--status-error-text)]",
 };
 
 /**
@@ -69,7 +69,7 @@ export function PitProgressCompactTile({
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="flex items-center gap-0.5 px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-green-500/20 text-green-400">
+                <span className="flex items-center gap-0.5 px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-[var(--status-success-bg)] text-[var(--status-success-text)]">
                   <CheckCircle2 className="h-2.5 w-2.5" />
                   Ready
                 </span>

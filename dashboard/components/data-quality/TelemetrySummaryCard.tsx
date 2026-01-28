@@ -42,25 +42,25 @@ function getStatusConfig(status: TelemetryStatus): StatusConfig {
       return {
         label: "OK",
         icon: CheckCircle2,
-        bgClass: "bg-green-500/10",
-        borderClass: "border-green-500/30",
-        textClass: "text-green-400",
+        bgClass: "bg-[var(--status-success-bg)]",
+        borderClass: "border-[var(--status-success-border)]",
+        textClass: "text-[var(--status-success-text)]",
       };
     case "warning":
       return {
         label: "Warning",
         icon: AlertTriangle,
-        bgClass: "bg-yellow-500/10",
-        borderClass: "border-yellow-500/30",
-        textClass: "text-yellow-400",
+        bgClass: "bg-[var(--status-warning-bg)]",
+        borderClass: "border-[var(--status-warning-border)]",
+        textClass: "text-[var(--status-warning-text)]",
       };
     case "critical":
       return {
         label: "Critical",
         icon: XCircle,
-        bgClass: "bg-red-500/10",
-        borderClass: "border-red-500/30",
-        textClass: "text-red-400",
+        bgClass: "bg-[var(--status-error-bg)]",
+        borderClass: "border-[var(--status-error-border)]",
+        textClass: "text-[var(--status-error-text)]",
       };
     case "degraded":
     default:
@@ -246,7 +246,7 @@ function MetricItem({
         <Icon
           className={cn(
             "h-3.5 w-3.5",
-            isWarning ? "text-yellow-400" : "text-muted-foreground"
+            isWarning ? "text-[var(--status-warning-text)]" : "text-muted-foreground"
           )}
         />
         <span className="text-xs text-muted-foreground truncate">{label}</span>
@@ -255,7 +255,7 @@ function MetricItem({
         <span
           className={cn(
             "text-lg font-semibold",
-            isWarning ? "text-yellow-400" : "text-foreground"
+            isWarning ? "text-[var(--status-warning-text)]" : "text-foreground"
           )}
         >
           {value}

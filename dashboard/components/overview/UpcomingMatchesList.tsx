@@ -49,12 +49,12 @@ export function UpcomingMatchesList({
 
             {match.hasPrediction ? (
               <CheckCircle2
-                className="h-4 w-4 text-green-500"
+                className="h-4 w-4 text-[var(--status-success-text)]"
                 aria-label="Has prediction"
               />
             ) : (
               <AlertCircle
-                className="h-4 w-4 text-yellow-500"
+                className="h-4 w-4 text-[var(--status-warning-text)]"
                 aria-label="Missing prediction"
               />
             )}
