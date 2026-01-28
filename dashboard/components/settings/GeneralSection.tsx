@@ -3,9 +3,7 @@
 import { SettingsSummary, ENVIRONMENT_LABELS } from "@/lib/types";
 import { SettingsSectionHeader } from "./SettingsSectionHeader";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Server, Globe } from "lucide-react";
+import { Server } from "lucide-react";
 
 interface GeneralSectionProps {
   settings: SettingsSummary;
@@ -42,25 +40,6 @@ export function GeneralSection({ settings }: GeneralSectionProps) {
             <span className="text-xs text-muted-foreground">
               Last updated: {new Date(settings.lastUpdated).toLocaleString()}
             </span>
-          </div>
-        </div>
-
-        {/* Narrative Provider */}
-        <div className="bg-surface rounded-lg p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <Globe className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">Narrative Provider</span>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="narrative-provider" className="text-xs text-muted-foreground">
-              LLM provider for match narratives
-            </Label>
-            <Input
-              id="narrative-provider"
-              value={settings.narrativeProvider}
-              disabled
-              className="bg-background max-w-sm"
-            />
           </div>
         </div>
 
