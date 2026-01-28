@@ -1,10 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import Image from "next/image";
 import { useFootballTeam } from "@/lib/hooks";
 import { DetailDrawer } from "@/components/shell";
 import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
+import { IconTabs } from "@/components/ui/icon-tabs";
 import { getCountryIsoCode } from "@/lib/utils/country-flags";
 import {
   RefreshCw,
@@ -15,6 +17,8 @@ import {
   Trophy,
   TrendingUp,
   BarChart3,
+  Info,
+  Settings,
 } from "lucide-react";
 import type {
   TeamInfo,
@@ -262,6 +266,13 @@ function RecentFormSection({ form }: { form: TeamFormMatch[] }) {
   );
 }
 
+/** Tab definitions for team drawer */
+const TEAM_TABS = [
+  { id: "overview", icon: <Info />, label: "Overview" },
+  { id: "stats", icon: <BarChart3 />, label: "Stats" },
+  { id: "settings", icon: <Settings />, label: "Settings" },
+];
+
 /**
  * TeamDrawer Component
  *
@@ -272,6 +283,7 @@ function RecentFormSection({ form }: { form: TeamFormMatch[] }) {
  * - Recent form
  */
 export function TeamDrawer({ teamId, open, onClose }: TeamDrawerProps) {
+  const [activeTab, setActiveTab] = useState("overview");
   const { data, isLoading, error, refetch } = useFootballTeam(teamId);
 
   // Content based on state
@@ -306,6 +318,14 @@ export function TeamDrawer({ teamId, open, onClose }: TeamDrawerProps) {
       <div className="space-y-6">
         {/* Team Info */}
         <TeamInfoSection team={data.team} />
+
+        {/* Tabs */}
+        <IconTabs
+          tabs={TEAM_TABS}
+          value={activeTab}
+          onValueChange={setActiveTab}
+          className="w-full"
+        />
 
         {/* Stats Summary */}
         {data.stats && <StatsSummarySection stats={data.stats} />}
