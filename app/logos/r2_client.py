@@ -216,7 +216,12 @@ class LogosR2Client:
         Returns:
             R2 key if successful, None otherwise
         """
-        ext = "webp" if "webp" in content_type else "png"
+        if "svg" in content_type:
+            ext = "svg"
+        elif "webp" in content_type:
+            ext = "webp"
+        else:
+            ext = "png"
         key = build_team_logo_key(
             team_id, variant, ext,
             apifb_id=apifb_id, slug=slug, revision=revision

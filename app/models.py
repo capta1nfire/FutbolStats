@@ -1466,6 +1466,7 @@ class TeamLogo(SQLModel, table=True):
 
     # R2 Storage Keys
     r2_key_original: Optional[str] = Field(default=None, max_length=255)
+    r2_key_original_svg: Optional[str] = Field(default=None, max_length=255)  # Original SVG preserved
     r2_key_front: Optional[str] = Field(default=None, max_length=255)
     r2_key_right: Optional[str] = Field(default=None, max_length=255)
     r2_key_left: Optional[str] = Field(default=None, max_length=255)

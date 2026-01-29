@@ -142,7 +142,7 @@ async def upload_team_logo(
     if not team:
         raise HTTPException(status_code=404, detail=f"Team {team_id} not found")
 
-    # Read and validate file (auto-converts SVG to PNG)
+    # Read and validate file (auto-converts SVG to PNG, auto-pads non-square)
     content = await file.read()
     validation = validate_original_logo(content)
 
@@ -152,8 +152,8 @@ async def upload_team_logo(
             detail=f"Invalid image: {', '.join(validation.errors)}",
         )
 
-    # Use converted PNG bytes if SVG was converted, otherwise original content
-    upload_bytes = validation.converted_bytes if validation.converted_from_svg else content
+    # Use processed PNG (converted from SVG and/or padded to square)
+    upload_bytes = validation.converted_bytes or content
 
     # Get or create TeamLogo record to determine revision
     # Use FOR UPDATE to prevent concurrent uploads from calculating same revision
@@ -183,9 +183,25 @@ async def upload_team_logo(
     if not r2_key:
         raise HTTPException(status_code=500, detail="Failed to upload to storage")
 
+    # Upload original SVG if converted (preserve vector for future use)
+    r2_key_svg = None
+    if validation.converted_from_svg and validation.original_svg_bytes:
+        r2_key_svg = await r2_client.upload_team_logo(
+            team_id=team_id,
+            variant="original_svg",
+            image_bytes=validation.original_svg_bytes,
+            content_type="image/svg+xml",
+            apifb_id=team.external_id,
+            slug=team.name,
+            revision=revision,
+        )
+        if r2_key_svg:
+            logger.info(f"Preserved original SVG: {r2_key_svg}")
+
     # Update or create TeamLogo record
     if team_logo:
         team_logo.r2_key_original = r2_key
+        team_logo.r2_key_original_svg = r2_key_svg
         team_logo.status = "pending"
         team_logo.uploaded_at = datetime.utcnow()
         team_logo.updated_at = datetime.utcnow()
@@ -201,6 +217,7 @@ async def upload_team_logo(
         team_logo = TeamLogo(
             team_id=team_id,
             r2_key_original=r2_key,
+            r2_key_original_svg=r2_key_svg,
             status="pending",
             uploaded_at=datetime.utcnow(),
             fallback_url=team.logo_url,
@@ -214,12 +231,15 @@ async def upload_team_logo(
         "team_id": team_id,
         "status": "pending",
         "r2_key": r2_key,
+        "r2_key_svg": r2_key_svg,  # Original SVG preserved (if uploaded SVG)
         "revision": revision,
         "validation": {
             "width": validation.width,
             "height": validation.height,
             "format": validation.format,
             "converted_from_svg": validation.converted_from_svg,
+            "padded_to_square": validation.padded_to_square,
+            "original_dimensions": validation.original_dimensions,
         },
     }
 

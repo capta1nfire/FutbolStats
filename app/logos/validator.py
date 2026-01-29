@@ -67,6 +67,71 @@ def convert_svg_to_png(svg_bytes: bytes, output_size: int = 1024) -> Tuple[bytes
         return b"", f"SVG conversion failed: {e}"
 
 
+def pad_to_square(image_bytes: bytes, target_size: int = 1024) -> Tuple[bytes, Optional[str]]:
+    """Pad non-square image to square with transparent background.
+
+    Centers the original image in a square canvas. Useful for logos with
+    crowns, stars, or other elements that make them non-square.
+
+    Args:
+        image_bytes: Raw image bytes (PNG/JPEG/etc)
+        target_size: Target width/height in pixels (default 1024)
+
+    Returns:
+        Tuple of (PNG bytes with padding, error message or None)
+    """
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        img.load()
+    except Exception as e:
+        return b"", f"Failed to load image: {e}"
+
+    width, height = img.size
+
+    # Already square (within tolerance)
+    if abs(width - height) <= 2:
+        # Just resize if needed
+        if width != target_size:
+            img = img.resize((target_size, target_size), Image.Resampling.LANCZOS)
+            output = io.BytesIO()
+            img.save(output, format="PNG")
+            return output.getvalue(), None
+        return image_bytes, None
+
+    # Calculate padding to make square
+    max_dim = max(width, height)
+    scale = target_size / max_dim
+
+    # Scale image to fit in target_size
+    new_width = int(width * scale)
+    new_height = int(height * scale)
+    img_resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+    # Create square canvas with transparency
+    canvas = Image.new("RGBA", (target_size, target_size), (0, 0, 0, 0))
+
+    # Center the image
+    x_offset = (target_size - new_width) // 2
+    y_offset = (target_size - new_height) // 2
+
+    # Handle images without alpha channel
+    if img_resized.mode != "RGBA":
+        img_resized = img_resized.convert("RGBA")
+
+    canvas.paste(img_resized, (x_offset, y_offset), img_resized)
+
+    # Save to bytes
+    output = io.BytesIO()
+    canvas.save(output, format="PNG")
+    padded_bytes = output.getvalue()
+
+    logger.info(
+        f"Padded {width}x{height} → {target_size}x{target_size} "
+        f"(centered at {x_offset},{y_offset})"
+    )
+    return padded_bytes, None
+
+
 @dataclass
 class ValidationResult:
     """Result of image validation."""
@@ -86,10 +151,19 @@ class ValidationResult:
     # SVG conversion info
     converted_from_svg: bool = False
     converted_bytes: Optional[bytes] = None  # PNG bytes if converted
+    original_svg_bytes: Optional[bytes] = None  # Original SVG preserved for storage
+
+    # Padding info (for non-square logos like those with crowns)
+    padded_to_square: bool = False
+    original_dimensions: Optional[Tuple[int, int]] = None  # Before padding
 
     def __str__(self) -> str:
         if self.valid:
-            suffix = " (converted from SVG)" if self.converted_from_svg else ""
+            suffix = ""
+            if self.converted_from_svg:
+                suffix += " (from SVG)"
+            if self.padded_to_square:
+                suffix += " (padded)"
             return f"Valid ({self.width}x{self.height}, {self.mode}){suffix}"
         return f"Invalid: {', '.join(self.errors)}"
 
@@ -205,20 +279,26 @@ def validate_original_logo(image_bytes: bytes) -> ValidationResult:
     Less strict than IA output validation:
     - Alpha channel optional
     - Smaller minimum size allowed
-    - Automatically converts SVG to PNG
+    - Automatically converts SVG to PNG (preserves original SVG)
+    - Auto-pads non-square images to square (logos with crowns, stars, etc.)
 
     Args:
         image_bytes: Raw image bytes
 
     Returns:
-        ValidationResult (with converted_bytes if SVG was converted)
+        ValidationResult (with converted_bytes containing the final PNG
+        ready for IA processing - converted from SVG and/or padded to square)
     """
     converted_from_svg = False
-    converted_bytes = None
+    original_svg_bytes = None
+    padded_to_square = False
+    original_dimensions = None
+    errors: list[str] = []
 
-    # Auto-convert SVG to PNG
+    # Step 1: Auto-convert SVG to PNG (preserve original SVG for storage)
     if is_svg(image_bytes):
         logger.info("Detected SVG upload, converting to PNG...")
+        original_svg_bytes = image_bytes  # Preserve original SVG
         png_bytes, error = convert_svg_to_png(image_bytes, output_size=1024)
         if error:
             return ValidationResult(
@@ -227,22 +307,82 @@ def validate_original_logo(image_bytes: bytes) -> ValidationResult:
                 file_size_bytes=len(image_bytes),
             )
         converted_from_svg = True
-        converted_bytes = png_bytes
         image_bytes = png_bytes
 
-    result = validate_ia_output(
-        image_bytes,
-        variant="original",
-        min_width=64,
-        min_height=64,
-        require_alpha=False,
+    # Step 2: Load image to check dimensions
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        img.load()
+    except Exception as e:
+        return ValidationResult(
+            valid=False,
+            errors=[f"Failed to load image: {e}"],
+            file_size_bytes=len(image_bytes),
+        )
+
+    width, height = img.size
+    original_dimensions = (width, height)
+
+    # Check minimum dimensions
+    if width < 64 or height < 64:
+        errors.append(f"Image too small: {width}x{height} (minimum 64x64)")
+        return ValidationResult(
+            valid=False,
+            errors=errors,
+            width=width,
+            height=height,
+            file_size_bytes=len(image_bytes),
+        )
+
+    # Step 3: Auto-pad to square if needed (for logos with crowns, etc.)
+    aspect_ratio = width / height
+    tolerance = logos_settings.LOGOS_ASPECT_RATIO_TOLERANCE
+    needs_padding = not (1 - tolerance <= aspect_ratio <= 1 + tolerance)
+
+    if needs_padding:
+        logger.info(f"Non-square image ({width}x{height}, ratio {aspect_ratio:.2f}), padding to square...")
+        padded_bytes, error = pad_to_square(image_bytes, target_size=1024)
+        if error:
+            return ValidationResult(
+                valid=False,
+                errors=[error],
+                width=width,
+                height=height,
+                file_size_bytes=len(image_bytes),
+            )
+        padded_to_square = True
+        image_bytes = padded_bytes
+        # Update dimensions to final padded size
+        width, height = 1024, 1024
+
+    # Step 4: Final validation (should pass now)
+    # Re-load to get final metadata
+    try:
+        final_img = Image.open(io.BytesIO(image_bytes))
+        final_img.load()
+    except Exception as e:
+        return ValidationResult(
+            valid=False,
+            errors=[f"Failed to process image: {e}"],
+            file_size_bytes=len(image_bytes),
+        )
+
+    return ValidationResult(
+        valid=True,
+        errors=[],
+        warnings=[],
+        width=final_img.width,
+        height=final_img.height,
+        format=final_img.format,
+        mode=final_img.mode,
+        has_alpha=final_img.mode in ("RGBA", "LA", "PA"),
+        file_size_bytes=len(image_bytes),
+        converted_from_svg=converted_from_svg,
+        converted_bytes=image_bytes,  # Always set: final PNG ready for IA
+        original_svg_bytes=original_svg_bytes,
+        padded_to_square=padded_to_square,
+        original_dimensions=original_dimensions,
     )
-
-    # Add conversion info to result
-    result.converted_from_svg = converted_from_svg
-    result.converted_bytes = converted_bytes
-
-    return result
 
 
 def validate_batch_results(
