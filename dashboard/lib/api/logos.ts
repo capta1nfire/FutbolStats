@@ -277,11 +277,11 @@ export function estimateCost(
 function parseLeague(raw: Record<string, unknown>): LeagueForGeneration {
   return {
     leagueId: Number(raw.league_id) || 0,
-    name: String(raw.name || ""),
+    name: String(raw.league_name || raw.name || ""),
     country: String(raw.country || ""),
-    teamCount: Number(raw.team_count) || 0,
-    pendingCount: Number(raw.pending_count) || 0,
-    readyCount: Number(raw.ready_count) || 0,
+    teamCount: Number(raw.total_teams || raw.team_count) || 0,
+    pendingCount: Number(raw.pending || raw.pending_count) || 0,
+    readyCount: Number(raw.ready || raw.ready_count) || 0,
     errorCount: Number(raw.error_count) || 0,
   };
 }
