@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   useLogosLeagues,
   useStartBatch,
@@ -39,6 +40,7 @@ export function LogosGeneratePanel({
   leagueId,
   onBatchStarted,
 }: LogosGeneratePanelProps) {
+  const router = useRouter();
   const [batchMode, setBatchMode] = useState<BatchMode>("league");
   const [generationMode, setGenerationMode] = useState<GenerationMode>("full_3d");
   const [iaModel, setIaModel] = useState<IAModel>("imagen-3");
@@ -89,8 +91,15 @@ export function LogosGeneratePanel({
             finalStatus.r2Keys.left,
           ].filter(Boolean).length;
 
+          const teamIdForDrawer = selectedTeamId;
           toast.success(
-            `Generated ${variantCount} variant${variantCount !== 1 ? "s" : ""} for ${finalStatus.teamName}`
+            `Generated ${variantCount} variant${variantCount !== 1 ? "s" : ""} for ${finalStatus.teamName}`,
+            {
+              action: {
+                label: "Ver equipo",
+                onClick: () => router.push(`/football?team=${teamIdForDrawer}`),
+              },
+            }
           );
         } else {
           toast.info(`Generation completed with status: ${finalStatus.status}`);
