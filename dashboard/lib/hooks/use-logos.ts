@@ -24,6 +24,8 @@ import {
   fetchPromptTemplates,
   fetchPromptTemplate,
   updatePromptTemplate,
+  fetchTeamsReadyForTest,
+  generateSingleTeam,
 } from "@/lib/api/logos";
 import type {
   GenerateBatchRequest,
@@ -373,6 +375,57 @@ export function useUpdatePrompt() {
       queryClient.invalidateQueries({ queryKey: promptsKeys.detail(promptId) });
       // Invalidate the list
       queryClient.invalidateQueries({ queryKey: promptsKeys.all });
+    },
+  });
+}
+
+// =============================================================================
+// Teams Ready for Test (Single Team Generation)
+// =============================================================================
+
+export const teamsReadyKeys = {
+  all: ["teams-ready"] as const,
+  list: (leagueId?: number) => [...teamsReadyKeys.all, "list", leagueId] as const,
+};
+
+/**
+ * Fetch teams that have original logos uploaded (ready for test generation)
+ */
+export function useTeamsReadyForTest(leagueId?: number) {
+  return useQuery({
+    queryKey: teamsReadyKeys.list(leagueId),
+    queryFn: () => fetchTeamsReadyForTest(leagueId),
+    staleTime: 30 * 1000, // 30 seconds
+  });
+}
+
+/**
+ * Generate 3D variants for a single team (test mode)
+ */
+export function useGenerateSingleTeam() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      teamId,
+      request,
+    }: {
+      teamId: number;
+      request: {
+        generation_mode: string;
+        ia_model: string;
+        prompt_version?: string;
+      };
+    }) => generateSingleTeam(teamId, request),
+    onSuccess: (_, { teamId }) => {
+      // Invalidate team status
+      queryClient.invalidateQueries({ queryKey: logosKeys.teamStatus(teamId) });
+      // Invalidate teams ready list
+      queryClient.invalidateQueries({ queryKey: teamsReadyKeys.all });
+      // Invalidate review queries
+      queryClient.invalidateQueries({
+        queryKey: [...logosKeys.all, "review"],
+      });
     },
   });
 }

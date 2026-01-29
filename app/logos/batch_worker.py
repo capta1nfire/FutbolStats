@@ -763,3 +763,200 @@ async def get_batch_status(session: AsyncSession, batch_id: UUID) -> Optional[di
         },
         "started_by": batch_job.started_by,
     }
+
+
+# =============================================================================
+# Single Team Generation (for testing prompts)
+# =============================================================================
+
+
+async def generate_single_team(
+    session: AsyncSession,
+    team_id: int,
+    generation_mode: str = "full_3d",
+    ia_model: str = "imagen-3",
+    prompt_version: str = "v1",
+) -> tuple[bool, Optional[str], Optional[dict]]:
+    """Generate 3D variants for a single team (no batch job).
+
+    Useful for testing prompts before running a full batch.
+
+    Args:
+        session: Database session
+        team_id: Team ID to process
+        generation_mode: full_3d, facing_only, front_only
+        ia_model: IA model to use
+        prompt_version: Prompt version (v1, v2, etc.)
+
+    Returns:
+        Tuple of (success, error_message, result_dict)
+    """
+    r2_client = get_logos_r2_client()
+    if not r2_client:
+        return False, "R2 client not configured", None
+
+    generator = get_ia_generator(ia_model)
+    if not generator:
+        return False, f"IA generator {ia_model} not available", None
+
+    # Get prompts
+    prompts = await get_active_prompts(session, prompt_version)
+    if not prompts:
+        return False, f"No active prompts for version {prompt_version}", None
+
+    # Get team
+    team_result = await session.execute(
+        select(Team).where(Team.id == team_id)
+    )
+    team = team_result.scalar_one_or_none()
+    if not team:
+        return False, f"Team {team_id} not found", None
+
+    apifb_id = team.external_id
+    team_slug = team.name
+
+    # Get TeamLogo record
+    result = await session.execute(
+        select(TeamLogo).where(TeamLogo.team_id == team_id)
+    )
+    team_logo = result.scalar_one_or_none()
+
+    if not team_logo or not team_logo.r2_key_original:
+        return False, "Team has no original logo uploaded", None
+
+    # Download original from R2
+    original_bytes = await r2_client.get_object(team_logo.r2_key_original)
+    if not original_bytes:
+        return False, "Could not download original logo from R2", None
+
+    # Determine revision (increment for regeneration)
+    revision = team_logo.revision + 1
+
+    # Update status to processing
+    team_logo.status = "processing"
+    team_logo.processing_started_at = datetime.utcnow()
+    team_logo.generation_mode = generation_mode
+    team_logo.ia_model = ia_model
+    team_logo.ia_prompt_version = prompt_version
+    team_logo.revision = revision
+    await session.commit()
+
+    # Determine variants to generate
+    variants = []
+    if generation_mode == "full_3d":
+        variants = [
+            ("front_3d", prompts.get("front")),
+            ("facing_right", prompts.get("right")),
+            ("facing_left", prompts.get("left")),
+        ]
+    elif generation_mode == "front_only":
+        variants = [("front_3d", prompts.get("front"))]
+    elif generation_mode == "facing_only":
+        team_logo.r2_key_front = team_logo.r2_key_original
+        team_logo.use_original_as_front = True
+        variants = [
+            ("facing_right", prompts.get("right")),
+            ("facing_left", prompts.get("left")),
+        ]
+
+    generated_variants: dict[str, bytes] = {}
+    total_cost = 0.0
+    generation_results = []
+
+    # Generate each variant
+    for variant_name, prompt in variants:
+        if not prompt:
+            logger.warning(f"No prompt for variant {variant_name}, skipping")
+            generation_results.append({
+                "variant": variant_name,
+                "success": False,
+                "error": "No active prompt",
+            })
+            continue
+
+        try:
+            # Rate limit
+            await _ia_rate_limiter.acquire(ia_model)
+
+            generated_bytes = await generator.generate(original_bytes, prompt)
+
+            if generated_bytes:
+                # Validate
+                validation = validate_ia_output(generated_bytes, variant_name)
+
+                if validation.valid:
+                    generated_variants[variant_name] = generated_bytes
+                    total_cost += 0.0 if ia_model.startswith("imagen") else 0.04
+                    generation_results.append({
+                        "variant": variant_name,
+                        "success": True,
+                        "dimensions": f"{validation.width}x{validation.height}",
+                    })
+                else:
+                    generation_results.append({
+                        "variant": variant_name,
+                        "success": False,
+                        "error": f"Validation failed: {validation.errors}",
+                    })
+            else:
+                generation_results.append({
+                    "variant": variant_name,
+                    "success": False,
+                    "error": "Generator returned no data",
+                })
+
+        except Exception as e:
+            logger.error(f"Single team generation error for {variant_name}: {e}")
+            generation_results.append({
+                "variant": variant_name,
+                "success": False,
+                "error": str(e),
+            })
+
+    if not generated_variants:
+        team_logo.status = "error"
+        team_logo.error_message = "No variants generated successfully"
+        team_logo.error_phase = "ia_generation"
+        await session.commit()
+        return False, "No variants generated successfully", {"results": generation_results}
+
+    # Upload generated variants
+    for variant_name, variant_bytes in generated_variants.items():
+        r2_key = await r2_client.upload_team_logo(
+            team_id=team_id,
+            variant=variant_name,
+            image_bytes=variant_bytes,
+            content_type="image/png",
+            apifb_id=apifb_id,
+            slug=team_slug,
+            revision=revision,
+        )
+        if r2_key:
+            if variant_name == "front_3d":
+                team_logo.r2_key_front = r2_key
+            elif variant_name == "facing_right":
+                team_logo.r2_key_right = r2_key
+            elif variant_name == "facing_left":
+                team_logo.r2_key_left = r2_key
+
+    # Update status
+    team_logo.status = "pending_resize"
+    team_logo.processing_completed_at = datetime.utcnow()
+    team_logo.ia_cost_usd = total_cost
+    team_logo.error_message = None
+    team_logo.error_phase = None
+    team_logo.updated_at = datetime.utcnow()
+
+    await session.commit()
+
+    logger.info(f"Single team {team_id} generation completed: {len(generated_variants)} variants")
+
+    return True, None, {
+        "team_id": team_id,
+        "team_name": team.name,
+        "status": "pending_resize",
+        "revision": revision,
+        "variants_generated": list(generated_variants.keys()),
+        "results": generation_results,
+        "cost_usd": total_cost,
+    }

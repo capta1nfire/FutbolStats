@@ -577,3 +577,108 @@ function parsePromptTemplate(raw: Record<string, unknown>): PromptTemplate {
     createdAt: raw.created_at ? String(raw.created_at) : undefined,
   };
 }
+
+// =============================================================================
+// Teams Ready for Test (Single Team Generation)
+// =============================================================================
+
+/**
+ * Team ready for IA test (has original logo uploaded)
+ */
+export interface TeamReadyForTest {
+  teamId: number;
+  teamName: string;
+  country: string;
+  externalId: number | null;
+  status: string;
+  hasOriginal: boolean;
+  hasVariants: boolean;
+  r2KeyOriginal: string;
+  fallbackUrl?: string;
+}
+
+/**
+ * Fetch teams that have original logos uploaded (ready for test generation)
+ */
+export async function fetchTeamsReadyForTest(
+  leagueId?: number
+): Promise<{ total: number; teams: TeamReadyForTest[] }> {
+  const params = new URLSearchParams();
+  if (leagueId) params.set("league_id", String(leagueId));
+
+  const url = `${API_BASE}/teams/ready-for-test${params.toString() ? `?${params}` : ""}`;
+  const res = await fetch(url);
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to fetch teams: ${res.status}`);
+  }
+
+  const data = await res.json();
+  return {
+    total: data.total || 0,
+    teams: (data.teams || []).map((t: Record<string, unknown>) => ({
+      teamId: Number(t.team_id) || 0,
+      teamName: String(t.team_name || ""),
+      country: String(t.country || ""),
+      externalId: t.external_id ? Number(t.external_id) : null,
+      status: String(t.status || "pending"),
+      hasOriginal: Boolean(t.has_original),
+      hasVariants: Boolean(t.has_variants),
+      r2KeyOriginal: String(t.r2_key_original || ""),
+      fallbackUrl: t.fallback_url ? String(t.fallback_url) : undefined,
+    })),
+  };
+}
+
+/**
+ * Result of single team generation
+ */
+export interface SingleTeamGenerationResult {
+  teamId: number;
+  teamName: string;
+  status: string;
+  revision: number;
+  variantsGenerated: string[];
+  results: Array<{
+    variant: string;
+    success: boolean;
+    error?: string;
+    dimensions?: string;
+  }>;
+  costUsd: number;
+}
+
+/**
+ * Generate 3D variants for a single team (test mode)
+ */
+export async function generateSingleTeam(
+  teamId: number,
+  request: {
+    generation_mode: string;
+    ia_model: string;
+    prompt_version?: string;
+  }
+): Promise<SingleTeamGenerationResult> {
+  const res = await fetch(`${API_BASE}/generate/team/${teamId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Generation failed: ${res.status}`);
+  }
+
+  const data = await res.json();
+  return {
+    teamId: Number(data.team_id) || teamId,
+    teamName: String(data.team_name || ""),
+    status: String(data.status || ""),
+    revision: Number(data.revision) || 1,
+    variantsGenerated: data.variants_generated || [],
+    results: data.results || [],
+    costUsd: Number(data.cost_usd) || 0,
+  };
+}

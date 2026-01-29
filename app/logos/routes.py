@@ -33,6 +33,7 @@ from app.logos.batch_worker import (
     get_batch_status,
     process_team_thumbnails,
     validate_batch_cost,
+    generate_single_team,
 )
 
 logger = logging.getLogger(__name__)
@@ -264,6 +265,50 @@ async def list_leagues_for_generation(
     }
 
 
+@router.get("/teams/ready-for-test")
+async def list_teams_ready_for_test(
+    league_id: Optional[int] = None,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """List teams with original logo uploaded, ready for IA test generation.
+
+    Returns teams that have r2_key_original (logo already uploaded).
+    Useful for selecting a single team to test prompts before batch processing.
+
+    Args:
+        league_id: Optional filter by league (not implemented yet)
+    """
+    query = (
+        select(TeamLogo, Team)
+        .join(Team, TeamLogo.team_id == Team.id)
+        .where(TeamLogo.r2_key_original.isnot(None))
+        .order_by(Team.name)
+        .limit(50)
+    )
+
+    result = await session.execute(query)
+    rows = result.fetchall()
+
+    teams = []
+    for team_logo, team in rows:
+        teams.append({
+            "team_id": team.id,
+            "team_name": team.name,
+            "country": team.country,
+            "external_id": team.external_id,
+            "status": team_logo.status,
+            "has_original": True,
+            "has_variants": bool(team_logo.r2_key_front),
+            "r2_key_original": team_logo.r2_key_original,
+            "fallback_url": team_logo.fallback_url or team.logo_url,
+        })
+
+    return {
+        "total": len(teams),
+        "teams": teams,
+    }
+
+
 @router.post("/generate/league/{league_id}")
 async def generate_league_logos(
     league_id: int,
@@ -331,6 +376,49 @@ async def process_batch_teams(
     except Exception as e:
         logger.error(f"Batch processing error: {e}")
         raise HTTPException(status_code=500, detail="Processing error")
+
+
+class GenerateSingleTeamRequest(BaseModel):
+    """Request to generate 3D variants for a single team."""
+
+    generation_mode: str = "full_3d"  # full_3d, facing_only, front_only
+    ia_model: str = "imagen-3"
+    prompt_version: str = "v1"
+
+
+@router.post("/generate/team/{team_id}")
+async def generate_team_logo(
+    team_id: int,
+    request: GenerateSingleTeamRequest,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Generate 3D variants for a single team (test mode).
+
+    Use this to test prompts before running a full batch.
+    Team must have an original logo uploaded (r2_key_original).
+    """
+    try:
+        success, error, result = await generate_single_team(
+            session=session,
+            team_id=team_id,
+            generation_mode=request.generation_mode,
+            ia_model=request.ia_model,
+            prompt_version=request.prompt_version,
+        )
+
+        if not success:
+            raise HTTPException(
+                status_code=400,
+                detail=error or "Generation failed",
+            )
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Single team generation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # =============================================================================
