@@ -193,6 +193,167 @@ class DallEGenerator:
                 return False
 
 
+class ImagenGenerator:
+    """Google Imagen/Gemini generator.
+
+    Uses Gemini API for image generation and editing.
+    Supports img2img via Gemini's image understanding + generation.
+    """
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.base_url = "https://generativelanguage.googleapis.com/v1beta"
+        # Use Gemini 2.0 Flash for img2img (image understanding + generation)
+        self.model = "gemini-2.0-flash-exp"
+
+    async def generate(
+        self,
+        original_image: bytes,
+        prompt: str,
+        size: str = "1024x1024",
+    ) -> Optional[bytes]:
+        """Generate image using Gemini img2img.
+
+        Uses Gemini's multimodal capabilities:
+        1. Send original image + prompt
+        2. Ask to transform/regenerate based on prompt
+
+        Args:
+            original_image: Original logo image bytes
+            prompt: Transformation prompt
+            size: Output size (not directly controllable, uses 1:1)
+
+        Returns:
+            Generated image bytes or None
+        """
+        # Encode image to base64
+        b64_image = base64.b64encode(original_image).decode("utf-8")
+
+        # Determine mime type (assume PNG for logos)
+        mime_type = "image/png"
+
+        async with httpx.AsyncClient() as client:
+            try:
+                # Use Gemini's generateContent with image input
+                response = await client.post(
+                    f"{self.base_url}/models/{self.model}:generateContent",
+                    params={"key": self.api_key},
+                    headers={"Content-Type": "application/json"},
+                    json={
+                        "contents": [
+                            {
+                                "parts": [
+                                    {
+                                        "inline_data": {
+                                            "mime_type": mime_type,
+                                            "data": b64_image,
+                                        }
+                                    },
+                                    {
+                                        "text": f"Transform this logo image: {prompt}. Return ONLY the transformed image, no text."
+                                    },
+                                ]
+                            }
+                        ],
+                        "generationConfig": {
+                            "responseModalities": ["IMAGE", "TEXT"],
+                            "responseMimeType": "image/png",
+                        },
+                    },
+                    timeout=120.0,
+                )
+
+                if response.status_code != 200:
+                    error_text = response.text
+                    logger.error(f"Gemini API error {response.status_code}: {error_text}")
+                    return None
+
+                data = response.json()
+
+                # Extract image from response
+                candidates = data.get("candidates", [])
+                if not candidates:
+                    logger.error("Gemini returned no candidates")
+                    return None
+
+                parts = candidates[0].get("content", {}).get("parts", [])
+                for part in parts:
+                    if "inlineData" in part:
+                        b64_result = part["inlineData"]["data"]
+                        image_bytes = base64.b64decode(b64_result)
+                        logger.info(f"Gemini generated {len(image_bytes)} bytes")
+                        return image_bytes
+
+                logger.error("Gemini response contains no image data")
+                return None
+
+            except httpx.TimeoutException:
+                logger.error("Gemini timeout")
+                return None
+            except Exception as e:
+                logger.error(f"Gemini error: {e}")
+                return None
+
+    async def generate_text_to_image(
+        self,
+        prompt: str,
+        size: str = "1024x1024",
+    ) -> Optional[bytes]:
+        """Generate image from text only using Imagen 4.
+
+        For cases where no original image is available.
+
+        Args:
+            prompt: Generation prompt
+            size: Output size
+
+        Returns:
+            Generated image bytes or None
+        """
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    f"{self.base_url}/models/imagen-4.0-generate-001:predict",
+                    params={"key": self.api_key},
+                    headers={"Content-Type": "application/json"},
+                    json={
+                        "instances": [{"prompt": prompt}],
+                        "parameters": {"sampleCount": 1},
+                    },
+                    timeout=120.0,
+                )
+
+                if response.status_code != 200:
+                    logger.error(f"Imagen API error: {response.text}")
+                    return None
+
+                data = response.json()
+                predictions = data.get("predictions", [])
+                if predictions and "bytesBase64Encoded" in predictions[0]:
+                    b64_image = predictions[0]["bytesBase64Encoded"]
+                    return base64.b64decode(b64_image)
+
+                logger.error("Imagen response contains no image")
+                return None
+
+            except Exception as e:
+                logger.error(f"Imagen error: {e}")
+                return None
+
+    async def health_check(self) -> bool:
+        """Check Gemini API availability."""
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(
+                    f"{self.base_url}/models",
+                    params={"key": self.api_key},
+                    timeout=10.0,
+                )
+                return response.status_code == 200
+            except Exception:
+                return False
+
+
 class SDXLGenerator:
     """SDXL generator using Replicate API.
 
@@ -315,14 +476,21 @@ def get_ia_generator(model: Optional[str] = None) -> Optional[IALogoGenerator]:
     """Get IA generator instance for specified model.
 
     Args:
-        model: Model name (dall-e-3, sdxl) or None for default
+        model: Model name (imagen-3, dall-e-3, sdxl) or None for default
 
     Returns:
         Generator instance or None if not configured
     """
     model = model or logos_settings.LOGOS_IA_MODEL
 
-    if model == "dall-e-3":
+    if model in ("imagen-3", "imagen-4", "gemini"):
+        api_key = logos_settings.GEMINI_API_KEY
+        if not api_key:
+            logger.warning("Imagen/Gemini requested but GEMINI_API_KEY not configured")
+            return None
+        return ImagenGenerator(api_key)
+
+    elif model == "dall-e-3":
         api_key = logos_settings.OPENAI_API_KEY
         if not api_key:
             logger.warning("DALL-E requested but OPENAI_API_KEY not configured")

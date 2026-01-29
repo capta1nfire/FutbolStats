@@ -39,7 +39,10 @@ class LogosSettings(BaseSettings):
     # ==========================================================================
 
     # Default IA model for generation
-    LOGOS_IA_MODEL: str = "dall-e-3"  # dall-e-3, sdxl
+    LOGOS_IA_MODEL: str = "imagen-3"  # imagen-3, dall-e-3, sdxl
+
+    # Google Gemini/Imagen 3
+    GEMINI_API_KEY: str = ""
 
     # OpenAI (DALL-E)
     OPENAI_API_KEY: str = ""
@@ -54,11 +57,13 @@ class LogosSettings(BaseSettings):
     # Cost Guard (Kimi recommendation)
     LOGOS_MAX_BATCH_COST_USD: float = 50.0  # Max cost per batch job
     LOGOS_COST_PER_IMAGE_DALLE: float = 0.04  # DALL-E 3 HD cost
-    LOGOS_COST_PER_IMAGE_SDXL: float = 0.02  # SDXL cost estimate
+    LOGOS_COST_PER_IMAGE_SDXL: float = 0.006  # SDXL via Replicate (p50)
+    LOGOS_COST_PER_IMAGE_IMAGEN: float = 0.03  # Google Imagen 3
 
     # Rate limits per IA model (requests per minute)
     LOGOS_DALLE_RPM: int = 5  # DALL-E 3 limit
     LOGOS_SDXL_RPM: int = 10  # SDXL limit
+    LOGOS_IMAGEN_RPM: int = 10  # Imagen 3 limit
 
     # Retry policy
     LOGOS_IA_MAX_RETRIES: int = 3

@@ -58,6 +58,9 @@ class IARateLimiter:
         self._limits = {
             "dall-e-3": logos_settings.LOGOS_DALLE_RPM,
             "sdxl": logos_settings.LOGOS_SDXL_RPM,
+            "imagen-3": logos_settings.LOGOS_IMAGEN_RPM,
+            "imagen-4": logos_settings.LOGOS_IMAGEN_RPM,
+            "gemini": logos_settings.LOGOS_IMAGEN_RPM,
         }
 
     async def acquire(self, model: str) -> None:
@@ -119,7 +122,10 @@ def estimate_batch_cost(team_count: int, generation_mode: str, ia_model: str) ->
     cost_per_image = {
         "dall-e-3": logos_settings.LOGOS_COST_PER_IMAGE_DALLE,
         "sdxl": logos_settings.LOGOS_COST_PER_IMAGE_SDXL,
-    }.get(ia_model, 0.04)
+        "imagen-3": logos_settings.LOGOS_COST_PER_IMAGE_IMAGEN,
+        "imagen-4": logos_settings.LOGOS_COST_PER_IMAGE_IMAGEN,
+        "gemini": logos_settings.LOGOS_COST_PER_IMAGE_IMAGEN,
+    }.get(ia_model, 0.03)
 
     return team_count * images_per_team * cost_per_image
 
