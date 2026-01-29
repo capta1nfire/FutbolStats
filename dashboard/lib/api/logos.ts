@@ -210,26 +210,6 @@ export async function approveLeagueLogos(
 }
 
 // =============================================================================
-// Team Status
-// =============================================================================
-
-/**
- * Get detailed status for a single team
- */
-export async function fetchTeamLogoStatus(
-  teamId: number
-): Promise<TeamLogoReview> {
-  const res = await fetch(`${API_BASE}/teams/${teamId}/status`);
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to fetch team status: ${res.status}`);
-  }
-
-  return parseTeamLogo(await res.json());
-}
-
-// =============================================================================
 // Cost Estimation (Client-side)
 // =============================================================================
 
@@ -333,5 +313,164 @@ function parseTeamLogo(raw: Record<string, unknown>): TeamLogoReview {
     fallbackUrl: raw.fallback_url ? String(raw.fallback_url) : undefined,
     errorMessage: raw.error_message ? String(raw.error_message) : undefined,
     iaCostUsd: raw.ia_cost_usd ? Number(raw.ia_cost_usd) : undefined,
+  };
+}
+
+// =============================================================================
+// Team Logo Upload & Status (Individual)
+// =============================================================================
+
+/**
+ * Upload logo response
+ */
+export interface UploadLogoResponse {
+  teamId: number;
+  status: string;
+  r2Key: string;
+  validation: {
+    width: number;
+    height: number;
+    format: string;
+  };
+}
+
+/**
+ * Team logo detailed status
+ */
+export interface TeamLogoStatus {
+  teamId: number;
+  teamName: string;
+  status: string;
+  reviewStatus: string;
+  urls: {
+    original?: string;
+    front?: string;
+    right?: string;
+    left?: string;
+  };
+  fallbackUrl?: string;
+  r2Keys: {
+    original?: string;
+    front?: string;
+    right?: string;
+    left?: string;
+  };
+  generation: {
+    mode?: string;
+    iaModel?: string;
+    promptVersion?: string;
+    costUsd?: number;
+  };
+  error?: {
+    message?: string;
+    phase?: string;
+    retryCount?: number;
+  };
+  timestamps: {
+    uploadedAt?: string;
+    processingStartedAt?: string;
+    processingCompletedAt?: string;
+    resizeCompletedAt?: string;
+  };
+}
+
+/**
+ * Upload a logo for a specific team
+ */
+export async function uploadTeamLogo(
+  teamId: number,
+  file: File
+): Promise<UploadLogoResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(`/api/logos/teams/${teamId}/upload`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || err.error || `Upload failed: ${res.status}`);
+  }
+
+  const data = await res.json();
+  return {
+    teamId: Number(data.team_id) || teamId,
+    status: String(data.status || "pending"),
+    r2Key: String(data.r2_key || ""),
+    validation: {
+      width: Number(data.validation?.width) || 0,
+      height: Number(data.validation?.height) || 0,
+      format: String(data.validation?.format || "unknown"),
+    },
+  };
+}
+
+/**
+ * Fetch detailed status for a team's logo
+ */
+export async function fetchTeamLogoStatus(
+  teamId: number
+): Promise<TeamLogoStatus | null> {
+  const res = await fetch(`${API_BASE}/teams/${teamId}/status`);
+
+  if (res.status === 404) {
+    return null; // No logo record exists
+  }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to fetch status: ${res.status}`);
+  }
+
+  const data = await res.json();
+  return parseTeamLogoStatus(data);
+}
+
+function parseTeamLogoStatus(raw: Record<string, unknown>): TeamLogoStatus {
+  const urls = (raw.urls as Record<string, string>) || {};
+  const r2Keys = (raw.r2_keys as Record<string, string>) || {};
+  const generation = (raw.generation as Record<string, unknown>) || {};
+  const error = (raw.error as Record<string, unknown>) || {};
+  const timestamps = (raw.timestamps as Record<string, string>) || {};
+
+  return {
+    teamId: Number(raw.team_id) || 0,
+    teamName: String(raw.team_name || ""),
+    status: String(raw.status || "pending"),
+    reviewStatus: String(raw.review_status || "pending"),
+    urls: {
+      original: urls.original || undefined,
+      front: urls.front || undefined,
+      right: urls.right || undefined,
+      left: urls.left || undefined,
+    },
+    fallbackUrl: raw.fallback_url ? String(raw.fallback_url) : undefined,
+    r2Keys: {
+      original: r2Keys.original || undefined,
+      front: r2Keys.front || undefined,
+      right: r2Keys.right || undefined,
+      left: r2Keys.left || undefined,
+    },
+    generation: {
+      mode: generation.mode ? String(generation.mode) : undefined,
+      iaModel: generation.ia_model ? String(generation.ia_model) : undefined,
+      promptVersion: generation.prompt_version
+        ? String(generation.prompt_version)
+        : undefined,
+      costUsd: generation.cost_usd ? Number(generation.cost_usd) : undefined,
+    },
+    error: {
+      message: error.message ? String(error.message) : undefined,
+      phase: error.phase ? String(error.phase) : undefined,
+      retryCount: error.retry_count ? Number(error.retry_count) : undefined,
+    },
+    timestamps: {
+      uploadedAt: timestamps.uploaded_at || undefined,
+      processingStartedAt: timestamps.processing_started_at || undefined,
+      processingCompletedAt: timestamps.processing_completed_at || undefined,
+      resizeCompletedAt: timestamps.resize_completed_at || undefined,
+    },
   };
 }

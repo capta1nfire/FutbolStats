@@ -27,6 +27,7 @@ import type {
   TeamLeague,
   TeamFormMatch,
 } from "@/lib/types";
+import { TeamLogoSettings } from "./TeamLogoSettings";
 
 /**
  * Country Flag Component
@@ -328,14 +329,37 @@ export function TeamDrawer({ teamId, open, onClose }: TeamDrawerProps) {
           className="w-full"
         />
 
-        {/* Stats Summary */}
-        {data.stats && <StatsSummarySection stats={data.stats} />}
+        {/* Tab Content */}
+        {activeTab === "overview" && (
+          <>
+            {/* Stats Summary */}
+            {data.stats && <StatsSummarySection stats={data.stats} />}
 
-        {/* Competitions */}
-        {data.leagues && <LeaguesSection leagues={data.leagues} />}
+            {/* Competitions */}
+            {data.leagues && <LeaguesSection leagues={data.leagues} />}
 
-        {/* Recent Form */}
-        {data.recent_form && <RecentFormSection form={data.recent_form} />}
+            {/* Recent Form */}
+            {data.recent_form && <RecentFormSection form={data.recent_form} />}
+          </>
+        )}
+
+        {activeTab === "stats" && (
+          <>
+            {/* Stats Summary (expanded view) */}
+            {data.stats && <StatsSummarySection stats={data.stats} />}
+
+            {/* Recent Form */}
+            {data.recent_form && <RecentFormSection form={data.recent_form} />}
+          </>
+        )}
+
+        {activeTab === "settings" && (
+          <TeamLogoSettings
+            teamId={data.team.team_id}
+            teamName={data.team.name}
+            fallbackLogoUrl={data.team.logo_url || undefined}
+          />
+        )}
 
         {/* Footer with cache info */}
         <div className="pt-4 border-t border-border">

@@ -13,6 +13,7 @@ import {
   fetchBatchStatus,
   fetchLeagueReview,
   fetchTeamLogoStatus,
+  uploadTeamLogo,
   startBatchJob,
   pauseBatch,
   resumeBatch,
@@ -288,4 +289,26 @@ export function setStoredActiveBatch(batchId: string | null): void {
 export function clearStoredActiveBatch(): void {
   if (typeof window === "undefined") return;
   localStorage.removeItem(ACTIVE_BATCH_KEY);
+}
+
+// =============================================================================
+// Team Logo Upload Hook
+// =============================================================================
+
+/**
+ * Upload a logo for a specific team
+ */
+export function useUploadTeamLogo() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ teamId, file }: { teamId: number; file: File }) =>
+      uploadTeamLogo(teamId, file),
+    onSuccess: (_, { teamId }) => {
+      // Invalidate team status
+      queryClient.invalidateQueries({ queryKey: logosKeys.teamStatus(teamId) });
+      // Invalidate leagues to refresh counts
+      queryClient.invalidateQueries({ queryKey: logosKeys.leagues() });
+    },
+  });
 }
