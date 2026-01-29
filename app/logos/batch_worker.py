@@ -119,12 +119,19 @@ def estimate_batch_cost(team_count: int, generation_mode: str, ia_model: str) ->
         "manual": 0,
     }.get(generation_mode, 3)
 
+    # Determine Imagen cost based on tier
+    imagen_cost = (
+        logos_settings.LOGOS_COST_PER_IMAGE_IMAGEN_FREE
+        if logos_settings.LOGOS_USE_FREE_TIER
+        else logos_settings.LOGOS_COST_PER_IMAGE_IMAGEN
+    )
+
     cost_per_image = {
         "dall-e-3": logos_settings.LOGOS_COST_PER_IMAGE_DALLE,
         "sdxl": logos_settings.LOGOS_COST_PER_IMAGE_SDXL,
-        "imagen-3": logos_settings.LOGOS_COST_PER_IMAGE_IMAGEN,
-        "imagen-4": logos_settings.LOGOS_COST_PER_IMAGE_IMAGEN,
-        "gemini": logos_settings.LOGOS_COST_PER_IMAGE_IMAGEN,
+        "imagen-3": imagen_cost,
+        "imagen-4": imagen_cost,
+        "gemini": imagen_cost,
     }.get(ia_model, 0.03)
 
     return team_count * images_per_team * cost_per_image

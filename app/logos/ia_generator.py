@@ -198,13 +198,23 @@ class ImagenGenerator:
 
     Uses Gemini API for image generation and editing.
     Supports img2img via Gemini's image understanding + generation.
+
+    Tiers:
+    - Free tier (LOGOS_USE_FREE_TIER=True): Google AI Studio, ~50 imgs/day limit
+    - Paid tier (LOGOS_USE_FREE_TIER=False): Vertex AI, $0.03/img, no limit
     """
 
     def __init__(self, api_key: str):
         self.api_key = api_key
+        self.use_free_tier = logos_settings.LOGOS_USE_FREE_TIER
+
+        # Google AI Studio (free tier) - uses API key auth
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
         # Use Gemini 2.0 Flash for img2img (image understanding + generation)
         self.model = "gemini-2.0-flash-exp"
+
+        tier_name = "Google AI Studio (FREE)" if self.use_free_tier else "Vertex AI (PAID)"
+        logger.info(f"ImagenGenerator initialized with {tier_name}")
 
     async def generate(
         self,

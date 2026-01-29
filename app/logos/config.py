@@ -41,8 +41,13 @@ class LogosSettings(BaseSettings):
     # Default IA model for generation
     LOGOS_IA_MODEL: str = "imagen-3"  # imagen-3, dall-e-3, sdxl
 
-    # Google Gemini/Imagen 3
+    # Google Gemini/Imagen
     GEMINI_API_KEY: str = ""
+
+    # Free tier vs Paid tier
+    # True = Google AI Studio (free, ~50 imgs/day limit)
+    # False = Vertex AI ($0.03/img, no limit)
+    LOGOS_USE_FREE_TIER: bool = True
 
     # OpenAI (DALL-E)
     OPENAI_API_KEY: str = ""
@@ -58,7 +63,8 @@ class LogosSettings(BaseSettings):
     LOGOS_MAX_BATCH_COST_USD: float = 50.0  # Max cost per batch job
     LOGOS_COST_PER_IMAGE_DALLE: float = 0.04  # DALL-E 3 HD cost
     LOGOS_COST_PER_IMAGE_SDXL: float = 0.006  # SDXL via Replicate (p50)
-    LOGOS_COST_PER_IMAGE_IMAGEN: float = 0.03  # Google Imagen 3
+    LOGOS_COST_PER_IMAGE_IMAGEN: float = 0.03  # Google Imagen (Vertex AI)
+    LOGOS_COST_PER_IMAGE_IMAGEN_FREE: float = 0.0  # Google AI Studio (free tier)
 
     # Rate limits per IA model (requests per minute)
     LOGOS_DALLE_RPM: int = 5  # DALL-E 3 limit
