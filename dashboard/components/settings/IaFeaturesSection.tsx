@@ -7,6 +7,7 @@ import { PromptTemplateViewer } from "./PromptTemplateViewer";
 import { PayloadPreview } from "./PayloadPreview";
 import { CallHistoryList } from "./CallHistoryList";
 import { LLMPlayground } from "./LLMPlayground";
+import { LogosTab } from "./LogosTab";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Accordion,
   AccordionContent,
@@ -31,6 +33,7 @@ import {
   MessageSquare,
   Save,
   RefreshCw,
+  ImageIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -151,11 +154,24 @@ export function IaFeaturesSection() {
     <div className="bg-background rounded-lg p-6 space-y-6 border border-border">
       <SettingsSectionHeader
         title="IA Features"
-        description="Configure narrative generation and LLM settings"
+        description="Configure narrative generation, LLM settings, and 3D logo generation"
       />
 
-      <div className="space-y-6">
-        {/* Narratives Toggle (3-state) */}
+      <Tabs defaultValue="narratives" className="w-full">
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="narratives" className="flex items-center gap-2">
+            <Brain className="h-4 w-4" />
+            Narratives
+          </TabsTrigger>
+          <TabsTrigger value="logos" className="flex items-center gap-2">
+            <ImageIcon className="h-4 w-4" />
+            3D Logos
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="narratives" className="mt-6">
+          <div className="space-y-6">
+            {/* Narratives Toggle (3-state) */}
         <div className="bg-surface rounded-lg p-4 space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -335,7 +351,13 @@ export function IaFeaturesSection() {
           {/* LLM Playground (Fase 3) */}
           <LLMPlayground />
         </div>
-      </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="logos" className="mt-6">
+          <LogosTab />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
