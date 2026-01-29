@@ -210,11 +210,12 @@ class ImagenGenerator:
 
         # Google AI Studio (free tier) - uses API key auth
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
-        # Use Gemini 2.0 Flash for img2img (image understanding + generation)
-        self.model = "gemini-2.0-flash-exp"
+        # Use Gemini 2.5 Flash Image for img2img (native image generation)
+        # Note: gemini-2.0-flash-exp deprecated March 2026
+        self.model = "gemini-2.5-flash-image"
 
         tier_name = "Google AI Studio (FREE)" if self.use_free_tier else "Vertex AI (PAID)"
-        logger.info(f"ImagenGenerator initialized with {tier_name}")
+        logger.info(f"ImagenGenerator initialized with {tier_name}, model={self.model}")
 
     async def generate(
         self,
@@ -244,7 +245,7 @@ class ImagenGenerator:
 
         async with httpx.AsyncClient() as client:
             try:
-                # Use Gemini's generateContent with image input
+                # Use Gemini's generateContent with image input for img2img
                 response = await client.post(
                     f"{self.base_url}/models/{self.model}:generateContent",
                     params={"key": self.api_key},
@@ -260,14 +261,13 @@ class ImagenGenerator:
                                         }
                                     },
                                     {
-                                        "text": f"Transform this logo image: {prompt}. Return ONLY the transformed image, no text."
+                                        "text": f"Transform this logo image: {prompt}. Generate ONLY the transformed image."
                                     },
                                 ]
                             }
                         ],
                         "generationConfig": {
-                            "responseModalities": ["IMAGE", "TEXT"],
-                            "responseMimeType": "image/png",
+                            "responseModalities": ["IMAGE"],
                         },
                     },
                     timeout=120.0,
