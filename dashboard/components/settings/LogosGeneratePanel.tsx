@@ -34,7 +34,7 @@ export function LogosGeneratePanel({
   const [generationMode, setGenerationMode] = useState<GenerationMode>("full_3d");
   const [iaModel, setIaModel] = useState<IAModel>("imagen-3");
 
-  const { data: leagues } = useLogosLeagues();
+  const { data: leagues, isLoading: isLoadingLeagues } = useLogosLeagues();
   const startBatch = useStartBatch();
 
   const selectedLeague = leagues?.find((l) => l.leagueId === leagueId);
@@ -63,6 +63,16 @@ export function LogosGeneratePanel({
       );
     }
   };
+
+  // Show loading state while leagues are loading
+  if (isLoadingLeagues) {
+    return (
+      <div className="bg-surface/50 rounded-lg p-4 border border-border flex items-center justify-center">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <span className="ml-2 text-sm text-muted-foreground">Loading league data...</span>
+      </div>
+    );
+  }
 
   if (teamCount === 0) {
     return (

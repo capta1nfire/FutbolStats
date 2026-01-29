@@ -89,7 +89,9 @@ function TeamCard({
   const isPending = team.reviewStatus === "pending";
   const isApproved = team.reviewStatus === "approved";
   const isRejected = team.reviewStatus === "rejected";
+  const needsRegeneration = team.reviewStatus === "needs_regeneration";
   const hasError = team.status === "error";
+  const showRegenerate = hasError || needsRegeneration;
 
   return (
     <div
@@ -97,7 +99,7 @@ function TeamCard({
         "bg-surface rounded-lg p-3 border",
         isApproved && "border-[var(--status-success-border)]",
         isRejected && "border-[var(--status-error-border)]",
-        hasError && "border-[var(--status-error-border)]",
+        (hasError || needsRegeneration) && "border-[var(--status-warning-border)]",
         isPending && "border-border"
       )}
     >
@@ -112,7 +114,8 @@ function TeamCard({
             "text-xs",
             isApproved && "bg-[var(--status-success-bg)] text-[var(--status-success-text)]",
             isRejected && "bg-[var(--status-error-bg)] text-[var(--status-error-text)]",
-            hasError && "bg-[var(--status-error-bg)] text-[var(--status-error-text)]"
+            hasError && "bg-[var(--status-error-bg)] text-[var(--status-error-text)]",
+            needsRegeneration && "bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]"
           )}
         >
           {hasError ? "Error" : REVIEW_STATUS_LABELS[team.reviewStatus]}
@@ -176,8 +179,8 @@ function TeamCard({
         </div>
       )}
 
-      {/* Regenerate for errors */}
-      {hasError && (
+      {/* Regenerate for errors or needs_regeneration */}
+      {showRegenerate && (
         <Button
           variant="outline"
           size="sm"
@@ -190,7 +193,7 @@ function TeamCard({
           ) : (
             <>
               <RefreshCw className="h-3 w-3 mr-1" />
-              Retry
+              {hasError ? "Retry" : "Regenerate"}
             </>
           )}
         </Button>
@@ -288,6 +291,7 @@ export function LogosReviewGrid({ leagueId }: LogosReviewGridProps) {
               <SelectItem value="pending">Pending</SelectItem>
               <SelectItem value="approved">Approved</SelectItem>
               <SelectItem value="rejected">Rejected</SelectItem>
+              <SelectItem value="needs_regeneration">Needs Regen</SelectItem>
             </SelectContent>
           </Select>
         </div>

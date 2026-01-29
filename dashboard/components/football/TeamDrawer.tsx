@@ -360,7 +360,7 @@ export function TeamDrawer({ teamId, open, onClose }: TeamDrawerProps) {
       onClose={onClose}
       title={
         <span>
-          Team{" "}
+          Team ID{" "}
           <button
             onClick={handleCopyId}
             className="text-primary hover:opacity-80 transition-opacity"

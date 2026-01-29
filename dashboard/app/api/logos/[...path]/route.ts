@@ -66,6 +66,15 @@ function buildHeaders(requestId: string): HeadersInit {
   return headers;
 }
 
+/**
+ * Validate path segments to prevent path traversal attacks
+ */
+function isValidPath(segments: string[]): boolean {
+  return segments.every(
+    (segment) => segment !== ".." && segment !== "." && segment.length > 0
+  );
+}
+
 function errorResponse(
   error: string,
   requestId: string,
@@ -96,6 +105,11 @@ export async function GET(
 
   if (!BACKEND_BASE_URL) {
     return errorResponse("Backend not configured", requestId, 503);
+  }
+
+  // Validate path segments to prevent traversal
+  if (!isValidPath(path)) {
+    return errorResponse("Invalid path", requestId, 400);
   }
 
   const pathStr = path.join("/");
@@ -156,6 +170,11 @@ export async function POST(
     return errorResponse("Backend not configured", requestId, 503);
   }
 
+  // Validate path segments to prevent traversal
+  if (!isValidPath(path)) {
+    return errorResponse("Invalid path", requestId, 400);
+  }
+
   // Parse request body (may be empty for actions like pause/resume)
   let body: unknown = {};
   try {
@@ -168,7 +187,8 @@ export async function POST(
   }
 
   const pathStr = path.join("/");
-  const url = `${BACKEND_BASE_URL}/dashboard/logos/${pathStr}`;
+  const searchParams = request.nextUrl.search;
+  const url = `${BACKEND_BASE_URL}/dashboard/logos/${pathStr}${searchParams}`;
 
   const fetchOptions: RequestInit = {
     method: "POST",
