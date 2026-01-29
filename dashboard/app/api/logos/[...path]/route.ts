@@ -24,7 +24,7 @@ import { randomUUID } from "crypto";
 const BACKEND_BASE_URL = process.env.BACKEND_BASE_URL;
 const AUTH_HEADER_NAME = process.env.OPS_AUTH_HEADER_NAME || "X-Dashboard-Token";
 const AUTH_HEADER_VALUE = process.env.OPS_AUTH_HEADER_VALUE;
-const TIMEOUT_MS = parseInt(process.env.OPS_TIMEOUT_MS || "30000", 10); // 30s for IA calls
+const TIMEOUT_MS = parseInt(process.env.OPS_TIMEOUT_MS || "120000", 10); // 120s for IA generation
 
 function generateRequestId(prefix: string = "logos"): string {
   try {
