@@ -324,7 +324,7 @@ def validate_original_logo(image_bytes: bytes) -> ValidationResult:
     if is_svg(image_bytes):
         logger.info("Detected SVG upload, converting to PNG...")
         original_svg_bytes = image_bytes  # Preserve original SVG
-        png_bytes, error = convert_svg_to_png(image_bytes, output_size=1024)
+        png_bytes, error = convert_svg_to_png(image_bytes, max_size=1024)
         if error:
             return ValidationResult(
                 valid=False,
