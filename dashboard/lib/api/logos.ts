@@ -294,8 +294,26 @@ function parseBatchJob(raw: Record<string, unknown>): LogoBatchJob {
   };
 }
 
+/**
+ * Helper to extract best URL from thumbnail object.
+ * Backend stores urls as {"front": {"64": "url", "128": "url", ...}, ...}
+ * but frontend expects {"front": "url", ...}
+ * This extracts the largest size (512) or falls back to any available size.
+ */
+function extractBestUrl(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "object" && value !== null) {
+    const sizeMap = value as Record<string, string>;
+    // Prefer largest size
+    return sizeMap["512"] || sizeMap["256"] || sizeMap["128"] || sizeMap["64"] || undefined;
+  }
+  return undefined;
+}
+
 function parseTeamLogo(raw: Record<string, unknown>): TeamLogoReview {
-  const urls = (raw.urls as Record<string, string>) || {};
+  const urls = (raw.urls as Record<string, unknown>) || {};
   const thumbnails = raw.thumbnails as TeamLogoReview["thumbnails"];
 
   return {
@@ -304,10 +322,10 @@ function parseTeamLogo(raw: Record<string, unknown>): TeamLogoReview {
     status: (raw.status as TeamLogoReview["status"]) || "pending",
     reviewStatus: (raw.review_status as TeamLogoReview["reviewStatus"]) || "pending",
     urls: {
-      original: urls.original || undefined,
-      front: urls.front || undefined,
-      right: urls.right || undefined,
-      left: urls.left || undefined,
+      original: extractBestUrl(urls.original),
+      front: extractBestUrl(urls.front),
+      right: extractBestUrl(urls.right),
+      left: extractBestUrl(urls.left),
     },
     thumbnails,
     fallbackUrl: raw.fallback_url ? String(raw.fallback_url) : undefined,
@@ -429,7 +447,7 @@ export async function fetchTeamLogoStatus(
 }
 
 function parseTeamLogoStatus(raw: Record<string, unknown>): TeamLogoStatus {
-  const urls = (raw.urls as Record<string, string>) || {};
+  const urls = (raw.urls as Record<string, unknown>) || {};
   const r2Keys = (raw.r2_keys as Record<string, string>) || {};
   const generation = (raw.generation as Record<string, unknown>) || {};
   const error = (raw.error as Record<string, unknown>) || {};
@@ -441,10 +459,10 @@ function parseTeamLogoStatus(raw: Record<string, unknown>): TeamLogoStatus {
     status: String(raw.status || "pending"),
     reviewStatus: String(raw.review_status || "pending"),
     urls: {
-      original: urls.original || undefined,
-      front: urls.front || undefined,
-      right: urls.right || undefined,
-      left: urls.left || undefined,
+      original: extractBestUrl(urls.original),
+      front: extractBestUrl(urls.front),
+      right: extractBestUrl(urls.right),
+      left: extractBestUrl(urls.left),
     },
     fallbackUrl: raw.fallback_url ? String(raw.fallback_url) : undefined,
     r2Keys: {

@@ -39,15 +39,19 @@ def is_svg(data: bytes) -> bool:
     return any(sig.lower() in header for sig in SVG_SIGNATURES)
 
 
-def convert_svg_to_png(svg_bytes: bytes, output_size: int = 1024) -> Tuple[bytes, Optional[str]]:
-    """Convert SVG to PNG using cairosvg.
+def convert_svg_to_png(svg_bytes: bytes, max_size: int = 1024) -> Tuple[bytes, Optional[str]]:
+    """Convert SVG to PNG using cairosvg, preserving aspect ratio.
 
     Args:
         svg_bytes: Raw SVG file bytes
-        output_size: Target width/height in pixels (default 1024)
+        max_size: Maximum dimension (larger side) in pixels (default 1024)
 
     Returns:
         Tuple of (PNG bytes, error message or None)
+
+    Note: This preserves the original aspect ratio. If the SVG is not square,
+    the output PNG will also not be square. Use pad_to_square() afterwards
+    if a square image is needed.
     """
     try:
         import cairosvg
@@ -55,12 +59,33 @@ def convert_svg_to_png(svg_bytes: bytes, output_size: int = 1024) -> Tuple[bytes
         return b"", "cairosvg not installed - cannot convert SVG"
 
     try:
+        # First, convert at default size to get original dimensions
+        temp_png = cairosvg.svg2png(bytestring=svg_bytes)
+        temp_img = Image.open(io.BytesIO(temp_png))
+        orig_width, orig_height = temp_img.size
+
+        # Calculate scale to fit within max_size while preserving aspect ratio
+        if orig_width >= orig_height:
+            # Landscape or square: constrain by width
+            scale = max_size / orig_width
+            output_width = max_size
+            output_height = int(orig_height * scale)
+        else:
+            # Portrait: constrain by height
+            scale = max_size / orig_height
+            output_width = int(orig_width * scale)
+            output_height = max_size
+
+        # Convert with correct dimensions (preserving aspect ratio)
         png_bytes = cairosvg.svg2png(
             bytestring=svg_bytes,
-            output_width=output_size,
-            output_height=output_size,
+            output_width=output_width,
+            output_height=output_height,
         )
-        logger.info(f"Converted SVG to PNG ({len(svg_bytes)} → {len(png_bytes)} bytes)")
+        logger.info(
+            f"Converted SVG to PNG: {orig_width}x{orig_height} → {output_width}x{output_height} "
+            f"({len(svg_bytes)} → {len(png_bytes)} bytes)"
+        )
         return png_bytes, None
     except Exception as e:
         logger.error(f"SVG conversion failed: {e}")

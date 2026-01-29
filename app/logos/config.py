@@ -137,11 +137,15 @@ def build_team_logo_key(
     ext: str = "png",
     apifb_id: Optional[int] = None,
     slug: Optional[str] = None,
-    revision: int = 1,
+    revision: int = 1,  # Kept for API compatibility but NOT used in filename
 ) -> str:
-    """Build R2 key for team logo with immutable versioning.
+    """Build R2 key for team logo (overwrites on regeneration).
 
-    Format: teams/{internal_id}/{apifb_id}-{slug}_{variant}_v{rev}.{ext}
+    Format: teams/{internal_id}/{apifb_id}-{slug}_{variant}.{ext}
+
+    Note: revision parameter is kept for API compatibility but NOT included
+    in the filename. Files are overwritten on regeneration instead of creating
+    versioned copies (user preference to avoid accumulating files).
 
     Args:
         team_id: Internal team ID (PK)
@@ -149,10 +153,10 @@ def build_team_logo_key(
         ext: File extension (png for originals, webp for generated)
         apifb_id: API-Football team ID (optional, uses "manual" if None)
         slug: Team name slug (optional, for readability)
-        revision: Asset revision number (increments on regeneration)
+        revision: IGNORED - kept for API compatibility only
 
     Returns:
-        R2 key: teams/1/529-america-de-cali_original_v1.png
+        R2 key: teams/1/529-america-de-cali_original.png
     """
     # Build identifier part: apifb_id or "manual"
     # Note: use `is not None` to handle apifb_id=0 correctly
@@ -162,7 +166,8 @@ def build_team_logo_key(
     if slug:
         id_part = f"{id_part}-{slugify(slug)}"
 
-    return f"teams/{team_id}/{id_part}_{variant}_v{revision}.{ext}"
+    # NO version suffix - files are overwritten on regeneration
+    return f"teams/{team_id}/{id_part}_{variant}.{ext}"
 
 
 def build_team_thumbnail_key(
@@ -171,11 +176,14 @@ def build_team_thumbnail_key(
     size: int,
     apifb_id: Optional[int] = None,
     slug: Optional[str] = None,
-    revision: int = 1,
+    revision: int = 1,  # Kept for API compatibility but NOT used in filename
 ) -> str:
-    """Build R2 key for team logo thumbnail with immutable versioning.
+    """Build R2 key for team logo thumbnail (overwrites on regeneration).
 
-    Format: teams/{internal_id}/{apifb_id}-{slug}_{variant}_v{rev}_{size}.webp
+    Format: teams/{internal_id}/{apifb_id}-{slug}_{variant}_{size}.webp
+
+    Note: revision parameter is kept for API compatibility but NOT included
+    in the filename. Files are overwritten on regeneration.
 
     Args:
         team_id: Internal team ID
@@ -183,10 +191,10 @@ def build_team_thumbnail_key(
         size: Thumbnail size (64, 128, 256, 512)
         apifb_id: API-Football team ID (optional)
         slug: Team name slug (optional)
-        revision: Asset revision number
+        revision: IGNORED - kept for API compatibility only
 
     Returns:
-        R2 key: teams/1/529-america-de-cali_front_3d_v1_256.webp
+        R2 key: teams/1/529-america-de-cali_front_3d_256.webp
     """
     # Note: use `is not None` to handle apifb_id=0 correctly
     id_part = str(apifb_id) if apifb_id is not None else "manual"
@@ -194,7 +202,8 @@ def build_team_thumbnail_key(
     if slug:
         id_part = f"{id_part}-{slugify(slug)}"
 
-    return f"teams/{team_id}/{id_part}_{variant}_v{revision}_{size}.webp"
+    # NO version suffix - files are overwritten on regeneration
+    return f"teams/{team_id}/{id_part}_{variant}_{size}.webp"
 
 
 def build_competition_logo_key(
@@ -202,52 +211,54 @@ def build_competition_logo_key(
     variant: str,
     ext: str = "png",
     slug: Optional[str] = None,
-    revision: int = 1,
+    revision: int = 1,  # Kept for API compatibility but NOT used in filename
 ) -> str:
-    """Build R2 key for competition logo with immutable versioning.
+    """Build R2 key for competition logo (overwrites on regeneration).
 
-    Format: competitions/{league_id}/{league_id}-{slug}_{variant}_v{rev}.{ext}
+    Format: competitions/{league_id}/{league_id}-{slug}_{variant}.{ext}
 
     Args:
         league_id: League ID from admin_leagues (same as API-Football)
         variant: Logo variant (original, main)
         ext: File extension
         slug: League name slug (optional)
-        revision: Asset revision number
+        revision: IGNORED - kept for API compatibility only
 
     Returns:
-        R2 key: competitions/239/239-liga-colombiana_main_v1.png
+        R2 key: competitions/239/239-liga-colombiana_main.png
     """
     id_part = str(league_id)
 
     if slug:
         id_part = f"{id_part}-{slugify(slug)}"
 
-    return f"competitions/{league_id}/{id_part}_{variant}_v{revision}.{ext}"
+    # NO version suffix - files are overwritten on regeneration
+    return f"competitions/{league_id}/{id_part}_{variant}.{ext}"
 
 
 def build_competition_thumbnail_key(
     league_id: int,
     size: int,
     slug: Optional[str] = None,
-    revision: int = 1,
+    revision: int = 1,  # Kept for API compatibility but NOT used in filename
 ) -> str:
-    """Build R2 key for competition logo thumbnail with immutable versioning.
+    """Build R2 key for competition logo thumbnail (overwrites on regeneration).
 
-    Format: competitions/{league_id}/{league_id}-{slug}_main_v{rev}_{size}.webp
+    Format: competitions/{league_id}/{league_id}-{slug}_main_{size}.webp
 
     Args:
         league_id: League ID
         size: Thumbnail size
         slug: League name slug (optional)
-        revision: Asset revision number
+        revision: IGNORED - kept for API compatibility only
 
     Returns:
-        R2 key: competitions/239/239-liga-colombiana_main_v1_256.webp
+        R2 key: competitions/239/239-liga-colombiana_main_256.webp
     """
     id_part = str(league_id)
 
     if slug:
         id_part = f"{id_part}-{slugify(slug)}"
 
-    return f"competitions/{league_id}/{id_part}_main_v{revision}_{size}.webp"
+    # NO version suffix - files are overwritten on regeneration
+    return f"competitions/{league_id}/{id_part}_main_{size}.webp"
