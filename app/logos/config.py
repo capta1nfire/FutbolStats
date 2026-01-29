@@ -155,7 +155,8 @@ def build_team_logo_key(
         R2 key: teams/1/529-america-de-cali_original_v1.png
     """
     # Build identifier part: apifb_id or "manual"
-    id_part = str(apifb_id) if apifb_id else "manual"
+    # Note: use `is not None` to handle apifb_id=0 correctly
+    id_part = str(apifb_id) if apifb_id is not None else "manual"
 
     # Add slug if provided
     if slug:
@@ -187,7 +188,8 @@ def build_team_thumbnail_key(
     Returns:
         R2 key: teams/1/529-america-de-cali_front_3d_v1_256.webp
     """
-    id_part = str(apifb_id) if apifb_id else "manual"
+    # Note: use `is not None` to handle apifb_id=0 correctly
+    id_part = str(apifb_id) if apifb_id is not None else "manual"
 
     if slug:
         id_part = f"{id_part}-{slugify(slug)}"

@@ -147,12 +147,15 @@ async def upload_team_logo(
         )
 
     # Get or create TeamLogo record to determine revision
+    # Use FOR UPDATE to prevent concurrent uploads from calculating same revision
     result = await session.execute(
-        select(TeamLogo).where(TeamLogo.team_id == team_id)
+        select(TeamLogo)
+        .where(TeamLogo.team_id == team_id)
+        .with_for_update()
     )
     team_logo = result.scalar_one_or_none()
 
-    # Determine revision: increment if re-uploading
+    # Determine revision: increment if re-uploading (atomic due to row lock)
     revision = (team_logo.revision + 1) if team_logo else 1
 
     # Upload to R2 with immutable versioning

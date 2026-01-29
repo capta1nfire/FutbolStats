@@ -1,9 +1,14 @@
 """CDN Cache Invalidation for Logo Regenerations.
 
-Purges Cloudflare cache when logos are regenerated to ensure
-clients receive updated images.
+NOTE: With immutable URL versioning (v1, v2, etc.), cache invalidation
+is NO LONGER REQUIRED. Each regeneration produces a new URL with
+incremented revision, so browsers/CDN automatically fetch the new asset.
 
-Uses Cloudflare API v4 for cache purge operations.
+Strategy: Cache-Control: public, max-age=31536000, immutable
+- Old URLs remain valid (previous versions)
+- New URLs are fetched fresh (cache miss → origin)
+
+The purge functions below are kept as NO-OPs for backwards compatibility.
 """
 
 import logging
@@ -11,10 +16,12 @@ from typing import Optional
 
 import httpx
 
-from app.logos.config import get_logos_settings, build_team_thumbnail_key, build_competition_thumbnail_key
+from app.logos.config import get_logos_settings
 
 logger = logging.getLogger(__name__)
-logos_settings = get_logos_settings()
+# Settings kept for potential future use, but currently unused
+# since invalidation functions are NO-OPs with immutable URLs
+_logos_settings = get_logos_settings()
 
 # Cloudflare API base URL
 CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4"
@@ -92,91 +99,59 @@ async def invalidate_team_logo_cdn(
 ) -> tuple[bool, Optional[str]]:
     """Invalidate CDN cache for team logo.
 
-    Purges all thumbnail sizes for specified variants.
+    NOTE: This is now a NO-OP. With immutable URL versioning, each
+    regeneration produces a new URL (e.g., _v1 → _v2), so cache
+    invalidation is unnecessary. The CDN serves old URLs indefinitely
+    (which is fine) and fetches new URLs fresh on first request.
 
     Args:
         team_id: Internal team ID
-        variants: List of variants to purge (default: all)
+        variants: List of variants to purge (ignored)
 
     Returns:
-        Tuple of (success, error_message)
+        Tuple of (True, None) - always succeeds as NO-OP
     """
-    if variants is None:
-        variants = ["front_3d", "facing_right", "facing_left"]
-
-    base_url = logos_settings.LOGOS_CDN_BASE_URL.rstrip("/")
-    if not base_url:
-        logger.warning("CDN invalidation skipped: LOGOS_CDN_BASE_URL not configured")
-        return False, "CDN base URL not configured"
-
-    sizes = logos_settings.LOGOS_THUMBNAIL_SIZES
-    urls_to_purge = []
-
-    for variant in variants:
-        # Original PNG
-        urls_to_purge.append(f"{base_url}/teams/{team_id}/{variant}.png")
-
-        # WebP thumbnails
-        for size in sizes:
-            thumb_key = build_team_thumbnail_key(team_id, variant, size)
-            urls_to_purge.append(f"{base_url}/{thumb_key}")
-
-    success, error = await purge_cache_by_urls(urls_to_purge)
-
-    if success:
-        logger.info(f"CDN invalidated for team {team_id}: {len(urls_to_purge)} paths")
-
-    return success, error
+    logger.debug(
+        f"CDN invalidation skipped for team {team_id}: "
+        "using immutable URL versioning strategy"
+    )
+    return True, None
 
 
 async def invalidate_competition_logo_cdn(league_id: int) -> tuple[bool, Optional[str]]:
     """Invalidate CDN cache for competition logo.
 
+    NOTE: This is now a NO-OP. With immutable URL versioning, each
+    regeneration produces a new URL (e.g., _v1 → _v2), so cache
+    invalidation is unnecessary.
+
     Args:
         league_id: League ID
 
     Returns:
-        Tuple of (success, error_message)
+        Tuple of (True, None) - always succeeds as NO-OP
     """
-    base_url = logos_settings.LOGOS_CDN_BASE_URL.rstrip("/")
-    if not base_url:
-        return False, "CDN base URL not configured"
-
-    sizes = logos_settings.LOGOS_THUMBNAIL_SIZES
-    urls_to_purge = []
-
-    # Original PNG
-    urls_to_purge.append(f"{base_url}/competitions/{league_id}/main.png")
-
-    # WebP thumbnails
-    for size in sizes:
-        thumb_key = build_competition_thumbnail_key(league_id, size)
-        urls_to_purge.append(f"{base_url}/{thumb_key}")
-
-    success, error = await purge_cache_by_urls(urls_to_purge)
-
-    if success:
-        logger.info(f"CDN invalidated for competition {league_id}: {len(urls_to_purge)} paths")
-
-    return success, error
+    logger.debug(
+        f"CDN invalidation skipped for competition {league_id}: "
+        "using immutable URL versioning strategy"
+    )
+    return True, None
 
 
 async def invalidate_batch_cdn(team_ids: list[int]) -> dict[int, tuple[bool, Optional[str]]]:
     """Invalidate CDN cache for multiple teams.
 
+    NOTE: This is now a NO-OP. With immutable URL versioning,
+    cache invalidation is unnecessary.
+
     Args:
         team_ids: List of team IDs
 
     Returns:
-        Dict mapping team_id to (success, error) tuple
+        Dict mapping team_id to (True, None) for all teams
     """
-    results = {}
-
-    for team_id in team_ids:
-        success, error = await invalidate_team_logo_cdn(team_id)
-        results[team_id] = (success, error)
-
-    successful = sum(1 for s, _ in results.values() if s)
-    logger.info(f"CDN batch invalidation: {successful}/{len(team_ids)} successful")
-
-    return results
+    logger.debug(
+        f"CDN batch invalidation skipped for {len(team_ids)} teams: "
+        "using immutable URL versioning strategy"
+    )
+    return {team_id: (True, None) for team_id in team_ids}
