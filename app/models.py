@@ -1497,6 +1497,12 @@ class TeamLogo(SQLModel, table=True):
     ia_prompt_version: Optional[str] = Field(default=None, max_length=20)
     use_original_as_front: bool = Field(default=False)
 
+    # Immutable versioning (ABE recommendation)
+    revision: int = Field(
+        default=1,
+        description="Asset revision number, increments on regeneration for cache busting"
+    )
+
     # Timestamps
     uploaded_at: Optional[datetime] = Field(default=None)
     processing_started_at: Optional[datetime] = Field(default=None)
@@ -1567,6 +1573,12 @@ class CompetitionLogo(SQLModel, table=True):
     ia_model: Optional[str] = Field(default=None, max_length=50)
     ia_prompt_version: Optional[str] = Field(default=None, max_length=20)
     ia_cost_usd: Optional[float] = Field(default=None)
+
+    # Immutable versioning (ABE recommendation)
+    revision: int = Field(
+        default=1,
+        description="Asset revision number, increments on regeneration for cache busting"
+    )
 
     # Error handling
     error_message: Optional[str] = Field(default=None)

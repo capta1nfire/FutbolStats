@@ -292,11 +292,22 @@ async def process_team_logo(
     if not generator:
         return False, f"IA generator {batch_job.ia_model} not available"
 
+    # Get Team for apifb_id and name (for immutable versioning)
+    team_result = await session.execute(
+        select(Team).where(Team.id == team_id)
+    )
+    team = team_result.scalar_one_or_none()
+    apifb_id = team.external_id if team else None
+    team_slug = team.name if team else None
+
     # Get or create TeamLogo record
     result = await session.execute(
         select(TeamLogo).where(TeamLogo.team_id == team_id)
     )
     team_logo = result.scalar_one_or_none()
+
+    # Determine revision (increment if regenerating)
+    revision = (team_logo.revision + 1) if team_logo else 1
 
     if not team_logo:
         team_logo = TeamLogo(
@@ -307,18 +318,25 @@ async def process_team_logo(
             ia_model=batch_job.ia_model,
             ia_prompt_version=batch_job.prompt_version,
             processing_started_at=datetime.utcnow(),
+            revision=revision,
         )
         session.add(team_logo)
     else:
         team_logo.status = "processing"
         team_logo.batch_job_id = batch_job.id
         team_logo.processing_started_at = datetime.utcnow()
+        team_logo.revision = revision
 
     await session.commit()
 
-    # Upload original
+    # Upload original with immutable versioning
     original_key = await r2_client.upload_team_logo(
-        team_id, "original", original_bytes
+        team_id=team_id,
+        variant="original",
+        image_bytes=original_bytes,
+        apifb_id=apifb_id,
+        slug=team_slug,
+        revision=revision,
     )
     if not original_key:
         team_logo.status = "error"
@@ -408,10 +426,16 @@ async def process_team_logo(
             generated_variants[variant_name] = generated_bytes
             total_cost += 0.04  # DALL-E 3 HD estimate
 
-    # Upload generated variants
+    # Upload generated variants with immutable versioning
     for variant_name, variant_bytes in generated_variants.items():
         r2_key = await r2_client.upload_team_logo(
-            team_id, variant_name, variant_bytes
+            team_id=team_id,
+            variant=variant_name,
+            image_bytes=variant_bytes,
+            content_type="image/webp",
+            apifb_id=apifb_id,
+            slug=team_slug,
+            revision=revision,
         )
         if not r2_key:
             team_logo.status = "error"
@@ -458,6 +482,14 @@ async def process_team_thumbnails(
     if not r2_client:
         return False, "R2 client not configured"
 
+    # Get Team for apifb_id and name
+    team_result = await session.execute(
+        select(Team).where(Team.id == team_id)
+    )
+    team = team_result.scalar_one_or_none()
+    apifb_id = team.external_id if team else None
+    team_slug = team.name if team else None
+
     result = await session.execute(
         select(TeamLogo).where(TeamLogo.team_id == team_id)
     )
@@ -465,6 +497,8 @@ async def process_team_thumbnails(
 
     if not team_logo or team_logo.status != "pending_resize":
         return False, "Team logo not in pending_resize status"
+
+    revision = team_logo.revision
 
     urls: dict = {"front": {}, "right": {}, "left": {}}
     variants = [
@@ -484,15 +518,21 @@ async def process_team_thumbnails(
             continue
 
         # Process thumbnails
-        result = process_logo_thumbnails(image_bytes)
-        if not result.success:
-            logger.warning(f"Thumbnail processing failed for {variant_name}: {result.errors}")
+        thumb_result = process_logo_thumbnails(image_bytes)
+        if not thumb_result.success:
+            logger.warning(f"Thumbnail processing failed for {variant_name}: {thumb_result.errors}")
             continue
 
-        # Upload thumbnails
-        for size, thumb in result.thumbnails.items():
+        # Upload thumbnails with immutable versioning
+        for size, thumb in thumb_result.thumbnails.items():
             thumb_key = await r2_client.upload_team_thumbnail(
-                team_id, variant_name, size, thumb.image_bytes
+                team_id=team_id,
+                variant=variant_name,
+                size=size,
+                image_bytes=thumb.image_bytes,
+                apifb_id=apifb_id,
+                slug=team_slug,
+                revision=revision,
             )
             if thumb_key:
                 cdn_url = f"{logos_settings.LOGOS_CDN_BASE_URL.rstrip('/')}/{thumb_key}"

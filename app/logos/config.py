@@ -95,6 +95,7 @@ class LogosSettings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"  # Ignore fields from main app settings
 
 
 @lru_cache
@@ -107,57 +108,144 @@ def get_logos_settings() -> LogosSettings:
 # R2 Key Builders
 # ==========================================================================
 
+import re
+import unicodedata
 
-def build_team_logo_key(team_id: int, variant: str, ext: str = "png") -> str:
-    """Build R2 key for team logo.
+
+def slugify(text: str) -> str:
+    """Convert text to URL-safe slug.
 
     Args:
-        team_id: Internal team ID
-        variant: Logo variant (original, front_3d, facing_right, facing_left)
-        ext: File extension (png for originals, webp for thumbnails)
+        text: Text to slugify (e.g., "América de Cali")
 
     Returns:
-        R2 key: teams/{team_id}/{variant}.{ext}
+        Slugified text (e.g., "america-de-cali")
     """
-    return f"teams/{team_id}/{variant}.{ext}"
+    # Normalize unicode (remove accents)
+    text = unicodedata.normalize("NFKD", text)
+    text = text.encode("ascii", "ignore").decode("ascii")
+    # Lowercase and replace spaces/special chars with hyphens
+    text = re.sub(r"[^\w\s-]", "", text.lower())
+    text = re.sub(r"[-\s]+", "-", text).strip("-")
+    # Limit length
+    return text[:50] if text else "unknown"
 
 
-def build_team_thumbnail_key(team_id: int, variant: str, size: int) -> str:
-    """Build R2 key for team logo thumbnail.
+def build_team_logo_key(
+    team_id: int,
+    variant: str,
+    ext: str = "png",
+    apifb_id: Optional[int] = None,
+    slug: Optional[str] = None,
+    revision: int = 1,
+) -> str:
+    """Build R2 key for team logo with immutable versioning.
+
+    Format: teams/{internal_id}/{apifb_id}-{slug}_{variant}_v{rev}.{ext}
+
+    Args:
+        team_id: Internal team ID (PK)
+        variant: Logo variant (original, front_3d, facing_right, facing_left)
+        ext: File extension (png for originals, webp for generated)
+        apifb_id: API-Football team ID (optional, uses "manual" if None)
+        slug: Team name slug (optional, for readability)
+        revision: Asset revision number (increments on regeneration)
+
+    Returns:
+        R2 key: teams/1/529-america-de-cali_original_v1.png
+    """
+    # Build identifier part: apifb_id or "manual"
+    id_part = str(apifb_id) if apifb_id else "manual"
+
+    # Add slug if provided
+    if slug:
+        id_part = f"{id_part}-{slugify(slug)}"
+
+    return f"teams/{team_id}/{id_part}_{variant}_v{revision}.{ext}"
+
+
+def build_team_thumbnail_key(
+    team_id: int,
+    variant: str,
+    size: int,
+    apifb_id: Optional[int] = None,
+    slug: Optional[str] = None,
+    revision: int = 1,
+) -> str:
+    """Build R2 key for team logo thumbnail with immutable versioning.
+
+    Format: teams/{internal_id}/{apifb_id}-{slug}_{variant}_v{rev}_{size}.webp
 
     Args:
         team_id: Internal team ID
         variant: Logo variant (front_3d, facing_right, facing_left)
         size: Thumbnail size (64, 128, 256, 512)
+        apifb_id: API-Football team ID (optional)
+        slug: Team name slug (optional)
+        revision: Asset revision number
 
     Returns:
-        R2 key: teams/{team_id}/{variant}_{size}.webp
+        R2 key: teams/1/529-america-de-cali_front_3d_v1_256.webp
     """
-    return f"teams/{team_id}/{variant}_{size}.webp"
+    id_part = str(apifb_id) if apifb_id else "manual"
+
+    if slug:
+        id_part = f"{id_part}-{slugify(slug)}"
+
+    return f"teams/{team_id}/{id_part}_{variant}_v{revision}_{size}.webp"
 
 
-def build_competition_logo_key(league_id: int, variant: str, ext: str = "png") -> str:
-    """Build R2 key for competition logo.
+def build_competition_logo_key(
+    league_id: int,
+    variant: str,
+    ext: str = "png",
+    slug: Optional[str] = None,
+    revision: int = 1,
+) -> str:
+    """Build R2 key for competition logo with immutable versioning.
+
+    Format: competitions/{league_id}/{league_id}-{slug}_{variant}_v{rev}.{ext}
 
     Args:
-        league_id: League ID from admin_leagues
+        league_id: League ID from admin_leagues (same as API-Football)
         variant: Logo variant (original, main)
         ext: File extension
+        slug: League name slug (optional)
+        revision: Asset revision number
 
     Returns:
-        R2 key: competitions/{league_id}/{variant}.{ext}
+        R2 key: competitions/239/239-liga-colombiana_main_v1.png
     """
-    return f"competitions/{league_id}/{variant}.{ext}"
+    id_part = str(league_id)
+
+    if slug:
+        id_part = f"{id_part}-{slugify(slug)}"
+
+    return f"competitions/{league_id}/{id_part}_{variant}_v{revision}.{ext}"
 
 
-def build_competition_thumbnail_key(league_id: int, size: int) -> str:
-    """Build R2 key for competition logo thumbnail.
+def build_competition_thumbnail_key(
+    league_id: int,
+    size: int,
+    slug: Optional[str] = None,
+    revision: int = 1,
+) -> str:
+    """Build R2 key for competition logo thumbnail with immutable versioning.
+
+    Format: competitions/{league_id}/{league_id}-{slug}_main_v{rev}_{size}.webp
 
     Args:
         league_id: League ID
         size: Thumbnail size
+        slug: League name slug (optional)
+        revision: Asset revision number
 
     Returns:
-        R2 key: competitions/{league_id}/main_{size}.webp
+        R2 key: competitions/239/239-liga-colombiana_main_v1_256.webp
     """
-    return f"competitions/{league_id}/main_{size}.webp"
+    id_part = str(league_id)
+
+    if slug:
+        id_part = f"{id_part}-{slugify(slug)}"
+
+    return f"competitions/{league_id}/{id_part}_main_v{revision}_{size}.webp"

@@ -198,20 +198,29 @@ class LogosR2Client:
         variant: str,
         image_bytes: bytes,
         content_type: str = "image/png",
+        apifb_id: Optional[int] = None,
+        slug: Optional[str] = None,
+        revision: int = 1,
     ) -> Optional[str]:
-        """Upload team logo variant.
+        """Upload team logo variant with immutable versioning.
 
         Args:
             team_id: Internal team ID
             variant: Logo variant (original, front_3d, facing_right, facing_left)
             image_bytes: PNG image data
             content_type: MIME type
+            apifb_id: API-Football team ID (for traceability)
+            slug: Team name slug (for readability)
+            revision: Asset revision number
 
         Returns:
             R2 key if successful, None otherwise
         """
         ext = "webp" if "webp" in content_type else "png"
-        key = build_team_logo_key(team_id, variant, ext)
+        key = build_team_logo_key(
+            team_id, variant, ext,
+            apifb_id=apifb_id, slug=slug, revision=revision
+        )
         success = await self.put_object(key, image_bytes, content_type)
         return key if success else None
 
@@ -220,6 +229,9 @@ class LogosR2Client:
         team_id: int,
         variant: str,
         ext: str = "png",
+        apifb_id: Optional[int] = None,
+        slug: Optional[str] = None,
+        revision: int = 1,
     ) -> Optional[bytes]:
         """Download team logo variant.
 
@@ -227,11 +239,17 @@ class LogosR2Client:
             team_id: Internal team ID
             variant: Logo variant
             ext: File extension
+            apifb_id: API-Football team ID
+            slug: Team name slug
+            revision: Asset revision number
 
         Returns:
             Image bytes or None if not found
         """
-        key = build_team_logo_key(team_id, variant, ext)
+        key = build_team_logo_key(
+            team_id, variant, ext,
+            apifb_id=apifb_id, slug=slug, revision=revision
+        )
         return await self.get_object(key)
 
     async def upload_team_thumbnail(
@@ -240,24 +258,45 @@ class LogosR2Client:
         variant: str,
         size: int,
         image_bytes: bytes,
+        apifb_id: Optional[int] = None,
+        slug: Optional[str] = None,
+        revision: int = 1,
     ) -> Optional[str]:
-        """Upload team logo thumbnail.
+        """Upload team logo thumbnail with immutable versioning.
 
         Args:
             team_id: Internal team ID
             variant: Logo variant
             size: Thumbnail size (64, 128, 256, 512)
             image_bytes: WebP image data
+            apifb_id: API-Football team ID
+            slug: Team name slug
+            revision: Asset revision number
 
         Returns:
             R2 key if successful, None otherwise
         """
-        key = build_team_thumbnail_key(team_id, variant, size)
+        key = build_team_thumbnail_key(
+            team_id, variant, size,
+            apifb_id=apifb_id, slug=slug, revision=revision
+        )
         success = await self.put_object(key, image_bytes, "image/webp")
         return key if success else None
 
-    async def get_team_logo_urls(self, team_id: int) -> dict:
+    async def get_team_logo_urls(
+        self,
+        team_id: int,
+        apifb_id: Optional[int] = None,
+        slug: Optional[str] = None,
+        revision: int = 1,
+    ) -> dict:
         """Get all thumbnail URLs for a team.
+
+        Args:
+            team_id: Internal team ID
+            apifb_id: API-Football team ID
+            slug: Team name slug
+            revision: Asset revision number
 
         Returns:
             Dict with structure:
@@ -280,7 +319,10 @@ class LogosR2Client:
             key = variant_map[variant]
             urls[key] = {}
             for size in sizes:
-                thumb_key = build_team_thumbnail_key(team_id, variant, size)
+                thumb_key = build_team_thumbnail_key(
+                    team_id, variant, size,
+                    apifb_id=apifb_id, slug=slug, revision=revision
+                )
                 urls[key][str(size)] = f"{base_url}/{thumb_key}"
 
         return urls
@@ -295,20 +337,27 @@ class LogosR2Client:
         variant: str,
         image_bytes: bytes,
         content_type: str = "image/png",
+        slug: Optional[str] = None,
+        revision: int = 1,
     ) -> Optional[str]:
-        """Upload competition logo.
+        """Upload competition logo with immutable versioning.
 
         Args:
             league_id: League ID
             variant: Logo variant (original, main)
             image_bytes: PNG image data
             content_type: MIME type
+            slug: League name slug
+            revision: Asset revision number
 
         Returns:
             R2 key if successful, None otherwise
         """
         ext = "webp" if "webp" in content_type else "png"
-        key = build_competition_logo_key(league_id, variant, ext)
+        key = build_competition_logo_key(
+            league_id, variant, ext,
+            slug=slug, revision=revision
+        )
         success = await self.put_object(key, image_bytes, content_type)
         return key if success else None
 
@@ -317,23 +366,40 @@ class LogosR2Client:
         league_id: int,
         size: int,
         image_bytes: bytes,
+        slug: Optional[str] = None,
+        revision: int = 1,
     ) -> Optional[str]:
-        """Upload competition logo thumbnail.
+        """Upload competition logo thumbnail with immutable versioning.
 
         Args:
             league_id: League ID
             size: Thumbnail size
             image_bytes: WebP image data
+            slug: League name slug
+            revision: Asset revision number
 
         Returns:
             R2 key if successful, None otherwise
         """
-        key = build_competition_thumbnail_key(league_id, size)
+        key = build_competition_thumbnail_key(
+            league_id, size,
+            slug=slug, revision=revision
+        )
         success = await self.put_object(key, image_bytes, "image/webp")
         return key if success else None
 
-    async def get_competition_logo_urls(self, league_id: int) -> dict:
+    async def get_competition_logo_urls(
+        self,
+        league_id: int,
+        slug: Optional[str] = None,
+        revision: int = 1,
+    ) -> dict:
         """Get all thumbnail URLs for a competition.
+
+        Args:
+            league_id: League ID
+            slug: League name slug
+            revision: Asset revision number
 
         Returns:
             Dict: {"64": "url", "128": "url", ...}
@@ -345,7 +411,10 @@ class LogosR2Client:
         sizes = logos_settings.LOGOS_THUMBNAIL_SIZES
         urls = {}
         for size in sizes:
-            thumb_key = build_competition_thumbnail_key(league_id, size)
+            thumb_key = build_competition_thumbnail_key(
+                league_id, size,
+                slug=slug, revision=revision
+            )
             urls[str(size)] = f"{base_url}/{thumb_key}"
 
         return urls

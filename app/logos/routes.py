@@ -126,7 +126,8 @@ async def upload_team_logo(
 ):
     """Upload original logo for a team.
 
-    The logo will be validated and stored in R2.
+    The logo will be validated and stored in R2 with immutable versioning.
+    Format: teams/{internal_id}/{apifb_id}-{slug}_original_v{rev}.png
     Status will be set to 'pending' for IA generation.
     """
     # Validate team exists
@@ -145,27 +146,45 @@ async def upload_team_logo(
             detail=f"Invalid image: {', '.join(validation.errors)}",
         )
 
-    # Upload to R2
-    r2_client = get_logos_r2_client()
-    if not r2_client:
-        raise HTTPException(status_code=503, detail="Storage not configured")
-
-    r2_key = await r2_client.upload_team_logo(team_id, "original", content)
-    if not r2_key:
-        raise HTTPException(status_code=500, detail="Failed to upload to storage")
-
-    # Create or update TeamLogo record
+    # Get or create TeamLogo record to determine revision
     result = await session.execute(
         select(TeamLogo).where(TeamLogo.team_id == team_id)
     )
     team_logo = result.scalar_one_or_none()
 
+    # Determine revision: increment if re-uploading
+    revision = (team_logo.revision + 1) if team_logo else 1
+
+    # Upload to R2 with immutable versioning
+    r2_client = get_logos_r2_client()
+    if not r2_client:
+        raise HTTPException(status_code=503, detail="Storage not configured")
+
+    r2_key = await r2_client.upload_team_logo(
+        team_id=team_id,
+        variant="original",
+        image_bytes=content,
+        apifb_id=team.external_id,  # API-Football ID for traceability
+        slug=team.name,  # Team name for readability
+        revision=revision,
+    )
+    if not r2_key:
+        raise HTTPException(status_code=500, detail="Failed to upload to storage")
+
+    # Update or create TeamLogo record
     if team_logo:
         team_logo.r2_key_original = r2_key
         team_logo.status = "pending"
         team_logo.uploaded_at = datetime.utcnow()
         team_logo.updated_at = datetime.utcnow()
         team_logo.fallback_url = team.logo_url
+        team_logo.revision = revision
+        # Clear previous variants (will be regenerated)
+        team_logo.r2_key_front = None
+        team_logo.r2_key_right = None
+        team_logo.r2_key_left = None
+        team_logo.urls = None
+        team_logo.review_status = "pending"
     else:
         team_logo = TeamLogo(
             team_id=team_id,
@@ -173,6 +192,7 @@ async def upload_team_logo(
             status="pending",
             uploaded_at=datetime.utcnow(),
             fallback_url=team.logo_url,
+            revision=revision,
         )
         session.add(team_logo)
 
@@ -182,6 +202,7 @@ async def upload_team_logo(
         "team_id": team_id,
         "status": "pending",
         "r2_key": r2_key,
+        "revision": revision,
         "validation": {
             "width": validation.width,
             "height": validation.height,
