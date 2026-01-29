@@ -17069,6 +17069,100 @@ async def link_match_to_api_football(
         return {"status": "error", "duration_ms": duration_ms, "error": str(e)}
 
 
+@app.patch("/dashboard/matches/{match_id}/odds")
+async def update_match_odds_manual(
+    request: Request,
+    match_id: int,
+    odds_home: float,
+    odds_draw: float,
+    odds_away: float,
+    source: str = "manual_audit",
+):
+    """
+    Manually update 1X2 odds for a match (audit/backfill purposes).
+
+    Use when API-Football doesn't have odds but we need them for tracking.
+    Records source for audit trail.
+
+    Args:
+        match_id: Internal match ID
+        odds_home: Home win odds (decimal, e.g. 2.50)
+        odds_draw: Draw odds (decimal, e.g. 3.20)
+        odds_away: Away win odds (decimal, e.g. 2.80)
+        source: Source of odds (e.g. "manual_audit_bet365", "sportsgambler")
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from sqlalchemy import text
+    from app.ops.audit import log_ops_action
+
+    # Validate odds are reasonable (1.01 to 100.0)
+    for name, value in [("odds_home", odds_home), ("odds_draw", odds_draw), ("odds_away", odds_away)]:
+        if not (1.01 <= value <= 100.0):
+            raise HTTPException(status_code=400, detail=f"{name} must be between 1.01 and 100.0")
+
+    start_time = time.time()
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Verify match exists
+            check = await session.execute(
+                text("SELECT id, status FROM matches WHERE id = :mid"),
+                {"mid": match_id}
+            )
+            match = check.fetchone()
+            if not match:
+                raise HTTPException(status_code=404, detail=f"Match {match_id} not found")
+
+            # Update odds
+            await session.execute(
+                text("""
+                    UPDATE matches
+                    SET odds_home = :oh, odds_draw = :od, odds_away = :oa,
+                        odds_recorded_at = NOW()
+                    WHERE id = :mid
+                """),
+                {"mid": match_id, "oh": odds_home, "od": odds_draw, "oa": odds_away}
+            )
+            await session.commit()
+
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        # Audit log
+        try:
+            async with AsyncSessionLocal() as audit_session:
+                await log_ops_action(
+                    session=audit_session,
+                    request=request,
+                    action="manual_odds_update",
+                    params={"match_id": match_id, "source": source},
+                    result="ok",
+                    result_detail={
+                        "odds_home": odds_home,
+                        "odds_draw": odds_draw,
+                        "odds_away": odds_away,
+                    },
+                    duration_ms=duration_ms,
+                )
+        except Exception as audit_err:
+            logger.warning(f"Failed to log audit for manual_odds_update: {audit_err}")
+
+        return {
+            "status": "ok",
+            "match_id": match_id,
+            "odds": {"home": odds_home, "draw": odds_draw, "away": odds_away},
+            "source": source,
+            "duration_ms": duration_ms,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update odds for match {match_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/dashboard/ops/stats_refresh")
 async def trigger_stats_refresh(request: Request, lookback_hours: int = 48, max_calls: int = 100):
     """
