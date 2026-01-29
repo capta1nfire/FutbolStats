@@ -10,19 +10,17 @@ import {
   useDebounce,
 } from "@/lib/hooks";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Loader } from "@/components/ui/loader";
 import { cn } from "@/lib/utils";
 import { getCountryIsoCode } from "@/lib/utils/country-flags";
 import {
-  Search,
   Globe,
   Trophy,
   Flag,
   Users,
   ChevronRight,
   AlertCircle,
-  X,
 } from "lucide-react";
 
 /**
@@ -113,8 +111,7 @@ export function FootballNav({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const handleTeamSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
+  const handleTeamSearchChange = useCallback((value: string) => {
     setTeamSearchQuery(value);
     setShowTeamResults(value.length >= 2);
   }, []);
@@ -124,11 +121,6 @@ export function FootballNav({
     setShowTeamResults(false);
     onTeamSelect?.(teamId);
   }, [onTeamSelect]);
-
-  const clearTeamSearch = useCallback(() => {
-    setTeamSearchQuery("");
-    setShowTeamResults(false);
-  }, []);
 
   // Fetch navigation categories
   const {
@@ -174,24 +166,12 @@ export function FootballNav({
 
         {/* Team Search */}
         <div className="px-3 py-2 border-b border-border relative" ref={teamSearchRef}>
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search teams..."
-              value={teamSearchQuery}
-              onChange={handleTeamSearchChange}
-              onFocus={() => teamSearchQuery.length >= 2 && setShowTeamResults(true)}
-              className="pl-8 pr-8 h-8 text-sm"
-            />
-            {teamSearchQuery && (
-              <button
-                onClick={clearTeamSearch}
-                className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
+          <SearchInput
+            placeholder="Search teams..."
+            value={teamSearchQuery}
+            onChange={handleTeamSearchChange}
+            onFocus={() => teamSearchQuery.length >= 2 && setShowTeamResults(true)}
+          />
 
           {/* Team Search Results Dropdown */}
           {showTeamResults && (
@@ -301,15 +281,11 @@ export function FootballNav({
 
           {/* Search */}
           <div className="px-3 py-2 shrink-0">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search countries..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 h-8 text-sm"
-              />
-            </div>
+            <SearchInput
+              placeholder="Search countries..."
+              value={searchQuery}
+              onChange={setSearchQuery}
+            />
           </div>
 
           {/* Nationals ScrollArea */}
@@ -370,15 +346,11 @@ export function FootballNav({
 
           {/* Search */}
           <div className="px-3 py-2 shrink-0">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search countries..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 h-8 text-sm"
-              />
-            </div>
+            <SearchInput
+              placeholder="Search countries..."
+              value={searchQuery}
+              onChange={setSearchQuery}
+            />
           </div>
 
           {/* Countries ScrollArea */}
