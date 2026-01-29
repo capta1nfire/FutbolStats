@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Image from "next/image";
-import { useTeamLogoStatus, useUploadTeamLogo } from "@/lib/hooks";
+import { useTeamLogoStatus, useUploadTeamLogo, useTeamGenerationPolling } from "@/lib/hooks";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -192,8 +192,26 @@ export function TeamLogoSettings({
   teamName,
   fallbackLogoUrl,
 }: TeamLogoSettingsProps) {
-  const { data: logoStatus, isLoading, error, refetch } = useTeamLogoStatus(teamId);
+  // Track if we're in a processing state to enable polling
+  const [shouldPoll, setShouldPoll] = useState(false);
+
+  // Use polling hook when processing, regular hook otherwise
+  const pollingQuery = useTeamGenerationPolling(teamId, shouldPoll);
+  const regularQuery = useTeamLogoStatus(teamId);
+
+  // Use polling data when polling, otherwise regular
+  const { data: logoStatus, isLoading, error, refetch } = shouldPoll ? pollingQuery : regularQuery;
+
   const uploadMutation = useUploadTeamLogo();
+
+  // Enable polling when status is processing
+  useEffect(() => {
+    if (logoStatus?.status === "processing") {
+      setShouldPoll(true);
+    } else if (logoStatus?.status && logoStatus.status !== "processing") {
+      setShouldPoll(false);
+    }
+  }, [logoStatus?.status]);
 
   const handleUpload = useCallback(
     async (file: File) => {
