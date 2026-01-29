@@ -14,13 +14,14 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Team, TeamLogo, CompetitionLogo, LogoBatchJob, LogoPromptTemplate
-from app.database import get_async_session
+from app.database import get_async_session, async_session_maker
 from app.logos.config import get_logos_settings
 from app.logos.r2_client import get_logos_r2_client
 from app.logos.validator import validate_original_logo
@@ -411,39 +412,125 @@ class GenerateSingleTeamRequest(BaseModel):
     prompt_version: str = "v1"
 
 
-@router.post("/generate/team/{team_id}")
+async def _generate_team_background(
+    team_id: int,
+    generation_mode: str,
+    ia_model: str,
+    prompt_version: str,
+) -> None:
+    """Background task for single team generation.
+
+    Runs generation in background after endpoint returns 202.
+    Uses its own session to avoid conflicts with the request session.
+    """
+    async with async_session_maker() as session:
+        try:
+            success, error, result = await generate_single_team(
+                session=session,
+                team_id=team_id,
+                generation_mode=generation_mode,
+                ia_model=ia_model,
+                prompt_version=prompt_version,
+            )
+
+            if not success:
+                logger.error(f"Background generation failed for team {team_id}: {error}")
+            else:
+                logger.info(f"Background generation completed for team {team_id}")
+
+        except Exception as e:
+            logger.error(f"Background generation exception for team {team_id}: {e}")
+            # Update status to error
+            try:
+                result = await session.execute(
+                    select(TeamLogo).where(TeamLogo.team_id == team_id)
+                )
+                team_logo = result.scalar_one_or_none()
+                if team_logo:
+                    team_logo.status = "error"
+                    team_logo.error_message = str(e)
+                    team_logo.error_phase = "background_task"
+                    await session.commit()
+            except Exception as inner_e:
+                logger.error(f"Failed to update error status: {inner_e}")
+
+
+@router.post("/generate/team/{team_id}", status_code=202)
 async def generate_team_logo(
     team_id: int,
     request: GenerateSingleTeamRequest,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_async_session),
 ):
-    """Generate 3D variants for a single team (test mode).
+    """Generate 3D variants for a single team (async mode).
 
-    Use this to test prompts before running a full batch.
+    Returns 202 Accepted immediately and processes in background.
+    Poll GET /teams/{team_id}/status to check progress.
+
     Team must have an original logo uploaded (r2_key_original).
     """
-    try:
-        success, error, result = await generate_single_team(
-            session=session,
-            team_id=team_id,
-            generation_mode=request.generation_mode,
-            ia_model=request.ia_model,
-            prompt_version=request.prompt_version,
+    # Validate team exists
+    team_result = await session.execute(
+        select(Team).where(Team.id == team_id)
+    )
+    team = team_result.scalar_one_or_none()
+    if not team:
+        raise HTTPException(status_code=404, detail=f"Team {team_id} not found")
+
+    # Validate team has original logo
+    result = await session.execute(
+        select(TeamLogo).where(TeamLogo.team_id == team_id)
+    )
+    team_logo = result.scalar_one_or_none()
+
+    if not team_logo or not team_logo.r2_key_original:
+        raise HTTPException(
+            status_code=400,
+            detail="Team has no original logo uploaded",
         )
 
-        if not success:
-            raise HTTPException(
-                status_code=400,
-                detail=error or "Generation failed",
-            )
+    # Check if already processing
+    if team_logo.status == "processing":
+        return JSONResponse(
+            status_code=202,
+            content={
+                "team_id": team_id,
+                "team_name": team.name,
+                "status": "processing",
+                "message": "Generation already in progress. Poll /teams/{team_id}/status for updates.",
+            },
+        )
 
-        return result
+    # Update status to processing immediately
+    team_logo.status = "processing"
+    team_logo.processing_started_at = datetime.utcnow()
+    team_logo.generation_mode = request.generation_mode
+    team_logo.ia_model = request.ia_model
+    team_logo.ia_prompt_version = request.prompt_version
+    team_logo.error_message = None
+    team_logo.error_phase = None
+    await session.commit()
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Single team generation error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    # Launch background task
+    background_tasks.add_task(
+        _generate_team_background,
+        team_id=team_id,
+        generation_mode=request.generation_mode,
+        ia_model=request.ia_model,
+        prompt_version=request.prompt_version,
+    )
+
+    logger.info(f"Started async generation for team {team_id} ({team.name})")
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "team_id": team_id,
+            "team_name": team.name,
+            "status": "processing",
+            "message": "Generation started. Poll /teams/{team_id}/status for updates.",
+        },
+    )
 
 
 # =============================================================================

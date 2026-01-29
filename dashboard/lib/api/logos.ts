@@ -632,25 +632,19 @@ export async function fetchTeamsReadyForTest(
 }
 
 /**
- * Result of single team generation
+ * Result of single team generation (async mode)
  */
 export interface SingleTeamGenerationResult {
   teamId: number;
   teamName: string;
   status: string;
-  revision: number;
-  variantsGenerated: string[];
-  results: Array<{
-    variant: string;
-    success: boolean;
-    error?: string;
-    dimensions?: string;
-  }>;
-  costUsd: number;
+  message: string;
 }
 
 /**
- * Generate 3D variants for a single team (test mode)
+ * Start async generation for a single team.
+ *
+ * Returns 202 immediately - use pollTeamGenerationStatus to track progress.
  */
 export async function generateSingleTeam(
   teamId: number,
@@ -666,19 +660,92 @@ export async function generateSingleTeam(
     body: JSON.stringify(request),
   });
 
+  // 202 Accepted = generation started in background
+  if (res.status === 202) {
+    const data = await res.json();
+    return {
+      teamId: Number(data.team_id) || teamId,
+      teamName: String(data.team_name || ""),
+      status: String(data.status || "processing"),
+      message: String(data.message || "Generation started"),
+    };
+  }
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `Generation failed: ${res.status}`);
   }
 
+  // Fallback for any other success status
   const data = await res.json();
   return {
     teamId: Number(data.team_id) || teamId,
     teamName: String(data.team_name || ""),
     status: String(data.status || ""),
-    revision: Number(data.revision) || 1,
-    variantsGenerated: data.variants_generated || [],
-    results: data.results || [],
-    costUsd: Number(data.cost_usd) || 0,
+    message: String(data.message || ""),
   };
+}
+
+/**
+ * Possible terminal statuses for generation polling
+ */
+export type GenerationTerminalStatus =
+  | "pending_resize"
+  | "ready"
+  | "error";
+
+/**
+ * Poll team status until generation completes.
+ *
+ * @param teamId - Team ID to poll
+ * @param options - Polling options
+ * @returns Final team logo status
+ * @throws Error if polling times out or encounters an error
+ */
+export async function pollTeamGenerationStatus(
+  teamId: number,
+  options?: {
+    intervalMs?: number;
+    maxAttempts?: number;
+    onProgress?: (status: TeamLogoStatus) => void;
+  }
+): Promise<TeamLogoStatus> {
+  const intervalMs = options?.intervalMs ?? 3000; // Poll every 3s
+  const maxAttempts = options?.maxAttempts ?? 60; // Max 3 minutes
+  const onProgress = options?.onProgress;
+
+  const terminalStatuses: GenerationTerminalStatus[] = [
+    "pending_resize",
+    "ready",
+    "error",
+  ];
+
+  let attempts = 0;
+
+  while (attempts < maxAttempts) {
+    attempts++;
+
+    const status = await fetchTeamLogoStatus(teamId);
+
+    if (!status) {
+      throw new Error("Team logo not found");
+    }
+
+    // Notify progress callback
+    if (onProgress) {
+      onProgress(status);
+    }
+
+    // Check if terminal status reached
+    if (terminalStatuses.includes(status.status as GenerationTerminalStatus)) {
+      return status;
+    }
+
+    // Wait before next poll
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  throw new Error(
+    `Generation polling timed out after ${maxAttempts} attempts (${(maxAttempts * intervalMs) / 1000}s)`
+  );
 }

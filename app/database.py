@@ -71,6 +71,9 @@ AsyncSessionLocal = sessionmaker(
     autoflush=False,
 )
 
+# Alias for background tasks that need to create their own sessions
+async_session_maker = AsyncSessionLocal
+
 
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     """Dependency for getting async database sessions."""

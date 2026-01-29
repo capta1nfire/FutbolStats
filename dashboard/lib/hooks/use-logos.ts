@@ -26,6 +26,8 @@ import {
   updatePromptTemplate,
   fetchTeamsReadyForTest,
   generateSingleTeam,
+  pollTeamGenerationStatus,
+  type TeamLogoStatus,
 } from "@/lib/api/logos";
 import type {
   GenerateBatchRequest,
@@ -400,15 +402,19 @@ export function useTeamsReadyForTest(leagueId?: number) {
 }
 
 /**
- * Generate 3D variants for a single team (test mode)
+ * Generate 3D variants for a single team (async mode with polling)
+ *
+ * Starts generation in background (202) and polls until complete.
+ * Returns the final TeamLogoStatus when generation finishes.
  */
 export function useGenerateSingleTeam() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({
+    mutationFn: async ({
       teamId,
       request,
+      onProgress,
     }: {
       teamId: number;
       request: {
@@ -416,7 +422,20 @@ export function useGenerateSingleTeam() {
         ia_model: string;
         prompt_version?: string;
       };
-    }) => generateSingleTeam(teamId, request),
+      onProgress?: (status: TeamLogoStatus) => void;
+    }): Promise<TeamLogoStatus> => {
+      // Start generation (returns 202 immediately)
+      await generateSingleTeam(teamId, request);
+
+      // Poll until complete
+      const finalStatus = await pollTeamGenerationStatus(teamId, {
+        intervalMs: 3000, // Poll every 3 seconds
+        maxAttempts: 60, // Max 3 minutes
+        onProgress,
+      });
+
+      return finalStatus;
+    },
     onSuccess: (_, { teamId }) => {
       // Invalidate team status
       queryClient.invalidateQueries({ queryKey: logosKeys.teamStatus(teamId) });
@@ -426,6 +445,28 @@ export function useGenerateSingleTeam() {
       queryClient.invalidateQueries({
         queryKey: [...logosKeys.all, "review"],
       });
+    },
+  });
+}
+
+/**
+ * Hook for tracking single team generation status with polling
+ *
+ * Use this when you need real-time status updates during generation.
+ * Polls every 3 seconds while status is "processing".
+ */
+export function useTeamGenerationPolling(teamId: number | null, enabled = true) {
+  return useQuery({
+    queryKey: logosKeys.teamStatus(teamId || 0),
+    queryFn: () => fetchTeamLogoStatus(teamId!),
+    enabled: enabled && !!teamId,
+    staleTime: 0, // Always refetch
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      // Poll every 3s while processing
+      if (status === "processing") return 3000;
+      // Stop polling when done
+      return false;
     },
   });
 }
