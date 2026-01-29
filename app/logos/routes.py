@@ -24,6 +24,7 @@ from app.database import get_async_session
 from app.logos.config import get_logos_settings
 from app.logos.r2_client import get_logos_r2_client
 from app.logos.validator import validate_original_logo
+from app.logos.auth import verify_dashboard_token
 from app.logos.batch_worker import (
     start_batch_job,
     process_batch,
@@ -39,7 +40,11 @@ from app.logos.batch_worker import (
 logger = logging.getLogger(__name__)
 logos_settings = get_logos_settings()
 
-router = APIRouter(prefix="/dashboard/logos", tags=["logos"])
+router = APIRouter(
+    prefix="/dashboard/logos",
+    tags=["logos"],
+    dependencies=[Depends(verify_dashboard_token)],
+)
 
 
 # =============================================================================

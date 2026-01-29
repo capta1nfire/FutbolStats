@@ -359,8 +359,18 @@ async def process_team_logo(
     elif batch_job.generation_mode == "front_only":
         variants = [("front_3d", batch_job.prompt_front)]
     elif batch_job.generation_mode == "facing_only":
-        # Use original as front, only generate facing variants
-        team_logo.r2_key_front = original_key
+        # Re-upload original as front with same revision for coherence (ABE audit P1)
+        front_key = await r2_client.upload_team_logo(
+            team_id=team_id,
+            variant="front_3d",
+            image_bytes=original_bytes,
+            content_type="image/png",
+            apifb_id=apifb_id,
+            slug=team_slug,
+            revision=revision,
+        )
+        if front_key:
+            team_logo.r2_key_front = front_key
         team_logo.use_original_as_front = True
         variants = [
             ("facing_right", batch_job.prompt_right),
@@ -432,7 +442,7 @@ async def process_team_logo(
             team_id=team_id,
             variant=variant_name,
             image_bytes=variant_bytes,
-            content_type="image/webp",
+            content_type="image/png",  # Consistent with single-team
             apifb_id=apifb_id,
             slug=team_slug,
             revision=revision,
@@ -832,6 +842,12 @@ async def generate_single_team(
     # Determine revision (increment for regeneration)
     revision = team_logo.revision + 1
 
+    # Clear previous variant keys/urls to avoid revision mixing (ABE audit P1)
+    team_logo.r2_key_front = None
+    team_logo.r2_key_right = None
+    team_logo.r2_key_left = None
+    team_logo.urls = None
+
     # Update status to processing
     team_logo.status = "processing"
     team_logo.processing_started_at = datetime.utcnow()
@@ -852,7 +868,18 @@ async def generate_single_team(
     elif generation_mode == "front_only":
         variants = [("front_3d", prompts.get("front"))]
     elif generation_mode == "facing_only":
-        team_logo.r2_key_front = team_logo.r2_key_original
+        # Re-upload original as front with new revision for coherence (ABE audit P1)
+        front_key = await r2_client.upload_team_logo(
+            team_id=team_id,
+            variant="front_3d",
+            image_bytes=original_bytes,
+            content_type="image/png",
+            apifb_id=apifb_id,
+            slug=team_slug,
+            revision=revision,
+        )
+        if front_key:
+            team_logo.r2_key_front = front_key
         team_logo.use_original_as_front = True
         variants = [
             ("facing_right", prompts.get("right")),
