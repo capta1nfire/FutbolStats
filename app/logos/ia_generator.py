@@ -246,6 +246,8 @@ class ImagenGenerator:
         async with httpx.AsyncClient() as client:
             try:
                 # Use Gemini's generateContent with image input for img2img
+                # Order matters: text prompt first, then image data
+                # responseModalities must include both TEXT and IMAGE
                 response = await client.post(
                     f"{self.base_url}/models/{self.model}:generateContent",
                     params={"key": self.api_key},
@@ -255,19 +257,19 @@ class ImagenGenerator:
                             {
                                 "parts": [
                                     {
+                                        "text": f"{prompt}. Use the provided logo as reference and generate a NEW transformed version."
+                                    },
+                                    {
                                         "inline_data": {
                                             "mime_type": mime_type,
                                             "data": b64_image,
                                         }
                                     },
-                                    {
-                                        "text": f"Transform this logo image: {prompt}. Generate ONLY the transformed image."
-                                    },
                                 ]
                             }
                         ],
                         "generationConfig": {
-                            "responseModalities": ["IMAGE"],
+                            "responseModalities": ["TEXT", "IMAGE"],
                         },
                     },
                     timeout=120.0,
