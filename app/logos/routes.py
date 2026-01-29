@@ -567,9 +567,15 @@ async def get_team_logo_status(
 @router.get("/prompts")
 async def list_prompt_templates(
     version: Optional[str] = None,
+    include_full: bool = False,
     session: AsyncSession = Depends(get_async_session),
 ):
-    """List available prompt templates."""
+    """List available prompt templates.
+
+    Args:
+        version: Filter by version (v1, v2, etc.)
+        include_full: Include full prompt text (default: False for list view)
+    """
     query = select(LogoPromptTemplate).order_by(
         LogoPromptTemplate.version.desc(),
         LogoPromptTemplate.variant,
@@ -587,14 +593,85 @@ async def list_prompt_templates(
                 "id": p.id,
                 "version": p.version,
                 "variant": p.variant,
-                "prompt_template": p.prompt_template[:100] + "..." if len(p.prompt_template) > 100 else p.prompt_template,
+                "prompt_template": p.prompt_template if include_full else (
+                    p.prompt_template[:100] + "..." if len(p.prompt_template) > 100 else p.prompt_template
+                ),
                 "ia_model": p.ia_model,
                 "is_active": p.is_active,
                 "success_rate": p.success_rate,
                 "usage_count": p.usage_count,
+                "notes": p.notes,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
             }
             for p in prompts
         ]
+    }
+
+
+@router.get("/prompts/{prompt_id}")
+async def get_prompt_template(
+    prompt_id: int,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Get a single prompt template with full text."""
+    result = await session.execute(
+        select(LogoPromptTemplate).where(LogoPromptTemplate.id == prompt_id)
+    )
+    prompt = result.scalar_one_or_none()
+
+    if not prompt:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+
+    return {
+        "id": prompt.id,
+        "version": prompt.version,
+        "variant": prompt.variant,
+        "prompt_template": prompt.prompt_template,
+        "ia_model": prompt.ia_model,
+        "is_active": prompt.is_active,
+        "success_rate": prompt.success_rate,
+        "usage_count": prompt.usage_count,
+        "notes": prompt.notes,
+        "created_at": prompt.created_at.isoformat() if prompt.created_at else None,
+    }
+
+
+@router.put("/prompts/{prompt_id}")
+async def update_prompt_template(
+    prompt_id: int,
+    data: dict,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Update a prompt template.
+
+    Allowed fields: prompt_template, is_active, notes, ia_model
+    """
+    result = await session.execute(
+        select(LogoPromptTemplate).where(LogoPromptTemplate.id == prompt_id)
+    )
+    prompt = result.scalar_one_or_none()
+
+    if not prompt:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+
+    # Update allowed fields
+    allowed_fields = {"prompt_template", "is_active", "notes", "ia_model"}
+    for field, value in data.items():
+        if field in allowed_fields and value is not None:
+            setattr(prompt, field, value)
+
+    await session.commit()
+    await session.refresh(prompt)
+
+    return {
+        "id": prompt.id,
+        "version": prompt.version,
+        "variant": prompt.variant,
+        "prompt_template": prompt.prompt_template,
+        "ia_model": prompt.ia_model,
+        "is_active": prompt.is_active,
+        "notes": prompt.notes,
+        "updated": True,
     }
 
 

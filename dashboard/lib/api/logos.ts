@@ -474,3 +474,106 @@ function parseTeamLogoStatus(raw: Record<string, unknown>): TeamLogoStatus {
     },
   };
 }
+
+// =============================================================================
+// Prompt Templates
+// =============================================================================
+
+/**
+ * Prompt template for logo generation
+ */
+export interface PromptTemplate {
+  id: number;
+  version: string;
+  variant: "front" | "right" | "left" | "main";
+  promptTemplate: string;
+  iaModel?: string;
+  isActive: boolean;
+  successRate?: number;
+  usageCount?: number;
+  notes?: string;
+  createdAt?: string;
+}
+
+/**
+ * Fetch all prompt templates
+ */
+export async function fetchPromptTemplates(
+  version?: string,
+  includeFull: boolean = true
+): Promise<PromptTemplate[]> {
+  const params = new URLSearchParams();
+  if (version) params.set("version", version);
+  if (includeFull) params.set("include_full", "true");
+
+  const url = `${API_BASE}/prompts${params.toString() ? `?${params}` : ""}`;
+  const res = await fetch(url);
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to fetch prompts: ${res.status}`);
+  }
+
+  const data = await res.json();
+  return (data.prompts || []).map(parsePromptTemplate);
+}
+
+/**
+ * Fetch a single prompt template by ID
+ */
+export async function fetchPromptTemplate(promptId: number): Promise<PromptTemplate> {
+  const res = await fetch(`${API_BASE}/prompts/${promptId}`);
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to fetch prompt: ${res.status}`);
+  }
+
+  return parsePromptTemplate(await res.json());
+}
+
+/**
+ * Update a prompt template
+ */
+export async function updatePromptTemplate(
+  promptId: number,
+  data: {
+    promptTemplate?: string;
+    isActive?: boolean;
+    notes?: string;
+    iaModel?: string;
+  }
+): Promise<PromptTemplate> {
+  const res = await fetch(`${API_BASE}/prompts/${promptId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt_template: data.promptTemplate,
+      is_active: data.isActive,
+      notes: data.notes,
+      ia_model: data.iaModel,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to update prompt: ${res.status}`);
+  }
+
+  return parsePromptTemplate(await res.json());
+}
+
+function parsePromptTemplate(raw: Record<string, unknown>): PromptTemplate {
+  return {
+    id: Number(raw.id) || 0,
+    version: String(raw.version || "v1"),
+    variant: (raw.variant as PromptTemplate["variant"]) || "front",
+    promptTemplate: String(raw.prompt_template || ""),
+    iaModel: raw.ia_model ? String(raw.ia_model) : undefined,
+    isActive: Boolean(raw.is_active),
+    successRate: raw.success_rate ? Number(raw.success_rate) : undefined,
+    usageCount: raw.usage_count ? Number(raw.usage_count) : undefined,
+    notes: raw.notes ? String(raw.notes) : undefined,
+    createdAt: raw.created_at ? String(raw.created_at) : undefined,
+  };
+}

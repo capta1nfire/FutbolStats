@@ -21,6 +21,9 @@ import {
   processBatchTeams,
   reviewTeamLogo,
   approveLeagueLogos,
+  fetchPromptTemplates,
+  fetchPromptTemplate,
+  updatePromptTemplate,
 } from "@/lib/api/logos";
 import type {
   GenerateBatchRequest,
@@ -309,6 +312,67 @@ export function useUploadTeamLogo() {
       queryClient.invalidateQueries({ queryKey: logosKeys.teamStatus(teamId) });
       // Invalidate leagues to refresh counts
       queryClient.invalidateQueries({ queryKey: logosKeys.leagues() });
+    },
+  });
+}
+
+// =============================================================================
+// Prompt Templates Hooks
+// =============================================================================
+
+export const promptsKeys = {
+  all: ["prompts"] as const,
+  list: (version?: string) => [...promptsKeys.all, "list", version] as const,
+  detail: (promptId: number) => [...promptsKeys.all, "detail", promptId] as const,
+};
+
+/**
+ * Fetch all prompt templates
+ */
+export function usePromptTemplates(version?: string) {
+  return useQuery({
+    queryKey: promptsKeys.list(version),
+    queryFn: () => fetchPromptTemplates(version, true),
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+}
+
+/**
+ * Fetch a single prompt template
+ */
+export function usePromptTemplate(promptId: number | null) {
+  return useQuery({
+    queryKey: promptsKeys.detail(promptId || 0),
+    queryFn: () => fetchPromptTemplate(promptId!),
+    enabled: !!promptId,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/**
+ * Update a prompt template
+ */
+export function useUpdatePrompt() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      promptId,
+      data,
+    }: {
+      promptId: number;
+      data: {
+        promptTemplate?: string;
+        isActive?: boolean;
+        notes?: string;
+        iaModel?: string;
+      };
+    }) => updatePromptTemplate(promptId, data),
+    onSuccess: (_, { promptId }) => {
+      // Invalidate the specific prompt
+      queryClient.invalidateQueries({ queryKey: promptsKeys.detail(promptId) });
+      // Invalidate the list
+      queryClient.invalidateQueries({ queryKey: promptsKeys.all });
     },
   });
 }

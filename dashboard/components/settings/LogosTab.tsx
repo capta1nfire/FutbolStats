@@ -5,6 +5,7 @@ import { LogosLeagueSelector } from "./LogosLeagueSelector";
 import { LogosGeneratePanel } from "./LogosGeneratePanel";
 import { LogosBatchProgress } from "./LogosBatchProgress";
 import { LogosReviewGrid } from "./LogosReviewGrid";
+import { LogosPromptsEditor } from "./LogosPromptsEditor";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getStoredActiveBatch, setStoredActiveBatch } from "@/lib/hooks";
 import { ImageIcon, ListChecks, Settings2 } from "lucide-react";
@@ -91,9 +92,13 @@ export function LogosTab() {
         </TabsContent>
 
         {/* Config Tab */}
-        <TabsContent value="config" className="space-y-4 mt-4">
+        <TabsContent value="config" className="space-y-6 mt-4">
+          {/* Prompts Editor */}
+          <LogosPromptsEditor />
+
+          {/* System Config */}
           <div className="bg-surface/50 rounded-lg p-4 border border-border space-y-3">
-            <h4 className="text-sm font-medium">Current Configuration</h4>
+            <h4 className="text-sm font-medium">System Configuration</h4>
             <div className="space-y-2 text-sm">
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">Default Model:</span>
@@ -116,7 +121,7 @@ export function LogosTab() {
 
           <div className="bg-surface/50 rounded-lg p-4 border border-border">
             <p className="text-xs text-muted-foreground">
-              Configuration is managed via environment variables. To change these
+              System config is managed via environment variables. To change these
               settings, update the Railway environment and redeploy.
             </p>
             <ul className="mt-2 text-xs text-muted-foreground space-y-1">
