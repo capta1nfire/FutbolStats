@@ -7,6 +7,7 @@ import {
   useFootballCountries,
   useNationalsCountries,
   useTeamSearch,
+  useDebounce,
 } from "@/lib/hooks";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
@@ -92,9 +93,12 @@ export function FootballNav({
   const [showTeamResults, setShowTeamResults] = useState(false);
   const teamSearchRef = useRef<HTMLDivElement>(null);
 
-  // Team search query
+  // Debounce team search to reduce API calls during typing
+  const debouncedTeamSearch = useDebounce(teamSearchQuery, 200);
+
+  // Team search query (uses debounced value)
   const { data: teamSearchData, isLoading: isTeamSearching } = useTeamSearch(
-    teamSearchQuery,
+    debouncedTeamSearch,
     showTeamResults
   );
 
@@ -169,7 +173,7 @@ export function FootballNav({
         </div>
 
         {/* Team Search */}
-        <div className="px-3 py-2 border-b border-border" ref={teamSearchRef}>
+        <div className="px-3 py-2 border-b border-border relative" ref={teamSearchRef}>
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
@@ -191,7 +195,7 @@ export function FootballNav({
 
           {/* Team Search Results Dropdown */}
           {showTeamResults && (
-            <div className="absolute left-0 right-0 mt-1 mx-3 bg-popover border border-border rounded-md shadow-lg z-50 max-h-64 overflow-y-auto">
+            <div className="absolute left-0 right-0 top-full mt-1 bg-popover border border-border rounded-md shadow-lg z-50 max-h-64 overflow-y-auto">
               {isTeamSearching ? (
                 <div className="flex items-center justify-center py-4">
                   <Loader size="sm" />
@@ -223,7 +227,7 @@ export function FootballNav({
                   ))}
                   {teamSearchData.pagination.has_more && (
                     <div className="px-3 py-1.5 text-xs text-muted-foreground text-center border-t border-border">
-                      +{teamSearchData.pagination.total - teamSearchData.teams.length} more results
+                      +{Math.max(0, teamSearchData.pagination.total - teamSearchData.teams.length)} more results
                     </div>
                   )}
                 </div>

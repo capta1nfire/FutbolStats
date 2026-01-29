@@ -5990,7 +5990,10 @@ async def dashboard_admin_teams(
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "data": data,
     }
-    cache[cache_key] = {"data": result, "timestamp": now}
+
+    # Only cache non-search requests (avoid cache bloat from typeahead)
+    if not search:
+        cache[cache_key] = {"data": result, "timestamp": now}
 
     return {
         "generated_at": result["generated_at"],

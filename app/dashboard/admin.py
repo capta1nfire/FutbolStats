@@ -554,6 +554,11 @@ async def build_teams_list(
         search: Search by team name (case-insensitive)
         limit: Max results (1-500)
         offset: Pagination offset
+
+    Note:
+        When search is provided, uses a lightweight query (no JOINs/stats)
+        optimized for typeahead performance. Stats are loaded on-demand
+        when opening TeamDrawer.
     """
 
     # Validate params
@@ -572,7 +577,8 @@ async def build_teams_list(
         where_parts.append("t.country = :country")
         params["country"] = country
 
-    if search and search.strip():
+    is_search = search and search.strip()
+    if is_search:
         # Case-insensitive search by name
         where_parts.append("t.name ILIKE :search")
         params["search"] = f"%{search.strip()}%"
@@ -588,7 +594,56 @@ async def build_teams_list(
     count_result = await session.execute(count_query, params)
     total = count_result.fetchone().total
 
-    # Get teams with stats
+    # FAST PATH: Lightweight query for search (no JOINs, no stats)
+    # Optimized for typeahead dropdown performance
+    if is_search:
+        teams_query = text(f"""
+            SELECT
+                t.id as team_id,
+                t.external_id,
+                t.name,
+                t.country,
+                t.team_type,
+                t.logo_url
+            FROM teams t
+            {where_clause}
+            ORDER BY t.name ASC
+            LIMIT :limit OFFSET :offset
+        """)
+        teams_result = await session.execute(teams_query, params)
+
+        teams = []
+        for r in teams_result.fetchall():
+            teams.append({
+                "team_id": r.team_id,
+                "external_id": r.external_id,
+                "name": r.name,
+                "country": r.country,
+                "team_type": r.team_type,
+                "logo_url": r.logo_url,
+                "stats": {
+                    "total_matches": 0,
+                    "matches_25_26": 0,
+                    "leagues_played": 0,
+                },
+            })
+
+        return {
+            "teams": teams,
+            "pagination": {
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "has_more": offset + limit < total,
+            },
+            "filters_applied": {
+                "type": team_type or "all",
+                "country": country,
+                "search": search.strip() if search else None,
+            },
+        }
+
+    # FULL PATH: Query with stats (for browsing, not search)
     teams_query = text(f"""
         SELECT
             t.id as team_id,
