@@ -111,7 +111,7 @@ function UploadDropZone({
       if (file && file.type.startsWith("image/")) {
         onUpload(file);
       } else {
-        toast.error("Please drop an image file (PNG, WebP, or JPEG)");
+        toast.error("Please drop an image file (PNG, WebP, JPEG, or SVG)");
       }
     },
     [onUpload]
@@ -153,12 +153,12 @@ function UploadDropZone({
               Drop high-quality logo here
             </p>
             <p className="text-[10px] text-muted-foreground/70">
-              PNG, WebP, JPEG (min 512x512, max 5MB)
+              PNG, WebP, JPEG, SVG (min 512x512, max 5MB)
             </p>
             <label>
               <input
                 type="file"
-                accept="image/png,image/webp,image/jpeg"
+                accept="image/png,image/webp,image/jpeg,image/svg+xml"
                 onChange={handleFileSelect}
                 className="hidden"
                 disabled={disabled || isUploading}

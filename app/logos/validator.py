@@ -9,12 +9,13 @@ Checks:
 - Alpha channel (transparency)
 - File size limits
 - Image corruption
+- SVG conversion (auto-converts to PNG)
 """
 
 import io
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Tuple
 
 from PIL import Image
 
@@ -22,6 +23,48 @@ from app.logos.config import get_logos_settings
 
 logger = logging.getLogger(__name__)
 logos_settings = get_logos_settings()
+
+# SVG detection magic bytes
+SVG_SIGNATURES = [
+    b"<?xml",
+    b"<svg",
+    b"<!DOCTYPE svg",
+]
+
+
+def is_svg(data: bytes) -> bool:
+    """Check if data is an SVG file by looking at the content."""
+    # Check first 1KB for SVG signatures
+    header = data[:1024].lower()
+    return any(sig.lower() in header for sig in SVG_SIGNATURES)
+
+
+def convert_svg_to_png(svg_bytes: bytes, output_size: int = 1024) -> Tuple[bytes, Optional[str]]:
+    """Convert SVG to PNG using cairosvg.
+
+    Args:
+        svg_bytes: Raw SVG file bytes
+        output_size: Target width/height in pixels (default 1024)
+
+    Returns:
+        Tuple of (PNG bytes, error message or None)
+    """
+    try:
+        import cairosvg
+    except ImportError:
+        return b"", "cairosvg not installed - cannot convert SVG"
+
+    try:
+        png_bytes = cairosvg.svg2png(
+            bytestring=svg_bytes,
+            output_width=output_size,
+            output_height=output_size,
+        )
+        logger.info(f"Converted SVG to PNG ({len(svg_bytes)} → {len(png_bytes)} bytes)")
+        return png_bytes, None
+    except Exception as e:
+        logger.error(f"SVG conversion failed: {e}")
+        return b"", f"SVG conversion failed: {e}"
 
 
 @dataclass
@@ -40,9 +83,14 @@ class ValidationResult:
     has_alpha: bool = False
     file_size_bytes: int = 0
 
+    # SVG conversion info
+    converted_from_svg: bool = False
+    converted_bytes: Optional[bytes] = None  # PNG bytes if converted
+
     def __str__(self) -> str:
         if self.valid:
-            return f"Valid ({self.width}x{self.height}, {self.mode})"
+            suffix = " (converted from SVG)" if self.converted_from_svg else ""
+            return f"Valid ({self.width}x{self.height}, {self.mode}){suffix}"
         return f"Invalid: {', '.join(self.errors)}"
 
 
@@ -157,20 +205,44 @@ def validate_original_logo(image_bytes: bytes) -> ValidationResult:
     Less strict than IA output validation:
     - Alpha channel optional
     - Smaller minimum size allowed
+    - Automatically converts SVG to PNG
 
     Args:
         image_bytes: Raw image bytes
 
     Returns:
-        ValidationResult
+        ValidationResult (with converted_bytes if SVG was converted)
     """
-    return validate_ia_output(
+    converted_from_svg = False
+    converted_bytes = None
+
+    # Auto-convert SVG to PNG
+    if is_svg(image_bytes):
+        logger.info("Detected SVG upload, converting to PNG...")
+        png_bytes, error = convert_svg_to_png(image_bytes, output_size=1024)
+        if error:
+            return ValidationResult(
+                valid=False,
+                errors=[error],
+                file_size_bytes=len(image_bytes),
+            )
+        converted_from_svg = True
+        converted_bytes = png_bytes
+        image_bytes = png_bytes
+
+    result = validate_ia_output(
         image_bytes,
         variant="original",
         min_width=64,
         min_height=64,
         require_alpha=False,
     )
+
+    # Add conversion info to result
+    result.converted_from_svg = converted_from_svg
+    result.converted_bytes = converted_bytes
+
+    return result
 
 
 def validate_batch_results(

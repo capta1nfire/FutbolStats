@@ -55,13 +55,13 @@ export async function POST(
       );
     }
 
-    // Validate file type (SVG not supported - PIL/IA require raster images)
-    const allowedTypes = ["image/png", "image/webp", "image/jpeg"];
+    // Validate file type (SVG supported - auto-converted to PNG by backend)
+    const allowedTypes = ["image/png", "image/webp", "image/jpeg", "image/svg+xml"];
     if (!allowedTypes.includes(file.type)) {
       return NextResponse.json(
         {
           error: "Invalid file type",
-          detail: `Allowed types: PNG, WebP, JPEG. Got: ${file.type}`,
+          detail: `Allowed types: PNG, WebP, JPEG, SVG. Got: ${file.type}`,
           requestId,
         },
         { status: 400 }

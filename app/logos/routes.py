@@ -136,7 +136,7 @@ async def upload_team_logo(
     if not team:
         raise HTTPException(status_code=404, detail=f"Team {team_id} not found")
 
-    # Read and validate file
+    # Read and validate file (auto-converts SVG to PNG)
     content = await file.read()
     validation = validate_original_logo(content)
 
@@ -145,6 +145,9 @@ async def upload_team_logo(
             status_code=400,
             detail=f"Invalid image: {', '.join(validation.errors)}",
         )
+
+    # Use converted PNG bytes if SVG was converted, otherwise original content
+    upload_bytes = validation.converted_bytes if validation.converted_from_svg else content
 
     # Get or create TeamLogo record to determine revision
     # Use FOR UPDATE to prevent concurrent uploads from calculating same revision
@@ -166,7 +169,7 @@ async def upload_team_logo(
     r2_key = await r2_client.upload_team_logo(
         team_id=team_id,
         variant="original",
-        image_bytes=content,
+        image_bytes=upload_bytes,
         apifb_id=team.external_id,  # API-Football ID for traceability
         slug=team.name,  # Team name for readability
         revision=revision,
@@ -210,6 +213,7 @@ async def upload_team_logo(
             "width": validation.width,
             "height": validation.height,
             "format": validation.format,
+            "converted_from_svg": validation.converted_from_svg,
         },
     }
 
