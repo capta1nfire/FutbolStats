@@ -1,8 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import Image from "next/image";
-import { useFootballNav, useFootballCountries, useNationalsCountries } from "@/lib/hooks";
+import {
+  useFootballNav,
+  useFootballCountries,
+  useNationalsCountries,
+  useTeamSearch,
+} from "@/lib/hooks";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Loader } from "@/components/ui/loader";
@@ -16,6 +21,7 @@ import {
   Users,
   ChevronRight,
   AlertCircle,
+  X,
 } from "lucide-react";
 
 /**
@@ -46,6 +52,7 @@ interface FootballNavProps {
   onCategoryChange: (category: string) => void;
   selectedCountry: string | null;
   onCountrySelect: (country: string) => void;
+  onTeamSelect?: (teamId: number) => void;
 }
 
 /**
@@ -78,8 +85,46 @@ export function FootballNav({
   onCategoryChange,
   selectedCountry,
   onCountrySelect,
+  onTeamSelect,
 }: FootballNavProps) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [teamSearchQuery, setTeamSearchQuery] = useState("");
+  const [showTeamResults, setShowTeamResults] = useState(false);
+  const teamSearchRef = useRef<HTMLDivElement>(null);
+
+  // Team search query
+  const { data: teamSearchData, isLoading: isTeamSearching } = useTeamSearch(
+    teamSearchQuery,
+    showTeamResults
+  );
+
+  // Close team search results when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (teamSearchRef.current && !teamSearchRef.current.contains(event.target as Node)) {
+        setShowTeamResults(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleTeamSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setTeamSearchQuery(value);
+    setShowTeamResults(value.length >= 2);
+  }, []);
+
+  const handleTeamClick = useCallback((teamId: number) => {
+    setTeamSearchQuery("");
+    setShowTeamResults(false);
+    onTeamSelect?.(teamId);
+  }, [onTeamSelect]);
+
+  const clearTeamSearch = useCallback(() => {
+    setTeamSearchQuery("");
+    setShowTeamResults(false);
+  }, []);
 
   // Fetch navigation categories
   const {
@@ -117,10 +162,78 @@ export function FootballNav({
 
   return (
     <div className="w-[277px] border-r border-border bg-sidebar flex flex-col">
-      {/* Categories Section */}
+      {/* Header */}
       <div className="shrink-0">
         <div className="px-4 py-3 border-b border-border">
           <h2 className="text-sm font-semibold text-foreground">Football</h2>
+        </div>
+
+        {/* Team Search */}
+        <div className="px-3 py-2 border-b border-border" ref={teamSearchRef}>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search teams..."
+              value={teamSearchQuery}
+              onChange={handleTeamSearchChange}
+              onFocus={() => teamSearchQuery.length >= 2 && setShowTeamResults(true)}
+              className="pl-8 pr-8 h-8 text-sm"
+            />
+            {teamSearchQuery && (
+              <button
+                onClick={clearTeamSearch}
+                className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+
+          {/* Team Search Results Dropdown */}
+          {showTeamResults && (
+            <div className="absolute left-0 right-0 mt-1 mx-3 bg-popover border border-border rounded-md shadow-lg z-50 max-h-64 overflow-y-auto">
+              {isTeamSearching ? (
+                <div className="flex items-center justify-center py-4">
+                  <Loader size="sm" />
+                </div>
+              ) : teamSearchData?.teams && teamSearchData.teams.length > 0 ? (
+                <div className="py-1">
+                  {teamSearchData.teams.map((team) => (
+                    <button
+                      key={team.team_id}
+                      onClick={() => handleTeamClick(team.team_id)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted text-left"
+                    >
+                      {team.logo_url ? (
+                        <img
+                          src={team.logo_url}
+                          alt=""
+                          className="w-5 h-5 object-contain"
+                        />
+                      ) : (
+                        <Users className="w-5 h-5 text-muted-foreground" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="truncate text-foreground">{team.name}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {team.country} · {team.team_type}
+                        </p>
+                      </div>
+                    </button>
+                  ))}
+                  {teamSearchData.pagination.has_more && (
+                    <div className="px-3 py-1.5 text-xs text-muted-foreground text-center border-t border-border">
+                      +{teamSearchData.pagination.total - teamSearchData.teams.length} more results
+                    </div>
+                  )}
+                </div>
+              ) : teamSearchQuery.length >= 2 ? (
+                <div className="py-4 text-sm text-muted-foreground text-center">
+                  No teams found
+                </div>
+              ) : null}
+            </div>
+          )}
         </div>
 
         {/* Category List */}

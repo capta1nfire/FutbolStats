@@ -5947,20 +5947,30 @@ async def dashboard_admin_teams(
     request: Request,
     type: str = "all",
     country: str = None,
+    search: str = None,
     limit: int = 100,
     offset: int = 0,
 ):
-    """Admin Panel - List teams with optional filters and pagination."""
+    """Admin Panel - List teams with optional filters and search.
+
+    Args:
+        type: Filter by team type (all, club, national)
+        country: Filter by country name
+        search: Search by team name (case-insensitive partial match)
+        limit: Max results (1-500)
+        offset: Pagination offset
+    """
     import time
 
     if not _verify_dashboard_token(request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
     now = time.time()
-    cache_key = f"{type}:{country}:{limit}:{offset}"
+    cache_key = f"{type}:{country}:{search}:{limit}:{offset}"
     cache = _admin_cache["teams"]
 
-    if cache_key in cache and cache[cache_key]["data"] and (now - cache[cache_key]["timestamp"]) < 120:
+    # Skip cache for search queries (fresh results)
+    if not search and cache_key in cache and cache[cache_key]["data"] and (now - cache[cache_key]["timestamp"]) < 120:
         cached = cache[cache_key]
         return {
             "generated_at": cached["data"]["generated_at"],
@@ -5974,7 +5984,7 @@ async def dashboard_admin_teams(
     team_type = type if type != "all" else None
 
     async with AsyncSessionLocal() as session:
-        data = await build_teams_list(session, team_type=team_type, country=country, limit=limit, offset=offset)
+        data = await build_teams_list(session, team_type=team_type, country=country, search=search, limit=limit, offset=offset)
 
     result = {
         "generated_at": datetime.utcnow().isoformat() + "Z",

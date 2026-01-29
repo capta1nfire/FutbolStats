@@ -299,6 +299,7 @@ function FootballPageContent() {
         onCategoryChange={handleCategoryChange}
         selectedCountry={country}
         onCountrySelect={handleCountrySelect}
+        onTeamSelect={handleTeamSelect}
       />
 
       {/* Col 3+4: Main Content Area */}

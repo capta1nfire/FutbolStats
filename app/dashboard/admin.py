@@ -541,10 +541,20 @@ async def build_teams_list(
     session: AsyncSession,
     team_type: Optional[str] = None,
     country: Optional[str] = None,
+    search: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
 ) -> dict:
-    """Build paginated teams list with optional filters."""
+    """Build paginated teams list with optional filters.
+
+    Args:
+        session: Database session
+        team_type: Filter by team type (club, national)
+        country: Filter by country
+        search: Search by team name (case-insensitive)
+        limit: Max results (1-500)
+        offset: Pagination offset
+    """
 
     # Validate params
     limit = min(max(limit, 1), 500)
@@ -561,6 +571,11 @@ async def build_teams_list(
     if country:
         where_parts.append("t.country = :country")
         params["country"] = country
+
+    if search and search.strip():
+        # Case-insensitive search by name
+        where_parts.append("t.name ILIKE :search")
+        params["search"] = f"%{search.strip()}%"
 
     where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
 
