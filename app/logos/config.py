@@ -51,6 +51,15 @@ class LogosSettings(BaseSettings):
     LOGOS_BATCH_CONCURRENT_LIMIT: int = 5  # Max concurrent IA calls
     LOGOS_BATCH_RATE_LIMIT_RPM: int = 50  # Requests per minute
 
+    # Cost Guard (Kimi recommendation)
+    LOGOS_MAX_BATCH_COST_USD: float = 50.0  # Max cost per batch job
+    LOGOS_COST_PER_IMAGE_DALLE: float = 0.04  # DALL-E 3 HD cost
+    LOGOS_COST_PER_IMAGE_SDXL: float = 0.02  # SDXL cost estimate
+
+    # Rate limits per IA model (requests per minute)
+    LOGOS_DALLE_RPM: int = 5  # DALL-E 3 limit
+    LOGOS_SDXL_RPM: int = 10  # SDXL limit
+
     # Retry policy
     LOGOS_IA_MAX_RETRIES: int = 3
     LOGOS_IA_RETRY_DELAY_SECONDS: int = 5

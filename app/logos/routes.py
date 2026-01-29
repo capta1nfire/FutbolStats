@@ -32,6 +32,7 @@ from app.logos.batch_worker import (
     cancel_batch,
     get_batch_status,
     process_team_thumbnails,
+    validate_batch_cost,
 )
 
 logger = logging.getLogger(__name__)
@@ -244,7 +245,23 @@ async def generate_league_logos(
     """Start batch generation for a league.
 
     Creates a batch job and returns the job ID for tracking.
+    Rate limited: Only one running job per league allowed.
     """
+    # Rate limiting: Check for existing running jobs on this league (Kimi recommendation)
+    existing_job = await session.execute(
+        select(LogoBatchJob)
+        .where(
+            LogoBatchJob.league_id == league_id,
+            LogoBatchJob.status.in_(["running", "paused"]),
+        )
+    )
+    if existing_job.scalar_one_or_none():
+        raise HTTPException(
+            status_code=429,
+            detail=f"A batch job is already running/paused for league {league_id}. "
+            "Cancel or complete it before starting a new one.",
+        )
+
     try:
         batch_id = await start_batch_job(
             session=session,

@@ -22,6 +22,7 @@ Usage:
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
@@ -39,6 +40,113 @@ from app.logos.cdn import invalidate_team_logo_cdn
 
 logger = logging.getLogger(__name__)
 logos_settings = get_logos_settings()
+
+
+# =============================================================================
+# Rate Limiter for IA APIs (Kimi recommendation)
+# =============================================================================
+
+
+class IARateLimiter:
+    """Simple rate limiter for IA API calls.
+
+    Tracks requests per minute and enforces limits per model.
+    """
+
+    def __init__(self):
+        self._requests: dict[str, list[float]] = {}
+        self._limits = {
+            "dall-e-3": logos_settings.LOGOS_DALLE_RPM,
+            "sdxl": logos_settings.LOGOS_SDXL_RPM,
+        }
+
+    async def acquire(self, model: str) -> None:
+        """Wait until rate limit allows another request.
+
+        Args:
+            model: IA model name
+        """
+        limit = self._limits.get(model, 5)
+        now = time.time()
+
+        if model not in self._requests:
+            self._requests[model] = []
+
+        # Remove requests older than 60 seconds
+        self._requests[model] = [t for t in self._requests[model] if now - t < 60]
+
+        # If at limit, wait
+        while len(self._requests[model]) >= limit:
+            oldest = self._requests[model][0]
+            wait_time = 60 - (now - oldest) + 0.1
+            if wait_time > 0:
+                logger.info(f"Rate limit reached for {model}, waiting {wait_time:.1f}s")
+                await asyncio.sleep(wait_time)
+            now = time.time()
+            self._requests[model] = [t for t in self._requests[model] if now - t < 60]
+
+        # Record this request
+        self._requests[model].append(now)
+
+
+# Global rate limiter instance
+_ia_rate_limiter = IARateLimiter()
+
+
+# =============================================================================
+# Cost Guard (Kimi recommendation)
+# =============================================================================
+
+
+def estimate_batch_cost(team_count: int, generation_mode: str, ia_model: str) -> float:
+    """Estimate cost for a batch job.
+
+    Args:
+        team_count: Number of teams to process
+        generation_mode: full_3d, facing_only, front_only
+        ia_model: IA model to use
+
+    Returns:
+        Estimated cost in USD
+    """
+    images_per_team = {
+        "full_3d": 3,
+        "facing_only": 2,
+        "front_only": 1,
+        "manual": 0,
+    }.get(generation_mode, 3)
+
+    cost_per_image = {
+        "dall-e-3": logos_settings.LOGOS_COST_PER_IMAGE_DALLE,
+        "sdxl": logos_settings.LOGOS_COST_PER_IMAGE_SDXL,
+    }.get(ia_model, 0.04)
+
+    return team_count * images_per_team * cost_per_image
+
+
+def validate_batch_cost(team_count: int, generation_mode: str, ia_model: str) -> tuple[bool, float, str]:
+    """Validate that batch cost is within limits.
+
+    Args:
+        team_count: Number of teams
+        generation_mode: Generation mode
+        ia_model: IA model
+
+    Returns:
+        Tuple of (valid, estimated_cost, error_message)
+    """
+    estimated_cost = estimate_batch_cost(team_count, generation_mode, ia_model)
+    max_cost = logos_settings.LOGOS_MAX_BATCH_COST_USD
+
+    if estimated_cost > max_cost:
+        return (
+            False,
+            estimated_cost,
+            f"Estimated cost ${estimated_cost:.2f} exceeds limit ${max_cost:.2f}. "
+            f"Reduce team count or use a cheaper model.",
+        )
+
+    return True, estimated_cost, ""
 
 
 async def get_active_prompts(
@@ -108,9 +216,14 @@ async def start_batch_job(
     if not team_ids:
         raise ValueError(f"No teams pending processing for league {league_id}")
 
-    # Estimate cost (DALL-E 3: ~$0.04 per image at HD quality)
-    images_per_team = 3 if generation_mode == "full_3d" else 1
-    estimated_cost = len(team_ids) * images_per_team * 0.04
+    # Cost Guard validation (Kimi recommendation)
+    cost_valid, estimated_cost, cost_error = validate_batch_cost(
+        team_count=len(team_ids),
+        generation_mode=generation_mode,
+        ia_model=ia_model,
+    )
+    if not cost_valid:
+        raise ValueError(cost_error)
 
     # Create batch job
     batch = LogoBatchJob(
@@ -238,6 +351,9 @@ async def process_team_logo(
 
         while retry_count < logos_settings.LOGOS_IA_MAX_RETRIES:
             try:
+                # Rate limit IA API calls (Kimi recommendation)
+                await _ia_rate_limiter.acquire(batch_job.ia_model)
+
                 generated_bytes = await generator.generate(
                     original_bytes, prompt
                 )
