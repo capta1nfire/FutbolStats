@@ -1436,3 +1436,246 @@ class OpsSetting(SQLModel, table=True):
     value: dict = Field(sa_column=Column(JSONB, nullable=False), description="Configuration as JSON object")
     updated_at: datetime = Field(default_factory=datetime.utcnow, description="Last update timestamp (UTC)")
     updated_by: str = Field(max_length=50, default="system", description="Who updated (user email or 'system')")
+
+
+# =============================================================================
+# 3D LOGO GENERATION SYSTEM
+# =============================================================================
+
+
+class TeamLogo(SQLModel, table=True):
+    """
+    3D logo variants for teams/national teams.
+
+    Stores R2 keys for original and 3 generated variants:
+    - original: uploaded source image
+    - front_3d: frontal 3D metallic badge
+    - facing_right: HOME perspective (looks at opponent on right)
+    - facing_left: AWAY perspective (looks at opponent on left)
+
+    Spec: docs/TEAM_LOGOS_3D_SPEC.md
+    """
+
+    __tablename__ = "team_logos"
+
+    team_id: int = Field(
+        foreign_key="teams.id",
+        primary_key=True,
+        description="FK to teams.id"
+    )
+
+    # R2 Storage Keys
+    r2_key_original: Optional[str] = Field(default=None, max_length=255)
+    r2_key_front: Optional[str] = Field(default=None, max_length=255)
+    r2_key_right: Optional[str] = Field(default=None, max_length=255)
+    r2_key_left: Optional[str] = Field(default=None, max_length=255)
+
+    # URLs de thumbnails (generadas post-resize)
+    urls: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSONB, server_default="{}"),
+        description="Thumbnail URLs: {front: {64, 128, 256, 512}, right: {...}, left: {...}}"
+    )
+
+    # Fallback (API-Football URL original)
+    fallback_url: Optional[str] = Field(default=None, max_length=500)
+
+    # Pipeline Status
+    status: str = Field(
+        default="pending",
+        max_length=20,
+        description="pending|queued|processing|pending_resize|ready|error|paused"
+    )
+
+    # Processing Metadata
+    batch_job_id: Optional[UUID] = Field(
+        default=None,
+        sa_column=Column(PG_UUID(as_uuid=True), nullable=True)
+    )
+    generation_mode: Optional[str] = Field(default=None, max_length=20)
+    ia_model: Optional[str] = Field(default=None, max_length=50)
+    ia_prompt_version: Optional[str] = Field(default=None, max_length=20)
+    use_original_as_front: bool = Field(default=False)
+
+    # Timestamps
+    uploaded_at: Optional[datetime] = Field(default=None)
+    processing_started_at: Optional[datetime] = Field(default=None)
+    processing_completed_at: Optional[datetime] = Field(default=None)
+    resize_completed_at: Optional[datetime] = Field(default=None)
+
+    # Cost tracking
+    ia_cost_usd: Optional[float] = Field(default=None, description="Total IA cost")
+
+    # Error Handling
+    error_message: Optional[str] = Field(default=None)
+    error_phase: Optional[str] = Field(default=None, max_length=20)
+    retry_count: int = Field(default=0)
+    last_retry_at: Optional[datetime] = Field(default=None)
+
+    # Validation
+    validation_errors: Optional[dict] = Field(default=None, sa_column=Column(JSONB))
+    last_validation_at: Optional[datetime] = Field(default=None)
+
+    # Review (Liga-by-liga approval)
+    review_status: str = Field(default="pending", max_length=20)
+    review_notes: Optional[str] = Field(default=None)
+    reviewed_by: Optional[str] = Field(default=None, max_length=100)
+    reviewed_at: Optional[datetime] = Field(default=None)
+
+    # Audit
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CompetitionLogo(SQLModel, table=True):
+    """
+    3D logos for leagues/tournaments (main variant only, no facing).
+
+    Spec: docs/TEAM_LOGOS_3D_SPEC.md
+    """
+
+    __tablename__ = "competition_logos"
+
+    league_id: int = Field(primary_key=True, description="FK to admin_leagues.league_id")
+
+    # R2 Storage Keys
+    r2_key_original: Optional[str] = Field(default=None, max_length=255)
+    r2_key_main: Optional[str] = Field(default=None, max_length=255)
+
+    # URLs de thumbnails
+    urls: Optional[dict] = Field(
+        default=None,
+        sa_column=Column(JSONB, server_default="{}"),
+        description="Thumbnail URLs: {64, 128, 256, 512}"
+    )
+
+    # Fallback
+    fallback_url: Optional[str] = Field(default=None, max_length=500)
+
+    # Status
+    status: str = Field(
+        default="pending",
+        max_length=20,
+        description="pending|queued|processing|pending_resize|ready|error"
+    )
+
+    # Metadata
+    batch_job_id: Optional[UUID] = Field(
+        default=None,
+        sa_column=Column(PG_UUID(as_uuid=True), nullable=True)
+    )
+    ia_model: Optional[str] = Field(default=None, max_length=50)
+    ia_prompt_version: Optional[str] = Field(default=None, max_length=20)
+    ia_cost_usd: Optional[float] = Field(default=None)
+
+    # Error handling
+    error_message: Optional[str] = Field(default=None)
+    retry_count: int = Field(default=0)
+
+    # Validation
+    validation_errors: Optional[dict] = Field(default=None, sa_column=Column(JSONB))
+    last_validation_at: Optional[datetime] = Field(default=None)
+
+    # Timestamps
+    uploaded_at: Optional[datetime] = Field(default=None)
+    processing_completed_at: Optional[datetime] = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class LogoBatchJob(SQLModel, table=True):
+    """
+    Batch generation jobs with pause/resume/cancel support.
+
+    Tracks liga-by-liga generation progress and approval workflow.
+
+    Spec: docs/TEAM_LOGOS_3D_SPEC.md
+    """
+
+    __tablename__ = "logo_batch_jobs"
+
+    id: Optional[UUID] = Field(
+        default=None,
+        sa_column=Column(PG_UUID(as_uuid=True), primary_key=True, server_default="gen_random_uuid()")
+    )
+
+    # Configuration
+    ia_model: str = Field(max_length=50)
+    generation_mode: str = Field(default="full_3d", max_length=20)
+    prompt_front: Optional[str] = Field(default=None)
+    prompt_right: Optional[str] = Field(default=None)
+    prompt_left: Optional[str] = Field(default=None)
+    prompt_version: str = Field(max_length=20)
+
+    # Scope
+    entity_type: str = Field(default="league", max_length=20)
+    league_id: Optional[int] = Field(default=None)
+    total_teams: int
+    team_ids: Optional[list] = Field(default=None, sa_column=Column(JSON))
+
+    # Status
+    status: str = Field(
+        default="running",
+        max_length=20,
+        description="running|paused|completed|cancelled|error|pending_review"
+    )
+
+    # Progress
+    processed_teams: int = Field(default=0)
+    processed_images: int = Field(default=0)
+    failed_teams: int = Field(default=0)
+
+    # Cost
+    estimated_cost_usd: Optional[float] = Field(default=None)
+    actual_cost_usd: float = Field(default=0)
+
+    # Approval
+    approval_status: str = Field(default="pending_review", max_length=20)
+    approved_count: int = Field(default=0)
+    rejected_count: int = Field(default=0)
+    approved_by: Optional[str] = Field(default=None, max_length=100)
+    approved_at: Optional[datetime] = Field(default=None)
+
+    # Re-run support
+    parent_batch_id: Optional[UUID] = Field(
+        default=None,
+        sa_column=Column(PG_UUID(as_uuid=True), nullable=True)
+    )
+    is_rerun: bool = Field(default=False)
+    rerun_reason: Optional[str] = Field(default=None, max_length=100)
+
+    # Timestamps
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    paused_at: Optional[datetime] = Field(default=None)
+    completed_at: Optional[datetime] = Field(default=None)
+
+    # Metadata
+    started_by: Optional[str] = Field(default=None, max_length=100)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class LogoPromptTemplate(SQLModel, table=True):
+    """
+    Versioned prompts for A/B testing and rollback support.
+
+    Spec: docs/TEAM_LOGOS_3D_SPEC.md (Kimi consideration)
+    """
+
+    __tablename__ = "logo_prompt_templates"
+    __table_args__ = (
+        UniqueConstraint("version", "variant", "ia_model", name="uq_prompt_version_variant_model"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    version: str = Field(max_length=10)
+    variant: str = Field(max_length=20, description="front|right|left|main")
+    prompt_template: str
+    ia_model: Optional[str] = Field(default=None, max_length=50)
+    is_active: bool = Field(default=False)
+    success_rate: Optional[float] = Field(default=None)
+    avg_quality_score: Optional[float] = Field(default=None)
+    usage_count: int = Field(default=0)
+    notes: Optional[str] = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_by: Optional[str] = Field(default=None, max_length=100)

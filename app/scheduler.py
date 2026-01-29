@@ -5794,6 +5794,86 @@ async def titan_outcome_sync() -> dict:
         return {"status": "error", "error": str(e), "duration_ms": duration_ms}
 
 
+async def logo_resize_pending() -> dict:
+    """
+    Logo Resize Job - processes pending_resize logos into thumbnails.
+
+    Finds team_logos with status='pending_resize' and generates
+    WebP thumbnails (64, 128, 256, 512) for each variant.
+
+    Runs every 5 minutes. Processes up to 10 teams per run.
+
+    Requires LOGOS_R2_ENABLED=true to be active.
+    """
+    import time as _time
+    from sqlalchemy import select, update
+
+    job_name = "logo_resize_pending"
+    start_time = _time.time()
+
+    # Check if logos system is enabled
+    from app.logos.config import get_logos_settings
+    logos_settings = get_logos_settings()
+
+    if not logos_settings.LOGOS_R2_ENABLED:
+        logger.debug(f"[{job_name}] Skipped - LOGOS_R2_ENABLED=false")
+        return {"status": "skipped", "reason": "disabled"}
+
+    try:
+        from app.models import TeamLogo
+        from app.logos.batch_worker import process_team_thumbnails
+
+        async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
+            # Find pending_resize logos (limit to batch size)
+            result = await session.execute(
+                select(TeamLogo.team_id)
+                .where(TeamLogo.status == "pending_resize")
+                .limit(10)
+            )
+            pending_ids = [row[0] for row in result.fetchall()]
+
+            if not pending_ids:
+                logger.debug(f"[{job_name}] No logos pending resize")
+                return {"status": "ok", "processed": 0}
+
+            processed = 0
+            errors = 0
+
+            for team_id in pending_ids:
+                try:
+                    success, error = await process_team_thumbnails(session, team_id)
+                    if success:
+                        processed += 1
+                    else:
+                        errors += 1
+                        logger.warning(f"[{job_name}] Team {team_id} resize failed: {error}")
+                except Exception as e:
+                    errors += 1
+                    logger.error(f"[{job_name}] Team {team_id} exception: {e}")
+
+            duration_ms = (_time.time() - start_time) * 1000
+
+            logger.info(
+                f"[{job_name}] Processed {processed}/{len(pending_ids)} logos, "
+                f"{errors} errors in {duration_ms:.0f}ms"
+            )
+
+            record_job_run(job=job_name, status="ok", duration_ms=duration_ms)
+
+            return {
+                "status": "ok",
+                "processed": processed,
+                "errors": errors,
+                "duration_ms": duration_ms,
+            }
+
+    except Exception as e:
+        duration_ms = (_time.time() - start_time) * 1000
+        logger.error(f"[{job_name}] Failed: {e}")
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        return {"status": "error", "error": str(e), "duration_ms": duration_ms}
+
+
 def start_scheduler(ml_engine):
     """
     Start the background scheduler.
@@ -6316,6 +6396,21 @@ def start_scheduler(ml_engine):
         misfire_grace_time=1800,  # 30min grace
     )
 
+    # Logos: Resize pending thumbnails - every 5 minutes
+    # Processes team_logos with status='pending_resize' into WebP thumbnails
+    # Disabled by default (requires LOGOS_R2_ENABLED=true)
+    scheduler.add_job(
+        logo_resize_pending,
+        trigger=IntervalTrigger(minutes=5),
+        id="logo_resize_pending",
+        name="Logo Resize Pending (every 5 min)",
+        replace_existing=True,
+        next_run_time=datetime.utcnow() + timedelta(seconds=120),  # Offset: +120s
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,  # 5min grace
+    )
+
     scheduler.start()
     _scheduler_started = True
 
@@ -6347,7 +6442,8 @@ def start_scheduler(ml_engine):
         f"  - SOTA Weather capture: Every 60 min (disabled by default)\n"
         f"  - SOTA Venue geo expand: Daily 03:00 UTC (disabled by default)\n"
         f"  - SOTA Sofascore XI capture: Every 30 min (disabled by default)\n"
-        f"  - TITAN Feature Matrix Runner: Every 2h (enabled by default)"
+        f"  - TITAN Feature Matrix Runner: Every 2h (enabled by default)\n"
+        f"  - Logo Resize Pending: Every 5 min (disabled by default, requires LOGOS_R2_ENABLED)"
     )
 
 
