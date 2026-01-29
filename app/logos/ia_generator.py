@@ -210,9 +210,9 @@ class ImagenGenerator:
 
         # Google AI Studio (free tier) - uses API key auth
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
-        # Use Gemini 2.5 Flash Image for img2img (native image generation)
-        # Note: gemini-2.0-flash-exp deprecated March 2026
-        self.model = "gemini-2.5-flash-image"
+        # Use Gemini 3 Pro Image Preview for img2img (best quality, free tier)
+        # Options: gemini-2.5-flash-image (fast), gemini-3-pro-image-preview (quality)
+        self.model = "gemini-3-pro-image-preview"
 
         tier_name = "Google AI Studio (FREE)" if self.use_free_tier else "Vertex AI (PAID)"
         logger.info(f"ImagenGenerator initialized with {tier_name}, model={self.model}")
