@@ -422,6 +422,9 @@ async def _generate_team_background(
 
     Runs generation in background after endpoint returns 202.
     Uses its own session to avoid conflicts with the request session.
+
+    IMPORTANT: Must update status to "error" if generation fails,
+    otherwise team stays stuck in "processing" forever.
     """
     async with async_session_maker() as session:
         try:
@@ -434,22 +437,38 @@ async def _generate_team_background(
             )
 
             if not success:
+                # P0 FIX: Must update status to error, not just log
                 logger.error(f"Background generation failed for team {team_id}: {error}")
+                try:
+                    logo_result = await session.execute(
+                        select(TeamLogo).where(TeamLogo.team_id == team_id)
+                    )
+                    team_logo = logo_result.scalar_one_or_none()
+                    if team_logo and team_logo.status == "processing":
+                        team_logo.status = "error"
+                        team_logo.error_message = error or "Generation failed"
+                        team_logo.error_phase = "background_generation"
+                        team_logo.updated_at = datetime.utcnow()
+                        await session.commit()
+                        logger.info(f"Marked team {team_id} as error after failed generation")
+                except Exception as update_err:
+                    logger.error(f"Failed to update error status for team {team_id}: {update_err}")
             else:
                 logger.info(f"Background generation completed for team {team_id}")
 
         except Exception as e:
             logger.error(f"Background generation exception for team {team_id}: {e}")
-            # Update status to error
+            # Update status to error on exception
             try:
-                result = await session.execute(
+                logo_result = await session.execute(
                     select(TeamLogo).where(TeamLogo.team_id == team_id)
                 )
-                team_logo = result.scalar_one_or_none()
-                if team_logo:
+                team_logo = logo_result.scalar_one_or_none()
+                if team_logo and team_logo.status == "processing":
                     team_logo.status = "error"
                     team_logo.error_message = str(e)
-                    team_logo.error_phase = "background_task"
+                    team_logo.error_phase = "background_exception"
+                    team_logo.updated_at = datetime.utcnow()
                     await session.commit()
             except Exception as inner_e:
                 logger.error(f"Failed to update error status: {inner_e}")

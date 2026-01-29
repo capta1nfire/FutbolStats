@@ -66,7 +66,8 @@ export function LogosGeneratePanel({
       }
 
       try {
-        const result = await generateSingle.mutateAsync({
+        // useGenerateSingleTeam now returns TeamLogoStatus after async polling
+        const finalStatus = await generateSingle.mutateAsync({
           teamId: selectedTeamId,
           request: {
             generation_mode: generationMode,
@@ -75,10 +76,25 @@ export function LogosGeneratePanel({
           },
         });
 
-        const successCount = result.results.filter((r) => r.success).length;
-        toast.success(
-          `Generated ${successCount}/${result.results.length} variants for ${result.teamName}`
-        );
+        // Check final status and show appropriate toast
+        if (finalStatus.status === "error") {
+          toast.error(
+            finalStatus.error?.message || "Generation failed"
+          );
+        } else if (finalStatus.status === "pending_resize" || finalStatus.status === "ready") {
+          // Count variants by checking r2Keys
+          const variantCount = [
+            finalStatus.r2Keys.front,
+            finalStatus.r2Keys.right,
+            finalStatus.r2Keys.left,
+          ].filter(Boolean).length;
+
+          toast.success(
+            `Generated ${variantCount} variant${variantCount !== 1 ? "s" : ""} for ${finalStatus.teamName}`
+          );
+        } else {
+          toast.info(`Generation completed with status: ${finalStatus.status}`);
+        }
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : "Generation failed"
