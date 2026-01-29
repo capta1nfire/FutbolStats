@@ -231,7 +231,7 @@ export function FootballNav({
                     </div>
                   )}
                 </div>
-              ) : teamSearchQuery.length >= 2 ? (
+              ) : debouncedTeamSearch.length >= 2 ? (
                 <div className="py-4 text-sm text-muted-foreground text-center">
                   No teams found
                 </div>
