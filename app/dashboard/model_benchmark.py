@@ -179,14 +179,17 @@ async def get_model_benchmark(
                     FROM predictions p
                     WHERE p.match_id = m.id AND p.model_version = 'v1.0.0'
                     LIMIT 1) as model_a_pred,
-                    -- Shadow (v1.1.0-two_stage) prediction
+                    -- Shadow prediction from shadow_predictions table
+                    -- Note: shadow_predicted uses 'home'/'draw'/'away' format
                     (SELECT CASE
-                        WHEN p.home_prob > p.draw_prob AND p.home_prob > p.away_prob THEN 'H'
-                        WHEN p.draw_prob > p.home_prob AND p.draw_prob > p.away_prob THEN 'D'
-                        ELSE 'A'
+                        WHEN shp.shadow_predicted = 'home' THEN 'H'
+                        WHEN shp.shadow_predicted = 'draw' THEN 'D'
+                        WHEN shp.shadow_predicted = 'away' THEN 'A'
+                        ELSE NULL
                     END
-                    FROM predictions p
-                    WHERE p.match_id = m.id AND p.model_version = 'v1.1.0-two_stage'
+                    FROM shadow_predictions shp
+                    WHERE shp.match_id = m.id
+                    ORDER BY shp.created_at DESC
                     LIMIT 1) as shadow_pred,
                     -- Sensor B prediction from sensor_predictions table (convert to H/D/A)
                     (SELECT CASE

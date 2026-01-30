@@ -17344,6 +17344,20 @@ async def predictions_rerun(request: Request, body: PredictionRerunRequest):
     if not _verify_dashboard_token(request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
+    # GUARDRAIL: Prevent two_stage/shadow predictions from going to predictions table
+    # Shadow/two-stage models must use shadow_predictions table, not predictions.
+    # This prevents data inconsistency issues discovered in Model Benchmark Tile.
+    forbidden_archs = ['two_stage', 'shadow', 'twostage']
+    if any(arch in body.architecture.lower() for arch in forbidden_archs):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Architecture '{body.architecture}' cannot write to predictions table. "
+                "Shadow/two-stage predictions must use shadow_predictions table. "
+                "Use the shadow mode pipeline instead of this endpoint."
+            )
+        )
+
     from app.ml.shadow import get_shadow_engine, is_shadow_enabled
     from app.models import Prediction, PredictionRerun
     from app.features import FeatureEngineer
