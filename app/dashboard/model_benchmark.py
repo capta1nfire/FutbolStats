@@ -156,11 +156,12 @@ async def get_model_benchmark(
         include_sensor_b = "Sensor B" in selected
 
         # Build dynamic query
+        # Use America/Los_Angeles timezone to match dashboard UI grouping
         query = text("""
             WITH match_predictions AS (
                 SELECT
                     m.id as match_id,
-                    DATE(m.date) as match_date,
+                    (m.date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Los_Angeles')::date as match_date,
                     m.home_goals,
                     m.away_goals,
                     -- Market prediction from odds (lowest odds = most probable)
