@@ -6,7 +6,7 @@ Supports Market, Model A, Shadow, and Sensor B models.
 """
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -83,13 +83,14 @@ class ModelBenchmarkResponse(BaseModel):
 # =============================================================================
 
 
-def calculate_start_date(selected_models: List[str]) -> str:
+def calculate_start_date(selected_models: List[str]) -> date:
     """
     Calculate the start date based on selected models.
-    Returns the most recent availability date among selected models.
+    Returns the most recent availability date among selected models as a date object.
     """
-    dates = [MODEL_AVAILABILITY[m] for m in selected_models if m in MODEL_AVAILABILITY]
-    return max(dates) if dates else "2026-01-10"
+    date_strs = [MODEL_AVAILABILITY[m] for m in selected_models if m in MODEL_AVAILABILITY]
+    max_str = max(date_strs) if date_strs else "2026-01-10"
+    return date.fromisoformat(max_str)
 
 
 def parse_models_param(models_param: Optional[str]) -> List[str]:
@@ -265,7 +266,7 @@ async def get_model_benchmark(
         if not rows:
             return ModelBenchmarkResponse(
                 generated_at=datetime.utcnow().isoformat(),
-                start_date=start_date,
+                start_date=start_date.isoformat(),
                 selected_models=selected,
                 total_matches=0,
                 daily_data=[],
@@ -357,7 +358,7 @@ async def get_model_benchmark(
 
         return ModelBenchmarkResponse(
             generated_at=datetime.utcnow().isoformat(),
-            start_date=start_date,
+            start_date=start_date.isoformat(),
             selected_models=selected,
             total_matches=total_matches,
             daily_data=daily_data,
