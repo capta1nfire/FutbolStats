@@ -216,13 +216,17 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
         categories: chartData.map((d) => d.date),
         labels: {
           style: { colors: "#6b7280", fontSize: "11px" },
-          rotate: 0,
+          rotate: -45,
+          rotateAlways: false,
           hideOverlappingLabels: true,
           trim: true,
+          showDuplicates: false,
         },
         axisBorder: { show: false },
         axisTicks: { show: false },
         tooltip: { enabled: false },
+        tickAmount: Math.min(chartData.length, 10), // Show ~10 ticks including last
+        tickPlacement: "on",
       },
       yaxis: {
         min: yAxisRange.min,
