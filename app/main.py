@@ -31,6 +31,7 @@ from app.scheduler import start_scheduler, stop_scheduler, get_last_sync_time, g
 from app.security import limiter, verify_api_key, verify_api_key_or_ops_session
 from app.telemetry.sentry import init_sentry, sentry_job_context, is_sentry_enabled
 from app.logos.routes import router as logos_router
+from app.dashboard.model_benchmark import router as model_benchmark_router
 
 # Configure logging
 logging.basicConfig(
@@ -1042,6 +1043,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Include routers
 app.include_router(logos_router)
+app.include_router(model_benchmark_router)
 
 
 # Request/Response Models

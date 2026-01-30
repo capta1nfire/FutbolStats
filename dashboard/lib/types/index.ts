@@ -12,3 +12,4 @@ export * from "./football";
 export * from "./admin";
 export * from "./feature-coverage-detail";
 export * from "./logos";
+export * from "./model-benchmark";
