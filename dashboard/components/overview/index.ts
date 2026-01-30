@@ -20,5 +20,7 @@ export { FastpathCompactTile } from "./FastpathCompactTile";
 export { PitProgressCompactTile } from "./PitProgressCompactTile";
 export { MovementSummaryTile } from "./MovementSummaryTile";
 export { TitanCompactTile } from "./TitanCompactTile";
+// Model Benchmark with ApexCharts
+export { ModelBenchmarkTile } from "./ModelBenchmarkTile";
 // Overview Drawer
 export { OverviewDrawer } from "./OverviewDrawer";

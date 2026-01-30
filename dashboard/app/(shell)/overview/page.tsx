@@ -26,6 +26,8 @@ import {
   MovementSummaryTile,
   DiagnosticsTile,
   TitanCompactTile,
+  // Model Benchmark
+  ModelBenchmarkTile,
   // Drawer
   OverviewDrawer,
 } from "@/components/overview";
@@ -266,7 +268,10 @@ export default function OverviewPage() {
             onRefresh={() => refetch()}
           />
 
-          {/* Row 2: Grid 2x2 - Predictions, Jobs, Fastpath, PIT Progress */}
+          {/* Row 2: Model Benchmark - Full Width */}
+          <ModelBenchmarkTile />
+
+          {/* Row 3: Grid 2x2 - Predictions, Jobs, Fastpath, PIT Progress */}
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
             <ClickableTile panel="predictions">
               <PredictionsCompactTile
@@ -296,8 +301,7 @@ export default function OverviewPage() {
             </ClickableTile>
           </div>
 
-          {/* Row 2b: Diagnostics (Shadow Mode + Sensor B) */}
-          {/* Row 2b: Diagnostics (Shadow Mode + Sensor B) + TITAN */}
+          {/* Row 4: Diagnostics (Shadow Mode + Sensor B) + TITAN */}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
             <DiagnosticsTile
               shadowMode={shadowMode}
@@ -309,7 +313,7 @@ export default function OverviewPage() {
             />
           </div>
 
-          {/* Row 3: SOTA Enrichment + Movement Summary (same row as last SOTA card) */}
+          {/* Row 5: SOTA Enrichment + Movement Summary (same row as last SOTA card) */}
           <ClickableTile panel="sota">
             <SotaEnrichmentSection
               data={sotaEnrichment}
