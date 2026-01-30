@@ -63,6 +63,95 @@ function formatStartDate(dateStr: string): string {
   return date.toLocaleDateString("es-ES", { day: "numeric", month: "short" });
 }
 
+// =============================================================================
+// Trend Arrow Calculation (WMA 3d vs 3d prev)
+// =============================================================================
+
+type ModelKey = "market" | "model_a" | "shadow" | "sensor_b";
+
+interface TrendInfo {
+  arrow: string;
+  delta: number;
+}
+
+const TREND_THRESHOLDS = {
+  strongUp: 2.0,
+  moderateUp: 0.5,
+  moderateDown: -0.5,
+  strongDown: -2.0,
+};
+
+const MIN_MATCHES_FOR_TREND = 25;
+
+/**
+ * Map series name to model key for accessing DailyModelStats fields
+ */
+function seriesNameToModelKey(name: string): ModelKey | null {
+  const map: Record<string, ModelKey> = {
+    "Market": "market",
+    "Model A": "model_a",
+    "Shadow": "shadow",
+    "Sensor B": "sensor_b",
+  };
+  return map[name] ?? null;
+}
+
+/**
+ * Get arrow symbol based on delta (percentage points)
+ */
+function getArrowForDelta(delta: number): string {
+  if (delta > TREND_THRESHOLDS.strongUp) return "↑";
+  if (delta > TREND_THRESHOLDS.moderateUp) return "↗";
+  if (delta > TREND_THRESHOLDS.moderateDown) return "→";
+  if (delta > TREND_THRESHOLDS.strongDown) return "↘";
+  return "↓";
+}
+
+/**
+ * Calculate trend using weighted moving average (3 days vs previous 3 days)
+ * Returns null if insufficient data for meaningful trend
+ */
+function calculateTrend(
+  dailyData: DailyModelStats[],
+  dataIndex: number,
+  modelKey: ModelKey
+): TrendInfo | null {
+  // Need at least 6 days of data for 3+3 comparison
+  if (dataIndex < 5 || dailyData.length < 6) return null;
+
+  const correctKey = `${modelKey}_correct` as keyof DailyModelStats;
+
+  // Recent 3 days (including current point)
+  let recentCorrect = 0;
+  let recentMatches = 0;
+  for (let i = dataIndex; i > dataIndex - 3 && i >= 0; i--) {
+    recentCorrect += dailyData[i][correctKey] as number;
+    recentMatches += dailyData[i].matches;
+  }
+
+  // Previous 3 days
+  let prevCorrect = 0;
+  let prevMatches = 0;
+  for (let i = dataIndex - 3; i > dataIndex - 6 && i >= 0; i--) {
+    prevCorrect += dailyData[i][correctKey] as number;
+    prevMatches += dailyData[i].matches;
+  }
+
+  // Check minimum sample size - fallback to neutral if insufficient
+  if (recentMatches < MIN_MATCHES_FOR_TREND || prevMatches < MIN_MATCHES_FOR_TREND) {
+    return null;
+  }
+
+  const recentAcc = (recentCorrect / recentMatches) * 100;
+  const prevAcc = (prevCorrect / prevMatches) * 100;
+  const delta = recentAcc - prevAcc;
+
+  return {
+    arrow: getArrowForDelta(delta),
+    delta: delta,
+  };
+}
+
 /**
  * Model Benchmark Tile
  *
@@ -244,13 +333,47 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
         theme: "dark",
         shared: true,
         intersect: false,
-        y: {
-          formatter: (value: number) => `${value.toFixed(1)}%`,
+        marker: { show: false }, // Hide default circles, we use custom arrows
+        custom: function({ series, dataPointIndex, w }) {
+          // Closure captures dailyData from component scope
+          const dailyData = data?.daily_data ?? [];
+
+          let html = '<div style="padding: 8px 12px; background: #1f2937; border: 1px solid #374151; border-radius: 6px; font-family: inherit;">';
+
+          // Header with date
+          const dateLabel = w.globals.categoryLabels?.[dataPointIndex] ?? "";
+          html += `<div style="color: #9ca3af; font-size: 10px; margin-bottom: 6px; border-bottom: 1px solid #374151; padding-bottom: 4px;">${dateLabel}</div>`;
+
+          for (let i = 0; i < series.length; i++) {
+            const seriesName = w.config.series[i].name as string;
+            const value = series[i][dataPointIndex];
+            const color = w.config.colors[i] as string;
+
+            // Get model key for trend calculation
+            const modelKey = seriesNameToModelKey(seriesName);
+
+            // Calculate trend (returns null if insufficient data)
+            const trend = modelKey ? calculateTrend(dailyData, dataPointIndex, modelKey) : null;
+
+            // Arrow defaults to "→" if no trend data
+            const arrow = trend?.arrow ?? "→";
+            const deltaStr = trend
+              ? `${trend.delta >= 0 ? "+" : ""}${trend.delta.toFixed(1)}pp`
+              : "";
+
+            html += `
+              <div style="display: flex; align-items: center; gap: 8px; padding: 2px 0;">
+                <span style="color: ${color}; font-size: 14px; width: 16px; text-align: center;">${arrow}</span>
+                <span style="color: #6b7280; font-size: 10px; width: 50px; font-family: monospace;">${deltaStr}</span>
+                <span style="color: #e5e7eb; font-size: 11px; flex: 1;">${seriesName}</span>
+                <span style="color: ${color}; font-weight: 600; font-size: 11px; font-family: monospace;">${value.toFixed(1)}%</span>
+              </div>
+            `;
+          }
+
+          html += "</div>";
+          return html;
         },
-        style: {
-          fontSize: "12px",
-        },
-        marker: { show: true },
       },
       markers: {
         size: 0,
@@ -258,7 +381,7 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
         hover: { size: 4 },
       },
     }),
-    [chartData, chartColors, yAxisRange]
+    [chartData, chartColors, yAxisRange, data?.daily_data]
   );
 
   // Loading state
