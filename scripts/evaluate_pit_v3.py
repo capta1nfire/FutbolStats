@@ -32,11 +32,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
 import json
 import os
 import random
 from datetime import datetime
 from decimal import Decimal
+from math import isnan
 from pathlib import Path
 
 import asyncpg
@@ -83,18 +85,42 @@ BOOTSTRAP_ITERATIONS = 1000
 MIN_BETS_FOR_CI = 30
 
 
-async def fetch_pit_data(conn, min_snapshot_date: str | None = None, league_ids: list[int] | None = None) -> list[dict]:
+def _parse_iso_date(date_str: str | None) -> str | None:
+    """Parse ISO date (YYYY-MM-DD) as string guardrail."""
+    if date_str is None:
+        return None
+    # Keep strict-ish: 10 chars and simple digits/hyphens
+    s = date_str.strip()
+    if len(s) != 10:
+        raise ValueError(f"Invalid date format (expected YYYY-MM-DD): {date_str!r}")
+    # Basic sanity; asyncpg will still handle actual date parsing if used as param,
+    # but we embed dates into SQL strings elsewhere in this script.
+    yyyy, mm, dd = s.split("-")
+    if not (yyyy.isdigit() and mm.isdigit() and dd.isdigit()):
+        raise ValueError(f"Invalid date format (expected YYYY-MM-DD): {date_str!r}")
+    return s
+
+
+async def fetch_pit_data(
+    conn,
+    min_snapshot_date: str | None = None,
+    max_snapshot_date: str | None = None,
+    league_ids: list[int] | None = None,
+) -> list[dict]:
     """
     Fetch PIT-eligible snapshots with match results.
     Only reads from odds_snapshots + matches.
 
     Args:
         min_snapshot_date: Optional ISO date string (e.g., '2026-01-13') to filter snapshots
+        max_snapshot_date: Optional ISO date string (e.g., '2026-01-20') to cap snapshots (exclusive)
         league_ids: Optional list of league IDs to filter (for feature coverage analysis)
     """
     where_clause = "WHERE os.snapshot_type = 'lineup_confirmed'"
     if min_snapshot_date:
         where_clause += f" AND os.snapshot_at >= '{min_snapshot_date}'"
+    if max_snapshot_date:
+        where_clause += f" AND os.snapshot_at < '{max_snapshot_date}'"
     if league_ids:
         ids_str = ",".join(str(lid) for lid in league_ids)
         where_clause += f" AND m.league_id IN ({ids_str})"
@@ -343,6 +369,62 @@ async def fetch_shadow_predictions(conn, shadow_version: str | None = None) -> t
         metadata['shadow_versions_available'] = version_counts
 
         return predictions, metadata
+    except Exception as e:
+        metadata['error'] = str(e)
+        return [], metadata
+
+
+async def fetch_predictions_experiments_many(conn, model_versions: list[str]) -> tuple[list, dict]:
+    """
+    Fetch predictions from predictions_experiments for a set of model_versions.
+
+    Designed for ablation/compare runs where we need multiple models on the same snapshot_ids.
+    Returns raw rows; caller groups by model_version and snapshot_id.
+    """
+    metadata = {
+        'table_exists': False,
+        'has_created_at': True,
+        'pit_prediction_integrity': 'enforced',
+        'source': 'predictions_experiments',
+        'keyed_by': 'snapshot_id',
+    }
+
+    if not model_versions:
+        metadata['error'] = 'model_versions empty'
+        return [], metadata
+
+    check_query = """
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables
+            WHERE table_name = 'predictions_experiments'
+        )
+    """
+    exists = await conn.fetchval(check_query)
+    if not exists:
+        return [], metadata
+    metadata['table_exists'] = True
+
+    query = """
+        SELECT
+            pe.snapshot_id,
+            pe.match_id,
+            pe.home_prob,
+            pe.draw_prob,
+            pe.away_prob,
+            pe.model_version,
+            pe.created_at,
+            pe.snapshot_at
+        FROM predictions_experiments pe
+        WHERE pe.model_version = ANY($1)
+        ORDER BY pe.snapshot_at
+    """
+    try:
+        rows = await conn.fetch(query, model_versions)
+        preds = [dict(r) for r in rows]
+        metadata['n_predictions'] = len(preds)
+        metadata['n_unique_snapshots'] = len(set(p['snapshot_id'] for p in preds))
+        metadata['model_versions_requested'] = model_versions
+        return preds, metadata
     except Exception as e:
         metadata['error'] = str(e)
         return [], metadata
@@ -710,6 +792,182 @@ def bootstrap_ci(values: list[float], n_iterations: int = BOOTSTRAP_ITERATIONS, 
 MIN_PREDICTIONS_FOR_STABLE_METRICS = 30
 
 
+def holm_bonferroni_adjust(p_values: list[float | None]) -> list[float | None]:
+    """
+    Holm-Bonferroni adjusted p-values.
+
+    Keeps None as None.
+    """
+    indexed = [(i, p) for i, p in enumerate(p_values) if p is not None]
+    if not indexed:
+        return [None for _ in p_values]
+
+    m = len(indexed)
+    indexed.sort(key=lambda x: x[1])  # ascending by p
+    adjusted = [None for _ in p_values]
+
+    # Step-down procedure with monotonicity enforcement
+    prev_adj = 0.0
+    for rank, (idx, p) in enumerate(indexed, start=1):
+        adj = (m - rank + 1) * float(p)
+        adj = min(1.0, max(prev_adj, adj))
+        adjusted[idx] = adj
+        prev_adj = adj
+    return adjusted
+
+
+def _two_sided_p_from_bootstrap(deltas: list[float]) -> float | None:
+    """Two-sided p-value from bootstrap delta distribution around 0."""
+    if not deltas:
+        return None
+    arr = np.array(deltas, dtype=float)
+    # Handle NaNs
+    arr = arr[~np.isnan(arr)]
+    if arr.size == 0:
+        return None
+    p_le = float(np.mean(arr <= 0.0))
+    p_ge = float(np.mean(arr >= 0.0))
+    return float(min(1.0, 2.0 * min(p_le, p_ge)))
+
+
+def _percentile_ci(values: list[float], alpha: float = 0.05) -> tuple[float | None, float | None]:
+    if not values:
+        return None, None
+    arr = np.array(values, dtype=float)
+    arr = arr[~np.isnan(arr)]
+    if arr.size == 0:
+        return None, None
+    low = float(np.quantile(arr, alpha / 2))
+    high = float(np.quantile(arr, 1 - alpha / 2))
+    return low, high
+
+
+def _simulate_bet_for_snapshot(
+    *,
+    odds: tuple[float, float, float],
+    probs_model: tuple[float, float, float],
+    probs_market: tuple[float, float, float],
+    result: int,
+    edge_threshold: float,
+    require_ev_positive: bool,
+) -> dict:
+    """
+    Deterministic bet policy:
+    - pick outcome with max edge (p_model - p_market)
+    - bet if edge >= threshold and (optionally) EV>0
+    Returns per-snapshot bet outcome with pnl, stake, clv placeholder.
+    """
+    edges = [probs_model[i] - probs_market[i] for i in range(3)]
+    best_idx = int(np.argmax(edges))
+    best_edge = float(edges[best_idx])
+    ev_best = float(probs_model[best_idx] * odds[best_idx] - 1.0)
+
+    place_bet = best_edge >= edge_threshold and (ev_best > 0 if require_ev_positive else True)
+    if not place_bet:
+        return {
+            'bet': False,
+            'bet_outcome': None,
+            'edge': best_edge,
+            'ev': ev_best,
+            'stake': 0.0,
+            'pnl': 0.0,
+            'returns': 0.0,
+        }
+
+    won = (result == best_idx)
+    returns = float(odds[best_idx] if won else 0.0)
+    pnl = returns - 1.0  # flat 1 unit stake
+
+    return {
+        'bet': True,
+        'bet_outcome': best_idx,
+        'edge': best_edge,
+        'ev': ev_best,
+        'stake': 1.0,
+        'pnl': pnl,
+        'returns': returns,
+    }
+
+
+def _bootstrap_paired_delta(
+    *,
+    baseline_series: dict,
+    candidate_series: dict,
+    metric: str,
+    n_bootstrap: int,
+    seed: int,
+) -> dict:
+    """
+    Paired bootstrap over snapshot indices.
+
+    baseline_series / candidate_series are dicts with precomputed per-snapshot arrays:
+      - brier_contrib: float per snapshot (sum squared error across 3 classes)
+      - logloss_contrib: float per snapshot (-log p_true)
+      - stake: 1 or 0 per snapshot
+      - pnl: returns-1 per snapshot (0 when no bet)
+      - clv: float or NaN per snapshot (NaN when missing)
+
+    Supported metrics for bootstrap delta:
+      - roi
+      - clv_mean
+      - brier_model
+      - logloss_model
+    """
+    rng = np.random.default_rng(seed)
+    n = int(baseline_series['n'])
+    if n <= 0:
+        return {'status': 'insufficient_n', 'n': n}
+
+    idx_samples = rng.integers(0, n, size=(n_bootstrap, n), endpoint=False)
+
+    def compute_metric(series: dict, sample_idx: np.ndarray) -> float:
+        if metric == 'brier_model':
+            return float(np.mean(series['brier_contrib'][sample_idx]))
+        if metric == 'logloss_model':
+            return float(np.mean(series['logloss_contrib'][sample_idx]))
+        if metric == 'roi':
+            stake_sum = float(np.sum(series['stake'][sample_idx]))
+            if stake_sum <= 0:
+                return float('nan')
+            pnl_sum = float(np.sum(series['pnl'][sample_idx]))
+            return pnl_sum / stake_sum
+        if metric == 'clv_mean':
+            clv = series['clv'][sample_idx]
+            clv = clv[~np.isnan(clv)]
+            if clv.size == 0:
+                return float('nan')
+            return float(np.mean(clv))
+        raise ValueError(f"Unsupported metric for bootstrap: {metric}")
+
+    deltas = []
+    for b in range(n_bootstrap):
+        sample_idx = idx_samples[b]
+        base_v = compute_metric(baseline_series, sample_idx)
+        cand_v = compute_metric(candidate_series, sample_idx)
+        deltas.append(float(cand_v - base_v))
+
+    ci_low, ci_high = _percentile_ci(deltas)
+    p_val = _two_sided_p_from_bootstrap(deltas)
+
+    # Point estimate on full sample (not bootstrapped)
+    full_idx = np.arange(n)
+    base_full = compute_metric(baseline_series, full_idx)
+    cand_full = compute_metric(candidate_series, full_idx)
+    delta_full = float(cand_full - base_full)
+
+    return {
+        'status': 'ok',
+        'n': n,
+        'metric': metric,
+        'baseline': base_full,
+        'candidate': cand_full,
+        'delta': delta_full,
+        'delta_ci95': [ci_low, ci_high],
+        'p_value': p_val,
+        'n_bootstrap': n_bootstrap,
+    }
+
+
 def generate_interpretation(phase: str, brier: dict, betting: dict) -> dict:
     """
     Generate interpretation block based on explicit rules.
@@ -771,6 +1029,7 @@ def generate_interpretation(phase: str, brier: dict, betting: dict) -> dict:
 
 async def run_evaluation(
     min_snapshot_date: str | None = None,
+    max_snapshot_date: str | None = None,
     edge_threshold: float | None = None,
     devig_method: str = "proportional",
     calibrator_method: str = "none",
@@ -778,11 +1037,13 @@ async def run_evaluation(
     league_ids: list[int] | None = None,
     model_version: str | None = None,
     source: str = "predictions",
+    require_ev_positive: bool = True,
 ) -> dict:
     """Main evaluation logic.
 
     Args:
         min_snapshot_date: Optional ISO date string (e.g., '2026-01-13') to filter snapshots
+        max_snapshot_date: Optional ISO date string (exclusive) to cap snapshots
         edge_threshold: Optional edge threshold override (default: EDGE_THRESHOLD constant)
         devig_method: De-vig method ("proportional"=baseline, "power"=alternative)
         calibrator_method: Calibration method ("none"=baseline, "isotonic", "temperature")
@@ -822,7 +1083,7 @@ async def run_evaluation(
 
     try:
         # Fetch data
-        snapshots = await fetch_pit_data(conn, min_snapshot_date, league_ids)
+        snapshots = await fetch_pit_data(conn, min_snapshot_date, max_snapshot_date, league_ids)
 
         # Fetch predictions based on source
         # ABE directive: Shadow models must read from shadow_predictions table (canonical source)
@@ -1157,19 +1418,21 @@ async def run_evaluation(
             # FASE 3C: Use selected de-vig method
             probs_market = devig_fn(odds[0], odds[1], odds[2])
 
-            # Calculate edges
-            edges = [probs_model[i] - probs_market[i] for i in range(3)]
-            best_idx = np.argmax(edges)
-            best_edge = edges[best_idx]
+            result = get_result(s)
+            bet_outcome = _simulate_bet_for_snapshot(
+                odds=(odds[0], odds[1], odds[2]),
+                probs_model=(probs_model[0], probs_model[1], probs_model[2]),
+                probs_market=(probs_market[0], probs_market[1], probs_market[2]),
+                result=result,
+                edge_threshold=threshold,
+                require_ev_positive=require_ev_positive,
+            )
 
-            # EV for best outcome
-            ev_best = probs_model[best_idx] * odds[best_idx] - 1
-
-            # Only bet if edge >= threshold and EV > 0
-            if best_edge >= threshold and ev_best > 0:
-                result = get_result(s)
-                won = (result == best_idx)
-                returns = odds[best_idx] if won else 0
+            if bet_outcome['bet']:
+                best_idx = bet_outcome['bet_outcome']
+                best_edge = bet_outcome['edge']
+                ev_best = bet_outcome['ev']
+                returns = bet_outcome['returns']
 
                 # CLV calculation (CRITICAL: both sides must use SAME devig method)
                 # ABE fix: recalculate close_probs with devig_fn, don't use stored prob_*
@@ -1193,7 +1456,7 @@ async def run_evaluation(
                     'odds': odds[best_idx],
                     'ev': ev_best,
                     'edge': best_edge,
-                    'won': won,
+                    'won': (returns > 0),
                     'returns': returns,
                     'delta_min': s['delta_min'],
                     'bucket': get_timing_bucket(s['delta_min']),
@@ -1316,9 +1579,12 @@ async def run_evaluation(
             'timing_window_valid': f'{TIMING_WINDOW_VALID_MIN}-{TIMING_WINDOW_VALID_MAX} min',
             'timing_window_ideal': f'{TIMING_WINDOW_IDEAL_MIN}-{TIMING_WINDOW_IDEAL_MAX} min',
             'edge_threshold': threshold,
+            'require_ev_positive': require_ev_positive,
         }
         if min_snapshot_date:
             filters_dict['min_snapshot_date'] = min_snapshot_date
+        if max_snapshot_date:
+            filters_dict['max_snapshot_date'] = max_snapshot_date
         if league_ids:
             filters_dict['league_ids'] = league_ids
         if model_version:
@@ -1439,6 +1705,12 @@ async def main():
         help='Minimum snapshot date (ISO format, e.g., 2026-01-13). Excludes earlier snapshots.'
     )
     parser.add_argument(
+        '--max-snapshot-date',
+        type=str,
+        default=None,
+        help='Maximum snapshot date (ISO format, exclusive). Caps snapshots to < this date.'
+    )
+    parser.add_argument(
         '--edge-threshold',
         type=float,
         default=None,
@@ -1484,9 +1756,70 @@ async def main():
         default='predictions',
         help='Source table for predictions (default: predictions, use experiments for tier comparison)'
     )
+    parser.add_argument(
+        '--require-ev-positive',
+        action='store_true',
+        help='Require EV>0 in addition to edge threshold for placing a bet (default: enabled).'
+    )
+    parser.add_argument(
+        '--allow-ev-negative',
+        action='store_true',
+        help='Allow betting even if EV<=0 (still requires edge threshold).'
+    )
+    parser.add_argument(
+        '--compare',
+        action='store_true',
+        help='Compare baseline vs multiple model_versions (ablation-style) using predictions_experiments.'
+    )
+    parser.add_argument(
+        '--baseline-model-version',
+        type=str,
+        default=None,
+        help='Baseline model_version for --compare (required).'
+    )
+    parser.add_argument(
+        '--compare-model-versions',
+        type=str,
+        default=None,
+        help='Comma-separated candidate model_versions for --compare (required).'
+    )
+    parser.add_argument(
+        '--compare-metric',
+        type=str,
+        choices=['roi', 'clv_mean', 'brier_model', 'logloss_model'],
+        default='roi',
+        help='Metric for paired bootstrap delta and Holm-Bonferroni p-adjust in --compare.'
+    )
+    parser.add_argument(
+        '--compare-seed',
+        type=int,
+        default=42,
+        help='Random seed for paired bootstrap in --compare.'
+    )
+    parser.add_argument(
+        '--compare-iterations',
+        type=int,
+        default=1000,
+        help='Bootstrap iterations for --compare.'
+    )
+    parser.add_argument(
+        '--compare-output-csv',
+        type=str,
+        default=None,
+        help='Optional CSV output path for --compare table.'
+    )
     args = parser.parse_args()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Normalize date inputs early (guardrail)
+    try:
+        args.min_snapshot_date = _parse_iso_date(args.min_snapshot_date)
+        args.max_snapshot_date = _parse_iso_date(args.max_snapshot_date)
+        args.calib_train_end = _parse_iso_date(args.calib_train_end) if args.calib_train_end else None
+    except Exception as e:
+        print(f"ERROR: {e}")
+        return 1
 
     # FASE 3C: Validate calibration params
     if args.calibrator != 'none' and args.calib_train_end is None:
@@ -1507,9 +1840,18 @@ async def main():
         print(f"Running PIT evaluation (live odds only, snapshot >= {args.min_snapshot_date})...")
     else:
         print("Running PIT evaluation (live odds only)...")
+    if args.max_snapshot_date:
+        print(f"  snapshot < {args.max_snapshot_date} (cap)")
 
-    # Print FASE 3C config
-    print(f"Config: devig={args.devig}, calibrator={args.calibrator}", end="")
+    # Resolve bet policy flags
+    require_ev_positive = True
+    if args.allow_ev_negative:
+        require_ev_positive = False
+    if args.require_ev_positive:
+        require_ev_positive = True
+
+    # Print config
+    print(f"Config: devig={args.devig}, calibrator={args.calibrator}, require_ev_positive={require_ev_positive}", end="")
     if args.calib_train_end:
         print(f", calib_train_end={args.calib_train_end}")
     else:
@@ -1519,11 +1861,259 @@ async def main():
         print(f"Using custom edge threshold: {args.edge_threshold:.0%}")
 
     if args.source == 'experiments':
-        print(f"Using predictions_experiments table")
+        print("Using predictions_experiments table")
+
+    # --compare mode (ablation-style): baseline vs candidates (paired bootstrap deltas)
+    if args.compare:
+        if args.source != 'experiments':
+            print("ERROR: --compare currently requires --source experiments (1:1 snapshot_id matching).")
+            return 1
+        if not args.baseline_model_version or not args.compare_model_versions:
+            print("ERROR: --compare requires --baseline-model-version and --compare-model-versions.")
+            return 1
+
+        baseline_mv = args.baseline_model_version.strip()
+        candidates = [s.strip() for s in args.compare_model_versions.split(",") if s.strip()]
+        if not candidates:
+            print("ERROR: --compare-model-versions is empty after parsing.")
+            return 1
+
+        database_url = os.environ.get('DATABASE_URL', '')
+        if not database_url:
+            print("ERROR: DATABASE_URL not set")
+            return 1
+
+        conn = await asyncpg.connect(database_url)
+        try:
+            snapshots = await fetch_pit_data(conn, args.min_snapshot_date, args.max_snapshot_date, league_ids)
+            for s in snapshots:
+                s['delta_min'] = calculate_delta_minutes(s)
+            valid_pit = [s for s in snapshots if is_pit_valid(s, s['delta_min'])]
+
+            # Fetch needed model_versions from experiments
+            all_versions = [baseline_mv] + candidates
+            preds_rows, preds_meta = await fetch_predictions_experiments_many(conn, all_versions)
+            if not preds_meta.get('table_exists'):
+                print("ERROR: predictions_experiments table not available.")
+                return 1
+
+            preds_by_model: dict[str, dict[int, dict]] = {}
+            for r in preds_rows:
+                mv = r.get('model_version')
+                sid = r.get('snapshot_id')
+                if not mv or sid is None:
+                    continue
+                preds_by_model.setdefault(mv, {})[sid] = r
+
+            # Cohort: intersection across baseline + all candidates (strict paired)
+            snapshot_ids = [s['snapshot_id'] for s in valid_pit]
+            cohort = set(snapshot_ids)
+            for mv in all_versions:
+                cohort &= set(preds_by_model.get(mv, {}).keys())
+
+            cohort_list = sorted(cohort)
+            if not cohort_list:
+                print("ERROR: Empty paired cohort (no common snapshot_ids across versions).")
+                return 1
+
+            # Build snapshot lookup for cohort
+            snap_by_id = {s['snapshot_id']: s for s in valid_pit}
+            cohort_snaps = [snap_by_id[sid] for sid in cohort_list if sid in snap_by_id]
+            # If some ids missing in valid_pit map, shrink cohort (shouldn't happen)
+            cohort_ids_final = [s['snapshot_id'] for s in cohort_snaps]
+
+            # Shared market quantities per snapshot (contract fixed)
+            # Import de-vig & calibrator hooks from app (same as run_evaluation)
+            import sys
+            sys.path.insert(0, str(Path(__file__).parent.parent))
+            from app.ml.devig import get_devig_function
+
+            devig_fn = get_devig_function(args.devig)
+            threshold = args.edge_threshold if args.edge_threshold is not None else EDGE_THRESHOLD
+
+            # Closing odds for CLV
+            match_ids_for_clv = [s['match_id'] for s in cohort_snaps]
+            closing_odds = await fetch_closing_odds(conn, match_ids_for_clv)
+
+            def build_series(mv: str) -> dict:
+                brier_contrib = []
+                logloss_contrib = []
+                stake = []
+                pnl = []
+                clv = []
+
+                eps = 1e-15
+                preds_map = preds_by_model[mv]
+                for s in cohort_snaps:
+                    sid = s['snapshot_id']
+                    pred = preds_map[sid]
+                    result = get_result(s)
+
+                    raw_probs = (
+                        to_float(pred.get('home_prob', 1/3)),
+                        to_float(pred.get('draw_prob', 1/3)),
+                        to_float(pred.get('away_prob', 1/3)),
+                    )
+                    model_probs = normalize_probs(*raw_probs)
+                    odds = (to_float(s['odds_home']), to_float(s['odds_draw']), to_float(s['odds_away']))
+                    market_probs = devig_fn(odds[0], odds[1], odds[2])
+
+                    # Per-snapshot brier/logloss contributions
+                    bc = sum((model_probs[j] - (1.0 if j == result else 0.0)) ** 2 for j in range(3))
+                    brier_contrib.append(float(bc))
+                    ll = -np.log(max(eps, float(model_probs[result])))
+                    logloss_contrib.append(float(ll))
+
+                    bet_outcome = _simulate_bet_for_snapshot(
+                        odds=odds,
+                        probs_model=model_probs,
+                        probs_market=market_probs,
+                        result=result,
+                        edge_threshold=threshold,
+                        require_ev_positive=require_ev_positive,
+                    )
+                    stake.append(float(bet_outcome['stake']))
+                    pnl.append(float(bet_outcome['pnl']))
+
+                    # CLV only when bet placed and closing snapshot exists
+                    clv_val = float('nan')
+                    if bet_outcome['bet']:
+                        match_close = closing_odds.get(s['match_id'])
+                        if match_close:
+                            close_odds = (
+                                match_close.get('odds_home'),
+                                match_close.get('odds_draw'),
+                                match_close.get('odds_away'),
+                            )
+                            if close_odds[0] and close_odds[1] and close_odds[2]:
+                                close_probs = devig_fn(close_odds[0], close_odds[1], close_odds[2])
+                                bet_probs = market_probs
+                                bet_prob_devigged = bet_probs[int(bet_outcome['bet_outcome'])]
+                                close_prob_devigged = close_probs[int(bet_outcome['bet_outcome'])]
+                                clv_calc = calculate_clv(bet_prob_devigged, close_prob_devigged)
+                                if clv_calc is not None:
+                                    clv_val = float(clv_calc)
+                    clv.append(clv_val)
+
+                return {
+                    'n': len(cohort_snaps),
+                    'brier_contrib': np.array(brier_contrib, dtype=float),
+                    'logloss_contrib': np.array(logloss_contrib, dtype=float),
+                    'stake': np.array(stake, dtype=float),
+                    'pnl': np.array(pnl, dtype=float),
+                    'clv': np.array(clv, dtype=float),
+                }
+
+            baseline_series = build_series(baseline_mv)
+            candidate_series_map = {mv: build_series(mv) for mv in candidates}
+
+            # Compute paired deltas (bootstrap) for each candidate vs baseline
+            comparisons = []
+            pvals = []
+            for mv in candidates:
+                res = _bootstrap_paired_delta(
+                    baseline_series=baseline_series,
+                    candidate_series=candidate_series_map[mv],
+                    metric=args.compare_metric,
+                    n_bootstrap=int(args.compare_iterations),
+                    seed=int(args.compare_seed),
+                )
+                comparisons.append({
+                    'baseline_model_version': baseline_mv,
+                    'candidate_model_version': mv,
+                    **res,
+                })
+                pvals.append(res.get('p_value'))
+
+            p_adj = holm_bonferroni_adjust(pvals)
+            for i, adj in enumerate(p_adj):
+                comparisons[i]['p_adj_holm'] = adj
+
+            # Optional CSV
+            if args.compare_output_csv:
+                out_path = Path(args.compare_output_csv)
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(out_path, "w", newline="") as f:
+                    writer = csv.DictWriter(
+                        f,
+                        fieldnames=[
+                            "baseline_model_version",
+                            "candidate_model_version",
+                            "metric",
+                            "n",
+                            "baseline",
+                            "candidate",
+                            "delta",
+                            "delta_ci95_low",
+                            "delta_ci95_high",
+                            "p_value",
+                            "p_adj_holm",
+                            "n_bootstrap",
+                            "status",
+                        ],
+                    )
+                    writer.writeheader()
+                    for row in comparisons:
+                        ci = row.get('delta_ci95') or [None, None]
+                        writer.writerow({
+                            "baseline_model_version": row.get("baseline_model_version"),
+                            "candidate_model_version": row.get("candidate_model_version"),
+                            "metric": row.get("metric"),
+                            "n": row.get("n"),
+                            "baseline": row.get("baseline"),
+                            "candidate": row.get("candidate"),
+                            "delta": row.get("delta"),
+                            "delta_ci95_low": ci[0],
+                            "delta_ci95_high": ci[1],
+                            "p_value": row.get("p_value"),
+                            "p_adj_holm": row.get("p_adj_holm"),
+                            "n_bootstrap": row.get("n_bootstrap"),
+                            "status": row.get("status"),
+                        })
+                print(f"\n[OK] Compare CSV saved to: {out_path}")
+
+            # Save JSON report alongside normal logs (without running run_evaluation)
+            logs_dir = Path(__file__).parent.parent / "logs"
+            logs_dir.mkdir(exist_ok=True)
+            suffix = f"_from_{args.min_snapshot_date}" if args.min_snapshot_date else ""
+            if args.max_snapshot_date:
+                suffix += f"_to_{args.max_snapshot_date}"
+            json_path = logs_dir / f"pit_compare_v3_{timestamp}{suffix}_{baseline_mv.replace('.', '_')}.json"
+            report = {
+                "generated_at": datetime.now().isoformat(),
+                "mode": "compare",
+                "protocol_version": PROTOCOL_VERSION,
+                "filters": {
+                    "min_snapshot_date": args.min_snapshot_date,
+                    "max_snapshot_date": args.max_snapshot_date,
+                    "league_ids": league_ids,
+                    "source": "predictions_experiments",
+                    "devig_method": args.devig,
+                    "edge_threshold": threshold,
+                    "require_ev_positive": require_ev_positive,
+                    "cohort_mode": "intersection_all_versions",
+                    "paired_n_snapshots": len(cohort_snaps),
+                    "compare_metric": args.compare_metric,
+                    "compare_seed": args.compare_seed,
+                    "compare_iterations": args.compare_iterations,
+                },
+                "prediction_integrity": preds_meta,
+                "baseline_model_version": baseline_mv,
+                "candidate_model_versions": candidates,
+                "comparisons": comparisons,
+                "notes": "read-only compare; paired bootstrap over snapshot_id intersection; ROI uses bet-only denominator; CLV uses T5 as closing line",
+            }
+            with open(json_path, "w") as f:
+                json.dump(report, f, indent=2, default=str)
+            print(f"\nResultados guardados en: {json_path}")
+            return 0
+        finally:
+            await conn.close()
 
     try:
         report = await run_evaluation(
             min_snapshot_date=args.min_snapshot_date,
+            max_snapshot_date=args.max_snapshot_date,
             edge_threshold=args.edge_threshold,
             devig_method=args.devig,
             calibrator_method=args.calibrator,
@@ -1531,6 +2121,7 @@ async def main():
             league_ids=league_ids,
             model_version=args.model_version,
             source=args.source,
+            require_ev_positive=require_ev_positive,
         )
     except Exception as e:
         report = {
