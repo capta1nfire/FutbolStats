@@ -15727,11 +15727,19 @@ async def dashboard_predictions_json(
             rows = result.fetchall()
 
             # Format shadow predictions
-            # Map shadow_predicted (H/D/A) to pick format (home/draw/away)
+            # Map shadow_predicted to pick format (home/draw/away)
+            # Handles both formats: "H/D/A" or "home/draw/away"
             def map_predicted_to_pick(predicted: str | None) -> str | None:
                 if not predicted:
                     return None
-                return {"H": "home", "D": "draw", "A": "away"}.get(predicted.upper())
+                p = predicted.lower()
+                if p in ("home", "h"):
+                    return "home"
+                elif p in ("draw", "d"):
+                    return "draw"
+                elif p in ("away", "a"):
+                    return "away"
+                return None
 
             predictions = []
             for row in rows:
