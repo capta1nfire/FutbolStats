@@ -398,7 +398,10 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
                   >
                     {modelData.accuracy}%
                   </span>
-                  <span className="px-1 py-0.5 rounded text-[10px] bg-yellow-500/20 text-yellow-500 font-medium">
+                  <span
+                    className="px-1 py-0.5 rounded text-[10px] bg-yellow-500/20 text-yellow-500 font-medium"
+                    title="Días ganados (empates se dividen: 2 empatados = 0.5 cada uno)"
+                  >
                     {Number.isInteger(modelData.days_won) ? modelData.days_won : modelData.days_won.toFixed(1)}
                   </span>
                   <span className="px-1.5 py-0.5 rounded text-[10px] bg-gray-500/20 text-gray-400">
@@ -427,8 +430,9 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
       <div className="mt-3 pt-3 border-t border-border">
         <p className="text-[10px] text-muted-foreground/70">
           Comparando accuracy acumulada desde {formatStartDate(data.start_date)}.
-          Badge colors: <span className="text-yellow-500">amarillo</span> = días ganados,
+          Badge colors: <span className="text-yellow-500">amarillo</span> = días ganados (empates se dividen),
           <span className="text-gray-400"> gris</span> = predicciones correctas totales.
+          Empates ±0.5pp → co-picks.
         </p>
       </div>
     </div>
