@@ -198,7 +198,7 @@ async def get_model_benchmark(
                     WHERE sp.match_id = m.id
                     LIMIT 1) as sensor_b_pred
                 FROM matches m
-                WHERE m.status = 'FT'
+                WHERE m.status IN ('FT', 'PEN')  -- Include penalties (90' result is draw)
                     AND m.date >= :start_date
                     -- Must have odds (required for market)
                     AND m.odds_home IS NOT NULL
