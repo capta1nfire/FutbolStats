@@ -80,7 +80,7 @@ async def get_model_benchmark(
     - Shadow (v1.1.0-two_stage)
     - Sensor B (from sensor_predictions table)
 
-    Only includes matches from 2026-01-17 onwards with odds and Model A predictions.
+    Only includes matches where ALL 4 models have predictions (apples-to-apples comparison).
 
     Market prediction: outcome with lowest odds (most probable according to bookmakers).
     Model prediction: outcome with highest probability from model.
@@ -136,6 +136,15 @@ async def get_model_benchmark(
                     AND m.odds_draw IS NOT NULL
                     AND m.odds_away IS NOT NULL
             ),
+            -- CRITICAL: Only matches where ALL 4 models have predictions (fair comparison)
+            complete_matches AS (
+                SELECT *
+                FROM match_predictions
+                WHERE market_pred IS NOT NULL
+                    AND model_a_pred IS NOT NULL
+                    AND shadow_pred IS NOT NULL
+                    AND sensor_b_pred IS NOT NULL
+            ),
             daily_results AS (
                 SELECT
                     match_date,
@@ -147,31 +156,24 @@ async def get_model_benchmark(
                         ELSE 0
                     END) as market_correct,
                     SUM(CASE
-                        WHEN model_a_pred IS NOT NULL AND (
-                            (home_goals > away_goals AND model_a_pred = 'H') OR
-                            (home_goals = away_goals AND model_a_pred = 'D') OR
-                            (home_goals < away_goals AND model_a_pred = 'A')
-                        ) THEN 1
+                        WHEN (home_goals > away_goals AND model_a_pred = 'H') OR
+                             (home_goals = away_goals AND model_a_pred = 'D') OR
+                             (home_goals < away_goals AND model_a_pred = 'A') THEN 1
                         ELSE 0
                     END) as model_a_correct,
                     SUM(CASE
-                        WHEN shadow_pred IS NOT NULL AND (
-                            (home_goals > away_goals AND shadow_pred = 'H') OR
-                            (home_goals = away_goals AND shadow_pred = 'D') OR
-                            (home_goals < away_goals AND shadow_pred = 'A')
-                        ) THEN 1
+                        WHEN (home_goals > away_goals AND shadow_pred = 'H') OR
+                             (home_goals = away_goals AND shadow_pred = 'D') OR
+                             (home_goals < away_goals AND shadow_pred = 'A') THEN 1
                         ELSE 0
                     END) as shadow_correct,
                     SUM(CASE
-                        WHEN sensor_b_pred IS NOT NULL AND (
-                            (home_goals > away_goals AND sensor_b_pred = 'H') OR
-                            (home_goals = away_goals AND sensor_b_pred = 'D') OR
-                            (home_goals < away_goals AND sensor_b_pred = 'A')
-                        ) THEN 1
+                        WHEN (home_goals > away_goals AND sensor_b_pred = 'H') OR
+                             (home_goals = away_goals AND sensor_b_pred = 'D') OR
+                             (home_goals < away_goals AND sensor_b_pred = 'A') THEN 1
                         ELSE 0
                     END) as sensor_b_correct
-                FROM match_predictions
-                WHERE model_a_pred IS NOT NULL  -- Only matches with Model A predictions
+                FROM complete_matches
                 GROUP BY match_date
                 ORDER BY match_date
             )
