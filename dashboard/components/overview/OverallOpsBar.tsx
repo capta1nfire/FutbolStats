@@ -27,6 +27,8 @@ interface OverallOpsBarProps {
   freshness: OpsFreshness | null;
   className?: string;
   onRefresh?: () => void;
+  /** Compact mode for sidebar (vertical layout) */
+  compact?: boolean;
 }
 
 const statusPriority: Record<ApiBudgetStatus, number> = {
@@ -108,6 +110,7 @@ export function OverallOpsBar({
   freshness,
   className,
   onRefresh,
+  compact = false,
 }: OverallOpsBarProps) {
   const overallStatus = getOverallStatus(statuses);
   const colors = statusColors[overallStatus];
@@ -116,6 +119,107 @@ export function OverallOpsBar({
   const healthyCount = Object.values(statuses).filter((s) => s === "ok").length;
   const totalDomains = Object.keys(statuses).length;
 
+  // Compact mode for sidebar
+  if (compact) {
+    return (
+      <div
+        className={cn(
+          "bg-surface border border-border rounded-lg p-3",
+          className
+        )}
+      >
+        {/* Header: Status + Refresh */}
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <Activity className="h-4 w-4 text-primary" />
+            <span className={cn("h-2.5 w-2.5 rounded-full", colors.dot)} />
+            <span className={cn("text-sm font-medium", colors.text)}>
+              {statusLabels[overallStatus]}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              ({healthyCount}/{totalDomains})
+            </span>
+          </div>
+          {onRefresh && (
+            <button
+              onClick={onRefresh}
+              className="text-muted-foreground hover:text-primary transition-colors p-1"
+              aria-label="Refresh"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* Domain chips - wrapped */}
+        <div className="flex flex-wrap gap-1.5">
+          <TooltipProvider delayDuration={200}>
+            {Object.entries(statuses).map(([domain, status]) => {
+              const chipColors = status ? statusColors[status] : statusColors.unknown;
+              const displayName = domain.charAt(0).toUpperCase() + domain.slice(1);
+
+              // Special handling for Jobs with top_alert
+              if (domain === "jobs" && jobs?.top_alert) {
+                const alert = jobs.top_alert;
+                const alertColors = alert.severity === "red" ? statusColors.critical : statusColors.warning;
+
+                return (
+                  <Tooltip key={domain}>
+                    <TooltipTrigger asChild>
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border",
+                          alertColors.bg,
+                          alert.severity === "red" ? "border-[var(--status-error-border)]" : "border-[var(--status-warning-border)]"
+                        )}
+                      >
+                        <AlertTriangle className={cn("h-2.5 w-2.5", alertColors.text)} />
+                        <span className={alertColors.text}>{alert.label}</span>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" className="max-w-xs">
+                      <p className="font-medium">{alert.label}</p>
+                      <p className="text-muted-foreground">{alert.reason}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              }
+
+              const chipLabel = domain === "jobs" && status === "ok" ? "Jobs" : displayName;
+
+              return (
+                <div
+                  key={domain}
+                  className={cn(
+                    "flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border border-transparent",
+                    chipColors.bg
+                  )}
+                >
+                  <span className={cn("h-1.5 w-1.5 rounded-full", chipColors.dot)} />
+                  <span className={chipColors.text}>{chipLabel}</span>
+                </div>
+              );
+            })}
+          </TooltipProvider>
+        </div>
+
+        {/* Freshness */}
+        {freshness && (
+          <div className="mt-2 pt-2 border-t border-border">
+            <span className={cn(
+              "text-[10px] tabular-nums",
+              freshness.is_stale ? "text-[var(--status-warning-text)]" : "text-muted-foreground"
+            )}>
+              Updated {formatFreshness(freshness.cache_age_seconds)}
+              {freshness.is_stale && " (stale)"}
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Default horizontal mode
   return (
     <div
       className={cn(

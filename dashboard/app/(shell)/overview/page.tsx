@@ -45,11 +45,12 @@ import { ScrollArea } from "@/components/ui/scroll-area";
  * Above-the-fold layout optimized for 1440x900.
  *
  * Layout:
- * - Left Rail (277px): API-Football Budget, Sentry, LLM Cost, Upcoming Matches
+ * - Left Rail (277px): Overall Ops Bar, API-Football Budget, Sentry, LLM Cost, Upcoming Matches
  * - Main:
- *   - Row 1: Overall Ops Bar (≤48px)
+ *   - Row 1: Model Benchmark (full width)
  *   - Row 2: Grid 2x2 (Predictions, Jobs, Fastpath, PIT Progress)
- *   - Row 3: Grid 2 cols (SOTA Enrichment, Movement Summary)
+ *   - Row 3: Diagnostics + TITAN
+ *   - Row 4: SOTA Enrichment + Movement Summary
  */
 /**
  * Clickable tile wrapper that opens the drawer
@@ -181,11 +182,20 @@ export default function OverviewPage() {
       {/* Overview Drawer (URL-controlled) */}
       <OverviewDrawer />
 
-      {/* Left Rail: Budget + Sentry + LLM Cost + Upcoming Matches */}
+      {/* Left Rail: Overall Ops + Budget + Sentry + LLM Cost + Upcoming Matches */}
       <aside className="w-[277px] min-w-[277px] shrink-0 border-r border-border bg-sidebar flex flex-col overflow-hidden">
         {/* Content */}
         <ScrollArea className="flex-1">
           <div className="p-3 space-y-3">
+            {/* Overall Ops Bar - compact version for sidebar */}
+            <OverallOpsBar
+              statuses={overallStatuses}
+              jobs={jobs}
+              freshness={freshness}
+              onRefresh={() => refetch()}
+              compact
+            />
+
             <ClickableTile panel="budget">
               <ApiBudgetCard
                 budget={displayBudget}
@@ -260,18 +270,10 @@ export default function OverviewPage() {
       {/* Main content - optimized for above-the-fold at 1440x900 */}
       <div className="flex-1 flex flex-col overflow-hidden">
         <div className="p-4 space-y-4 flex-1 overflow-auto">
-          {/* Row 1: Overall Ops Bar (≤48px) */}
-          <OverallOpsBar
-            statuses={overallStatuses}
-            jobs={jobs}
-            freshness={freshness}
-            onRefresh={() => refetch()}
-          />
-
-          {/* Row 2: Model Benchmark - Full Width */}
+          {/* Row 1: Model Benchmark - Full Width */}
           <ModelBenchmarkTile />
 
-          {/* Row 3: Grid 2x2 - Predictions, Jobs, Fastpath, PIT Progress */}
+          {/* Row 2: Grid 2x2 - Predictions, Jobs, Fastpath, PIT Progress */}
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
             <ClickableTile panel="predictions">
               <PredictionsCompactTile
@@ -301,7 +303,7 @@ export default function OverviewPage() {
             </ClickableTile>
           </div>
 
-          {/* Row 4: Diagnostics (Shadow Mode + Sensor B) + TITAN */}
+          {/* Row 3: Diagnostics (Shadow Mode + Sensor B) + TITAN */}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
             <DiagnosticsTile
               shadowMode={shadowMode}
@@ -313,7 +315,7 @@ export default function OverviewPage() {
             />
           </div>
 
-          {/* Row 5: SOTA Enrichment + Movement Summary (same row as last SOTA card) */}
+          {/* Row 4: SOTA Enrichment + Movement Summary */}
           <ClickableTile panel="sota">
             <SotaEnrichmentSection
               data={sotaEnrichment}
