@@ -45,12 +45,14 @@ export interface ModelSummary {
 export interface ModelBenchmarkResponse {
   /** ISO timestamp when response was generated */
   generated_at: string;
-  /** Start date for benchmark: "2026-01-17" */
+  /** Start date for benchmark (dynamic based on selected models) */
   start_date: string;
+  /** Models included in this comparison */
+  selected_models: string[];
   /** Total matches evaluated across all days */
   total_matches: number;
   /** Daily breakdown of results */
   daily_data: DailyModelStats[];
-  /** Summary stats per model */
+  /** Summary stats per model (only selected models) */
   models: ModelSummary[];
 }

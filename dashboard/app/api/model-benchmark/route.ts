@@ -61,7 +61,7 @@ function isRetryableError(error: unknown, response?: Response): boolean {
   return false;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const requestId = generateRequestId();
 
   // Check if backend URL is configured
@@ -78,7 +78,11 @@ export async function GET() {
     );
   }
 
-  const url = `${BACKEND_BASE_URL}/dashboard/model-benchmark`;
+  // Forward query params to backend
+  const { searchParams } = new URL(request.url);
+  const modelsParam = searchParams.get("models");
+  const queryString = modelsParam ? `?models=${encodeURIComponent(modelsParam)}` : "";
+  const url = `${BACKEND_BASE_URL}/dashboard/model-benchmark${queryString}`;
 
   // Build headers
   const headers: HeadersInit = {
