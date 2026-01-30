@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRegion } from "@/components/providers/RegionProvider";
+import { getPredictionPick, getProbabilityCellClasses, type Outcome } from "@/lib/predictions";
 
 /**
  * Get color classes for a match status
@@ -69,7 +70,7 @@ function CopyableId({ id, status }: { id: number; status: MatchStatus }) {
  * Determine actual match outcome from score
  * Returns: "home" | "draw" | "away" | null (if no score yet)
  */
-function getOutcome(score?: MatchScore): "home" | "draw" | "away" | null {
+function getOutcome(score?: MatchScore): Outcome | null {
   if (!score) return null;
   if (score.home > score.away) return "home";
   if (score.home < score.away) return "away";
@@ -78,52 +79,39 @@ function getOutcome(score?: MatchScore): "home" | "draw" | "away" | null {
 
 interface ProbabilityCellProps {
   probs?: ProbabilitySet;
-  outcome?: "home" | "draw" | "away" | null;
+  outcome?: Outcome | null;
 }
 
 /**
  * Cell component for displaying 1X2 probability distribution
- * Shows pick with highest probability highlighted
- * When match is finished (outcome provided), shows green/red badges
+ *
+ * Handles ties in max probability using epsilon comparison.
+ * When match is finished:
+ * - Green: single pick was correct
+ * - Amber: tied pick, one of them correct (fair handling of ties)
+ * - Red: pick(s) were wrong
+ * - No color: outcomes the model didn't predict
  */
 function ProbabilityCell({ probs, outcome }: ProbabilityCellProps) {
   if (!probs) {
     return <span className="text-muted-foreground text-xs">-</span>;
   }
 
-  // Find the pick with highest probability (the model's prediction)
-  const maxProb = Math.max(probs.home, probs.draw, probs.away);
-
-  // Style for each outcome based on whether it matches the actual result
-  const getStyle = (probType: "home" | "draw" | "away", prob: number) => {
-    const isPick = prob === maxProb;
-
-    // If match not finished yet, just highlight the pick
-    if (!outcome) {
-      return isPick ? "text-foreground font-medium" : "text-muted-foreground";
-    }
-
-    // Match finished - show result badges
-    const isCorrect = outcome === probType;
-
-    if (isCorrect) {
-      // Green badge for correct outcome
-      return "text-success font-medium";
-    } else {
-      // Red badge for wrong outcomes
-      return "text-error/70";
-    }
-  };
+  // Use the new pick calculation that handles ties fairly
+  const pickResult = getPredictionPick(
+    { home: probs.home, draw: probs.draw, away: probs.away },
+    outcome ?? null
+  );
 
   return (
     <div className="flex flex-col text-xs font-mono leading-tight">
-      <span className={getStyle("home", probs.home)}>
+      <span className={getProbabilityCellClasses("home", pickResult)}>
         1: {(probs.home * 100).toFixed(0)}%
       </span>
-      <span className={getStyle("draw", probs.draw)}>
+      <span className={getProbabilityCellClasses("draw", pickResult)}>
         X: {(probs.draw * 100).toFixed(0)}%
       </span>
-      <span className={getStyle("away", probs.away)}>
+      <span className={getProbabilityCellClasses("away", pickResult)}>
         2: {(probs.away * 100).toFixed(0)}%
       </span>
     </div>
