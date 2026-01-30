@@ -6,6 +6,7 @@ Supports Market, Model A, Shadow, and Sensor B models.
 """
 
 import logging
+from collections import defaultdict
 from datetime import date, datetime
 from typing import List, Optional
 
@@ -107,6 +108,55 @@ def parse_models_param(models_param: Optional[str]) -> List[str]:
 
 
 # =============================================================================
+# Co-pick Logic (matches frontend epsilon logic)
+# =============================================================================
+
+PROB_EPSILON = 0.005  # 0.5 percentage points for 0-1 scale
+
+
+def get_top_outcomes(
+    home_prob: float,
+    draw_prob: float,
+    away_prob: float,
+    epsilon: float = PROB_EPSILON
+) -> set:
+    """
+    Get all outcomes within epsilon of max probability (co-picks).
+
+    Returns set of 'H', 'D', 'A' that are tied for maximum.
+    """
+    max_prob = max(home_prob, draw_prob, away_prob)
+    top = set()
+    if abs(home_prob - max_prob) <= epsilon:
+        top.add('H')
+    if abs(draw_prob - max_prob) <= epsilon:
+        top.add('D')
+    if abs(away_prob - max_prob) <= epsilon:
+        top.add('A')
+    return top
+
+
+def is_prediction_correct(
+    home_prob: float,
+    draw_prob: float,
+    away_prob: float,
+    actual_outcome: str  # 'H', 'D', or 'A'
+) -> bool:
+    """
+    Determine if prediction is correct using co-pick logic with epsilon.
+
+    Returns True if actual_outcome is among the co-picks.
+
+    Examples:
+        - H=0.41, D=0.41, A=0.18, actual='D' → True (D is co-pick)
+        - H=0.41, D=0.41, A=0.18, actual='A' → False (A not in co-picks)
+        - H=0.52, D=0.28, A=0.20, actual='H' → True (single pick)
+    """
+    top_outcomes = get_top_outcomes(home_prob, draw_prob, away_prob)
+    return actual_outcome in top_outcomes
+
+
+# =============================================================================
 # Endpoint
 # =============================================================================
 
@@ -155,104 +205,84 @@ async def get_model_benchmark(
         include_shadow = "Shadow" in selected
         include_sensor_b = "Sensor B" in selected
 
-        # Build dynamic query
+        # Build dynamic query - returns raw probabilities for Python co-pick processing
         # Use America/Los_Angeles timezone to match dashboard UI grouping
         query = text("""
-            WITH match_predictions AS (
+            WITH match_data AS (
                 SELECT
                     m.id as match_id,
                     (m.date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Los_Angeles')::date as match_date,
-                    m.home_goals,
-                    m.away_goals,
-                    -- Market prediction from odds (lowest odds = most probable)
+                    -- Actual outcome as H/D/A
                     CASE
-                        WHEN m.odds_home < m.odds_draw AND m.odds_home < m.odds_away THEN 'H'
-                        WHEN m.odds_draw < m.odds_home AND m.odds_draw < m.odds_away THEN 'D'
-                        ELSE 'A'
-                    END as market_pred,
-                    -- Model A (v1.0.0) prediction
-                    (SELECT CASE
-                        WHEN p.home_prob > p.draw_prob AND p.home_prob > p.away_prob THEN 'H'
-                        WHEN p.draw_prob > p.home_prob AND p.draw_prob > p.away_prob THEN 'D'
-                        ELSE 'A'
-                    END
-                    FROM predictions p
-                    WHERE p.match_id = m.id AND p.model_version = 'v1.0.0'
-                    LIMIT 1) as model_a_pred,
-                    -- Shadow prediction from shadow_predictions table
-                    -- Note: shadow_predicted uses 'home'/'draw'/'away' format
-                    (SELECT CASE
-                        WHEN shp.shadow_predicted = 'home' THEN 'H'
-                        WHEN shp.shadow_predicted = 'draw' THEN 'D'
-                        WHEN shp.shadow_predicted = 'away' THEN 'A'
+                        WHEN m.home_goals > m.away_goals THEN 'H'
+                        WHEN m.home_goals < m.away_goals THEN 'A'
+                        ELSE 'D'
+                    END as actual_outcome,
+
+                    -- Market implied probabilities (normalized, with guardrails)
+                    CASE
+                        WHEN m.odds_home > 0 AND m.odds_draw > 0 AND m.odds_away > 0 THEN
+                            (1.0 / m.odds_home) / (1.0/m.odds_home + 1.0/m.odds_draw + 1.0/m.odds_away)
                         ELSE NULL
-                    END
-                    FROM shadow_predictions shp
-                    WHERE shp.match_id = m.id
-                    ORDER BY shp.created_at DESC
-                    LIMIT 1) as shadow_pred,
-                    -- Sensor B prediction from sensor_predictions table (convert to H/D/A)
-                    (SELECT CASE
-                        WHEN sp.b_pick = 'home' THEN 'H'
-                        WHEN sp.b_pick = 'draw' THEN 'D'
-                        WHEN sp.b_pick = 'away' THEN 'A'
+                    END as market_home_prob,
+                    CASE
+                        WHEN m.odds_home > 0 AND m.odds_draw > 0 AND m.odds_away > 0 THEN
+                            (1.0 / m.odds_draw) / (1.0/m.odds_home + 1.0/m.odds_draw + 1.0/m.odds_away)
                         ELSE NULL
-                    END
-                    FROM sensor_predictions sp
-                    WHERE sp.match_id = m.id
-                    LIMIT 1) as sensor_b_pred
+                    END as market_draw_prob,
+                    CASE
+                        WHEN m.odds_home > 0 AND m.odds_draw > 0 AND m.odds_away > 0 THEN
+                            (1.0 / m.odds_away) / (1.0/m.odds_home + 1.0/m.odds_draw + 1.0/m.odds_away)
+                        ELSE NULL
+                    END as market_away_prob,
+
+                    -- Model A (v1.0.0) raw probabilities
+                    (SELECT p.home_prob FROM predictions p
+                     WHERE p.match_id = m.id AND p.model_version = 'v1.0.0'
+                     ORDER BY p.created_at DESC LIMIT 1) as model_a_home,
+                    (SELECT p.draw_prob FROM predictions p
+                     WHERE p.match_id = m.id AND p.model_version = 'v1.0.0'
+                     ORDER BY p.created_at DESC LIMIT 1) as model_a_draw,
+                    (SELECT p.away_prob FROM predictions p
+                     WHERE p.match_id = m.id AND p.model_version = 'v1.0.0'
+                     ORDER BY p.created_at DESC LIMIT 1) as model_a_away,
+
+                    -- Shadow raw probabilities
+                    (SELECT shp.shadow_home_prob FROM shadow_predictions shp
+                     WHERE shp.match_id = m.id
+                     ORDER BY shp.created_at DESC LIMIT 1) as shadow_home_prob,
+                    (SELECT shp.shadow_draw_prob FROM shadow_predictions shp
+                     WHERE shp.match_id = m.id
+                     ORDER BY shp.created_at DESC LIMIT 1) as shadow_draw_prob,
+                    (SELECT shp.shadow_away_prob FROM shadow_predictions shp
+                     WHERE shp.match_id = m.id
+                     ORDER BY shp.created_at DESC LIMIT 1) as shadow_away_prob,
+
+                    -- Sensor B raw probabilities
+                    (SELECT sp.b_home_prob FROM sensor_predictions sp
+                     WHERE sp.match_id = m.id
+                     ORDER BY sp.created_at DESC LIMIT 1) as sensor_b_home_prob,
+                    (SELECT sp.b_draw_prob FROM sensor_predictions sp
+                     WHERE sp.match_id = m.id
+                     ORDER BY sp.created_at DESC LIMIT 1) as sensor_b_draw_prob,
+                    (SELECT sp.b_away_prob FROM sensor_predictions sp
+                     WHERE sp.match_id = m.id
+                     ORDER BY sp.created_at DESC LIMIT 1) as sensor_b_away_prob
+
                 FROM matches m
                 WHERE m.status IN ('FT', 'PEN')  -- Include penalties (90' result is draw)
                     AND m.date >= :start_date
-                    -- Must have odds (required for market)
-                    AND m.odds_home IS NOT NULL
-                    AND m.odds_draw IS NOT NULL
-                    AND m.odds_away IS NOT NULL
-            ),
-            -- Only matches where SELECTED models have predictions
-            complete_matches AS (
-                SELECT *
-                FROM match_predictions
-                WHERE
-                    -- Only validate presence of SELECTED models
-                    (market_pred IS NOT NULL OR NOT :include_market)
-                    AND (model_a_pred IS NOT NULL OR NOT :include_model_a)
-                    AND (shadow_pred IS NOT NULL OR NOT :include_shadow)
-                    AND (sensor_b_pred IS NOT NULL OR NOT :include_sensor_b)
-            ),
-            daily_results AS (
-                SELECT
-                    match_date,
-                    COUNT(*) as total_matches,
-                    SUM(CASE
-                        WHEN (home_goals > away_goals AND market_pred = 'H') OR
-                             (home_goals = away_goals AND market_pred = 'D') OR
-                             (home_goals < away_goals AND market_pred = 'A') THEN 1
-                        ELSE 0
-                    END) as market_correct,
-                    SUM(CASE
-                        WHEN (home_goals > away_goals AND model_a_pred = 'H') OR
-                             (home_goals = away_goals AND model_a_pred = 'D') OR
-                             (home_goals < away_goals AND model_a_pred = 'A') THEN 1
-                        ELSE 0
-                    END) as model_a_correct,
-                    SUM(CASE
-                        WHEN (home_goals > away_goals AND shadow_pred = 'H') OR
-                             (home_goals = away_goals AND shadow_pred = 'D') OR
-                             (home_goals < away_goals AND shadow_pred = 'A') THEN 1
-                        ELSE 0
-                    END) as shadow_correct,
-                    SUM(CASE
-                        WHEN (home_goals > away_goals AND sensor_b_pred = 'H') OR
-                             (home_goals = away_goals AND sensor_b_pred = 'D') OR
-                             (home_goals < away_goals AND sensor_b_pred = 'A') THEN 1
-                        ELSE 0
-                    END) as sensor_b_correct
-                FROM complete_matches
-                GROUP BY match_date
-                ORDER BY match_date
+                    AND m.home_goals IS NOT NULL
+                    AND m.away_goals IS NOT NULL
             )
-            SELECT * FROM daily_results
+            SELECT * FROM match_data
+            WHERE
+                -- Filter based on selected models having data
+                (market_home_prob IS NOT NULL OR NOT :include_market)
+                AND (model_a_home IS NOT NULL OR NOT :include_model_a)
+                AND (shadow_home_prob IS NOT NULL OR NOT :include_shadow)
+                AND (sensor_b_home_prob IS NOT NULL OR NOT :include_sensor_b)
+            ORDER BY match_date
         """)
 
         result = await db.execute(
@@ -277,19 +307,60 @@ async def get_model_benchmark(
                 models=[],
             )
 
-        # Transform to response format
-        daily_data = []
+        # Aggregate by day with co-pick logic
+        daily_stats = defaultdict(lambda: {
+            'matches': 0,
+            'market_correct': 0,
+            'model_a_correct': 0,
+            'shadow_correct': 0,
+            'sensor_b_correct': 0,
+        })
+
         for row in rows:
-            daily_data.append(
-                DailyModelStats(
-                    date=row.match_date.isoformat(),
-                    matches=row.total_matches,
-                    market_correct=row.market_correct or 0,
-                    model_a_correct=row.model_a_correct or 0,
-                    shadow_correct=row.shadow_correct or 0,
-                    sensor_b_correct=row.sensor_b_correct or 0,
-                )
+            day = row.match_date.isoformat()
+            daily_stats[day]['matches'] += 1
+            actual = row.actual_outcome  # Already 'H'/'D'/'A' from SQL
+
+            # Market (co-pick logic)
+            if include_market and row.market_home_prob is not None:
+                if is_prediction_correct(
+                    row.market_home_prob, row.market_draw_prob, row.market_away_prob, actual
+                ):
+                    daily_stats[day]['market_correct'] += 1
+
+            # Model A (co-pick logic)
+            if include_model_a and row.model_a_home is not None:
+                if is_prediction_correct(
+                    row.model_a_home, row.model_a_draw, row.model_a_away, actual
+                ):
+                    daily_stats[day]['model_a_correct'] += 1
+
+            # Shadow (co-pick logic)
+            if include_shadow and row.shadow_home_prob is not None:
+                if is_prediction_correct(
+                    row.shadow_home_prob, row.shadow_draw_prob, row.shadow_away_prob, actual
+                ):
+                    daily_stats[day]['shadow_correct'] += 1
+
+            # Sensor B (co-pick logic)
+            if include_sensor_b and row.sensor_b_home_prob is not None:
+                if is_prediction_correct(
+                    row.sensor_b_home_prob, row.sensor_b_draw_prob, row.sensor_b_away_prob, actual
+                ):
+                    daily_stats[day]['sensor_b_correct'] += 1
+
+        # Convert to list sorted by date
+        daily_data = [
+            DailyModelStats(
+                date=day,
+                matches=stats['matches'],
+                market_correct=stats['market_correct'],
+                model_a_correct=stats['model_a_correct'],
+                shadow_correct=stats['shadow_correct'],
+                sensor_b_correct=stats['sensor_b_correct'],
             )
+            for day, stats in sorted(daily_stats.items())
+        ]
 
         # Calculate cumulative stats
         total_matches = sum(d.matches for d in daily_data)
