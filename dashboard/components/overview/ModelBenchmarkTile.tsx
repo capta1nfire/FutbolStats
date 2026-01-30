@@ -399,7 +399,7 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
                     {modelData.accuracy}%
                   </span>
                   <span className="px-1 py-0.5 rounded text-[10px] bg-yellow-500/20 text-yellow-500 font-medium">
-                    {modelData.days_won}
+                    {Number.isInteger(modelData.days_won) ? modelData.days_won : modelData.days_won.toFixed(1)}
                   </span>
                   <span className="px-1.5 py-0.5 rounded text-[10px] bg-gray-500/20 text-gray-400">
                     {modelData.correct}

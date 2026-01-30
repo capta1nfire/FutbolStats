@@ -35,7 +35,7 @@ export interface ModelSummary {
   correct: number;
   /** Total matches evaluated */
   total: number;
-  /** Number of days where this model had the most correct predictions */
+  /** Days won (fractional: ties split the day - 2 tied = 0.5 each, 4 tied = 0.25 each) */
   days_won: number;
 }
 

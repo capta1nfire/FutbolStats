@@ -64,7 +64,7 @@ class ModelSummary(BaseModel):
     accuracy: float  # 0-100
     correct: int
     total: int
-    days_won: int
+    days_won: float  # Fractional: ties split the day (2 tied = 0.5 each)
 
 
 class ModelBenchmarkResponse(BaseModel):
@@ -299,10 +299,11 @@ async def get_model_benchmark(
         total_sensor_b_correct = sum(d.sensor_b_correct for d in daily_data)
 
         # Calculate days won for each model (only among selected models)
-        def count_days_won(model_correct_fn, model_name: str) -> int:
+        # Ties split the day: 2 tied = 0.5 each, 4 tied = 0.25 each
+        def count_days_won(model_correct_fn, model_name: str) -> float:
             if model_name not in selected:
-                return 0
-            count = 0
+                return 0.0
+            total = 0.0
             for d in daily_data:
                 model_val = model_correct_fn(d)
                 # Only compare against selected models
@@ -316,10 +317,21 @@ async def get_model_benchmark(
                 if include_sensor_b:
                     candidates.append(d.sensor_b_correct)
 
-                max_val = max(candidates) if candidates else 0
-                if model_val == max_val and max_val > 0:
-                    count += 1
-            return count
+                if not candidates:
+                    continue
+
+                max_val = max(candidates)
+                if max_val <= 0:
+                    continue
+
+                # Count how many models tied for first place
+                num_tied = sum(1 for c in candidates if c == max_val)
+
+                # If this model is tied for first, add fractional day
+                if model_val == max_val:
+                    total += 1.0 / num_tied
+
+            return round(total, 2)
 
         # Build models list (only selected models)
         models_list = []
