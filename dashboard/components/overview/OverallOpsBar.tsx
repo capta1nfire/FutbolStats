@@ -188,16 +188,22 @@ export function OverallOpsBar({
               const chipLabel = domain === "jobs" && status === "ok" ? "Jobs" : displayName;
 
               return (
-                <div
-                  key={domain}
-                  className={cn(
-                    "flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border border-transparent",
-                    chipColors.bg
-                  )}
-                >
-                  <span className={cn("h-1.5 w-1.5 rounded-full", chipColors.dot)} />
-                  <span className={chipColors.text}>{chipLabel}</span>
-                </div>
+                <Tooltip key={domain}>
+                  <TooltipTrigger asChild>
+                    <div
+                      className={cn(
+                        "flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border border-transparent cursor-default",
+                        chipColors.bg
+                      )}
+                    >
+                      <span className={cn("h-1.5 w-1.5 rounded-full", chipColors.dot)} />
+                      <span className={chipColors.text}>{chipLabel}</span>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    <p>{displayName}: {status ?? "unknown"}</p>
+                  </TooltipContent>
+                </Tooltip>
               );
             })}
           </TooltipProvider>
