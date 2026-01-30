@@ -83,17 +83,21 @@ BOOTSTRAP_ITERATIONS = 1000
 MIN_BETS_FOR_CI = 30
 
 
-async def fetch_pit_data(conn, min_snapshot_date: str | None = None) -> list[dict]:
+async def fetch_pit_data(conn, min_snapshot_date: str | None = None, league_ids: list[int] | None = None) -> list[dict]:
     """
     Fetch PIT-eligible snapshots with match results.
     Only reads from odds_snapshots + matches.
 
     Args:
         min_snapshot_date: Optional ISO date string (e.g., '2026-01-13') to filter snapshots
+        league_ids: Optional list of league IDs to filter (for feature coverage analysis)
     """
     where_clause = "WHERE os.snapshot_type = 'lineup_confirmed'"
     if min_snapshot_date:
         where_clause += f" AND os.snapshot_at >= '{min_snapshot_date}'"
+    if league_ids:
+        ids_str = ",".join(str(lid) for lid in league_ids)
+        where_clause += f" AND m.league_id IN ({ids_str})"
 
     query = f"""
         SELECT
@@ -182,6 +186,182 @@ async def fetch_predictions(conn) -> tuple[list, dict]:
         return [dict(r) for r in rows], metadata
     except Exception:
         return [], metadata
+
+
+async def fetch_predictions_experiments(conn, model_version: str | None = None) -> tuple[list, dict]:
+    """
+    Fetch predictions from predictions_experiments table.
+
+    Returns predictions keyed by snapshot_id for 1:1 matching with snapshots.
+    Used when --source experiments is specified.
+    """
+    metadata = {
+        'table_exists': False,
+        'has_created_at': True,  # Always true for experiments
+        'pit_prediction_integrity': 'enforced',  # Constraint in table
+        'source': 'predictions_experiments',
+        'keyed_by': 'snapshot_id',
+    }
+
+    # Check if predictions_experiments table exists
+    check_query = """
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables
+            WHERE table_name = 'predictions_experiments'
+        )
+    """
+    exists = await conn.fetchval(check_query)
+
+    if not exists:
+        return [], metadata
+
+    metadata['table_exists'] = True
+
+    # Build query with optional model_version filter (parameterized to avoid SQL injection)
+    if model_version:
+        query = """
+            SELECT
+                pe.snapshot_id,
+                pe.match_id,
+                pe.home_prob,
+                pe.draw_prob,
+                pe.away_prob,
+                pe.model_version,
+                pe.created_at,
+                pe.snapshot_at
+            FROM predictions_experiments pe
+            WHERE pe.model_version = $1
+            ORDER BY pe.snapshot_at
+        """
+        query_args = [model_version]
+    else:
+        query = """
+            SELECT
+                pe.snapshot_id,
+                pe.match_id,
+                pe.home_prob,
+                pe.draw_prob,
+                pe.away_prob,
+                pe.model_version,
+                pe.created_at,
+                pe.snapshot_at
+            FROM predictions_experiments pe
+            ORDER BY pe.snapshot_at
+        """
+        query_args = []
+
+    try:
+        rows = await conn.fetch(query, *query_args)
+        predictions = [dict(r) for r in rows]
+        metadata['n_unique_snapshots'] = len(set(p['snapshot_id'] for p in predictions))
+        return predictions, metadata
+    except Exception as e:
+        metadata['error'] = str(e)
+        return [], metadata
+
+
+async def fetch_shadow_predictions(conn, shadow_version: str | None = None) -> tuple[list, dict]:
+    """
+    Fetch predictions from shadow_predictions table (canonical source for shadow models).
+
+    This is the authoritative source for shadow model predictions, per ABE directive.
+    Uses asyncpg placeholders ($1) for parameterized queries.
+
+    Args:
+        conn: Database connection
+        shadow_version: Optional shadow_version to filter (e.g., "v1.1.0-two_stage")
+
+    Returns:
+        - list: predictions [{match_id, home_prob, draw_prob, away_prob, model_version, created_at}, ...]
+        - dict: metadata about prediction integrity
+    """
+    metadata = {
+        'table_exists': False,
+        'has_created_at': True,
+        'pit_prediction_integrity': 'enforced',
+        'source': 'shadow_predictions',
+    }
+
+    # Check if shadow_predictions table exists
+    check_query = """
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables
+            WHERE table_name = 'shadow_predictions'
+        )
+    """
+    exists = await conn.fetchval(check_query)
+
+    if not exists:
+        metadata['error'] = 'shadow_predictions table does not exist'
+        return [], metadata
+
+    metadata['table_exists'] = True
+
+    # Build query with optional shadow_version filter (asyncpg placeholders $1)
+    if shadow_version:
+        query = """
+            SELECT
+                sp.match_id,
+                sp.shadow_home_prob as home_prob,
+                sp.shadow_draw_prob as draw_prob,
+                sp.shadow_away_prob as away_prob,
+                sp.shadow_version as model_version,
+                sp.shadow_predicted as predicted,
+                sp.shadow_correct as is_correct,
+                sp.created_at
+            FROM shadow_predictions sp
+            WHERE sp.shadow_version = $1
+            ORDER BY sp.match_id, sp.created_at DESC
+        """
+        query_args = [shadow_version]
+    else:
+        query = """
+            SELECT
+                sp.match_id,
+                sp.shadow_home_prob as home_prob,
+                sp.shadow_draw_prob as draw_prob,
+                sp.shadow_away_prob as away_prob,
+                sp.shadow_version as model_version,
+                sp.shadow_predicted as predicted,
+                sp.shadow_correct as is_correct,
+                sp.created_at
+            FROM shadow_predictions sp
+            ORDER BY sp.match_id, sp.created_at DESC
+        """
+        query_args = []
+
+    try:
+        rows = await conn.fetch(query, *query_args)
+        predictions = [dict(r) for r in rows]
+        metadata['n_predictions'] = len(predictions)
+
+        # Count unique shadow_versions
+        version_counts = {}
+        for p in predictions:
+            mv = p.get('model_version', 'unknown')
+            version_counts[mv] = version_counts.get(mv, 0) + 1
+        metadata['shadow_versions_available'] = version_counts
+
+        return predictions, metadata
+    except Exception as e:
+        metadata['error'] = str(e)
+        return [], metadata
+
+
+def is_shadow_model_version(model_version: str | None) -> bool:
+    """Check if model_version indicates a shadow model.
+
+    Handles naming variants: shadow, two_stage, two-stage, twostage
+    """
+    if not model_version:
+        return False
+    mv_lower = model_version.lower()
+    return (
+        'shadow' in mv_lower or
+        'two_stage' in mv_lower or
+        'two-stage' in mv_lower or
+        'twostage' in mv_lower
+    )
 
 
 def get_pit_safe_prediction(predictions_list: list, match_id: int, snapshot_at) -> dict | None:
@@ -595,6 +775,9 @@ async def run_evaluation(
     devig_method: str = "proportional",
     calibrator_method: str = "none",
     calib_train_end: str | None = None,
+    league_ids: list[int] | None = None,
+    model_version: str | None = None,
+    source: str = "predictions",
 ) -> dict:
     """Main evaluation logic.
 
@@ -604,6 +787,8 @@ async def run_evaluation(
         devig_method: De-vig method ("proportional"=baseline, "power"=alternative)
         calibrator_method: Calibration method ("none"=baseline, "isotonic", "temperature")
         calib_train_end: Date to split calibration train/test (required if calibrator != none)
+        league_ids: Optional list of league IDs to filter (for feature coverage analysis)
+        model_version: Optional model version to filter predictions (e.g., "v1.0.0")
 
     FASE 3C (ABE): Calibration requires --calib-train-end to prevent data leakage.
     """
@@ -637,8 +822,37 @@ async def run_evaluation(
 
     try:
         # Fetch data
-        snapshots = await fetch_pit_data(conn, min_snapshot_date)
-        predictions_list, pred_metadata = await fetch_predictions(conn)
+        snapshots = await fetch_pit_data(conn, min_snapshot_date, league_ids)
+
+        # Fetch predictions based on source
+        # ABE directive: Shadow models must read from shadow_predictions table (canonical source)
+        if source == "experiments":
+            # Use predictions_experiments table (TITAN tier comparison)
+            predictions_list, pred_metadata = await fetch_predictions_experiments(conn, model_version)
+            pred_metadata['source'] = 'predictions_experiments'
+        elif is_shadow_model_version(model_version):
+            # Shadow model: read from shadow_predictions table (canonical source)
+            predictions_list, pred_metadata = await fetch_shadow_predictions(conn, model_version)
+            pred_metadata['source'] = 'shadow_predictions'
+            pred_metadata['model_version_filter'] = model_version
+            print(f"[INFO] Using shadow_predictions table for model_version={model_version}")
+        else:
+            # Use standard predictions table
+            predictions_list, pred_metadata = await fetch_predictions(conn)
+            pred_metadata['source'] = 'predictions'
+
+            # Count model versions before filtering (only for standard predictions)
+            model_version_counts = {}
+            for p in predictions_list:
+                mv = p.get('model_version', 'unknown')
+                model_version_counts[mv] = model_version_counts.get(mv, 0) + 1
+            pred_metadata['model_versions_available'] = model_version_counts
+
+            # Filter by model_version if specified
+            if model_version:
+                predictions_list = [p for p in predictions_list if p.get('model_version') == model_version]
+                pred_metadata['model_version_filter'] = model_version
+                pred_metadata['n_predictions_after_filter'] = len(predictions_list)
 
         # Coverage stats
         n_total = len(snapshots)
@@ -657,34 +871,53 @@ async def run_evaluation(
 
         # Match predictions to snapshots using PIT-safe logic
         # Only use predictions created BEFORE the snapshot timestamp
-        pit_safe_predictions = {}  # match_id -> prediction
+        pit_safe_predictions = {}  # match_id -> prediction (or snapshot_id for experiments)
         n_no_prediction_asof = 0
         n_with_prediction_any = 0  # Has prediction but maybe not PIT-safe
 
         can_enforce_pit = pred_metadata.get('has_created_at', False)
 
-        for s in valid_pit:
-            match_id = s['match_id']
-            snapshot_at = s.get('snapshot_at')
+        if source == "experiments":
+            # MODE: experiments - emparejamiento 1:1 por snapshot_id
+            # CRITICAL: Key by snapshot_id (NOT match_id) for true 1:1 matching
+            predictions_by_snapshot = {p['snapshot_id']: p for p in predictions_list}
 
-            if can_enforce_pit and snapshot_at:
-                # PIT-safe: only use predictions created before snapshot
-                pred = get_pit_safe_prediction(predictions_list, match_id, snapshot_at)
+            for s in valid_pit:
+                snapshot_id = s['snapshot_id']  # odds_snapshots.id
+                pred = predictions_by_snapshot.get(snapshot_id)
+
                 if pred:
-                    pit_safe_predictions[match_id] = pred
-                else:
-                    # Check if there's ANY prediction for this match (just not PIT-safe)
-                    any_pred = [p for p in predictions_list if p['match_id'] == match_id]
-                    if any_pred:
-                        n_with_prediction_any += 1
-                    n_no_prediction_asof += 1
-            else:
-                # No timestamps - can't enforce PIT, use any prediction
-                match_preds = [p for p in predictions_list if p['match_id'] == match_id]
-                if match_preds:
-                    pit_safe_predictions[match_id] = match_preds[0]
+                    # PIT is enforced by table constraint (created_at <= snapshot_at)
+                    # Key by snapshot_id for 1:1 matching
+                    pit_safe_predictions[snapshot_id] = pred
                 else:
                     n_no_prediction_asof += 1
+
+            pred_metadata['keyed_by'] = 'snapshot_id'
+        else:
+            # MODE: predictions - emparejamiento por match_id (código original)
+            for s in valid_pit:
+                match_id = s['match_id']
+                snapshot_at = s.get('snapshot_at')
+
+                if can_enforce_pit and snapshot_at:
+                    # PIT-safe: only use predictions created before snapshot
+                    pred = get_pit_safe_prediction(predictions_list, match_id, snapshot_at)
+                    if pred:
+                        pit_safe_predictions[match_id] = pred
+                    else:
+                        # Check if there's ANY prediction for this match (just not PIT-safe)
+                        any_pred = [p for p in predictions_list if p['match_id'] == match_id]
+                        if any_pred:
+                            n_with_prediction_any += 1
+                        n_no_prediction_asof += 1
+                else:
+                    # No timestamps - can't enforce PIT, use any prediction
+                    match_preds = [p for p in predictions_list if p['match_id'] == match_id]
+                    if match_preds:
+                        pit_safe_predictions[match_id] = match_preds[0]
+                    else:
+                        n_no_prediction_asof += 1
 
         # Update integrity status
         if can_enforce_pit:
@@ -721,7 +954,11 @@ async def run_evaluation(
         top_bookmakers = sorted(bookmaker_counts.items(), key=lambda x: -x[1])[:10]
 
         # Brier calculation (for snapshots with PIT-safe model predictions)
-        pit_with_preds = [s for s in valid_pit if s['match_id'] in pit_safe_predictions]
+        # Use snapshot_id for experiments (1:1), match_id for standard predictions
+        if source == "experiments":
+            pit_with_preds = [s for s in valid_pit if s['snapshot_id'] in pit_safe_predictions]
+        else:
+            pit_with_preds = [s for s in valid_pit if s['match_id'] in pit_safe_predictions]
 
         # FASE 3C: Split data for calibration if needed
         calib_train_data = None
@@ -753,7 +990,8 @@ async def run_evaluation(
                 train_probs = []
                 train_outcomes = []
                 for s in calib_train_data:
-                    pred = pit_safe_predictions[s['match_id']]
+                    pred_key = s['snapshot_id'] if source == "experiments" else s['match_id']
+                    pred = pit_safe_predictions[pred_key]
                     raw_probs = (
                         to_float(pred.get('home_prob', 1/3)),
                         to_float(pred.get('draw_prob', 1/3)),
@@ -788,7 +1026,8 @@ async def run_evaluation(
             y_proba_uniform = []
 
             for s in calib_test_data:
-                pred = pit_safe_predictions[s['match_id']]
+                pred_key = s['snapshot_id'] if source == "experiments" else s['match_id']
+                pred = pit_safe_predictions[pred_key]
                 result = get_result(s)
                 y_true.append(result)
 
@@ -855,7 +1094,8 @@ async def run_evaluation(
             if bucket not in bucket_metrics:
                 bucket_metrics[bucket] = {'y_true': [], 'y_model': [], 'y_market': []}
 
-            pred = pit_safe_predictions[s['match_id']]
+            pred_key = s['snapshot_id'] if source == "experiments" else s['match_id']
+            pred = pit_safe_predictions[pred_key]
             result = get_result(s)
             raw_probs = (to_float(pred.get('home_prob', 1/3)), to_float(pred.get('draw_prob', 1/3)), to_float(pred.get('away_prob', 1/3)))
             model_probs = normalize_probs(*raw_probs)
@@ -895,7 +1135,8 @@ async def run_evaluation(
         bets = []
         for s in calib_test_data:
             # Use PIT-safe prediction selected above
-            pred = pit_safe_predictions[s['match_id']]
+            pred_key = s['snapshot_id'] if source == "experiments" else s['match_id']
+            pred = pit_safe_predictions[pred_key]
             odds = [to_float(s['odds_home']), to_float(s['odds_draw']), to_float(s['odds_away'])]
 
             # Normalize model probabilities
@@ -1078,6 +1319,10 @@ async def run_evaluation(
         }
         if min_snapshot_date:
             filters_dict['min_snapshot_date'] = min_snapshot_date
+        if league_ids:
+            filters_dict['league_ids'] = league_ids
+        if model_version:
+            filters_dict['model_version'] = model_version
 
         report = {
             'generated_at': datetime.now().isoformat(),
@@ -1220,6 +1465,25 @@ async def main():
         default=None,
         help='Date to split calibration train/test (ISO format). REQUIRED if --calibrator != none'
     )
+    parser.add_argument(
+        '--league-ids',
+        type=str,
+        default=None,
+        help='Comma-separated list of league IDs to filter (e.g., "40,39,135")'
+    )
+    parser.add_argument(
+        '--model-version',
+        type=str,
+        default=None,
+        help='Filter predictions by model_version (e.g., "v1.0.0", "v1.1.0-two_stage")'
+    )
+    parser.add_argument(
+        '--source',
+        type=str,
+        choices=['predictions', 'experiments'],
+        default='predictions',
+        help='Source table for predictions (default: predictions, use experiments for tier comparison)'
+    )
     args = parser.parse_args()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1229,6 +1493,15 @@ async def main():
         print("ERROR: --calib-train-end is REQUIRED when using --calibrator")
         print("       This prevents data leakage in calibration.")
         return 1
+
+    # Parse league_ids
+    league_ids = None
+    if args.league_ids:
+        league_ids = [int(lid.strip()) for lid in args.league_ids.split(",")]
+        print(f"Filtering to {len(league_ids)} leagues: {league_ids[:5]}{'...' if len(league_ids) > 5 else ''}")
+
+    if args.model_version:
+        print(f"Filtering predictions to model_version: {args.model_version}")
 
     if args.min_snapshot_date:
         print(f"Running PIT evaluation (live odds only, snapshot >= {args.min_snapshot_date})...")
@@ -1245,6 +1518,9 @@ async def main():
     if args.edge_threshold:
         print(f"Using custom edge threshold: {args.edge_threshold:.0%}")
 
+    if args.source == 'experiments':
+        print(f"Using predictions_experiments table")
+
     try:
         report = await run_evaluation(
             min_snapshot_date=args.min_snapshot_date,
@@ -1252,6 +1528,9 @@ async def main():
             devig_method=args.devig,
             calibrator_method=args.calibrator,
             calib_train_end=args.calib_train_end,
+            league_ids=league_ids,
+            model_version=args.model_version,
+            source=args.source,
         )
     except Exception as e:
         report = {
@@ -1269,6 +1548,10 @@ async def main():
     logs_dir.mkdir(exist_ok=True)
 
     suffix = f"_from_{args.min_snapshot_date}" if args.min_snapshot_date else ""
+    if league_ids:
+        suffix += f"_filtered_{len(league_ids)}leagues"
+    if args.model_version:
+        suffix += f"_{args.model_version.replace('.', '_')}"
     json_path = logs_dir / f"pit_evaluation_v3_{timestamp}{suffix}.json"
     with open(json_path, "w") as f:
         json.dump(report, f, indent=2, default=str)

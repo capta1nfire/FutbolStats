@@ -15621,14 +15621,14 @@ async def dashboard_predictions_json(
                 status_placeholders = ",".join(f"'{s}'" for s in status_list)
                 filters.append(f"m.status IN ({status_placeholders})")
 
-        # Model filter (baseline vs shadow via model_version)
+        # Model filter (baseline vs shadow)
+        # IMPORTANT: Shadow predictions are read from shadow_predictions table (canonical source)
+        use_shadow_table = model and model.lower() == "shadow"
+
         model_filter_sql = ""
-        if model:
-            model_lower = model.lower()
-            if model_lower == "baseline":
-                model_filter_sql = "AND p.model_version NOT LIKE '%shadow%' AND p.model_version NOT LIKE '%two_stage%'"
-            elif model_lower == "shadow":
-                model_filter_sql = "AND (p.model_version LIKE '%shadow%' OR p.model_version LIKE '%two_stage%')"
+        if model and model.lower() == "baseline":
+            model_filter_sql = "AND p.model_version NOT LIKE '%shadow%' AND p.model_version NOT LIKE '%two_stage%'"
+        # Note: shadow case is handled separately below with shadow_predictions table
 
         # Search filter
         if q:
@@ -15647,6 +15647,150 @@ async def dashboard_predictions_json(
             128: "Argentina Primera", 71: "Brasileirão",
             848: "Conference League", 45: "FA Cup", 143: "Copa del Rey",
         }
+
+        # =================================================================
+        # SHADOW PATH: Read from shadow_predictions table (canonical source)
+        # =================================================================
+        if use_shadow_table:
+            # Build shadow-specific filters (using sp alias)
+            shadow_filters = ["m.date >= :from_date", "m.date < :to_date"]
+
+            # League filter
+            if league_ids:
+                try:
+                    league_list = [int(lid.strip()) for lid in league_ids.split(",") if lid.strip()]
+                    if league_list:
+                        shadow_filters.append(f"m.league_id IN ({','.join(str(l) for l in league_list)})")
+                except ValueError:
+                    pass
+
+            # Status filter
+            if status:
+                status_list = [s.strip().upper() for s in status.split(",") if s.strip()]
+                if status_list:
+                    status_placeholders = ",".join(f"'{s}'" for s in status_list)
+                    shadow_filters.append(f"m.status IN ({status_placeholders})")
+
+            # Search filter
+            if q:
+                shadow_filters.append("(t_home.name ILIKE :q OR t_away.name ILIKE :q)")
+
+            shadow_where = " AND ".join(shadow_filters)
+
+            # Count from shadow_predictions
+            shadow_count_query = f"""
+                SELECT COUNT(DISTINCT sp.id)
+                FROM shadow_predictions sp
+                JOIN matches m ON sp.match_id = m.id
+                JOIN teams t_home ON m.home_team_id = t_home.id
+                JOIN teams t_away ON m.away_team_id = t_away.id
+                WHERE {shadow_where}
+            """
+            count_result = await session.execute(text(shadow_count_query), params)
+            total = int(count_result.scalar() or 0)
+
+            pages = (total + limit - 1) // limit if limit > 0 else 1
+            offset_val = (page - 1) * limit
+
+            # Fetch shadow predictions
+            shadow_data_query = f"""
+                SELECT
+                    sp.id,
+                    sp.match_id,
+                    m.league_id,
+                    m.date AS kickoff_utc,
+                    t_home.name AS home_team,
+                    t_away.name AS away_team,
+                    m.status,
+                    m.home_goals,
+                    m.away_goals,
+                    sp.shadow_version,
+                    sp.shadow_architecture,
+                    sp.shadow_home_prob,
+                    sp.shadow_draw_prob,
+                    sp.shadow_away_prob,
+                    sp.shadow_predicted,
+                    sp.shadow_correct,
+                    sp.created_at
+                FROM shadow_predictions sp
+                JOIN matches m ON sp.match_id = m.id
+                JOIN teams t_home ON m.home_team_id = t_home.id
+                JOIN teams t_away ON m.away_team_id = t_away.id
+                WHERE {shadow_where}
+                ORDER BY m.date ASC, sp.created_at DESC
+                LIMIT :limit OFFSET :offset
+            """
+            params["limit"] = limit
+            params["offset"] = offset_val
+
+            result = await session.execute(text(shadow_data_query), params)
+            rows = result.fetchall()
+
+            # Format shadow predictions
+            # Map shadow_predicted (H/D/A) to pick format (home/draw/away)
+            def map_predicted_to_pick(predicted: str | None) -> str | None:
+                if not predicted:
+                    return None
+                return {"H": "home", "D": "draw", "A": "away"}.get(predicted.upper())
+
+            predictions = []
+            for row in rows:
+                probs = {
+                    "home": round(row.shadow_home_prob, 3) if row.shadow_home_prob else None,
+                    "draw": round(row.shadow_draw_prob, 3) if row.shadow_draw_prob else None,
+                    "away": round(row.shadow_away_prob, 3) if row.shadow_away_prob else None,
+                }
+
+                # Use shadow_predicted from DB (avoids rounding issues with co-pick)
+                pick = map_predicted_to_pick(row.shadow_predicted)
+
+                predictions.append({
+                    "id": row.id,
+                    "match_id": row.match_id,
+                    "league_id": row.league_id,
+                    "league_name": league_names.get(row.league_id, f"League {row.league_id}"),
+                    "kickoff_utc": row.kickoff_utc.isoformat() + "Z" if row.kickoff_utc else None,
+                    "home_team": row.home_team,
+                    "away_team": row.away_team,
+                    "status": row.status,
+                    "score": f"{row.home_goals}-{row.away_goals}" if row.home_goals is not None else None,
+                    "model": "shadow",
+                    "model_version": row.shadow_version,
+                    "architecture": row.shadow_architecture,
+                    "pick": pick,
+                    "probs": probs,
+                    "predicted": row.shadow_predicted,
+                    "is_correct": row.shadow_correct,
+                    "is_frozen": None,  # Shadow doesn't use frozen concept
+                    "frozen_at": None,
+                    "confidence_tier": None,
+                    "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
+                })
+
+            return {
+                "generated_at": generated_at,
+                "cached": False,
+                "cache_age_seconds": 0,
+                "source": "shadow_predictions",  # ABE requirement: trazabilidad
+                "data": {
+                    "predictions": predictions,
+                    "total": total,
+                    "page": page,
+                    "limit": limit,
+                    "pages": pages,
+                    "filters_applied": {
+                        "league_ids": league_ids,
+                        "status": status,
+                        "model": model,
+                        "q": q,
+                        "days_back": days_back,
+                        "days_ahead": days_ahead,
+                    },
+                },
+            }
+        # =================================================================
+        # END SHADOW PATH
+        # =================================================================
 
         # Count total
         count_query = f"""
@@ -15749,6 +15893,7 @@ async def dashboard_predictions_json(
             "generated_at": generated_at,
             "cached": False,
             "cache_age_seconds": 0,
+            "source": "predictions",  # Canonical source for baseline models
             "data": {
                 "predictions": predictions,
                 "total": total,
