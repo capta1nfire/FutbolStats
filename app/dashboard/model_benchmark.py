@@ -1,7 +1,7 @@
 """
 Model Benchmark endpoint for dashboard.
 
-Returns historical accuracy data for Market, Model A, and Shadow models
+Returns historical accuracy data for Market, Model A, Shadow, and Sensor B models
 since 2026-01-17 for comparison visualization.
 """
 
@@ -39,6 +39,7 @@ class DailyModelStats(BaseModel):
     market_correct: int
     model_a_correct: int
     shadow_correct: int
+    sensor_b_correct: int
 
 
 class ModelSummary(BaseModel):
@@ -73,11 +74,17 @@ async def get_model_benchmark(
     """
     Get historical model benchmark data.
 
-    Returns daily accuracy for Market (from odds), Model A (v1.0.0), and Shadow (v1.1.0-two_stage).
+    Returns daily accuracy for:
+    - Market (from odds)
+    - Model A (v1.0.0)
+    - Shadow (v1.1.0-two_stage)
+    - Sensor B (from sensor_predictions table)
+
     Only includes matches from 2026-01-17 onwards with odds and Model A predictions.
 
     Market prediction: outcome with lowest odds (most probable according to bookmakers).
     Model prediction: outcome with highest probability from model.
+    Sensor B: b_pick from sensor_predictions table.
     """
     try:
         query = text("""
@@ -110,7 +117,12 @@ async def get_model_benchmark(
                     END
                     FROM predictions p
                     WHERE p.match_id = m.id AND p.model_version = 'v1.1.0-two_stage'
-                    LIMIT 1) as shadow_pred
+                    LIMIT 1) as shadow_pred,
+                    -- Sensor B prediction from sensor_predictions table
+                    (SELECT sp.b_pick
+                    FROM sensor_predictions sp
+                    WHERE sp.match_id = m.id
+                    LIMIT 1) as sensor_b_pred
                 FROM matches m
                 WHERE m.status = 'FT'
                     AND m.date >= '2026-01-17'
@@ -145,9 +157,14 @@ async def get_model_benchmark(
                         ) THEN 1
                         ELSE 0
                     END) as shadow_correct,
-                    -- Count matches with each model for accurate percentages
-                    SUM(CASE WHEN model_a_pred IS NOT NULL THEN 1 ELSE 0 END) as model_a_count,
-                    SUM(CASE WHEN shadow_pred IS NOT NULL THEN 1 ELSE 0 END) as shadow_count
+                    SUM(CASE
+                        WHEN sensor_b_pred IS NOT NULL AND (
+                            (home_goals > away_goals AND sensor_b_pred = 'H') OR
+                            (home_goals = away_goals AND sensor_b_pred = 'D') OR
+                            (home_goals < away_goals AND sensor_b_pred = 'A')
+                        ) THEN 1
+                        ELSE 0
+                    END) as sensor_b_correct
                 FROM match_predictions
                 WHERE model_a_pred IS NOT NULL  -- Only matches with Model A predictions
                 GROUP BY match_date
@@ -178,6 +195,7 @@ async def get_model_benchmark(
                     market_correct=row.market_correct,
                     model_a_correct=row.model_a_correct,
                     shadow_correct=row.shadow_correct,
+                    sensor_b_correct=row.sensor_b_correct,
                 )
             )
 
@@ -186,13 +204,14 @@ async def get_model_benchmark(
         total_market_correct = sum(d.market_correct for d in daily_data)
         total_model_a_correct = sum(d.model_a_correct for d in daily_data)
         total_shadow_correct = sum(d.shadow_correct for d in daily_data)
+        total_sensor_b_correct = sum(d.sensor_b_correct for d in daily_data)
 
         # Calculate days won for each model
         def count_days_won(model_correct_fn):
             count = 0
             for d in daily_data:
                 model_val = model_correct_fn(d)
-                max_val = max(d.market_correct, d.model_a_correct, d.shadow_correct)
+                max_val = max(d.market_correct, d.model_a_correct, d.shadow_correct, d.sensor_b_correct)
                 if model_val == max_val and max_val > 0:
                     count += 1
             return count
@@ -200,6 +219,7 @@ async def get_model_benchmark(
         market_days_won = count_days_won(lambda d: d.market_correct)
         model_a_days_won = count_days_won(lambda d: d.model_a_correct)
         shadow_days_won = count_days_won(lambda d: d.shadow_correct)
+        sensor_b_days_won = count_days_won(lambda d: d.sensor_b_correct)
 
         models = [
             ModelSummary(
@@ -222,6 +242,13 @@ async def get_model_benchmark(
                 correct=total_shadow_correct,
                 total=total_matches,
                 days_won=shadow_days_won,
+            ),
+            ModelSummary(
+                name="Sensor B",
+                accuracy=round((total_sensor_b_correct / total_matches) * 100, 1) if total_matches > 0 else 0,
+                correct=total_sensor_b_correct,
+                total=total_matches,
+                days_won=sensor_b_days_won,
             ),
         ]
 

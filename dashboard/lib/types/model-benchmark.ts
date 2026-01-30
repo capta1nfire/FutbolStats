@@ -19,6 +19,8 @@ export interface DailyModelStats {
   model_a_correct: number;
   /** Correct predictions by Shadow (v1.1.0-two_stage) */
   shadow_correct: number;
+  /** Correct predictions by Sensor B (from sensor_predictions) */
+  sensor_b_correct: number;
 }
 
 /**

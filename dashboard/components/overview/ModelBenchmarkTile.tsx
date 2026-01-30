@@ -10,11 +10,12 @@ import { DailyModelStats, ModelSummary } from "@/lib/types/model-benchmark";
 // Dynamic import to avoid SSR issues with ApexCharts
 const ReactApexChart = dynamic(() => import("react-apexcharts"), { ssr: false });
 
-// Model config with colors (3 models: Market, Model A, Shadow)
+// Model config with colors (4 models: Market, Model A, Shadow, Sensor B)
 const MODEL_CONFIG: Record<string, { color: string; strokeColor: string }> = {
   Market: { color: "rgba(148, 163, 184, 0.2)", strokeColor: "#94a3b8" },
   "Model A": { color: "rgba(34, 197, 94, 0.2)", strokeColor: "#22c55e" },
   Shadow: { color: "rgba(168, 85, 247, 0.2)", strokeColor: "#a855f7" },
+  "Sensor B": { color: "rgba(249, 115, 22, 0.2)", strokeColor: "#f97316" },
 };
 
 interface ModelBenchmarkTileProps {
@@ -28,12 +29,14 @@ function calculateCumulativeData(dailyData: DailyModelStats[]) {
   let marketCum = 0;
   let modelACum = 0;
   let shadowCum = 0;
+  let sensorBCum = 0;
   let totalMatches = 0;
 
   return dailyData.map((day) => {
     marketCum += day.market_correct;
     modelACum += day.model_a_correct;
     shadowCum += day.shadow_correct;
+    sensorBCum += day.sensor_b_correct;
     totalMatches += day.matches;
 
     return {
@@ -41,6 +44,7 @@ function calculateCumulativeData(dailyData: DailyModelStats[]) {
       market: totalMatches > 0 ? (marketCum / totalMatches) * 100 : 0,
       modelA: totalMatches > 0 ? (modelACum / totalMatches) * 100 : 0,
       shadow: totalMatches > 0 ? (shadowCum / totalMatches) * 100 : 0,
+      sensorB: totalMatches > 0 ? (sensorBCum / totalMatches) * 100 : 0,
     };
   });
 }
@@ -62,6 +66,7 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
     Market: true,
     "Model A": true,
     Shadow: true,
+    "Sensor B": true,
   });
 
   const toggleModel = (name: string) => {
@@ -112,6 +117,12 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
         data: chartData.map((d) => d.shadow),
       });
     }
+    if (selectedModels["Sensor B"] && chartData.length > 0) {
+      series.push({
+        name: "Sensor B",
+        data: chartData.map((d) => d.sensorB),
+      });
+    }
     return series;
   }, [chartData, selectedModels]);
 
@@ -119,7 +130,7 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
   const yAxisRange = useMemo(() => {
     if (chartData.length === 0) return { min: 30, max: 60 };
 
-    const allValues = chartData.flatMap((d) => [d.market, d.modelA, d.shadow]);
+    const allValues = chartData.flatMap((d) => [d.market, d.modelA, d.shadow, d.sensorB]);
     const minVal = Math.min(...allValues);
     const maxVal = Math.max(...allValues);
 
@@ -147,6 +158,7 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
         selectedModels["Market"] ? "#94a3b8" : "transparent",
         selectedModels["Model A"] ? "#22c55e" : "transparent",
         selectedModels["Shadow"] ? "#a855f7" : "transparent",
+        selectedModels["Sensor B"] ? "#f97316" : "transparent",
       ].filter((c) => c !== "transparent"),
       stroke: {
         curve: "smooth",
