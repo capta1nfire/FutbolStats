@@ -118,8 +118,13 @@ async def get_model_benchmark(
                     FROM predictions p
                     WHERE p.match_id = m.id AND p.model_version = 'v1.1.0-two_stage'
                     LIMIT 1) as shadow_pred,
-                    -- Sensor B prediction from sensor_predictions table
-                    (SELECT sp.b_pick
+                    -- Sensor B prediction from sensor_predictions table (convert to H/D/A)
+                    (SELECT CASE
+                        WHEN sp.b_pick = 'home' THEN 'H'
+                        WHEN sp.b_pick = 'draw' THEN 'D'
+                        WHEN sp.b_pick = 'away' THEN 'A'
+                        ELSE NULL
+                    END
                     FROM sensor_predictions sp
                     WHERE sp.match_id = m.id
                     LIMIT 1) as sensor_b_pred
