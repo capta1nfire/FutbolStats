@@ -42,8 +42,10 @@ function calculateCumulativeData(dailyData: DailyModelStats[], selectedModels: s
     sensorBCum += day.sensor_b_correct;
     totalMatches += day.matches;
 
+    // Parse date as local time (not UTC) to avoid timezone shift
+    // "2026-01-29" + "T12:00:00" prevents the date from shifting to previous day
     return {
-      date: new Date(day.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+      date: new Date(day.date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }),
       market: selectedModels.includes("Market") && totalMatches > 0 ? (marketCum / totalMatches) * 100 : 0,
       modelA: selectedModels.includes("Model A") && totalMatches > 0 ? (modelACum / totalMatches) * 100 : 0,
       shadow: selectedModels.includes("Shadow") && totalMatches > 0 ? (shadowCum / totalMatches) * 100 : 0,
@@ -54,9 +56,10 @@ function calculateCumulativeData(dailyData: DailyModelStats[], selectedModels: s
 
 /**
  * Format date for display (e.g., "10 ene")
+ * Uses T12:00:00 to avoid timezone shift when parsing ISO date strings
  */
 function formatStartDate(dateStr: string): string {
-  const date = new Date(dateStr);
+  const date = new Date(dateStr + "T12:00:00");
   return date.toLocaleDateString("es-ES", { day: "numeric", month: "short" });
 }
 
