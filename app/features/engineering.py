@@ -641,16 +641,36 @@ class FeatureEngineer:
         team_id: int,
         before_date: datetime,
         limit: int = None,
+        league_only: bool = False,
     ) -> list[Match]:
-        """Get completed matches for a team before a given date."""
+        """Get completed matches for a team before a given date.
+
+        Args:
+            team_id: Team to get matches for.
+            before_date: Only matches before this date (PIT-safe).
+            limit: Max matches to return.
+            league_only: If True, only include matches from competitions where
+                         admin_leagues.kind = 'league' (excludes cups/international).
+                         Used to prevent "Exeter mode" where cup matches against
+                         amateur teams inflate rolling averages.
+
+        Returns:
+            List of Match objects ordered by date descending.
+        """
         limit = limit or self.rolling_window * 2  # Get more for decay calculation
 
         # Use cache if available (for batch operations like training)
         if self._cache is not None:
-            return self._cache.get_matches_before(team_id, before_date, limit)
+            # Note: cache does not support league_only filter yet
+            # For league_only queries, we fall through to direct query
+            if not league_only:
+                return self._cache.get_matches_before(team_id, before_date, limit)
 
-        # Fallback to direct query (for single predictions, excluding tainted data)
-        result = await self.session.execute(
+        # Build base query with PIT-safe guardrails:
+        # 1. status='FT' (finished matches only)
+        # 2. date < before_date (PIT-safe)
+        # 3. Exclude tainted data
+        stmt = (
             select(Match)
             .where(
                 (Match.home_team_id == team_id) | (Match.away_team_id == team_id),
@@ -660,9 +680,21 @@ class FeatureEngineer:
                 Match.away_goals.isnot(None),
                 Match.tainted == False,  # Exclude data quality issues
             )
-            .order_by(Match.date.desc())
-            .limit(limit)
         )
+
+        # FASE 0 FIX: Filter to league matches only (exclude cups/international)
+        # This prevents "Exeter mode" where cup matches against amateur teams
+        # inflate rolling averages for lower-division teams
+        if league_only:
+            stmt = stmt.where(
+                Match.league_id.in_(
+                    text("SELECT league_id FROM admin_leagues WHERE kind = 'league'")
+                )
+            )
+
+        stmt = stmt.order_by(Match.date.desc()).limit(limit)
+
+        result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
     def _extract_match_stats(
@@ -716,6 +748,7 @@ class FeatureEngineer:
         team_id: int,
         match_date: datetime,
         is_home: bool,
+        league_only: bool = False,
     ) -> dict:
         """
         Calculate rolling average features for a team.
@@ -724,12 +757,14 @@ class FeatureEngineer:
             team_id: The team's internal ID.
             match_date: The reference date (features use only data before this).
             is_home: Whether this is for the home or away team.
+            league_only: If True, only use matches from leagues (not cups).
+                         Prevents "Exeter mode" inflation.
 
         Returns:
             Dictionary of feature values.
         """
         prefix = "home" if is_home else "away"
-        matches = await self._get_team_matches(team_id, match_date)
+        matches = await self._get_team_matches(team_id, match_date, league_only=league_only)
 
         if not matches:
             # No history - return defaults
@@ -1124,21 +1159,26 @@ class FeatureEngineer:
             "xi_captured_horizon_minutes": 0,
         }
 
-    async def get_match_features(self, match: Match) -> dict:
+    async def get_match_features(
+        self, match: Match, league_only: bool = False
+    ) -> dict:
         """
         Calculate all features for a match.
 
         Args:
             match: The Match object to calculate features for.
+            league_only: If True, rolling averages use only league matches
+                         (excludes cups/international). Prevents "Exeter mode"
+                         where cup matches against amateur teams inflate stats.
 
         Returns:
             Dictionary with all features for the match.
         """
         home_features = await self.get_team_features(
-            match.home_team_id, match.date, is_home=True
+            match.home_team_id, match.date, is_home=True, league_only=league_only
         )
         away_features = await self.get_team_features(
-            match.away_team_id, match.date, is_home=False
+            match.away_team_id, match.date, is_home=False, league_only=league_only
         )
 
         # Combine features
@@ -1233,6 +1273,48 @@ class FeatureEngineer:
             features.update(self._get_xi_defaults())
 
         return features
+
+    async def get_match_features_asof(
+        self,
+        match: Match,
+        asof_dt: datetime,
+        league_only: bool = False,
+    ) -> dict:
+        """
+        PIT-strict: Calculate features as-of a specific datetime.
+
+        Used for experimental predictions where we need features
+        calculated at snapshot_at (pre-kickoff) rather than match.date.
+
+        This ensures that rest_days, goal averages, and other temporal features
+        are computed using only data available at asof_dt, preventing information
+        leakage from the time between snapshot and kickoff.
+
+        Args:
+            match: Match object
+            asof_dt: Point-in-time for feature calculation (typically snapshot_at)
+            league_only: If True, rolling averages use only league matches
+                         (excludes cups/international). Prevents "Exeter mode".
+
+        Returns:
+            dict with features calculated as-of asof_dt
+        """
+        # Guardar fecha original
+        orig_date = match.date
+
+        try:
+            # Prevenir flush accidental mientras modificamos el objeto
+            with self.session.no_autoflush:
+                # Override temporal para cálculos
+                match.date = asof_dt
+
+                # Reutilizar lógica existente con fecha "falsa"
+                features = await self.get_match_features(match, league_only=league_only)
+
+            return features
+        finally:
+            # Restaurar fecha original (importante si match está en session)
+            match.date = orig_date
 
     async def build_training_dataset(
         self,
@@ -1331,6 +1413,7 @@ class FeatureEngineer:
     async def get_matches_features_by_ids(
         self,
         match_ids: list[int],
+        league_only: bool = False,
     ) -> pd.DataFrame:
         """
         Build features for specific matches by their IDs.
@@ -1340,6 +1423,8 @@ class FeatureEngineer:
 
         Args:
             match_ids: List of match IDs to process.
+            league_only: If True, rolling averages use only league matches.
+                         FASE 0 FIX: Prevents "Exeter mode" inflation.
 
         Returns:
             DataFrame with features for each match, including home_goals/away_goals.
@@ -1379,7 +1464,7 @@ class FeatureEngineer:
         rows = []
         for match in matches:
             try:
-                features = await self.get_match_features(match)
+                features = await self.get_match_features(match, league_only=league_only)
 
                 # Add scores for label computation
                 features["home_goals"] = match.home_goals
@@ -1411,6 +1496,7 @@ class FeatureEngineer:
         league_ids: Optional[list[int]] = None,
         include_recent_days: int = 7,
         days_ahead: Optional[int] = None,
+        league_only: bool = False,
     ) -> pd.DataFrame:
         """
         Get features for upcoming and recent matches.
@@ -1420,6 +1506,8 @@ class FeatureEngineer:
             include_recent_days: Include finished matches from last N days (for showing scores).
                                  Default 7 to preserve history for iOS date selector.
             days_ahead: Limit upcoming matches to next N days. None = no limit (all upcoming).
+            league_only: If True, rolling averages use only league matches (not cups).
+                         FASE 0 FIX: Prevents "Exeter mode" inflation.
 
         Returns:
             DataFrame with features for matches (upcoming + recent finished).
@@ -1515,7 +1603,7 @@ class FeatureEngineer:
         rows = []
         for match in matches:
             try:
-                features = await self.get_match_features(match)
+                features = await self.get_match_features(match, league_only=league_only)
                 features["home_team_name"] = match.home_team.name if match.home_team else "Unknown"
                 features["away_team_name"] = match.away_team.name if match.away_team else "Unknown"
                 features["home_team_logo"] = match.home_team.logo_url if match.home_team else None

@@ -415,13 +415,14 @@ async def ensure_kickoff_predictions() -> dict:
                 return {"generated": 0, "error": "model_not_loaded"}
 
             # Get features for these matches
+            # FASE 0 FIX: league_only=True prevents "Exeter mode"
             match_ids = [g[0] for g in imminent_gaps]
             feature_engineer = FeatureEngineer(session=session)
 
             if hasattr(feature_engineer, 'get_matches_features_by_ids'):
-                df = await feature_engineer.get_matches_features_by_ids(match_ids)
+                df = await feature_engineer.get_matches_features_by_ids(match_ids, league_only=True)
             else:
-                df = await feature_engineer.get_upcoming_matches_features()
+                df = await feature_engineer.get_upcoming_matches_features(league_only=True)
                 if len(df) > 0:
                     df = df[df["match_id"].isin(match_ids)]
 
@@ -1882,9 +1883,11 @@ async def daily_save_predictions():
         # Use get_session_with_retry to handle Railway connection drops (InterfaceError fix)
         async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
             # Get upcoming matches features (can be slow - wrap in try/except)
+            # FASE 0 FIX: league_only=True prevents "Exeter mode" where cup matches
+            # against amateur teams inflate rolling averages for lower-division teams
             try:
                 feature_engineer = FeatureEngineer(session=session)
-                df = await feature_engineer.get_upcoming_matches_features()
+                df = await feature_engineer.get_upcoming_matches_features(league_only=True)
             except (InterfaceError, DBAPIError) as fetch_err:
                 logger.error(f"[DAILY-SAVE] DB connection lost during feature fetch: {fetch_err}")
                 record_job_run(job="daily_save_predictions", status="error", duration_ms=(time.time() - start_time) * 1000)
@@ -1895,6 +1898,105 @@ async def daily_save_predictions():
             if total_fetched > 0 and "status" in df.columns:
                 df = df[df["status"] == "NS"].reset_index(drop=True)
             ns_total = len(df)
+
+            # ═══════════════════════════════════════════════════════════════════
+            # KILL-SWITCH ROUTER (FASE 0)
+            # Criterio: Ambos equipos deben tener >= 5 partidos de LIGA
+            #           en los 90 días ANTERIORES al kickoff del partido
+            # ═══════════════════════════════════════════════════════════════════
+            MIN_LEAGUE_MATCHES = 5
+            LOOKBACK_DAYS = 90
+
+            if ns_total > 0:
+                from collections import defaultdict
+                from app.telemetry.metrics import (
+                    PREDICTIONS_KILLSWITCH_FILTERED,
+                    PREDICTIONS_KILLSWITCH_ELIGIBLE,
+                )
+
+                # PASO 1: Query BATCH - traer partidos de liga relevantes
+                all_team_ids = list(set(
+                    df["home_team_id"].tolist() + df["away_team_id"].tolist()
+                ))
+
+                # FIX #1: Calcular earliest_needed desde MIN(match.date), NO desde NOW()
+                min_match_date = df["date"].min()
+                earliest_needed = min_match_date - timedelta(days=LOOKBACK_DAYS + 7)
+
+                league_matches_result = await session.execute(text("""
+                    SELECT team_id, match_date
+                    FROM (
+                        SELECT home_team_id as team_id, date as match_date
+                        FROM matches m
+                        JOIN admin_leagues al ON m.league_id = al.league_id
+                        WHERE m.status = 'FT'
+                          AND al.kind = 'league'
+                          AND m.date >= :earliest_needed
+                        UNION ALL
+                        SELECT away_team_id as team_id, date as match_date
+                        FROM matches m
+                        JOIN admin_leagues al ON m.league_id = al.league_id
+                        WHERE m.status = 'FT'
+                          AND al.kind = 'league'
+                          AND m.date >= :earliest_needed
+                    ) sub
+                    WHERE team_id = ANY(:team_ids)
+                    ORDER BY team_id, match_date DESC
+                """), {"team_ids": all_team_ids, "earliest_needed": earliest_needed})
+
+                # Construir dict: team_id -> [lista de fechas de partidos de liga]
+                team_match_dates = defaultdict(list)
+                for row in league_matches_result.fetchall():
+                    team_match_dates[row.team_id].append(row.match_date)
+
+                # PASO 2: Filtrar en MEMORIA con cutoff POR MATCH (match.date)
+                n_before = len(df)
+                eligible_match_ids = []
+
+                for _, match_row in df.iterrows():
+                    # CRÍTICO: El cutoff es relativo al kickoff del PARTIDO A PREDECIR
+                    match_kickoff = match_row["date"]
+                    cutoff = match_kickoff - timedelta(days=LOOKBACK_DAYS)
+
+                    home_id = match_row["home_team_id"]
+                    away_id = match_row["away_team_id"]
+
+                    # Contar partidos de liga en ventana [cutoff, match_kickoff)
+                    home_count = sum(
+                        1 for d in team_match_dates.get(home_id, [])
+                        if cutoff <= d < match_kickoff
+                    )
+                    away_count = sum(
+                        1 for d in team_match_dates.get(away_id, [])
+                        if cutoff <= d < match_kickoff
+                    )
+
+                    home_ok = home_count >= MIN_LEAGUE_MATCHES
+                    away_ok = away_count >= MIN_LEAGUE_MATCHES
+
+                    if home_ok and away_ok:
+                        eligible_match_ids.append(match_row["match_id"])
+                    else:
+                        # FIX #2: Labels unificados con sufijo _insufficient
+                        if not home_ok and not away_ok:
+                            reason = "both_insufficient"
+                        elif not home_ok:
+                            reason = "home_insufficient"
+                        else:
+                            reason = "away_insufficient"
+
+                        logger.info(
+                            f"[KILL-SWITCH] Skipping match {match_row['match_id']} "
+                            f"(reason={reason}, home={home_count}, away={away_count})"
+                        )
+                        PREDICTIONS_KILLSWITCH_FILTERED.labels(reason=reason).inc()
+
+                # FIX #3: Calcular filtered correctamente ANTES de modificar df
+                n_filtered = n_before - len(eligible_match_ids)
+                PREDICTIONS_KILLSWITCH_ELIGIBLE.set(len(eligible_match_ids))
+                df = df[df["match_id"].isin(eligible_match_ids)].reset_index(drop=True)
+                logger.info(f"[KILL-SWITCH] {len(eligible_match_ids)} eligible, {n_filtered} filtered")
+            # ═══════════════════════════════════════════════════════════════════
 
             # Query next NS match date for logging
             next_ns_result = await session.execute(
@@ -2125,15 +2227,16 @@ async def prediction_gap_safety_net():
                 return {"status": "error", "error": "model_not_loaded"}
 
             # Get features only for gap matches (optimized for 12h window)
+            # FASE 0 FIX: league_only=True prevents "Exeter mode"
             match_ids = [g[0] for g in gaps]
             feature_engineer = FeatureEngineer(session=session)
 
             # Try to use optimized method if available, else fallback
             if hasattr(feature_engineer, 'get_matches_features_by_ids'):
-                df = await feature_engineer.get_matches_features_by_ids(match_ids)
+                df = await feature_engineer.get_matches_features_by_ids(match_ids, league_only=True)
             else:
                 # Fallback: get all upcoming and filter
-                df = await feature_engineer.get_upcoming_matches_features()
+                df = await feature_engineer.get_upcoming_matches_features(league_only=True)
                 if len(df) > 0:
                     df = df[df["match_id"].isin(match_ids)]
 

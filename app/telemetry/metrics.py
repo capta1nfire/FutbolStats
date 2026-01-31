@@ -295,6 +295,24 @@ predictions_ft_coverage_pct = Gauge(
 )
 
 # =============================================================================
+# KILL-SWITCH ROUTER METRICS (FASE 0)
+# =============================================================================
+
+# Counter: partidos filtrados por razón
+PREDICTIONS_KILLSWITCH_FILTERED = Counter(
+    "predictions_killswitch_filtered_total",
+    "Matches filtered by kill-switch router (team lacks league history)",
+    ["reason"],  # "home_insufficient", "away_insufficient", "both_insufficient"
+)
+
+# Gauge: partidos elegibles en el último run
+PREDICTIONS_KILLSWITCH_ELIGIBLE = Gauge(
+    "predictions_killswitch_eligible",
+    "Number of eligible matches after kill-switch filter in last run",
+    [],
+)
+
+# =============================================================================
 # ENTITY MAPPING METRICS
 # =============================================================================
 
