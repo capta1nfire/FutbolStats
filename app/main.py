@@ -7688,6 +7688,69 @@ async def predictions_trigger_save(request: Request):
     return diagnostics
 
 
+@app.post("/dashboard/predictions/trigger-fase0")
+async def predictions_trigger_fase0(request: Request):
+    """
+    Trigger predictions using the EXACT same code path as the scheduler.
+
+    FASE 0 ATI AUDIT: This endpoint calls daily_save_predictions() directly
+    to ensure kill-switch router and league_only features are exercised.
+
+    Unlike /dashboard/predictions/trigger (recovery endpoint), this one:
+    - Uses league_only=True for feature engineering
+    - Applies kill-switch router (filters teams with <5 league matches)
+    - Emits [KILL-SWITCH] logs and Prometheus metrics
+    - Returns detailed metrics for audit verification
+
+    Protected by dashboard token.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from app.scheduler import daily_save_predictions
+    from app.ops.audit import log_ops_action
+
+    start_time = time.time()
+
+    try:
+        # Call the SAME function that the scheduler uses
+        # This ensures kill-switch router is exercised with identical code path
+        result = await daily_save_predictions(return_metrics=True)
+
+        # Handle case where result is None (shouldn't happen with return_metrics=True)
+        if result is None:
+            result = {"status": "unknown", "error": "No metrics returned"}
+
+    except Exception as e:
+        logger.error(f"[TRIGGER-FASE0] Failed: {e}")
+        result = {"status": "error", "error": str(e)}
+
+    # Audit log
+    duration_ms = int((time.time() - start_time) * 1000)
+    try:
+        async with AsyncSessionLocal() as audit_session:
+            await log_ops_action(
+                session=audit_session,
+                request=request,
+                action="predictions_trigger_fase0",
+                params=None,
+                result="ok" if result.get("status") == "ok" else "error",
+                result_detail={
+                    "n_matches_total": result.get("n_matches_total", 0),
+                    "n_eligible": result.get("n_eligible", 0),
+                    "n_filtered": result.get("n_filtered", 0),
+                    "filtered_by_reason": result.get("filtered_by_reason", {}),
+                    "saved": result.get("saved", 0),
+                },
+                error_message=result.get("error"),
+                duration_ms=duration_ms,
+            )
+    except Exception as audit_err:
+        logger.warning(f"Failed to log audit for trigger-fase0: {audit_err}")
+
+    return result
+
+
 # =============================================================================
 # OPS DASHBOARD (DB-backed, cached)
 # =============================================================================

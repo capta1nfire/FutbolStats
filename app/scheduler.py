@@ -1811,7 +1811,7 @@ async def capture_lineup_relative_movement() -> dict:
         return {"checked": 0, "captured": 0, "error": str(e)}
 
 
-async def daily_save_predictions():
+async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
     """
     Daily job to save predictions for upcoming matches.
     Runs every day at 7:00 AM UTC (before audit).
@@ -1821,6 +1821,10 @@ async def daily_save_predictions():
     - Commits every BATCH_SIZE matches (avoids long transactions)
     - Time budget guardrail (exits cleanly if exceeded)
     - Safe rollback on DB errors (no InterfaceError on closed connection)
+
+    Args:
+        return_metrics: If True, return detailed metrics dict instead of None.
+                       Used by /dashboard/predictions/trigger-fase0 endpoint.
     """
     import numpy as np
     from app.db_utils import upsert
@@ -1869,6 +1873,8 @@ async def daily_save_predictions():
         if not engine.load_model():
             logger.error("[DAILY-SAVE] Could not load ML model")
             record_job_run(job="daily_save_predictions", status="error", duration_ms=0)
+            if return_metrics:
+                return {"status": "error", "error": "Could not load ML model", "n_matches_total": 0, "n_eligible": 0, "n_filtered": 0, "filtered_by_reason": {}, "duration_ms": 0}
             return
 
         sensor_settings = get_settings()
@@ -1889,8 +1895,11 @@ async def daily_save_predictions():
                 feature_engineer = FeatureEngineer(session=session)
                 df = await feature_engineer.get_upcoming_matches_features(league_only=True)
             except (InterfaceError, DBAPIError) as fetch_err:
+                duration_ms = (time.time() - start_time) * 1000
                 logger.error(f"[DAILY-SAVE] DB connection lost during feature fetch: {fetch_err}")
-                record_job_run(job="daily_save_predictions", status="error", duration_ms=(time.time() - start_time) * 1000)
+                record_job_run(job="daily_save_predictions", status="error", duration_ms=duration_ms)
+                if return_metrics:
+                    return {"status": "error", "error": f"DB connection lost: {fetch_err}", "n_matches_total": 0, "n_eligible": 0, "n_filtered": 0, "filtered_by_reason": {}, "duration_ms": duration_ms}
                 return
 
             # P0 FIX: Filter to NS-only BEFORE predicting (reduces work significantly)
@@ -1906,6 +1915,11 @@ async def daily_save_predictions():
             # ═══════════════════════════════════════════════════════════════════
             MIN_LEAGUE_MATCHES = 5
             LOOKBACK_DAYS = 90
+
+            # Initialize kill-switch metrics (for return_metrics)
+            killswitch_eligible = 0
+            n_filtered = 0
+            filtered_by_reason = {"home_insufficient": 0, "away_insufficient": 0, "both_insufficient": 0}
 
             if ns_total > 0:
                 from collections import defaultdict
@@ -1952,6 +1966,8 @@ async def daily_save_predictions():
                 # PASO 2: Filtrar en MEMORIA con cutoff POR MATCH (match.date)
                 n_before = len(df)
                 eligible_match_ids = []
+                # Track filtered reasons for return_metrics
+                filtered_by_reason = {"home_insufficient": 0, "away_insufficient": 0, "both_insufficient": 0}
 
                 for _, match_row in df.iterrows():
                     # CRÍTICO: El cutoff es relativo al kickoff del PARTIDO A PREDECIR
@@ -1985,6 +2001,7 @@ async def daily_save_predictions():
                         else:
                             reason = "away_insufficient"
 
+                        filtered_by_reason[reason] += 1
                         logger.info(
                             f"[KILL-SWITCH] Skipping match {match_row['match_id']} "
                             f"(reason={reason}, home={home_count}, away={away_count})"
@@ -1993,9 +2010,10 @@ async def daily_save_predictions():
 
                 # FIX #3: Calcular filtered correctamente ANTES de modificar df
                 n_filtered = n_before - len(eligible_match_ids)
-                PREDICTIONS_KILLSWITCH_ELIGIBLE.set(len(eligible_match_ids))
+                killswitch_eligible = len(eligible_match_ids)
+                PREDICTIONS_KILLSWITCH_ELIGIBLE.set(killswitch_eligible)
                 df = df[df["match_id"].isin(eligible_match_ids)].reset_index(drop=True)
-                logger.info(f"[KILL-SWITCH] {len(eligible_match_ids)} eligible, {n_filtered} filtered")
+                logger.info(f"[KILL-SWITCH] {killswitch_eligible} eligible, {n_filtered} filtered")
             # ═══════════════════════════════════════════════════════════════════
 
             # Query next NS match date for logging
@@ -2015,6 +2033,8 @@ async def daily_save_predictions():
         if ns_total == 0:
             logger.info("[DAILY-SAVE] No NS matches to process")
             record_job_run(job="daily_save_predictions", status="ok", duration_ms=0)
+            if return_metrics:
+                return {"status": "ok", "n_matches_total": total_fetched, "n_eligible": 0, "n_filtered": 0, "filtered_by_reason": {}, "saved": 0, "duration_ms": 0}
             return
 
         # Time budget check BEFORE predict() (feature fetch can be slow)
@@ -2025,6 +2045,8 @@ async def daily_save_predictions():
                 f"exiting early with ns_total={ns_total}"
             )
             record_job_run(job="daily_save_predictions", status="partial", duration_ms=elapsed_ms)
+            if return_metrics:
+                return {"status": "partial", "error": "Time budget exceeded before predict", "n_matches_total": total_fetched, "n_eligible": killswitch_eligible, "n_filtered": n_filtered, "filtered_by_reason": filtered_by_reason, "saved": 0, "duration_ms": elapsed_ms}
             return
 
         # =================================================================
@@ -2153,10 +2175,28 @@ async def daily_save_predictions():
 
         record_job_run(job="daily_save_predictions", status=job_status, duration_ms=duration_ms)
 
+        # Return metrics dict if requested (for trigger-fase0 endpoint)
+        if return_metrics:
+            return {
+                "status": job_status,
+                "n_matches_total": total_fetched,
+                "n_ns": ns_total,
+                "n_eligible": killswitch_eligible,
+                "n_filtered": n_filtered,
+                "filtered_by_reason": filtered_by_reason,
+                "saved": saved,
+                "skipped_no_features": skipped_no_features,
+                "errors": errors,
+                "model_version": engine.model_version,
+                "duration_ms": round(duration_ms),
+            }
+
     except Exception as e:
         duration_ms = (time.time() - start_time) * 1000
         logger.error(f"[DAILY-SAVE] Failed after {duration_ms:.0f}ms: {e}")
         record_job_run(job="daily_save_predictions", status="error", duration_ms=duration_ms)
+        if return_metrics:
+            return {"status": "error", "error": str(e), "n_matches_total": 0, "n_eligible": 0, "n_filtered": 0, "filtered_by_reason": {}, "duration_ms": round(duration_ms)}
 
 
 async def prediction_gap_safety_net():
