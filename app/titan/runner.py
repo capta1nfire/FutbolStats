@@ -155,8 +155,17 @@ class TitanRunner:
                     stats["pit_violations"] += 1
 
             except Exception as e:
-                logger.error(f"Error processing match {match['external_id']}: {e}")
-                stats["errors"].append(f"match_{match['external_id']}: {str(e)}")
+                # CRITICAL: Rollback to prevent cascade failures (InFailedSQLTransactionError)
+                # When a DB operation fails, the connection stays in error state until rollback
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    pass  # Best effort - connection may already be broken
+                logger.error(
+                    f"Error processing match {match['external_id']}: "
+                    f"[{type(e).__name__}] {e}"
+                )
+                stats["errors"].append(f"match_{match['external_id']}: [{type(e).__name__}] {str(e)}")
 
         logger.info(
             f"TITAN Runner complete: {stats['extracted_success']} extracted, "
