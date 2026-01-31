@@ -1187,6 +1187,9 @@ class FeatureEngineer:
             "match_external_id": match.external_id,
             "date": match.date,
             "league_id": match.league_id,
+            # FASE 0 FIX: Include team IDs for kill-switch router
+            "home_team_id": match.home_team_id,
+            "away_team_id": match.away_team_id,
             **home_features,
             **away_features,
         }
