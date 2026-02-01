@@ -13,6 +13,108 @@ import { cn } from "@/lib/utils";
 import { useRegion } from "@/components/providers/RegionProvider";
 import { getPredictionPick, getProbabilityCellClasses, type Outcome } from "@/lib/predictions";
 
+// =============================================================================
+// Model Accuracy Calculation
+// =============================================================================
+
+type ModelKey = "market" | "modelA" | "shadow" | "sensorB";
+
+interface ModelAccuracyStats {
+  correct: number;
+  total: number;
+  accuracy: number | null; // null if no finished matches
+}
+
+/**
+ * Calculate accuracy stats for all models based on finished matches
+ */
+function calculateModelAccuracies(
+  data: MatchSummary[]
+): Record<ModelKey, ModelAccuracyStats> {
+  const stats: Record<ModelKey, ModelAccuracyStats> = {
+    market: { correct: 0, total: 0, accuracy: null },
+    modelA: { correct: 0, total: 0, accuracy: null },
+    shadow: { correct: 0, total: 0, accuracy: null },
+    sensorB: { correct: 0, total: 0, accuracy: null },
+  };
+
+  for (const match of data) {
+    // Only count finished matches
+    if (match.status !== "ft") continue;
+
+    const outcome = getOutcomeFromMatch(match);
+    if (!outcome) continue;
+
+    // Check each model
+    const models: { key: ModelKey; probs: ProbabilitySet | undefined }[] = [
+      { key: "market", probs: match.market },
+      { key: "modelA", probs: match.modelA },
+      { key: "shadow", probs: match.shadow },
+      { key: "sensorB", probs: match.sensorB },
+    ];
+
+    for (const { key, probs } of models) {
+      if (!probs) continue;
+
+      stats[key].total++;
+      const pickResult = getPredictionPick(
+        { home: probs.home, draw: probs.draw, away: probs.away },
+        outcome
+      );
+      if (pickResult.isCorrect) {
+        stats[key].correct++;
+      }
+    }
+  }
+
+  // Calculate percentages
+  for (const key of Object.keys(stats) as ModelKey[]) {
+    if (stats[key].total > 0) {
+      stats[key].accuracy = (stats[key].correct / stats[key].total) * 100;
+    }
+  }
+
+  return stats;
+}
+
+/**
+ * Get outcome from match (helper for accuracy calculation)
+ */
+function getOutcomeFromMatch(match: MatchSummary): Outcome | null {
+  if (!match.score) return null;
+  if (match.score.home > match.score.away) return "home";
+  if (match.score.home < match.score.away) return "away";
+  return "draw";
+}
+
+/**
+ * Header component with accuracy badge
+ */
+function ModelHeader({
+  label,
+  stats,
+}: {
+  label: string;
+  stats: ModelAccuracyStats;
+}) {
+  const hasStats = stats.accuracy !== null && stats.total > 0;
+
+  return (
+    <div className="flex items-center gap-1.5 leading-tight">
+      <span>{label}</span>
+      {hasStats && <span>({stats.correct})</span>}
+      {hasStats && (
+        <span
+          className="text-[10px] font-medium px-1.5 py-0.5 rounded tabular-nums bg-muted text-muted-foreground"
+          title={`${stats.correct}/${stats.total} correct`}
+        >
+          {stats.accuracy!.toFixed(1)}%
+        </span>
+      )}
+    </div>
+  );
+}
+
 /**
  * Get color classes for a match status
  */
@@ -94,7 +196,7 @@ interface ProbabilityCellProps {
  */
 function ProbabilityCell({ probs, outcome }: ProbabilityCellProps) {
   if (!probs) {
-    return <span className="text-muted-foreground text-xs">-</span>;
+    return <div className="text-center"><span className="text-muted-foreground text-xs">-</span></div>;
   }
 
   // Use the new pick calculation that handles ties fairly
@@ -104,16 +206,16 @@ function ProbabilityCell({ probs, outcome }: ProbabilityCellProps) {
   );
 
   return (
-    <div className="flex flex-col text-xs font-mono leading-tight">
-      <span className={getProbabilityCellClasses("home", pickResult)}>
+    <div className="text-xs font-mono leading-tight inline-block">
+      <div className={getProbabilityCellClasses("home", pickResult)}>
         1: {(probs.home * 100).toFixed(0)}%
-      </span>
-      <span className={getProbabilityCellClasses("draw", pickResult)}>
+      </div>
+      <div className={getProbabilityCellClasses("draw", pickResult)}>
         X: {(probs.draw * 100).toFixed(0)}%
-      </span>
-      <span className={getProbabilityCellClasses("away", pickResult)}>
+      </div>
+      <div className={getProbabilityCellClasses("away", pickResult)}>
         2: {(probs.away * 100).toFixed(0)}%
-      </span>
+      </div>
     </div>
   );
 }
@@ -169,6 +271,9 @@ export function MatchesTable({
   getLogoUrl,
 }: MatchesTableProps) {
   const { formatShortDate, formatTime } = useRegion();
+
+  // Calculate model accuracies from finished matches
+  const modelAccuracies = useMemo(() => calculateModelAccuracies(data), [data]);
 
   const columns: ColumnDef<MatchSummary>[] = useMemo(
     () => [
@@ -276,8 +381,9 @@ export function MatchesTable({
       },
       {
         id: "market",
-        header: "Market",
-        size: 90,
+        header: () => <ModelHeader label="Market" stats={modelAccuracies.market} />,
+        size: 110,
+        meta: { cellClassName: "text-center", headerClassName: "text-center" },
         cell: ({ row }) => (
           <ProbabilityCell
             probs={row.original.market}
@@ -288,8 +394,9 @@ export function MatchesTable({
       },
       {
         id: "modelA",
-        header: "Model A",
-        size: 90,
+        header: () => <ModelHeader label="Model A" stats={modelAccuracies.modelA} />,
+        size: 110,
+        meta: { cellClassName: "text-center", headerClassName: "text-center" },
         cell: ({ row }) => (
           <ProbabilityCell
             probs={row.original.modelA}
@@ -300,8 +407,9 @@ export function MatchesTable({
       },
       {
         id: "shadow",
-        header: "Shadow",
-        size: 90,
+        header: () => <ModelHeader label="Shadow" stats={modelAccuracies.shadow} />,
+        size: 110,
+        meta: { cellClassName: "text-center", headerClassName: "text-center" },
         cell: ({ row }) => (
           <ProbabilityCell
             probs={row.original.shadow}
@@ -312,8 +420,9 @@ export function MatchesTable({
       },
       {
         id: "sensorB",
-        header: "Sensor B",
-        size: 90,
+        header: () => <ModelHeader label="Sensor B" stats={modelAccuracies.sensorB} />,
+        size: 110,
+        meta: { cellClassName: "text-center", headerClassName: "text-center" },
         cell: ({ row }) => (
           <ProbabilityCell
             probs={row.original.sensorB}
@@ -323,7 +432,7 @@ export function MatchesTable({
         enableSorting: false,
       },
     ],
-    [getLogoUrl, formatShortDate, formatTime]
+    [getLogoUrl, formatShortDate, formatTime, modelAccuracies]
   );
 
   return (
