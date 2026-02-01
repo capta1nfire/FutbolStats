@@ -1324,6 +1324,7 @@ class FeatureEngineer:
         min_date: Optional[datetime] = None,
         max_date: Optional[datetime] = None,
         league_ids: Optional[list[int]] = None,
+        league_only: bool = False,
     ) -> pd.DataFrame:
         """
         Build a training dataset from historical matches.
@@ -1335,6 +1336,9 @@ class FeatureEngineer:
             min_date: Minimum match date to include.
             max_date: Maximum match date to include.
             league_ids: Optional list of league IDs to filter.
+            league_only: If True, rolling averages use only league matches
+                         (admin_leagues.kind='league'). FASE 1: Eliminates
+                         training-serving skew when serving uses league_only=True.
 
         Returns:
             DataFrame with features and target variable.
@@ -1359,7 +1363,7 @@ class FeatureEngineer:
         result = await self.session.execute(query)
         matches = list(result.scalars().all())
 
-        logger.info(f"Building features for {len(matches)} matches...")
+        logger.info(f"Building features for {len(matches)} matches... (league_only={league_only})")
 
         # Preload match history cache to avoid N+1 queries
         # This reduces ~2000 queries to 1 query for 1000 matches
@@ -1378,7 +1382,7 @@ class FeatureEngineer:
                 logger.info(f"Processing match {i + 1}/{len(matches)}")
 
             try:
-                features = await self.get_match_features(match)
+                features = await self.get_match_features(match, league_only=league_only)
 
                 # Add target variable
                 if match.home_goals > match.away_goals:

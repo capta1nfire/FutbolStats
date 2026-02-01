@@ -43,21 +43,32 @@ from app.models import Match
 VARIANTS = {
     "control": {
         "model_version": "v1.0.0-control",
+        "model_path": None,  # Use default v1.0.0
         "league_only": False,
         "killswitch": False,
         "description": "Pre-Fase0 baseline: all matches, all competitions"
     },
     "league-only": {
         "model_version": "v1.0.1-league-only",
+        "model_path": None,  # Use default v1.0.0 (skew experiment)
         "league_only": True,
         "killswitch": False,
-        "description": "Fase0 features: league-only rolling averages, no gating"
+        "description": "Fase0 features: league-only rolling averages, no gating (SKEW)"
     },
     "killswitch": {
         "model_version": "v1.0.1-killswitch",
+        "model_path": None,  # Use default v1.0.0 (skew experiment)
         "league_only": True,
         "killswitch": True,
-        "description": "Full Fase0: league-only features + kill-switch gating"
+        "description": "Full Fase0: league-only features + kill-switch gating (SKEW)"
+    },
+    # FASE 1: New model trained with league_only=True (NO SKEW)
+    "league-only-new": {
+        "model_version": "v1.0.1-league-only-trained",
+        "model_path": "models/xgb_v1.0.1-league-only_*.json",  # New model
+        "league_only": True,
+        "killswitch": False,
+        "description": "FASE 1: Model trained with league_only=True (NO SKEW)"
     },
 }
 
@@ -182,11 +193,32 @@ async def generate_variant(variant: str, since: str, until: Optional[str] = None
     engine_db = create_async_engine(database_url)
     async_session = sessionmaker(engine_db, class_=AsyncSession, expire_on_commit=False)
 
-    # Load production model v1.0.0
+    # Load model - either default v1.0.0 or specific path for new variants
     ml_engine = XGBoostEngine()
-    if not ml_engine.load_model():
-        raise RuntimeError("Could not load ML model v1.0.0")
+
+    model_path = config.get('model_path')
+    if model_path and '*' in model_path:
+        # Glob pattern - find latest matching model
+        import glob
+        matching = sorted(glob.glob(model_path))
+        if not matching:
+            raise RuntimeError(f"No model found matching: {model_path}")
+        model_path = matching[-1]  # Latest
+        print(f"Using model: {model_path}")
+
+    if model_path:
+        if not ml_engine.load_model(model_path):
+            raise RuntimeError(f"Could not load model from {model_path}")
+    else:
+        if not ml_engine.load_model():
+            raise RuntimeError("Could not load ML model v1.0.0")
+
+    # ATI AUDIT: Log model↔features alignment
+    expected_features = ml_engine._get_model_expected_features()
     print(f"Loaded model: {ml_engine.model_version}")
+    print(f"  n_expected_features: {len(expected_features)}")
+    print(f"  expected_features: {expected_features}")
+    print(f"  FEATURE_COLUMNS (code): {len(ml_engine.FEATURE_COLUMNS)}")
 
     since_date = datetime.fromisoformat(since)
     until_date = datetime.fromisoformat(until) if until else None
@@ -253,7 +285,10 @@ async def generate_variant(variant: str, since: str, until: Optional[str] = None
                 )
 
                 # Build feature vector for model
-                feature_vector = [float(features.get(col, 0.0)) for col in ml_engine.FEATURE_COLUMNS]
+                # Use _get_model_expected_features() for backward compatibility
+                # (v1.0.0 has 14 features, FEATURE_COLUMNS now has 17)
+                expected_cols = ml_engine._get_model_expected_features()
+                feature_vector = [float(features.get(col, 0.0)) for col in expected_cols]
 
                 # Predict
                 X = np.array([feature_vector])
@@ -328,7 +363,7 @@ async def generate_variant(variant: str, since: str, until: Optional[str] = None
 def main():
     parser = argparse.ArgumentParser(description="Generate Fase 0 A/B experiments")
     parser.add_argument('--variant', required=True, choices=list(VARIANTS.keys()),
-                        help='Variant to generate: control, league-only, killswitch')
+                        help='Variant to generate: control, league-only, killswitch, league-only-new')
     parser.add_argument('--since', required=True,
                         help='Start date (ISO format, e.g., 2026-01-07)')
     parser.add_argument('--until', default=None,
