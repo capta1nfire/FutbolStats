@@ -8,6 +8,7 @@ import {
   Coffee,
   XCircle,
   AlertTriangle,
+  CheckCircle2,
   LucideIcon,
 } from "lucide-react";
 import {
@@ -34,7 +35,7 @@ const statusConfig: Record<MatchStatus, StatusConfig> = {
   scheduled: { icon: Calendar, color: "text-primary", label: "Scheduled" },
   live: { icon: Play, color: "text-success animate-pulse", label: "Live" },
   ht: { icon: Coffee, color: "text-warning", label: "Half Time" },
-  ft: { icon: null, color: "text-muted-foreground", label: "Final" },
+  ft: { icon: CheckCircle2, color: "text-primary", label: "Final" },
   postponed: { icon: AlertTriangle, color: "text-warning", label: "Postponed" },
   cancelled: { icon: XCircle, color: "text-error", label: "Cancelled" },
 };

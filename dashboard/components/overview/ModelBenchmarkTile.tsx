@@ -1,11 +1,18 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useMemo } from "react";
 import dynamic from "next/dynamic";
 import { cn } from "@/lib/utils";
-import { TrendingUp, Trophy, CheckSquare, Loader2, AlertCircle, AlertTriangle } from "lucide-react";
-import { useModelBenchmark } from "@/lib/hooks/use-model-benchmark";
+import { TrendingUp, Trophy, Loader2, AlertCircle, AlertTriangle } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { useModelBenchmark, useModelSelection } from "@/lib/hooks";
 import { DailyModelStats } from "@/lib/types/model-benchmark";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 // Dynamic import to avoid SSR issues with ApexCharts
 const ReactApexChart = dynamic(() => import("react-apexcharts"), { ssr: false });
@@ -164,31 +171,11 @@ function calculateTrend(
  * - Highlights best performing model
  */
 export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
-  // Track selected models as array
-  const [selectedModels, setSelectedModels] = useState<string[]>([...ALL_MODELS]);
+  // Track selected models with localStorage persistence
+  const { selectedModels, toggleModel, canDeselect } = useModelSelection();
 
   // Fetch data with selected models
   const { data, isLoading, isDegraded, validationError } = useModelBenchmark(selectedModels);
-
-  // Toggle model selection
-  const toggleModel = (name: string) => {
-    setSelectedModels((prev) => {
-      const isSelected = prev.includes(name);
-      if (isSelected) {
-        // Don't allow deselecting if it would leave < 2 models
-        if (prev.length <= 2) return prev;
-        return prev.filter((m) => m !== name);
-      } else {
-        return [...prev, name];
-      }
-    });
-  };
-
-  // Check if a model can be toggled off
-  const canDeselect = (name: string): boolean => {
-    const isSelected = selectedModels.includes(name);
-    return !isSelected || selectedModels.length > 2;
-  };
 
   // Transform API data for chart
   const chartData = useMemo(() => {
@@ -303,6 +290,7 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
         strokeDashArray: 3,
         xaxis: { lines: { show: true } },
         yaxis: { lines: { show: true } },
+        padding: { right: 20 },
       },
       xaxis: {
         categories: chartData.map((d) => d.date),
@@ -317,7 +305,7 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
         axisBorder: { show: false },
         axisTicks: { show: false },
         tooltip: { enabled: false },
-        tickAmount: Math.min(chartData.length, 10), // Show ~10 ticks including last
+        tickAmount: Math.min(chartData.length, 10),
         tickPlacement: "on",
       },
       yaxis: {
@@ -337,16 +325,25 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
         custom: function({ series, dataPointIndex, w }) {
           // Closure captures dailyData from component scope
           const dailyData = data?.daily_data ?? [];
+          const dayData = dailyData[dataPointIndex];
 
           let html = '<div style="padding: 8px 12px; background: #1f2937; border: 1px solid #374151; border-radius: 6px; font-family: inherit;">';
 
-          // Header with date
+          // Header with date and total matches
           const dateLabel = w.globals.categoryLabels?.[dataPointIndex] ?? "";
-          html += `<div style="color: #9ca3af; font-size: 10px; margin-bottom: 6px; border-bottom: 1px solid #374151; padding-bottom: 4px;">${dateLabel}</div>`;
+          const matchesLabel = dayData ? ` (${dayData.matches} partidos)` : "";
+          html += `<div style="color: #9ca3af; font-size: 10px; margin-bottom: 6px; border-bottom: 1px solid #374151; padding-bottom: 4px;">${dateLabel}${matchesLabel}</div>`;
+
+          // Map series name to correct field in dayData
+          const correctFieldMap: Record<string, string> = {
+            "Market": "market_correct",
+            "Model A": "model_a_correct",
+            "Shadow": "shadow_correct",
+            "Sensor B": "sensor_b_correct",
+          };
 
           for (let i = 0; i < series.length; i++) {
             const seriesName = w.config.series[i].name as string;
-            const value = series[i][dataPointIndex];
             const color = w.config.colors[i] as string;
 
             // Get model key for trend calculation
@@ -361,12 +358,23 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
               ? `${trend.delta >= 0 ? "+" : ""}${trend.delta.toFixed(1)}pp`
               : "";
 
+            // Get daily correct count for this model
+            const correctField = correctFieldMap[seriesName];
+            const dailyCorrect = dayData && correctField ? (dayData as unknown as Record<string, number>)[correctField] : null;
+            const dailyStr = dailyCorrect !== null ? `${dailyCorrect}/${dayData?.matches ?? 0}` : "";
+
+            // Calculate daily percentage (not cumulative)
+            const dailyPercent = dailyCorrect !== null && dayData?.matches
+              ? ((dailyCorrect / dayData.matches) * 100).toFixed(1)
+              : "0.0";
+
             html += `
               <div style="display: flex; align-items: center; gap: 8px; padding: 2px 0;">
                 <span style="color: ${color}; font-size: 14px; width: 16px; text-align: center;">${arrow}</span>
                 <span style="color: #6b7280; font-size: 10px; width: 50px; font-family: monospace;">${deltaStr}</span>
                 <span style="color: #e5e7eb; font-size: 11px; flex: 1;">${seriesName}</span>
-                <span style="color: ${color}; font-weight: 600; font-size: 11px; font-family: monospace;">${value.toFixed(1)}%</span>
+                <span style="color: #9ca3af; font-size: 10px; font-family: monospace; margin-right: 4px;">${dailyStr}</span>
+                <span style="color: ${color}; font-weight: 600; font-size: 11px; font-family: monospace;">${dailyPercent}%</span>
               </div>
             `;
           }
@@ -471,9 +479,8 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
           <div className="flex items-center gap-3 text-xs">
             <div className="flex items-center gap-1.5">
               <Trophy className="h-3 w-3 text-yellow-500" />
-              <span className="text-muted-foreground">Líder:</span>
-              <span className="font-medium text-foreground">{leader.name}</span>
-              <span className="text-muted-foreground">({leader.accuracy}%)</span>
+              <span className="font-medium text-foreground">{leader.name}:</span>
+              <span className="text-muted-foreground">{leader.accuracy}%</span>
             </div>
           </div>
         )}
@@ -487,52 +494,57 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
           const config = MODEL_CONFIG[modelName];
           const canToggle = canDeselect(modelName);
 
+          const isDisabled = isSelected && !canToggle;
+
           return (
-            <button
+            <label
               key={modelName}
-              onClick={() => toggleModel(modelName)}
-              disabled={isSelected && !canToggle}
               className={cn(
-                "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all border",
+                "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all border cursor-pointer select-none",
                 isSelected
                   ? "bg-surface border-border hover:border-primary/50"
                   : "bg-transparent border-transparent opacity-50 hover:opacity-75",
-                isSelected && !canToggle && "cursor-not-allowed opacity-75"
+                isDisabled && "cursor-not-allowed opacity-75"
               )}
-              title={!canToggle ? "Mínimo 2 modelos requeridos" : undefined}
             >
-              <CheckSquare
-                className={cn(
-                  "h-3.5 w-3.5 transition-colors",
-                  isSelected ? "text-primary" : "text-muted-foreground"
-                )}
+              <Checkbox
+                checked={isSelected}
+                onCheckedChange={() => !isDisabled && toggleModel(modelName)}
+                disabled={isDisabled}
               />
               <span className="text-foreground">{modelName}</span>
 
               {/* Stats row (only if model has data) */}
               {modelData && (
-                <div className="flex items-center gap-2 ml-1">
-                  <span
-                    className="px-1.5 py-0.5 rounded text-[10px] font-bold"
-                    style={{
-                      backgroundColor: config.color,
-                      color: config.strokeColor,
-                    }}
-                  >
-                    {modelData.accuracy}%
-                  </span>
-                  <span
-                    className="px-1 py-0.5 rounded text-[10px] bg-yellow-500/20 text-yellow-500 font-medium"
-                    title="Días ganados (empates se dividen: 2 empatados = 0.5 cada uno)"
-                  >
-                    {Number.isInteger(modelData.days_won) ? modelData.days_won : modelData.days_won.toFixed(1)}
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-gray-500/20 text-gray-400">
-                    {modelData.correct}
-                  </span>
-                </div>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="flex items-center gap-2 ml-1 cursor-pointer">
+                        <span
+                          className="px-1.5 py-0.5 rounded text-[10px] font-bold"
+                          style={{
+                            backgroundColor: config.color,
+                            color: config.strokeColor,
+                          }}
+                        >
+                          {modelData.accuracy}%
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-gray-500/20 text-gray-400 font-medium">
+                          {Number.isInteger(modelData.days_won) ? modelData.days_won : modelData.days_won.toFixed(1)}D | {modelData.correct}
+                        </span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="max-w-[220px]">
+                      <div className="text-xs space-y-1">
+                        <div><strong>{modelData.accuracy}%</strong> accuracy acumulada</div>
+                        <div><strong>{Number.isInteger(modelData.days_won) ? modelData.days_won : modelData.days_won.toFixed(1)}</strong> días ganados</div>
+                        <div><strong>{modelData.correct}</strong> predicciones correctas</div>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               )}
-            </button>
+            </label>
           );
         })}
       </div>
@@ -549,15 +561,6 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
         )}
       </div>
 
-      {/* Footer note */}
-      <div className="mt-3 pt-3 border-t border-border">
-        <p className="text-[10px] text-muted-foreground/70">
-          Comparando accuracy acumulada desde {formatStartDate(data.start_date)}.
-          Badge colors: <span className="text-yellow-500">amarillo</span> = días ganados (empates se dividen),
-          <span className="text-gray-400"> gris</span> = predicciones correctas totales.
-          Empates ±0.5pp → co-picks.
-        </p>
-      </div>
     </div>
   );
 }

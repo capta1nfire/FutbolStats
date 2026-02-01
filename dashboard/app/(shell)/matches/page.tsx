@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMatchesApi, useMatchApi, useMatch, useColumnVisibility, usePageSize, useTeamLogos } from "@/lib/hooks";
+import { useMatchesApi, useMatchApi, useMatch, useColumnVisibility, usePageSize, useTeamLogos, useCompactPredictions } from "@/lib/hooks";
 import { MatchSummary, MatchFilters, MatchStatus, MATCH_STATUSES } from "@/lib/types";
 import { getMatchesMockSync } from "@/lib/mocks";
 import {
@@ -132,6 +132,9 @@ function MatchesPageContent() {
   // UI state (non-URL)
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
   const [customizeColumnsOpen, setCustomizeColumnsOpen] = useState(false);
+
+  // Compact predictions with localStorage persistence
+  const { compactPredictions, setCompactPredictions } = useCompactPredictions();
 
   // Pagination state with localStorage persistence
   const [currentPage, setCurrentPage] = useState(1);
@@ -408,6 +411,8 @@ function MatchesPageContent() {
         onRestore={resetToDefault}
         onDone={handleCustomizeColumnsDone}
         onCollapse={handleCustomizeColumnsDone}
+        compactPredictions={compactPredictions}
+        onCompactPredictionsChange={setCompactPredictions}
       />
 
       {/* Main content: Table */}
@@ -423,6 +428,7 @@ function MatchesPageContent() {
           columnVisibility={columnVisibility}
           onColumnVisibilityChange={setColumnVisibility}
           getLogoUrl={getLogoUrl}
+          compactPredictions={compactPredictions}
         />
 
         {/* Pagination */}

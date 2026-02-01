@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
 
 /**
  * Column definition for the customize panel
@@ -37,6 +38,10 @@ interface CustomizeColumnsPanelProps {
   onCollapse?: () => void;
   /** Additional class names */
   className?: string;
+  /** Whether compact predictions mode is enabled */
+  compactPredictions?: boolean;
+  /** Called when compact predictions toggle changes */
+  onCompactPredictionsChange?: (enabled: boolean) => void;
 }
 
 /**
@@ -67,6 +72,8 @@ export function CustomizeColumnsPanel({
   onDone,
   onCollapse,
   className,
+  compactPredictions = false,
+  onCompactPredictionsChange,
 }: CustomizeColumnsPanelProps) {
   // Filter to only hideable columns
   const hideableColumns = useMemo(
@@ -174,6 +181,20 @@ export function CustomizeColumnsPanel({
           })}
         </div>
       </ScrollArea>
+
+      {/* Compact Predictions toggle (only shown if callback provided) */}
+      {onCompactPredictionsChange && (
+        <div className="px-3 py-2 border-t border-border">
+          <label className="flex items-center justify-between cursor-pointer">
+            <span className="text-sm text-foreground">Compact predictions</span>
+            <Switch
+              checked={compactPredictions}
+              onCheckedChange={onCompactPredictionsChange}
+              aria-label="Toggle compact predictions"
+            />
+          </label>
+        </div>
+      )}
 
       {/* Footer: Restore + Done - same height as table pagination (py-4 + h-8 content) */}
       {/* Shadow uses ::before pseudo-element with gradient to render above ScrollArea content */}

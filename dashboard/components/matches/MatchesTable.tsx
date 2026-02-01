@@ -182,6 +182,8 @@ function getOutcome(score?: MatchScore): Outcome | null {
 interface ProbabilityCellProps {
   probs?: ProbabilitySet;
   outcome?: Outcome | null;
+  /** Compact mode: show only the predicted pick */
+  compact?: boolean;
 }
 
 /**
@@ -193,8 +195,10 @@ interface ProbabilityCellProps {
  * - Amber: tied pick, one of them correct (fair handling of ties)
  * - Red: pick(s) were wrong
  * - No color: outcomes the model didn't predict
+ *
+ * Compact mode: shows only the predicted pick (the max probability outcome)
  */
-function ProbabilityCell({ probs, outcome }: ProbabilityCellProps) {
+function ProbabilityCell({ probs, outcome, compact = false }: ProbabilityCellProps) {
   if (!probs) {
     return <div className="text-center"><span className="text-muted-foreground text-xs">-</span></div>;
   }
@@ -205,6 +209,29 @@ function ProbabilityCell({ probs, outcome }: ProbabilityCellProps) {
     outcome ?? null
   );
 
+  // Compact mode: show only the pick(s)
+  if (compact) {
+    const outcomes: { key: Outcome; label: string; prob: number }[] = [
+      { key: "home", label: "1", prob: probs.home },
+      { key: "draw", label: "X", prob: probs.draw },
+      { key: "away", label: "2", prob: probs.away },
+    ];
+
+    // Filter to only show top picks
+    const picks = outcomes.filter((o) => pickResult.topOutcomes.includes(o.key));
+
+    return (
+      <div className="text-xs font-mono leading-tight inline-block">
+        {picks.map((pick) => (
+          <div key={pick.key} className={getProbabilityCellClasses(pick.key, pickResult)}>
+            {pick.label}: {(pick.prob * 100).toFixed(0)}%
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // Full mode: show all 3 outcomes
   return (
     <div className="text-xs font-mono leading-tight inline-block">
       <div className={getProbabilityCellClasses("home", pickResult)}>
@@ -233,6 +260,8 @@ interface MatchesTableProps {
   onColumnVisibilityChange?: (visibility: VisibilityState) => void;
   /** Function to get team logo URL by team name */
   getLogoUrl?: (teamName: string) => string | null;
+  /** Compact predictions mode: show only the predicted pick */
+  compactPredictions?: boolean;
 }
 
 /**
@@ -240,7 +269,8 @@ interface MatchesTableProps {
  * Maps column IDs to human-readable labels
  */
 export const MATCHES_COLUMN_OPTIONS: ColumnOption[] = [
-  { id: "id", label: "ID", enableHiding: false }, // Status + Match ID combined, always visible
+  { id: "rowIndex", label: "#", enableHiding: false }, // Row number, always visible
+  { id: "id", label: "ID", enableHiding: true }, // Status + Match ID
   { id: "match", label: "Match", enableHiding: false }, // Always visible
   { id: "leagueName", label: "League", enableHiding: true },
   { id: "kickoffISO", label: "Kickoff", enableHiding: true },
@@ -269,6 +299,7 @@ export function MatchesTable({
   columnVisibility,
   onColumnVisibilityChange,
   getLogoUrl,
+  compactPredictions = false,
 }: MatchesTableProps) {
   const { formatShortDate, formatTime } = useRegion();
 
@@ -277,6 +308,17 @@ export function MatchesTable({
 
   const columns: ColumnDef<MatchSummary>[] = useMemo(
     () => [
+      {
+        id: "rowIndex",
+        header: "#",
+        size: 45,
+        cell: ({ row }) => (
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {row.index + 1}
+          </span>
+        ),
+        enableSorting: false,
+      },
       {
         id: "id",
         header: "ID",
@@ -388,6 +430,7 @@ export function MatchesTable({
           <ProbabilityCell
             probs={row.original.market}
             outcome={row.original.status === "ft" ? getOutcome(row.original.score) : null}
+            compact={compactPredictions}
           />
         ),
         enableSorting: false,
@@ -401,6 +444,7 @@ export function MatchesTable({
           <ProbabilityCell
             probs={row.original.modelA}
             outcome={row.original.status === "ft" ? getOutcome(row.original.score) : null}
+            compact={compactPredictions}
           />
         ),
         enableSorting: false,
@@ -414,6 +458,7 @@ export function MatchesTable({
           <ProbabilityCell
             probs={row.original.shadow}
             outcome={row.original.status === "ft" ? getOutcome(row.original.score) : null}
+            compact={compactPredictions}
           />
         ),
         enableSorting: false,
@@ -427,12 +472,13 @@ export function MatchesTable({
           <ProbabilityCell
             probs={row.original.sensorB}
             outcome={row.original.status === "ft" ? getOutcome(row.original.score) : null}
+            compact={compactPredictions}
           />
         ),
         enableSorting: false,
       },
     ],
-    [getLogoUrl, formatShortDate, formatTime, modelAccuracies]
+    [getLogoUrl, formatShortDate, formatTime, modelAccuracies, compactPredictions]
   );
 
   return (

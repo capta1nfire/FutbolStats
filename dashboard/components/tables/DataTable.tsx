@@ -199,110 +199,109 @@ function DataTableInner<TData>(
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Fixed header - outside scroll area */}
-      <div className="flex-shrink-0 bg-background border-b border-border">
-        <table className="w-full border-collapse text-sm table-fixed">
-          <thead>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id}>
-                {headerGroup.headers.map((header) => {
-                  const canSort = header.column.getCanSort();
-                  const sorted = header.column.getIsSorted();
-                  const headerContent = header.isPlaceholder
-                    ? null
-                    : flexRender(header.column.columnDef.header, header.getContext());
+    <div className="flex-1 overflow-auto">
+      {/* Single table with sticky header - ensures perfect column alignment */}
+      <table className="w-full border-collapse text-sm table-fixed">
+        <thead className="sticky top-0 z-10 bg-background">
+          {table.getHeaderGroups().map((headerGroup) => (
+            <tr key={headerGroup.id} className="border-b border-border">
+              {headerGroup.headers.map((header) => {
+                const canSort = header.column.getCanSort();
+                const sorted = header.column.getIsSorted();
+                const headerContent = header.isPlaceholder
+                  ? null
+                  : flexRender(header.column.columnDef.header, header.getContext());
 
-                  return (
-                    <th
-                      key={header.id}
-                      style={{ width: header.getSize() !== 150 ? header.getSize() : undefined }}
-                      className="px-3 pt-3 pb-2 text-left font-semibold text-muted-foreground text-sm align-bottom"
-                    >
-                      {canSort ? (
-                        <button
-                          type="button"
-                          onClick={header.column.getToggleSortingHandler()}
-                          className={cn(
-                            "group flex items-end gap-0.5 cursor-pointer select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 rounded",
-                            sorted ? "text-primary" : "hover:text-foreground"
+                return (
+                  <th
+                    key={header.id}
+                    style={{ width: header.getSize() !== 150 ? header.getSize() : undefined }}
+                    className={cn(
+                      "px-3 pt-3 pb-2 text-left font-semibold text-muted-foreground text-sm align-bottom",
+                      (header.column.columnDef.meta as { headerClassName?: string } | undefined)?.headerClassName
+                    )}
+                  >
+                    {canSort ? (
+                      <button
+                        type="button"
+                        onClick={header.column.getToggleSortingHandler()}
+                        className={cn(
+                          "group flex items-end gap-0.5 cursor-pointer select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 rounded",
+                          sorted ? "text-primary" : "hover:text-foreground"
+                        )}
+                        aria-label={`Sort by ${typeof headerContent === "string" ? headerContent : header.id}`}
+                      >
+                        {headerContent}
+                        <span className={cn(
+                          "opacity-0 group-hover:opacity-100 transition-opacity",
+                          sorted && "text-primary"
+                        )}>
+                          {sorted === "asc" ? (
+                            <ChevronUp className="h-4 w-4" />
+                          ) : (
+                            <ChevronDown className="h-4 w-4" />
                           )}
-                          aria-label={`Sort by ${typeof headerContent === "string" ? headerContent : header.id}`}
-                        >
-                          {headerContent}
-                          <span className={cn(
-                            "opacity-0 group-hover:opacity-100 transition-opacity",
-                            sorted && "text-primary"
-                          )}>
-                            {sorted === "asc" ? (
-                              <ChevronUp className="h-4 w-4" />
-                            ) : (
-                              <ChevronDown className="h-4 w-4" />
-                            )}
-                          </span>
-                        </button>
-                      ) : (
-                        <div className="flex items-end gap-1">{headerContent}</div>
-                      )}
-                    </th>
-                  );
-                })}
-              </tr>
-            ))}
-          </thead>
-        </table>
-      </div>
+                        </span>
+                      </button>
+                    ) : (
+                      <div className="inline-flex items-end gap-1">{headerContent}</div>
+                    )}
+                  </th>
+                );
+              })}
+            </tr>
+          ))}
+        </thead>
+        <tbody ref={tableBodyRef} role="rowgroup">
+          {rows.map((row, rowIndex) => {
+            const isSelected =
+              selectedRowId !== null &&
+              selectedRowId !== undefined &&
+              row.id === String(selectedRowId);
+            const isFocused = focusedRowIndex === rowIndex;
 
-      {/* Scrollable body */}
-      <div className="flex-1 overflow-auto">
-        <table className="w-full border-collapse text-sm table-fixed">
-          <tbody ref={tableBodyRef} role="rowgroup">
-            {rows.map((row, rowIndex) => {
-              const isSelected =
-                selectedRowId !== null &&
-                selectedRowId !== undefined &&
-                row.id === String(selectedRowId);
-              const isFocused = focusedRowIndex === rowIndex;
-
-              return (
-                <tr
-                  key={row.id}
-                  ref={(el) => {
-                    if (el) {
-                      rowRefs.current.set(rowIndex, el);
-                    } else {
-                      rowRefs.current.delete(rowIndex);
-                    }
-                  }}
-                  tabIndex={isFocused || (focusedRowIndex === -1 && rowIndex === 0) ? 0 : -1}
-                  role="row"
-                  aria-selected={isSelected}
-                  onClick={() => onRowClick?.(row.original)}
-                  onKeyDown={(e) => handleRowKeyDown(e, rowIndex, row.original)}
-                  onFocus={() => setFocusedRowIndex(rowIndex)}
-                  className={cn(
-                    "border-b border-border transition-colors cursor-pointer",
-                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-                    isSelected
-                      ? "bg-primary/10 border-l-2 border-l-primary"
-                      : "hover:bg-accent/50"
-                  )}
-                >
-                  {row.getVisibleCells().map((cell) => (
+            return (
+              <tr
+                key={row.id}
+                ref={(el) => {
+                  if (el) {
+                    rowRefs.current.set(rowIndex, el);
+                  } else {
+                    rowRefs.current.delete(rowIndex);
+                  }
+                }}
+                tabIndex={isFocused || (focusedRowIndex === -1 && rowIndex === 0) ? 0 : -1}
+                role="row"
+                aria-selected={isSelected}
+                onClick={() => onRowClick?.(row.original)}
+                onKeyDown={(e) => handleRowKeyDown(e, rowIndex, row.original)}
+                onFocus={() => setFocusedRowIndex(rowIndex)}
+                className={cn(
+                  "border-b border-border transition-colors cursor-pointer",
+                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                  isSelected
+                    ? "bg-primary/10 border-l-2 border-l-primary"
+                    : "hover:bg-accent/50"
+                )}
+              >
+                {row.getVisibleCells().map((cell) => {
+                  // Support custom cell classes via column meta
+                  const cellClassName = (cell.column.columnDef.meta as { cellClassName?: string } | undefined)?.cellClassName;
+                  return (
                     <td
                       key={cell.id}
                       style={{ width: cell.column.getSize() !== 150 ? cell.column.getSize() : undefined }}
-                      className="px-3 py-2.5"
+                      className={cn("px-3 py-2.5 align-middle", cellClassName)}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </td>
-                  ))}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                  );
+                })}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
