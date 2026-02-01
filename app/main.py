@@ -8300,6 +8300,8 @@ async def _calculate_sensor_b_summary(session) -> dict:
             "is_ready": sensor_info.get("is_ready", False),
             # Health (telemetry)
             "health": health,
+            # Sanity check (P0 ATI/ADA): detect overconfidence in last 24h
+            "sanity": report.get("sanity"),
         }
     except Exception as e:
         logger.warning(f"Sensor B summary failed: {e}")

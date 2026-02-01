@@ -17,6 +17,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,6 +69,25 @@ class SensorEngine:
         "multi_class": "multinomial",
     }
 
+    # Hard bounds for raw feature values (guardrail against outliers / bad feature rows).
+    # These are intentionally wide and only prevent pathological values from dominating logits.
+    FEATURE_CLIP_BOUNDS: dict[str, tuple[float, float]] = {
+        "home_goals_scored_avg": (0.0, 6.0),
+        "home_goals_conceded_avg": (0.0, 6.0),
+        "home_shots_avg": (0.0, 40.0),
+        "home_corners_avg": (0.0, 30.0),
+        "home_rest_days": (0.0, 45.0),
+        "home_matches_played": (0.0, 80.0),
+        "away_goals_scored_avg": (0.0, 6.0),
+        "away_goals_conceded_avg": (0.0, 6.0),
+        "away_shots_avg": (0.0, 40.0),
+        "away_corners_avg": (0.0, 30.0),
+        "away_rest_days": (0.0, 45.0),
+        "away_matches_played": (0.0, 80.0),
+        "goal_diff_avg": (-6.0, 6.0),
+        "rest_diff": (-45.0, 45.0),
+    }
+
     def __init__(self, window_size: int = None):
         """
         Initialize sensor engine.
@@ -80,6 +101,9 @@ class SensorEngine:
         self.trained_at: Optional[datetime] = None
         self.training_samples: int = 0
         self.is_ready: bool = False
+        # Numerical stability / calibration controls
+        self.temperature: float = float(getattr(settings, "SENSOR_TEMPERATURE", 2.0))
+        self.prob_eps: float = float(getattr(settings, "SENSOR_PROB_EPS", 1e-12))
 
     def train(self, df: pd.DataFrame) -> dict:
         """
@@ -105,8 +129,15 @@ class SensorEngine:
             X = self._prepare_features(df)
             y = df["label"].values
 
-            # Train LogReg
-            self.model = LogisticRegression(**self.LOGREG_CONFIG)
+            # Train LogReg with feature scaling to prevent extreme logits/probabilities
+            # (LogReg is sensitive to feature scale; unscaled/outlier rows can produce
+            # very confident probabilities that break calibration diagnostics.)
+            self.model = Pipeline(
+                steps=[
+                    ("scaler", StandardScaler(with_mean=True, with_std=True)),
+                    ("clf", LogisticRegression(**self.LOGREG_CONFIG)),
+                ]
+            )
             self.model.fit(X, y)
 
             # Update state
@@ -116,7 +147,7 @@ class SensorEngine:
             self.is_ready = True
 
             # Calculate training accuracy (not for evaluation, just sanity check)
-            train_acc = self.model.score(X, y)
+            train_acc = float(self.model.score(X, y))
 
             logger.info(
                 f"[SENSOR] Trained: n={len(df)}, window={self.window_size}, "
@@ -129,6 +160,7 @@ class SensorEngine:
                 "window_size": self.window_size,
                 "train_accuracy": round(train_acc, 4),
                 "model_version": self.model_version,
+                "temperature": round(self.temperature, 3),
             }
 
         except Exception as e:
@@ -156,7 +188,14 @@ class SensorEngine:
 
         try:
             X = self._prepare_features(df)
-            return self.model.predict_proba(X)
+            # Apply optional temperature scaling to reduce overconfidence.
+            # This is still a diagnostic tool; we want stable, comparable probabilities.
+            probs = self._predict_proba_with_temperature(X)
+            # Floor/ceiling probabilities to keep downstream metrics stable (logloss, etc.)
+            eps = self.prob_eps
+            probs = np.clip(probs, eps, 1.0 - eps)
+            probs = probs / probs.sum(axis=1, keepdims=True)
+            return probs
         except Exception as e:
             logger.warning(f"[SENSOR] Prediction failed: {e}")
             return None
@@ -167,7 +206,43 @@ class SensorEngine:
         for col in self.FEATURE_COLUMNS:
             if col not in df.columns:
                 df[col] = 0
-        return df[self.FEATURE_COLUMNS].fillna(0).values
+        # Coerce to numeric, replace inf/NaN, and clip pathological values.
+        for col in self.FEATURE_COLUMNS:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df = df.replace([np.inf, -np.inf], np.nan).fillna(0)
+        for col, (lo, hi) in self.FEATURE_CLIP_BOUNDS.items():
+            if col in df.columns:
+                df[col] = df[col].clip(lower=lo, upper=hi)
+        return df[self.FEATURE_COLUMNS].values
+
+    def _predict_proba_with_temperature(self, X: np.ndarray) -> np.ndarray:
+        """
+        Predict probabilities with temperature scaling (multinomial).
+
+        Using decision_function + our own softmax gives us a stable place
+        to apply temperature without retraining or changing scikit internals.
+        """
+        # Pipeline: scaler -> clf
+        if isinstance(self.model, Pipeline):
+            scaler = self.model.named_steps["scaler"]
+            clf = self.model.named_steps["clf"]
+            Xs = scaler.transform(X)
+            scores = clf.decision_function(Xs)
+        else:
+            # Fallback for legacy state (shouldn't happen after retrain)
+            scores = self.model.decision_function(X)
+
+        # Ensure 2D (n_samples, n_classes)
+        if scores.ndim == 1:
+            scores = np.stack([-scores, scores], axis=1)
+
+        T = max(1e-6, float(self.temperature))
+        scores = scores / T
+
+        # Stable softmax
+        scores = scores - np.max(scores, axis=1, keepdims=True)
+        exp_scores = np.exp(scores)
+        return exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
 
 
 def get_sensor_engine() -> Optional[SensorEngine]:
@@ -743,6 +818,66 @@ async def get_sensor_report(session: AsyncSession) -> dict:
     missing_b_evaluated = evaluated_total - evaluated_with_b
     missing_b_pending = pending_total - pending_with_b
 
+    # =========================================================================
+    # Sanity Check: Detect overconfidence in last 24h predictions (P0 ATI/ADA)
+    # Uses 1e-12 epsilon consistent with prob_eps clipping
+    # =========================================================================
+    sanity_query = text("""
+        SELECT
+            COUNT(*) AS total,
+            COUNT(*) FILTER (
+                WHERE GREATEST(b_home_prob, b_draw_prob, b_away_prob) > 0.9999
+            ) AS overconfident_count,
+            AVG(
+                -b_home_prob * LN(b_home_prob + 1e-12)
+                -b_draw_prob * LN(b_draw_prob + 1e-12)
+                -b_away_prob * LN(b_away_prob + 1e-12)
+            ) AS mean_entropy,
+            COUNT(*) FILTER (
+                WHERE (
+                    -b_home_prob * LN(b_home_prob + 1e-12)
+                    -b_draw_prob * LN(b_draw_prob + 1e-12)
+                    -b_away_prob * LN(b_away_prob + 1e-12)
+                ) < 0.25
+            ) AS low_entropy_count,
+            MIN(LEAST(b_home_prob, b_draw_prob, b_away_prob)) AS min_prob
+        FROM sensor_predictions
+        WHERE created_at > NOW() - INTERVAL '24 hours'
+          AND b_home_prob IS NOT NULL
+    """)
+    sanity_result = await session.execute(sanity_query)
+    sanity_row = sanity_result.first()
+
+    total_sanity = int(sanity_row.total or 0)
+    if total_sanity > 0:
+        overconfident_ratio = (sanity_row.overconfident_count or 0) / total_sanity
+        low_entropy_ratio = (sanity_row.low_entropy_count or 0) / total_sanity
+    else:
+        overconfident_ratio = 0.0
+        low_entropy_ratio = 0.0
+
+    # Determine sanity state (thresholds from ATI: 5% overconfident, 10% low entropy)
+    if overconfident_ratio > 0.05 or low_entropy_ratio > 0.10:
+        sanity_state = "OVERCONFIDENT"
+        logger.warning(
+            f"[SENSOR] Sanity check OVERCONFIDENT: overconfident_ratio={overconfident_ratio:.4f}, "
+            f"low_entropy_ratio={low_entropy_ratio:.4f}, samples={total_sanity}"
+        )
+    else:
+        sanity_state = "HEALTHY"
+
+    sanity_metrics = {
+        "state": sanity_state,
+        "window_hours": 24,
+        "samples": total_sanity,
+        "overconfident_count": int(sanity_row.overconfident_count or 0),
+        "overconfident_ratio": round(overconfident_ratio, 4),
+        "mean_entropy": round(float(sanity_row.mean_entropy or 0), 4),
+        "low_entropy_count": int(sanity_row.low_entropy_count or 0),
+        "low_entropy_ratio": round(low_entropy_ratio, 4),
+        "min_prob": float(sanity_row.min_prob) if sanity_row.min_prob is not None else None,
+    }
+
     # Gating uses evaluated_with_b (need sensor predictions to compare A vs B)
     if evaluated_with_b < min_samples:
         # Determine current sensor state for messaging
@@ -760,6 +895,7 @@ async def get_sensor_report(session: AsyncSession) -> dict:
             "status": "INSUFFICIENT_DATA",
             "reason": f"Need {min_samples} evaluated_with_b samples, have {evaluated_with_b}",
             "sensor_state": sensor_state,
+            "sanity": sanity_metrics,
             "counts": {
                 "total": int(counts_row.total or 0),
                 "evaluated_total": evaluated_total,
@@ -847,6 +983,7 @@ async def get_sensor_report(session: AsyncSession) -> dict:
     return {
         "status": "ok",
         "sensor_state": "READY",
+        "sanity": sanity_metrics,
         "counts": {
             "total": int(counts_row.total or 0),
             "evaluated_total": evaluated_total,
