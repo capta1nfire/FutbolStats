@@ -1909,19 +1909,23 @@ async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
             ns_total = len(df)
 
             # ═══════════════════════════════════════════════════════════════════
-            # KILL-SWITCH ROUTER (FASE 0)
-            # Criterio: Ambos equipos deben tener >= 5 partidos de LIGA
-            #           en los 90 días ANTERIORES al kickoff del partido
+            # KILL-SWITCH ROUTER (FASE 0/1)
+            # Criterio: Ambos equipos deben tener >= MIN_LEAGUE_MATCHES partidos de LIGA
+            #           en los LOOKBACK_DAYS días ANTERIORES al kickoff del partido
+            # Config: KILLSWITCH_ENABLED, KILLSWITCH_MIN_LEAGUE_MATCHES, KILLSWITCH_LOOKBACK_DAYS
             # ═══════════════════════════════════════════════════════════════════
-            MIN_LEAGUE_MATCHES = 5
-            LOOKBACK_DAYS = 90
+            from app.config import get_settings
+            _ks_settings = get_settings()
+            KILLSWITCH_ENABLED = _ks_settings.KILLSWITCH_ENABLED
+            MIN_LEAGUE_MATCHES = _ks_settings.KILLSWITCH_MIN_LEAGUE_MATCHES
+            LOOKBACK_DAYS = _ks_settings.KILLSWITCH_LOOKBACK_DAYS
 
             # Initialize kill-switch metrics (for return_metrics)
             killswitch_eligible = 0
             n_filtered = 0
             filtered_by_reason = {"home_insufficient": 0, "away_insufficient": 0, "both_insufficient": 0}
 
-            if ns_total > 0:
+            if ns_total > 0 and KILLSWITCH_ENABLED:
                 from collections import defaultdict
                 from app.telemetry.metrics import (
                     PREDICTIONS_KILLSWITCH_FILTERED,
@@ -2014,6 +2018,10 @@ async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
                 PREDICTIONS_KILLSWITCH_ELIGIBLE.set(killswitch_eligible)
                 df = df[df["match_id"].isin(eligible_match_ids)].reset_index(drop=True)
                 logger.info(f"[KILL-SWITCH] {killswitch_eligible} eligible, {n_filtered} filtered")
+            elif ns_total > 0 and not KILLSWITCH_ENABLED:
+                # Kill-switch disabled - all matches are eligible
+                killswitch_eligible = ns_total
+                logger.info(f"[KILL-SWITCH] DISABLED - all {ns_total} matches eligible")
             # ═══════════════════════════════════════════════════════════════════
 
             # Query next NS match date for logging

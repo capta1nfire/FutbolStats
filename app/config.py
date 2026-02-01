@@ -29,7 +29,23 @@ class Settings(BaseSettings):
     API_KEY_HEADER: str = "X-API-Key"
 
     # Model versioning
-    MODEL_VERSION: str = "v1.0.0"
+    MODEL_VERSION: str = "v1.0.1-league-only"
+
+    # ═══════════════════════════════════════════════════════════════
+    # FASE 1: League-Only + Kill-Switch + Policy Draw Cap
+    # ═══════════════════════════════════════════════════════════════
+
+    # Kill-switch: Filter matches where teams lack league history
+    KILLSWITCH_ENABLED: bool = True
+    KILLSWITCH_MIN_LEAGUE_MATCHES: int = 5
+    KILLSWITCH_LOOKBACK_DAYS: int = 90
+
+    # Policy: Draw cap to prevent over-concentration
+    POLICY_DRAW_CAP_ENABLED: bool = True
+    POLICY_MAX_DRAW_SHARE: float = 0.35
+    POLICY_EDGE_THRESHOLD: float = 0.05
+
+    # ═══════════════════════════════════════════════════════════════
 
     # Model architecture (baseline | two_stage)
     MODEL_ARCHITECTURE: str = "baseline"
@@ -59,6 +75,11 @@ class Settings(BaseSettings):
     SENSOR_SIGNAL_SCORE_GO: float = 1.1  # Signal score above this = A may be stale
     SENSOR_SIGNAL_SCORE_NOISE: float = 0.9  # Signal score below this = B is overfitting
     SENSOR_EVAL_WINDOW_DAYS: int = 14  # Window for sensor evaluation metrics
+    # Sensor B numerical stability / calibration controls
+    # Temperature > 1.0 softens overconfident probabilities (diagnostic still valid)
+    SENSOR_TEMPERATURE: float = 2.0
+    # Floor/ceiling for probabilities used by Sensor B (prevents extreme ~0/1 outputs)
+    SENSOR_PROB_EPS: float = 1e-12
 
     # Telemetry: Stale evaluation thresholds (minutes)
     SHADOW_EVAL_STALE_MINUTES: int = 120  # Alert if oldest pending > this

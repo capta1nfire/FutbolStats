@@ -1962,6 +1962,25 @@ async def get_predictions(
     predictions = await _apply_team_overrides(session, predictions)
     _stage_times["overrides_ms"] = (time.time() - _t4) * 1000
 
+    # ═══════════════════════════════════════════════════════════════
+    # FASE 1: Apply draw cap to value bets (portfolio level)
+    # ═══════════════════════════════════════════════════════════════
+    _t5 = time.time()
+    from app.ml.policy import apply_draw_cap, get_policy_config
+    policy_config = get_policy_config()
+    predictions, policy_metadata = apply_draw_cap(
+        predictions,
+        max_draw_share=policy_config["max_draw_share"],
+        enabled=policy_config["draw_cap_enabled"],
+    )
+    _stage_times["policy_cap_ms"] = (time.time() - _t5) * 1000
+    if policy_metadata.get("cap_applied"):
+        logger.info(
+            f"policy_draw_cap | applied | draws={policy_metadata['n_draws_original']}→{policy_metadata['n_draws_after']} "
+            f"share={policy_metadata['draw_share_original']}%→{policy_metadata['draw_share_after']}%"
+        )
+    # ═══════════════════════════════════════════════════════════════
+
     # Save predictions to database if requested
     if save:
         saved_count = await _save_predictions_to_db(session, predictions, ml_engine.model_version)
