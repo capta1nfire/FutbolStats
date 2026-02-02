@@ -44,6 +44,7 @@
   /* Surface layers */
   --color-surface: var(--surface);
   --color-surface-elevated: var(--surface-elevated);
+  --color-tile: var(--tile-bg);
 
   /* Sidebar */
   --color-sidebar: var(--sidebar);
@@ -84,6 +85,7 @@
   --background: #131416;
   --surface: #1c1e21;
   --surface-elevated: #232326;
+  --tile-bg: transparent; /* Overview tiles - no background */
 
   /* Foreground/text - UniFi typography */
   --foreground: #dee0e3;
@@ -128,7 +130,7 @@
   --sidebar-foreground: #dee0e3;
   --sidebar-primary: #4797FF;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #1c1e21;
+  --sidebar-accent: transparent;
   --sidebar-accent-foreground: #dee0e3;
   --sidebar-border: rgba(249, 250, 250, 0.07);
   --sidebar-ring: #4797FF;
@@ -143,6 +145,7 @@
   /* ADS tokens (P0) */
   --tooltip-bg: #232326;
   --row-selected: #05254d;
+  --progress-track: #282b2f;
   --shadow-drawer-left: -4px 0 48px rgba(0, 0, 0, 1),
     0 0 1px rgba(249, 250, 250, 0.08);
   --shadow-tooltip: 0 8px 24px rgba(0, 0, 0, 1),

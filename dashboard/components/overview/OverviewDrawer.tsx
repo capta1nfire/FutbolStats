@@ -29,6 +29,7 @@ import {
   OverviewDrawerLlm,
   OverviewDrawerUpcoming,
   OverviewDrawerIncidents,
+  OverviewDrawerMatch,
 } from "./drawer-panels";
 
 /** Map tab keys to icons for IconTabs */
@@ -111,6 +112,8 @@ export function OverviewDrawer({ className }: OverviewDrawerProps) {
         return <OverviewDrawerUpcoming tab={tab} />;
       case "incidents":
         return <OverviewDrawerIncidents tab={tab} />;
+      case "match":
+        return <OverviewDrawerMatch tab={tab} />;
       default:
         return null;
     }

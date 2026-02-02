@@ -397,7 +397,7 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
     return (
       <div
         className={cn(
-          "bg-surface border border-border rounded-lg p-4 h-[420px] flex items-center justify-center",
+          "bg-tile border border-border rounded-lg p-4 h-[420px] flex items-center justify-center",
           className
         )}
       >
@@ -414,7 +414,7 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
     return (
       <div
         className={cn(
-          "bg-surface border border-border rounded-lg p-4 h-[420px] flex items-center justify-center",
+          "bg-tile border border-border rounded-lg p-4 h-[420px] flex items-center justify-center",
           className
         )}
       >
@@ -431,7 +431,7 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
     return (
       <div
         className={cn(
-          "bg-surface border border-border rounded-lg p-4 h-[420px] flex items-center justify-center",
+          "bg-tile border border-border rounded-lg p-4 h-[420px] flex items-center justify-center",
           className
         )}
       >
@@ -448,7 +448,7 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
     return (
       <div
         className={cn(
-          "bg-surface border border-border rounded-lg p-4 h-[420px] flex items-center justify-center",
+          "bg-tile border border-border rounded-lg p-4 h-[420px] flex items-center justify-center",
           className
         )}
       >
@@ -462,7 +462,7 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
 
   return (
     <div
-      className={cn("bg-surface border border-border rounded-lg p-4", className)}
+      className={cn("bg-tile border border-border rounded-lg p-4", className)}
     >
       {/* Header */}
       <div className="flex items-start justify-between mb-4">
@@ -502,7 +502,7 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
               className={cn(
                 "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all border cursor-pointer select-none",
                 isSelected
-                  ? "bg-surface border-border hover:border-primary/50"
+                  ? "bg-tile border-border hover:border-primary/50"
                   : "bg-transparent border-transparent opacity-50 hover:opacity-75",
                 isDisabled && "cursor-not-allowed opacity-75"
               )}

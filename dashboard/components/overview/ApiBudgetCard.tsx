@@ -181,7 +181,7 @@ export function ApiBudgetCard({ budget, className, isMockFallback = false, reque
   return (
     <div
       className={cn(
-        "bg-surface border border-border rounded-lg p-4 overflow-hidden",
+        "bg-tile border border-border rounded-lg p-4 overflow-hidden",
         className
       )}
     >
@@ -251,10 +251,10 @@ export function ApiBudgetCard({ budget, className, isMockFallback = false, reque
       {/* Progress Bar */}
       {hasLimit ? (
         <div className="mb-4">
-          <div className="h-2 bg-background rounded-full overflow-hidden">
+          <div className="h-2 bg-[var(--progress-track)] rounded-full overflow-hidden">
             <div
               className={cn(
-                "h-full rounded-full transition-all",
+                "h-full transition-all",
                 progressColors[displayStatus]
               )}
               style={{ width: `${progressWidth}%` }}

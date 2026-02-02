@@ -13,6 +13,7 @@ export * from "./use-column-visibility";
 export * from "./use-page-size";
 export * from "./use-ops-budget";
 export * from "./use-upcoming-matches";
+export * from "./use-today-matches";
 export * from "./use-team-logos";
 export * from "./use-standings";
 // v2 drawer hooks

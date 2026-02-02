@@ -184,7 +184,7 @@ export function LlmCostCard({
   return (
     <div
       className={cn(
-        "bg-surface border border-border rounded-lg p-4 overflow-hidden",
+        "bg-tile border border-border rounded-lg p-4 overflow-hidden",
         className
       )}
     >

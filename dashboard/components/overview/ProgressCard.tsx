@@ -74,7 +74,7 @@ export function ProgressCard({
   return (
     <div
       className={cn(
-        "bg-surface border border-border rounded-lg p-4",
+        "bg-tile border border-border rounded-lg p-4",
         className
       )}
     >

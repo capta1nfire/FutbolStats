@@ -76,7 +76,7 @@ export function TitanCompactTile({
   return (
     <div
       className={cn(
-        "bg-surface border border-border rounded-lg p-3 h-full flex flex-col",
+        "bg-tile border border-border rounded-lg p-3 h-full flex flex-col",
         className
       )}
     >
@@ -99,7 +99,7 @@ export function TitanCompactTile({
 
       {/* Progress bar */}
       <div className="mb-2">
-        <div className="h-2 w-full bg-background rounded-full overflow-hidden">
+        <div className="h-2 w-full bg-[var(--progress-track)] rounded-full overflow-hidden">
           <div
             className={cn("h-full transition-all duration-500", progressBarColors[status])}
             style={{ width: `${Math.min(pctToFormal, 100)}%` }}

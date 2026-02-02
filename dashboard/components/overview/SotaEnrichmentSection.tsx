@@ -106,7 +106,7 @@ function SotaCard({ item }: { item: SotaEnrichmentNormalizedItem }) {
   const noteText = item.error || item.note || "No data available";
 
   return (
-    <div className="bg-surface border border-border rounded-lg p-3">
+    <div className="bg-tile border border-border rounded-lg p-3">
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">

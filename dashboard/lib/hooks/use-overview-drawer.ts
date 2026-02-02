@@ -17,11 +17,12 @@ import {
 /**
  * Hook for managing overview drawer state via URL query params
  *
- * URL format: /overview?panel=<panel>&tab=<tab>
+ * URL format: /overview?panel=<panel>&tab=<tab>&matchId=<matchId>
  *
  * Features:
  * - Deep-linkable drawer state
  * - Tab validation per panel
+ * - Match ID support for match panel
  * - Focus return on close (via callback)
  */
 export function useOverviewDrawer() {
@@ -39,6 +40,14 @@ export function useOverviewDrawer() {
     [searchParams]
   );
 
+  // Parse matchId from URL
+  const matchId = useMemo(() => {
+    const matchIdStr = searchParams.get("matchId");
+    if (!matchIdStr) return null;
+    const parsed = parseInt(matchIdStr, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  }, [searchParams]);
+
   // Get effective tab (validated for current panel)
   const tab = useMemo(() => {
     if (!panel) return null;
@@ -48,8 +57,16 @@ export function useOverviewDrawer() {
   // Drawer is open if panel is set
   const isOpen = panel !== null;
 
-  // Get panel metadata
-  const panelMeta = panel ? PANEL_META[panel] : null;
+  // Get panel metadata (dynamic title for match panel)
+  const panelMeta = useMemo(() => {
+    if (!panel) return null;
+    const meta = PANEL_META[panel];
+    // For match panel, use matchId as title
+    if (panel === "match" && matchId) {
+      return { ...meta, title: `Match ${matchId}` };
+    }
+    return meta;
+  }, [panel, matchId]);
 
   // Get available tabs for current panel
   const availableTabs = panel ? TABS_BY_PANEL[panel] : [];
@@ -62,10 +79,10 @@ export function useOverviewDrawer() {
   }));
 
   /**
-   * Open drawer with specific panel and optional tab
+   * Open drawer with specific panel and optional tab/matchId
    */
   const openDrawer = useCallback(
-    (opts: { panel: OverviewPanel; tab?: OverviewTab }) => {
+    (opts: { panel: OverviewPanel; tab?: OverviewTab; matchId?: number }) => {
       const params = buildOverviewDrawerParams(opts);
       router.push(`/overview?${params.toString()}`, { scroll: false });
     },
@@ -78,10 +95,10 @@ export function useOverviewDrawer() {
   const setTab = useCallback(
     (newTab: OverviewTab) => {
       if (!panel) return;
-      const params = buildOverviewDrawerParams({ panel, tab: newTab });
+      const params = buildOverviewDrawerParams({ panel, tab: newTab, matchId: matchId ?? undefined });
       router.replace(`/overview?${params.toString()}`, { scroll: false });
     },
-    [router, panel]
+    [router, panel, matchId]
   );
 
   /**
@@ -96,6 +113,7 @@ export function useOverviewDrawer() {
     isOpen,
     panel,
     tab,
+    matchId,
     panelMeta,
     availableTabs,
     tabsMeta,

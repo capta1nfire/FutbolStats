@@ -31,7 +31,7 @@ export function MovementSummaryTile({
   return (
     <div
       className={cn(
-        "bg-surface border border-border rounded-lg p-3 h-full flex flex-col",
+        "bg-tile border border-border rounded-lg p-3 h-full flex flex-col",
         className
       )}
     >

@@ -27,6 +27,7 @@ export const OVERVIEW_PANELS = [
   "llm",         // LlmCostCard
   "upcoming",    // UpcomingMatchesList
   "incidents",   // ActiveIncidentsList
+  "match",       // Match detail (from Today Matches)
 ] as const;
 
 export type OverviewPanel = (typeof OVERVIEW_PANELS)[number];
@@ -70,6 +71,7 @@ export const DEFAULT_TAB_BY_PANEL: Record<OverviewPanel, OverviewTab> = {
   llm: "summary",
   upcoming: "summary",
   incidents: "summary",
+  match: "summary",
 };
 
 // ============================================================================
@@ -92,6 +94,7 @@ export const TABS_BY_PANEL: Record<OverviewPanel, OverviewTab[]> = {
   llm: ["summary"],
   upcoming: ["summary"],
   incidents: ["summary", "timeline"],
+  match: ["summary"],
 };
 
 // ============================================================================
@@ -114,6 +117,7 @@ export const PANEL_META: Record<OverviewPanel, { title: string; icon?: string }>
   llm: { title: "LLM Cost" },
   upcoming: { title: "Upcoming Matches" },
   incidents: { title: "Active Incidents" },
+  match: { title: "Match Details" },
 };
 
 /**
@@ -186,11 +190,15 @@ export function getEffectiveTab(panel: OverviewPanel, tab: OverviewTab | null): 
 export function buildOverviewDrawerParams(opts: {
   panel: OverviewPanel;
   tab?: OverviewTab;
+  matchId?: number;
 }): URLSearchParams {
   const params = new URLSearchParams();
   params.set("panel", opts.panel);
   if (opts.tab && opts.tab !== DEFAULT_TAB_BY_PANEL[opts.panel]) {
     params.set("tab", opts.tab);
+  }
+  if (opts.matchId !== undefined) {
+    params.set("matchId", opts.matchId.toString());
   }
   return params;
 }
@@ -201,6 +209,7 @@ export function buildOverviewDrawerParams(opts: {
 export function buildOverviewDrawerUrl(opts: {
   panel: OverviewPanel;
   tab?: OverviewTab;
+  matchId?: number;
 }): string {
   const params = buildOverviewDrawerParams(opts);
   return `/overview?${params.toString()}`;
@@ -212,8 +221,11 @@ export function buildOverviewDrawerUrl(opts: {
 export function parseDrawerStateFromParams(searchParams: URLSearchParams): {
   panel: OverviewPanel | null;
   tab: OverviewTab | null;
+  matchId: number | null;
 } {
   const panel = parsePanel(searchParams.get("panel"));
   const tab = parseTab(searchParams.get("tab"));
-  return { panel, tab };
+  const matchIdStr = searchParams.get("matchId");
+  const matchId = matchIdStr ? parseInt(matchIdStr, 10) : null;
+  return { panel, tab, matchId: Number.isNaN(matchId) ? null : matchId };
 }

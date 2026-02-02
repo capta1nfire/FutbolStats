@@ -124,7 +124,7 @@ export function OverallOpsBar({
     return (
       <div
         className={cn(
-          "bg-surface border border-border rounded-lg p-3",
+          "bg-tile border border-border rounded-lg p-3",
           className
         )}
       >
@@ -229,7 +229,7 @@ export function OverallOpsBar({
   return (
     <div
       className={cn(
-        "h-12 bg-surface border border-border rounded-lg px-4 flex items-center gap-4",
+        "h-12 bg-tile border border-border rounded-lg px-4 flex items-center gap-4",
         className
       )}
     >

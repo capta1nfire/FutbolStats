@@ -1,21 +1,20 @@
 "use client";
 
+import { useState } from "react";
 import {
   useOpsOverview,
-  useUpcomingMatches,
+  useTodayMatches,
   useActiveIncidentsApi,
 } from "@/lib/hooks";
 import {
   mockApiBudget,
-  mockUpcomingMatches,
   mockActiveIncidents,
 } from "@/lib/mocks";
 import {
   ApiBudgetCard,
   SentryHealthCard,
   LlmCostCard,
-  UpcomingMatchesList,
-  ActiveIncidentsList,
+  TodayMatchesList,
   SotaEnrichmentSection,
   // New compact components for above-the-fold layout
   OverallOpsBar,
@@ -26,6 +25,7 @@ import {
   MovementSummaryTile,
   DiagnosticsTile,
   TitanCompactTile,
+  IncidentsCompactTile,
   // Model Benchmark
   ModelBenchmarkTile,
   // Drawer
@@ -33,10 +33,16 @@ import {
 } from "@/components/overview";
 import { useOverviewDrawer } from "@/lib/hooks/use-overview-drawer";
 import { OverviewPanel } from "@/lib/overview-drawer";
-import { AlertCircle, AlertTriangle, Calendar } from "lucide-react";
+import { AlertCircle, Calendar, ChevronLeft, ChevronRight, LayoutDashboard } from "lucide-react";
 import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 /**
  * Overview Page
@@ -45,11 +51,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
  * Above-the-fold layout optimized for 1440x900.
  *
  * Layout:
- * - Left Rail (277px): Overall Ops Bar, API-Football Budget, Sentry, LLM Cost, Upcoming Matches
+ * - Left Rail (290px): Today Matches
  * - Main:
  *   - Row 1: Model Benchmark (full width)
- *   - Row 2: Grid 2x2 (Predictions, Jobs, Fastpath, PIT Progress)
- *   - Row 3: Diagnostics + TITAN
+ *   - Row 2: Grid 8 tiles (OverallOps, Incidents, Predictions, Jobs, Fastpath, PIT, TITAN)
+ *   - Row 3: [API Budget + Sentry + LLM Cost] | Diagnostics
  *   - Row 4: SOTA Enrichment + Movement Summary
  */
 /**
@@ -113,12 +119,12 @@ export default function OverviewPage() {
     refetch,
   } = useOpsOverview();
 
-  // Fetch upcoming matches from real backend
+  // Fetch today's matches from real backend
   const {
-    matches: upcomingMatches,
-    isDegraded: isUpcomingDegraded,
-    isLoading: isUpcomingLoading,
-  } = useUpcomingMatches();
+    matches: todayMatches,
+    isDegraded: isTodayDegraded,
+    isLoading: isTodayLoading,
+  } = useTodayMatches();
 
   // Fetch active incidents from real backend
   const {
@@ -126,6 +132,9 @@ export default function OverviewPage() {
     isDegraded: isIncidentsDegraded,
     isLoading: isIncidentsLoading,
   } = useActiveIncidentsApi();
+
+  // Left rail collapse state
+  const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
 
   // Loading state
   if (isLoading) {
@@ -161,11 +170,11 @@ export default function OverviewPage() {
   // Use real data with mock fallback for budget only
   const displayBudget = budget ?? mockApiBudget;
 
-  // Use real upcoming matches with mock fallback
-  const displayUpcomingMatches = upcomingMatches ?? mockUpcomingMatches;
-
   // Use real active incidents with mock fallback
   const displayActiveIncidents = activeIncidents ?? mockActiveIncidents;
+
+  // Today's matches (no mock fallback - show empty state if unavailable)
+  const displayTodayMatches = todayMatches ?? [];
 
   // Build statuses for overall rollup
   const overallStatuses = {
@@ -182,12 +191,102 @@ export default function OverviewPage() {
       {/* Overview Drawer (URL-controlled) */}
       <OverviewDrawer />
 
-      {/* Left Rail: Overall Ops + Budget + Sentry + LLM Cost + Upcoming Matches */}
-      <aside className="w-[277px] min-w-[277px] shrink-0 border-r border-border bg-sidebar flex flex-col overflow-hidden">
-        {/* Content */}
-        <ScrollArea className="flex-1">
-          <div className="p-3 space-y-3">
-            {/* Overall Ops Bar - compact version for sidebar */}
+      {/* Left Rail: Today Matches */}
+      {leftRailCollapsed ? (
+        /* Collapsed state: thin rail with expand button */
+        <aside className="w-12 shrink-0 bg-sidebar flex flex-col items-center py-3 transition-smooth">
+          <TooltipProvider delayDuration={0}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setLeftRailCollapsed(false)}
+                  className="mb-2"
+                  aria-label="Expand panel"
+                >
+                  <ChevronRight className="h-4 w-4" strokeWidth={1.5} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                <p>Expand panel</p>
+              </TooltipContent>
+            </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-muted-foreground"
+                  aria-label="Overview"
+                >
+                  <LayoutDashboard className="h-4 w-4" strokeWidth={1.5} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                <p>Overview</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </aside>
+      ) : (
+        /* Expanded state: full panel */
+        <aside className="w-[290px] min-w-[290px] shrink-0 bg-sidebar flex flex-col overflow-hidden transition-smooth">
+          {/* Header with collapse button */}
+          <div className="h-12 flex items-center justify-between pl-3 pr-0 shrink-0">
+            <span className="text-sm font-semibold text-foreground">Overview</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setLeftRailCollapsed(true)}
+              className="h-8 w-8 -mr-1"
+              aria-label="Collapse panel"
+            >
+              <ChevronLeft className="h-4 w-4" strokeWidth={1.5} />
+            </Button>
+          </div>
+
+          {/* Content - min-h-0 allows flex child to shrink below content size */}
+          <ScrollArea className="flex-1 min-h-0">
+            <div className="pl-3 pr-1.5 py-3 space-y-3">
+              {/* Today Matches */}
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium text-foreground">
+                    Today Matches
+                  </span>
+                  <span className="text-sm font-medium text-primary">
+                    ({displayTodayMatches.length})
+                  </span>
+                  {isTodayDegraded && (
+                    <span className="text-[10px] text-[var(--status-warning-text)] bg-[var(--status-warning-bg)] px-1.5 py-0.5 rounded">
+                      error
+                    </span>
+                  )}
+                </div>
+                {isTodayLoading ? (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader size="sm" />
+                  </div>
+                ) : (
+                  <TodayMatchesList matches={displayTodayMatches} />
+                )}
+              </div>
+            </div>
+          </ScrollArea>
+        </aside>
+      )}
+
+      {/* Main content - optimized for above-the-fold at 1440x900 */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="pl-1.5 pr-4 py-4 space-y-4 flex-1 overflow-auto">
+          {/* Row 1: Model Benchmark - Full Width */}
+          <ModelBenchmarkTile />
+
+          {/* Row 2: Grid - 8 compact tiles */}
+          <div className="grid grid-cols-4 xl:grid-cols-8 gap-3">
             <OverallOpsBar
               statuses={overallStatuses}
               jobs={jobs}
@@ -195,86 +294,10 @@ export default function OverviewPage() {
               onRefresh={() => refetch()}
               compact
             />
-
-            <ClickableTile panel="budget">
-              <ApiBudgetCard
-                budget={displayBudget}
-                isMockFallback={isBudgetDegraded}
-                requestId={requestId}
-              />
-            </ClickableTile>
-            <ClickableTile panel="sentry">
-              <SentryHealthCard
-                sentry={sentry}
-                isMockFallback={isSentryDegraded}
-              />
-            </ClickableTile>
-            <ClickableTile panel="llm">
-              <LlmCostCard
-                llmCost={llmCost}
-                isMockFallback={isLlmCostDegraded}
-              />
-            </ClickableTile>
-
-            {/* Upcoming Matches */}
-            <div className="pt-3 border-t border-border">
-              <div className="flex items-center gap-2 mb-2">
-                <Calendar className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-medium text-foreground">
-                  Upcoming Matches
-                </span>
-                {isUpcomingDegraded && (
-                  <span className="text-[10px] text-[var(--status-warning-text)] bg-[var(--status-warning-bg)] px-1.5 py-0.5 rounded">
-                    mock
-                  </span>
-                )}
-              </div>
-              {isUpcomingLoading ? (
-                <div className="flex items-center justify-center py-4">
-                  <Loader size="sm" />
-                </div>
-              ) : (
-                <UpcomingMatchesList
-                  matches={displayUpcomingMatches.slice(0, 5)}
-                />
-              )}
-            </div>
-
-            {/* Active Incidents */}
-            <div className="pt-3 border-t border-border">
-              <div className="flex items-center gap-2 mb-2">
-                <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-medium text-foreground">
-                  Active Incidents
-                </span>
-                {isIncidentsDegraded && (
-                  <span className="text-[10px] text-[var(--status-warning-text)] bg-[var(--status-warning-bg)] px-1.5 py-0.5 rounded">
-                    mock
-                  </span>
-                )}
-              </div>
-              {isIncidentsLoading ? (
-                <div className="flex items-center justify-center py-4">
-                  <Loader size="sm" />
-                </div>
-              ) : (
-                <ActiveIncidentsList
-                  incidents={displayActiveIncidents.slice(0, 5)}
-                />
-              )}
-            </div>
-          </div>
-        </ScrollArea>
-      </aside>
-
-      {/* Main content - optimized for above-the-fold at 1440x900 */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="p-4 space-y-4 flex-1 overflow-auto">
-          {/* Row 1: Model Benchmark - Full Width */}
-          <ModelBenchmarkTile />
-
-          {/* Row 2: Grid 2x2 - Predictions, Jobs, Fastpath, PIT Progress */}
-          <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+            <IncidentsCompactTile
+              incidents={displayActiveIncidents}
+              isMockFallback={isIncidentsDegraded}
+            />
             <ClickableTile panel="predictions">
               <PredictionsCompactTile
                 predictions={predictions}
@@ -301,17 +324,39 @@ export default function OverviewPage() {
                 isPitActivityDegraded={isPitActivityDegraded}
               />
             </ClickableTile>
-          </div>
-
-          {/* Row 3: Diagnostics (Shadow Mode + Sensor B) + TITAN */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-            <DiagnosticsTile
-              shadowMode={shadowMode}
-              sensorB={sensorB}
-            />
             <TitanCompactTile
               titan={titan}
               isMockFallback={isTitanDegraded}
+            />
+          </div>
+
+          {/* Row 3: API Budget + Sentry + LLM Cost | Diagnostics */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+            {/* Left half: 3 compact cards */}
+            <div className="grid grid-cols-3 gap-3">
+              <ClickableTile panel="budget">
+                <ApiBudgetCard
+                  budget={displayBudget}
+                  isMockFallback={isBudgetDegraded}
+                  requestId={requestId}
+                />
+              </ClickableTile>
+              <ClickableTile panel="sentry">
+                <SentryHealthCard
+                  sentry={sentry}
+                  isMockFallback={isSentryDegraded}
+                />
+              </ClickableTile>
+              <ClickableTile panel="llm">
+                <LlmCostCard
+                  llmCost={llmCost}
+                  isMockFallback={isLlmCostDegraded}
+                />
+              </ClickableTile>
+            </div>
+            <DiagnosticsTile
+              shadowMode={shadowMode}
+              sensorB={sensorB}
             />
           </div>
 

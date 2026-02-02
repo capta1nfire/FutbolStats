@@ -37,7 +37,7 @@ export function UpcomingMatchesList({
         <Link
           key={match.id}
           href={`/matches?id=${match.id}`}
-          className="block p-3 rounded-lg bg-background hover:bg-surface border border-border transition-colors"
+          className="block p-3 rounded-lg bg-background hover:bg-tile border border-border transition-colors"
         >
           <div className="flex items-center justify-between mb-1">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">

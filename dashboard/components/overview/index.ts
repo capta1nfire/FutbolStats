@@ -1,6 +1,7 @@
 export { HealthCard } from "./HealthCard";
 export { CoverageBar } from "./CoverageBar";
 export { UpcomingMatchesList } from "./UpcomingMatchesList";
+export { TodayMatchesList } from "./TodayMatchesList";
 export { ActiveIncidentsList } from "./ActiveIncidentsList";
 export { ApiBudgetCard } from "./ApiBudgetCard";
 export { SentryHealthCard } from "./SentryHealthCard";
@@ -20,6 +21,7 @@ export { FastpathCompactTile } from "./FastpathCompactTile";
 export { PitProgressCompactTile } from "./PitProgressCompactTile";
 export { MovementSummaryTile } from "./MovementSummaryTile";
 export { TitanCompactTile } from "./TitanCompactTile";
+export { IncidentsCompactTile } from "./IncidentsCompactTile";
 // Model Benchmark with ApexCharts
 export { ModelBenchmarkTile } from "./ModelBenchmarkTile";
 // Overview Drawer
