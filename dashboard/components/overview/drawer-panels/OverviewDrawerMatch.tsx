@@ -52,5 +52,9 @@ export function OverviewDrawerMatch({ tab }: OverviewDrawerMatchProps) {
     );
   }
 
-  return <MatchDetailContent match={match} />;
+  return (
+    <div className="-mt-3">
+      <MatchDetailContent match={match} />
+    </div>
+  );
 }
