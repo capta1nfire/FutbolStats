@@ -313,6 +313,34 @@ PREDICTIONS_KILLSWITCH_ELIGIBLE = Gauge(
 )
 
 # =============================================================================
+# EXTC SHADOW METRICS (experimental ext-C model evaluation)
+# =============================================================================
+
+EXTC_SHADOW_INSERTED = Counter(
+    "extc_shadow_predictions_inserted_total",
+    "Shadow predictions inserted for ext-C model",
+    [],
+)
+
+EXTC_SHADOW_SKIPPED = Counter(
+    "extc_shadow_predictions_skipped_total",
+    "Shadow predictions skipped (already exist)",
+    [],
+)
+
+EXTC_SHADOW_ERRORS = Counter(
+    "extc_shadow_errors_total",
+    "Errors in ext-C shadow job",
+    [],
+)
+
+EXTC_SHADOW_LAST_SUCCESS = Gauge(
+    "extc_shadow_last_success_timestamp",
+    "Unix timestamp of last successful ext-C shadow run",
+    [],
+)
+
+# =============================================================================
 # ENTITY MAPPING METRICS
 # =============================================================================
 
