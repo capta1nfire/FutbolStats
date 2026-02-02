@@ -93,6 +93,8 @@ class ETLPipeline:
         if existing_match:
             # Update existing match
             existing_match.date = match_data.date
+            # Round/matchday (safe overwrite; source-of-truth is provider)
+            existing_match.round = match_data.round
             # Only update goals if new value is not None (don't overwrite valid data with None)
             if match_data.home_goals is not None:
                 existing_match.home_goals = match_data.home_goals
@@ -195,6 +197,7 @@ class ETLPipeline:
             date=match_data.date,
             league_id=match_data.league_id,
             season=match_data.season,
+            round=match_data.round,
             home_team_id=home_team_id,
             away_team_id=away_team_id,
             home_goals=match_data.home_goals,

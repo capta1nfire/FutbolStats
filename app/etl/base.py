@@ -25,6 +25,7 @@ class MatchData:
     date: datetime
     league_id: int
     season: int
+    round: Optional[str] = None  # API-Football: fixture.league.round (e.g., "Regular Season - 21")
     home_team_external_id: int
     away_team_external_id: int
     home_goals: Optional[int]

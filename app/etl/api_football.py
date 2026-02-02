@@ -404,6 +404,7 @@ class APIFootballProvider(DataProvider):
             date=match_date,
             league_id=league_id,
             season=fixture.get("league", {}).get("season", datetime.now().year),
+            round=fixture.get("league", {}).get("round"),
             home_team_external_id=teams.get("home", {}).get("id"),
             away_team_external_id=teams.get("away", {}).get("id"),
             home_goals=goals.get("home"),

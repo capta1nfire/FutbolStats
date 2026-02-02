@@ -46,6 +46,11 @@ class Match(SQLModel, table=True):
     date: datetime = Field(index=True, description="Match date and time")
     league_id: int = Field(index=True, description="Competition ID")
     season: int = Field(description="Season year")
+    round: Optional[str] = Field(
+        default=None,
+        max_length=80,
+        description="API-Football fixture.league.round (e.g., 'Regular Season - 21')",
+    )
 
     home_team_id: int = Field(foreign_key="teams.id", index=True)
     away_team_id: int = Field(foreign_key="teams.id", index=True)
