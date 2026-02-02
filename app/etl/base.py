@@ -25,7 +25,6 @@ class MatchData:
     date: datetime
     league_id: int
     season: int
-    round: Optional[str] = None  # API-Football: fixture.league.round (e.g., "Regular Season - 21")
     home_team_external_id: int
     away_team_external_id: int
     home_goals: Optional[int]
@@ -33,6 +32,8 @@ class MatchData:
     stats: Optional[dict]
     status: str
     elapsed: Optional[int]  # Current minute for live matches
+    # --- Fields with defaults must come after fields without defaults ---
+    round: Optional[str] = None  # API-Football: fixture.league.round (e.g., "Regular Season - 21")
     elapsed_extra: Optional[int] = None  # Added/injury time (e.g., 3 for 90+3)
     match_type: str = "official"  # "official" or "friendly"
     match_weight: float = 1.0
