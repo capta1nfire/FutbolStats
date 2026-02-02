@@ -51,8 +51,8 @@ function getStatusBadge(status: string) {
     case "AET":
     case "PEN":
       return (
-        <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-muted text-muted-foreground">
-          {s}
+        <span className="text-[10px] font-medium text-muted-foreground">
+          Final
         </span>
       );
     case "PST":
