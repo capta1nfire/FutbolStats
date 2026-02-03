@@ -2631,11 +2631,12 @@ async def evaluate_shadow_predictions():
 
 
 # ═══════════════════════════════════════════════════════════════
-# SHADOW ext-C (experimental model predictions)
+# SHADOW ext-A/B/C (experimental model predictions)
+# ATI: Un solo job genérico procesa todas las variantes habilitadas
 # ═══════════════════════════════════════════════════════════════
 
-# Features for ext-C model (same as training)
-EXTC_14_FEATURES = [
+# Features for ext models (same as training - shared by A/B/C)
+EXT_14_FEATURES = [
     "home_goals_scored_avg",
     "home_goals_conceded_avg",
     "home_shots_avg",
@@ -2652,200 +2653,250 @@ EXTC_14_FEATURES = [
     "rest_diff",
 ]
 
+# Legacy alias
+EXTC_14_FEATURES = EXT_14_FEATURES
 
-async def generate_extc_shadow_predictions():
+
+async def generate_ext_shadow_predictions():
     """
-    Generate shadow predictions for v1.0.2-ext-C model.
+    Generate shadow predictions for ext-A/B/C models.
 
-    Runs every EXTC_SHADOW_INTERVAL_MINUTES to process new snapshots.
+    ATI: Un solo job genérico que procesa todas las variantes habilitadas.
+    Cada variante se procesa independientemente (fail-closed por variante).
+
     Writes ONLY to predictions_experiments (never to predictions).
-
-    Guardrails ATI:
-    - Write target: predictions_experiments only
-    - Keying: ON CONFLICT (snapshot_id, model_version) - idempotent
-    - PIT-safe: created_at = snapshot_at - 1s
-    - Gating: snapshot_type='lineup_confirmed', valid window 10-90min
-    - Rate limit: EXTC_SHADOW_BATCH_SIZE per run
-    - Fail-closed: log + skip on errors
     """
     from app.config import get_settings
     from app.telemetry.metrics import (
-        EXTC_SHADOW_INSERTED,
-        EXTC_SHADOW_SKIPPED,
-        EXTC_SHADOW_ERRORS,
-        EXTC_SHADOW_LAST_SUCCESS,
+        EXT_SHADOW_INSERTED,
+        EXT_SHADOW_SKIPPED,
+        EXT_SHADOW_ERRORS,
+        EXT_SHADOW_LAST_SUCCESS,
     )
+
+    settings = get_settings()
+    job_name = "ext_shadow"
+    start_time = time.time()
+
+    # Build list of enabled variants
+    variants = []
+    if settings.EXTA_SHADOW_ENABLED:
+        variants.append({
+            "name": "A",
+            "model_version": settings.EXTA_SHADOW_MODEL_VERSION,
+            "model_path": settings.EXTA_SHADOW_MODEL_PATH,
+        })
+    if settings.EXTB_SHADOW_ENABLED:
+        variants.append({
+            "name": "B",
+            "model_version": settings.EXTB_SHADOW_MODEL_VERSION,
+            "model_path": settings.EXTB_SHADOW_MODEL_PATH,
+        })
+    if settings.EXTC_SHADOW_ENABLED:
+        variants.append({
+            "name": "C",
+            "model_version": settings.EXTC_SHADOW_MODEL_VERSION,
+            "model_path": settings.EXTC_SHADOW_MODEL_PATH,
+        })
+
+    if not variants:
+        return {"status": "disabled", "variants": []}
+
+    results = {}
+    for variant in variants:
+        try:
+            result = await _generate_ext_shadow_for_variant(
+                variant_name=variant["name"],
+                model_version=variant["model_version"],
+                model_path=variant["model_path"],
+                settings=settings,
+            )
+            results[variant["name"]] = result
+
+            # Update metrics
+            if result.get("inserted", 0) > 0:
+                EXT_SHADOW_INSERTED.labels(variant=variant["name"]).inc(result["inserted"])
+            if result.get("skipped", 0) > 0:
+                EXT_SHADOW_SKIPPED.labels(variant=variant["name"]).inc(result["skipped"])
+            EXT_SHADOW_LAST_SUCCESS.labels(variant=variant["name"]).set_to_current_time()
+
+        except Exception as e:
+            logger.error(f"[EXT_SHADOW] Variant {variant['name']} failed: {e}")
+            EXT_SHADOW_ERRORS.labels(variant=variant["name"]).inc()
+            results[variant["name"]] = {"status": "error", "error": str(e)}
+
+    duration_ms = (time.time() - start_time) * 1000
+    total_inserted = sum(r.get("inserted", 0) for r in results.values() if isinstance(r, dict))
+    record_job_run(job=job_name, status="ok", duration_ms=duration_ms)
+
+    if total_inserted > 0:
+        logger.info(f"[EXT_SHADOW] Total inserted: {total_inserted} across {len(variants)} variants")
+
+    return {"status": "ok", "variants": results}
+
+
+async def _generate_ext_shadow_for_variant(
+    variant_name: str,
+    model_version: str,
+    model_path: str,
+    settings,
+) -> dict:
+    """
+    Generate predictions for a single ext variant.
+
+    ATI: Fail-closed - if model not found or error, return error dict without crashing.
+    """
     from pathlib import Path
     from collections import defaultdict
     import numpy as np
     import xgboost as xgb
 
-    settings = get_settings()
-    job_name = "extc_shadow"
-    start_time = time.time()
+    # Load model (fail-closed if not found)
+    if not Path(model_path).exists():
+        logger.warning(f"[EXT_SHADOW] ext-{variant_name}: Model not found: {model_path}")
+        return {"status": "error", "reason": "model_not_found", "path": model_path}
 
-    # Gating: check if enabled
-    if not settings.EXTC_SHADOW_ENABLED:
-        return {"status": "disabled"}
+    model = xgb.XGBClassifier()
+    model.load_model(model_path)
 
-    try:
-        # Load model (fail-closed if not found)
-        model_path = settings.EXTC_SHADOW_MODEL_PATH
-        if not Path(model_path).exists():
-            logger.error(f"[EXTC_SHADOW] Model not found: {model_path}")
-            record_job_run(job=job_name, status="error", duration_ms=0)
-            return {"status": "error", "reason": "model_not_found"}
+    async with AsyncSessionLocal() as session:
+        # ATI FIX v2: Siempre usar start_at fijo para evitar gaps si job cae >2h
+        start_filter = f"AND os.snapshot_at >= '{settings.EXT_SHADOW_START_AT}'"
 
-        model = xgb.XGBClassifier()
-        model.load_model(model_path)
+        # ATI FIX: Anti-join para encontrar snapshots pendientes
+        snapshots_result = await session.execute(text(f"""
+            SELECT
+                os.id as snapshot_id,
+                os.match_id,
+                os.snapshot_at,
+                m.home_team_id,
+                m.away_team_id,
+                m.date as match_date
+            FROM odds_snapshots os
+            JOIN matches m ON os.match_id = m.id
+            LEFT JOIN predictions_experiments pe
+                ON pe.snapshot_id = os.id
+                AND pe.model_version = :model_version
+            WHERE os.snapshot_type = 'lineup_confirmed'
+              {start_filter}
+              AND pe.snapshot_id IS NULL
+              AND m.date > os.snapshot_at + INTERVAL '10 minutes'
+              AND m.date < os.snapshot_at + INTERVAL '90 minutes'
+            ORDER BY os.snapshot_at
+            LIMIT :batch_size
+        """), {
+            "model_version": model_version,
+            "batch_size": settings.EXT_SHADOW_BATCH_SIZE
+        })
+        snapshots = [dict(r._mapping) for r in snapshots_result.fetchall()]
 
-        async with AsyncSessionLocal() as session:
-            # ATI FIX v2: Siempre usar start_at fijo para evitar gaps si job cae >2h
-            # OOS_ONLY controla el valor de start_at, pero ambos modos usan fecha fija
-            start_filter = f"AND os.snapshot_at >= '{settings.EXTC_SHADOW_START_AT}'"
+        if not snapshots:
+            return {"status": "ok", "inserted": 0, "skipped": 0}
 
-            # ATI FIX: Anti-join para encontrar snapshots pendientes
-            snapshots_result = await session.execute(text(f"""
-                SELECT
-                    os.id as snapshot_id,
-                    os.match_id,
-                    os.snapshot_at,
-                    m.home_team_id,
-                    m.away_team_id,
-                    m.date as match_date
-                FROM odds_snapshots os
-                JOIN matches m ON os.match_id = m.id
-                LEFT JOIN predictions_experiments pe
-                    ON pe.snapshot_id = os.id
-                    AND pe.model_version = :model_version
-                WHERE os.snapshot_type = 'lineup_confirmed'
-                  {start_filter}
-                  AND pe.snapshot_id IS NULL
-                  AND m.date > os.snapshot_at + INTERVAL '10 minutes'
-                  AND m.date < os.snapshot_at + INTERVAL '90 minutes'
-                ORDER BY os.snapshot_at
-                LIMIT :batch_size
-            """), {
-                "model_version": settings.EXTC_SHADOW_MODEL_VERSION,
-                "batch_size": settings.EXTC_SHADOW_BATCH_SIZE
-            })
-            snapshots = [dict(r._mapping) for r in snapshots_result.fetchall()]
+        # Get all team IDs and build match history index
+        all_team_ids = set()
+        for s in snapshots:
+            all_team_ids.add(s['home_team_id'])
+            all_team_ids.add(s['away_team_id'])
 
-            if not snapshots:
-                record_job_run(job=job_name, status="ok", duration_ms=(time.time()-start_time)*1000)
-                return {"status": "ok", "inserted": 0, "skipped": 0}
+        # Get league matches for feature calculation (last 365 days from earliest snapshot)
+        min_snapshot_at = min(s['snapshot_at'] for s in snapshots)
+        earliest_date = min_snapshot_at - timedelta(days=365)
 
-            # Get all team IDs and build match history index
-            all_team_ids = set()
-            for s in snapshots:
-                all_team_ids.add(s['home_team_id'])
-                all_team_ids.add(s['away_team_id'])
+        # ATI FIX v2: Coherencia dataset - away_goals NOT NULL + tainted filter
+        league_matches_result = await session.execute(text("""
+            SELECT
+                m.id,
+                m.date,
+                m.home_team_id,
+                m.away_team_id,
+                m.home_goals,
+                m.away_goals,
+                COALESCE((m.stats->'home'->>'total_shots')::int, 0) as home_shots,
+                COALESCE((m.stats->'away'->>'total_shots')::int, 0) as away_shots,
+                COALESCE((m.stats->'home'->>'corner_kicks')::int, 0) as home_corners,
+                COALESCE((m.stats->'away'->>'corner_kicks')::int, 0) as away_corners
+            FROM matches m
+            JOIN admin_leagues al ON m.league_id = al.league_id
+            WHERE m.status = 'FT'
+              AND m.home_goals IS NOT NULL
+              AND m.away_goals IS NOT NULL
+              AND (m.tainted IS NULL OR m.tainted = false)
+              AND al.kind = 'league'
+              AND m.date >= :earliest
+              AND (m.home_team_id = ANY(:team_ids) OR m.away_team_id = ANY(:team_ids))
+            ORDER BY m.date
+        """), {"earliest": earliest_date, "team_ids": list(all_team_ids)})
+        league_matches = [dict(r._mapping) for r in league_matches_result.fetchall()]
 
-            # Get league matches for feature calculation (last 365 days from earliest snapshot)
-            min_snapshot_at = min(s['snapshot_at'] for s in snapshots)
-            earliest_date = min_snapshot_at - timedelta(days=365)
+        # Build team match index
+        team_index = defaultdict(list)
+        for m in league_matches:
+            for tid in [m['home_team_id'], m['away_team_id']]:
+                team_index[tid].append((m['date'], m))
 
-            # ATI FIX v2: Coherencia dataset - away_goals NOT NULL + tainted filter
-            league_matches_result = await session.execute(text("""
-                SELECT
-                    m.id,
-                    m.date,
-                    m.home_team_id,
-                    m.away_team_id,
-                    m.home_goals,
-                    m.away_goals,
-                    COALESCE((m.stats->'home'->>'total_shots')::int, 0) as home_shots,
-                    COALESCE((m.stats->'away'->>'total_shots')::int, 0) as away_shots,
-                    COALESCE((m.stats->'home'->>'corner_kicks')::int, 0) as home_corners,
-                    COALESCE((m.stats->'away'->>'corner_kicks')::int, 0) as away_corners
-                FROM matches m
-                JOIN admin_leagues al ON m.league_id = al.league_id
-                WHERE m.status = 'FT'
-                  AND m.home_goals IS NOT NULL
-                  AND m.away_goals IS NOT NULL
-                  AND (m.tainted IS NULL OR m.tainted = false)
-                  AND al.kind = 'league'
-                  AND m.date >= :earliest
-                  AND (m.home_team_id = ANY(:team_ids) OR m.away_team_id = ANY(:team_ids))
-                ORDER BY m.date
-            """), {"earliest": earliest_date, "team_ids": list(all_team_ids)})
-            league_matches = [dict(r._mapping) for r in league_matches_result.fetchall()]
+        # Sort by date for each team
+        for tid in team_index:
+            team_index[tid].sort(key=lambda x: x[0])
 
-            # Build team match index
-            team_index = defaultdict(list)
-            for m in league_matches:
-                for tid in [m['home_team_id'], m['away_team_id']]:
-                    team_index[tid].append((m['date'], m))
+        # Generate predictions
+        inserted = 0
+        skipped = 0
+        errors = 0
 
-            # Sort by date for each team
-            for tid in team_index:
-                team_index[tid].sort(key=lambda x: x[0])
+        for snap in snapshots:
+            try:
+                # Calculate features as-of snapshot_at
+                features = _calculate_ext_features(
+                    snap, team_index, snap['snapshot_at']
+                )
+                feature_vector = np.array([[features.get(f, 0) for f in EXT_14_FEATURES]])
+                probs = model.predict_proba(feature_vector)[0]
 
-            # Generate predictions
-            inserted = 0
-            skipped = 0
-            errors = 0
-
-            for snap in snapshots:
-                try:
-                    # Calculate features as-of snapshot_at
-                    features = _calculate_extc_features(
-                        snap, team_index, snap['snapshot_at']
-                    )
-                    feature_vector = np.array([[features.get(f, 0) for f in EXTC_14_FEATURES]])
-                    probs = model.predict_proba(feature_vector)[0]
-
-                    await session.execute(text("""
-                        INSERT INTO predictions_experiments
-                        (snapshot_id, match_id, snapshot_at, model_version,
-                         home_prob, draw_prob, away_prob, feature_set, created_at)
-                        VALUES (:snapshot_id, :match_id, :snapshot_at, :model_version,
-                                :home_prob, :draw_prob, :away_prob, :feature_set, :created_at)
-                        ON CONFLICT (snapshot_id, model_version) DO NOTHING
-                    """), {
-                        "snapshot_id": snap['snapshot_id'],
-                        "match_id": snap['match_id'],
-                        "snapshot_at": snap['snapshot_at'],
-                        "model_version": settings.EXTC_SHADOW_MODEL_VERSION,
-                        "home_prob": float(probs[0]),
-                        "draw_prob": float(probs[1]),
-                        "away_prob": float(probs[2]),
-                        "feature_set": json.dumps(EXTC_14_FEATURES),
-                        "created_at": snap['snapshot_at'] - timedelta(seconds=1),
-                    })
+                # ATI FIX: RETURNING 1 para detectar insert real vs conflict skip
+                # ATI FIX: CAST explícito a jsonb para asyncpg
+                result = await session.execute(text("""
+                    INSERT INTO predictions_experiments
+                    (snapshot_id, match_id, snapshot_at, model_version,
+                     home_prob, draw_prob, away_prob, feature_set, created_at)
+                    VALUES (:snapshot_id, :match_id, :snapshot_at, :model_version,
+                            :home_prob, :draw_prob, :away_prob,
+                            CAST(:feature_set AS jsonb), :created_at)
+                    ON CONFLICT (snapshot_id, model_version) DO NOTHING
+                    RETURNING 1
+                """), {
+                    "snapshot_id": snap['snapshot_id'],
+                    "match_id": snap['match_id'],
+                    "snapshot_at": snap['snapshot_at'],
+                    "model_version": model_version,
+                    "home_prob": float(probs[0]),
+                    "draw_prob": float(probs[1]),
+                    "away_prob": float(probs[2]),
+                    "feature_set": json.dumps(EXT_14_FEATURES),
+                    "created_at": snap['snapshot_at'] - timedelta(seconds=1),
+                })
+                # Si RETURNING devuelve algo → insertó; si None → conflict (skipped)
+                if result.fetchone() is not None:
                     inserted += 1
-                except Exception as e:
-                    logger.warning(f"[EXTC_SHADOW] Error for snapshot {snap['snapshot_id']}: {e}")
-                    errors += 1
+                else:
+                    skipped += 1
+            except Exception as e:
+                logger.warning(f"[EXT_SHADOW] ext-{variant_name} error for snapshot {snap['snapshot_id']}: {e}")
+                errors += 1
 
-            await session.commit()
+        await session.commit()
 
-            duration_ms = (time.time() - start_time) * 1000
-            record_job_run(job=job_name, status="ok", duration_ms=duration_ms)
+        if inserted > 0 or skipped > 0:
+            logger.info(f"[EXT_SHADOW] ext-{variant_name}: inserted={inserted}, skipped={skipped}, errors={errors}")
 
-            # Observability
-            EXTC_SHADOW_INSERTED.inc(inserted)
-            EXTC_SHADOW_SKIPPED.inc(skipped)
-            EXTC_SHADOW_LAST_SUCCESS.set_to_current_time()
-
-            if inserted > 0:
-                logger.info(f"[EXTC_SHADOW] Generated {inserted} predictions, errors={errors}")
-
-            return {"status": "ok", "inserted": inserted, "skipped": skipped, "errors": errors}
-
-    except Exception as e:
-        duration_ms = (time.time() - start_time) * 1000
-        logger.error(f"[EXTC_SHADOW] Failed: {e}")
-        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
-        EXTC_SHADOW_ERRORS.inc()
-        return {"status": "error", "error": str(e)}
+        return {"status": "ok", "inserted": inserted, "skipped": skipped, "errors": errors}
 
 
-def _calculate_extc_features(snap: dict, team_index: dict, snapshot_at: datetime) -> dict:
+def _calculate_ext_features(snap: dict, team_index: dict, snapshot_at: datetime) -> dict:
     """
-    Calculate ext-C features as-of snapshot_at.
+    Calculate ext features as-of snapshot_at.
 
-    Uses the same 14 features as the ext-C model was trained on.
+    Uses the same 14 features as the ext models were trained on.
     PIT-safe: only uses matches with date < snapshot_at.
     """
     import numpy as np
@@ -2937,6 +2988,11 @@ def _calculate_extc_features(snap: dict, team_index: dict, snapshot_at: datetime
     features['rest_diff'] = features['home_rest_days'] - features['away_rest_days']
 
     return features
+
+
+# Legacy alias (calls new generic function)
+# ATI: Mantenido para compatibilidad con jobs existentes
+_calculate_extc_features = _calculate_ext_features
 
 
 async def retrain_sensor_model():
@@ -6463,14 +6519,28 @@ def start_scheduler(ml_engine):
             replace_existing=True,
         )
 
-    # ext-C Shadow job: Generate experimental predictions for v1.0.2-ext-C model
-    # ATI guardrails: default OFF, max_instances=1, coalesce=True
-    if sensor_settings.EXTC_SHADOW_ENABLED:
+    # ext-A/B/C Shadow job: Generate experimental predictions for all enabled variants
+    # ATI: Un solo job genérico procesa A/B/C en paralelo
+    # ATI guardrails: default OFF per variant, max_instances=1, coalesce=True
+    ext_shadow_enabled = (
+        sensor_settings.EXTA_SHADOW_ENABLED or
+        sensor_settings.EXTB_SHADOW_ENABLED or
+        sensor_settings.EXTC_SHADOW_ENABLED
+    )
+    if ext_shadow_enabled:
+        enabled_variants = []
+        if sensor_settings.EXTA_SHADOW_ENABLED:
+            enabled_variants.append("A")
+        if sensor_settings.EXTB_SHADOW_ENABLED:
+            enabled_variants.append("B")
+        if sensor_settings.EXTC_SHADOW_ENABLED:
+            enabled_variants.append("C")
+
         scheduler.add_job(
-            generate_extc_shadow_predictions,
-            trigger=IntervalTrigger(minutes=sensor_settings.EXTC_SHADOW_INTERVAL_MINUTES),
-            id="extc_shadow",
-            name=f"ext-C Shadow Predictions (every {sensor_settings.EXTC_SHADOW_INTERVAL_MINUTES}min)",
+            generate_ext_shadow_predictions,
+            trigger=IntervalTrigger(minutes=sensor_settings.EXT_SHADOW_INTERVAL_MINUTES),
+            id="ext_shadow",
+            name=f"ext-{'/'.join(enabled_variants)} Shadow (every {sensor_settings.EXT_SHADOW_INTERVAL_MINUTES}min)",
             replace_existing=True,
             max_instances=1,  # ATI: evitar solapes si una corrida tarda
             coalesce=True,    # ATI: fusionar runs acumulados

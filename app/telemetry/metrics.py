@@ -313,30 +313,56 @@ PREDICTIONS_KILLSWITCH_ELIGIBLE = Gauge(
 )
 
 # =============================================================================
-# EXTC SHADOW METRICS (experimental ext-C model evaluation)
+# EXT SHADOW METRICS (experimental ext-A/B/C model evaluation)
+# ATI: Métricas genéricas con label por variante
 # =============================================================================
 
+EXT_SHADOW_INSERTED = Counter(
+    "ext_shadow_predictions_inserted_total",
+    "Shadow predictions inserted for ext models",
+    ["variant"],  # A, B, C
+)
+
+EXT_SHADOW_SKIPPED = Counter(
+    "ext_shadow_predictions_skipped_total",
+    "Shadow predictions skipped (already exist)",
+    ["variant"],
+)
+
+EXT_SHADOW_ERRORS = Counter(
+    "ext_shadow_errors_total",
+    "Errors in ext shadow job",
+    ["variant"],
+)
+
+EXT_SHADOW_LAST_SUCCESS = Gauge(
+    "ext_shadow_last_success_timestamp",
+    "Unix timestamp of last successful ext shadow run",
+    ["variant"],
+)
+
+# Legacy aliases (for backwards compatibility with existing dashboards)
 EXTC_SHADOW_INSERTED = Counter(
     "extc_shadow_predictions_inserted_total",
-    "Shadow predictions inserted for ext-C model",
+    "Shadow predictions inserted for ext-C model (legacy)",
     [],
 )
 
 EXTC_SHADOW_SKIPPED = Counter(
     "extc_shadow_predictions_skipped_total",
-    "Shadow predictions skipped (already exist)",
+    "Shadow predictions skipped (already exist) (legacy)",
     [],
 )
 
 EXTC_SHADOW_ERRORS = Counter(
     "extc_shadow_errors_total",
-    "Errors in ext-C shadow job",
+    "Errors in ext-C shadow job (legacy)",
     [],
 )
 
 EXTC_SHADOW_LAST_SUCCESS = Gauge(
     "extc_shadow_last_success_timestamp",
-    "Unix timestamp of last successful ext-C shadow run",
+    "Unix timestamp of last successful ext-C shadow run (legacy)",
     [],
 )
 
