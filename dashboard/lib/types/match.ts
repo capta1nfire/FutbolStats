@@ -71,6 +71,8 @@ export interface MatchSummary {
   leagueId: number;
   leagueName: string;
   leagueCountry: string;
+  /** Round / matchday label (e.g., "Regular Season - 21") */
+  round?: string;
   home: string;
   away: string;
   kickoffISO: string;
@@ -88,6 +90,12 @@ export interface MatchSummary {
   shadow?: ProbabilitySet;
   /** Sensor B prediction (calibration diagnostic) */
   sensorB?: ProbabilitySet;
+  /** Experimental ext-A prediction */
+  extA?: ProbabilitySet;
+  /** Experimental ext-B prediction */
+  extB?: ProbabilitySet;
+  /** Experimental ext-C prediction */
+  extC?: ProbabilitySet;
 }
 
 /**

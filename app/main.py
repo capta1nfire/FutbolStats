@@ -13315,6 +13315,48 @@ async def get_matches_dashboard(
         column("is_daylight"),
     ).subquery("weather")
 
+    # Experimental predictions (ext-A/B/C) from predictions_experiments
+    # Uses DISTINCT ON with PIT guard (snapshot_at <= kickoff) and tie-break
+    ext_subq = text("""
+        WITH latest AS (
+          SELECT DISTINCT ON (pe.match_id, pe.model_version)
+            pe.match_id,
+            pe.model_version,
+            pe.home_prob,
+            pe.draw_prob,
+            pe.away_prob
+          FROM predictions_experiments pe
+          JOIN matches m ON m.id = pe.match_id
+          WHERE pe.model_version IN ('v1.0.2-ext-A','v1.0.2-ext-B','v1.0.2-ext-C')
+            AND pe.snapshot_at <= m.date
+          ORDER BY pe.match_id, pe.model_version, pe.snapshot_at DESC, pe.created_at DESC
+        )
+        SELECT
+          match_id,
+          MAX(CASE WHEN model_version='v1.0.2-ext-A' THEN home_prob END) AS ext_a_home,
+          MAX(CASE WHEN model_version='v1.0.2-ext-A' THEN draw_prob END) AS ext_a_draw,
+          MAX(CASE WHEN model_version='v1.0.2-ext-A' THEN away_prob END) AS ext_a_away,
+          MAX(CASE WHEN model_version='v1.0.2-ext-B' THEN home_prob END) AS ext_b_home,
+          MAX(CASE WHEN model_version='v1.0.2-ext-B' THEN draw_prob END) AS ext_b_draw,
+          MAX(CASE WHEN model_version='v1.0.2-ext-B' THEN away_prob END) AS ext_b_away,
+          MAX(CASE WHEN model_version='v1.0.2-ext-C' THEN home_prob END) AS ext_c_home,
+          MAX(CASE WHEN model_version='v1.0.2-ext-C' THEN draw_prob END) AS ext_c_draw,
+          MAX(CASE WHEN model_version='v1.0.2-ext-C' THEN away_prob END) AS ext_c_away
+        FROM latest
+        GROUP BY match_id
+    """).columns(
+        column("match_id"),
+        column("ext_a_home"),
+        column("ext_a_draw"),
+        column("ext_a_away"),
+        column("ext_b_home"),
+        column("ext_b_draw"),
+        column("ext_b_away"),
+        column("ext_c_home"),
+        column("ext_c_draw"),
+        column("ext_c_away"),
+    ).subquery("ext")
+
     base_query = (
         select(
             Match.id,
@@ -13354,6 +13396,16 @@ async def get_matches_dashboard(
             weather_subq.c.precip_prob.label("weather_precip_prob"),
             weather_subq.c.cloudcover.label("weather_cloudcover"),
             weather_subq.c.is_daylight.label("weather_is_daylight"),
+            # Ext-A/B/C experimental predictions (use MAX to avoid GROUP BY issues)
+            func.max(ext_subq.c.ext_a_home).label("ext_a_home"),
+            func.max(ext_subq.c.ext_a_draw).label("ext_a_draw"),
+            func.max(ext_subq.c.ext_a_away).label("ext_a_away"),
+            func.max(ext_subq.c.ext_b_home).label("ext_b_home"),
+            func.max(ext_subq.c.ext_b_draw).label("ext_b_draw"),
+            func.max(ext_subq.c.ext_b_away).label("ext_b_away"),
+            func.max(ext_subq.c.ext_c_home).label("ext_c_home"),
+            func.max(ext_subq.c.ext_c_draw).label("ext_c_draw"),
+            func.max(ext_subq.c.ext_c_away).label("ext_c_away"),
         )
         .join(home_team, Match.home_team_id == home_team.id)
         .join(away_team, Match.away_team_id == away_team.id)
@@ -13361,6 +13413,7 @@ async def get_matches_dashboard(
         .outerjoin(ShadowPrediction, ShadowPrediction.match_id == Match.id)
         .outerjoin(SensorPrediction, SensorPrediction.match_id == Match.id)
         .outerjoin(weather_subq, weather_subq.c.match_id == Match.id)
+        .outerjoin(ext_subq, ext_subq.c.match_id == Match.id)
         .group_by(
             Match.id,
             Match.date,
@@ -13569,6 +13622,30 @@ async def get_matches_dashboard(
                 "home": round(row.sensor_b_home, 3),
                 "draw": round(row.sensor_b_draw, 3),
                 "away": round(row.sensor_b_away, 3),
+            }
+
+        # Ext-A experimental prediction
+        if row.ext_a_home is not None:
+            match_data["extA"] = {
+                "home": round(float(row.ext_a_home), 3),
+                "draw": round(float(row.ext_a_draw), 3),
+                "away": round(float(row.ext_a_away), 3),
+            }
+
+        # Ext-B experimental prediction
+        if row.ext_b_home is not None:
+            match_data["extB"] = {
+                "home": round(float(row.ext_b_home), 3),
+                "draw": round(float(row.ext_b_draw), 3),
+                "away": round(float(row.ext_b_away), 3),
+            }
+
+        # Ext-C experimental prediction
+        if row.ext_c_home is not None:
+            match_data["extC"] = {
+                "home": round(float(row.ext_c_home), 3),
+                "draw": round(float(row.ext_c_draw), 3),
+                "away": round(float(row.ext_c_away), 3),
             }
 
         matches.append(match_data)
