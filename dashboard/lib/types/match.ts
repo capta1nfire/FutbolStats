@@ -96,6 +96,8 @@ export interface MatchSummary {
   extB?: ProbabilitySet;
   /** Experimental ext-C prediction */
   extC?: ProbabilitySet;
+  /** Experimental ext-D prediction (league-only retrained) */
+  extD?: ProbabilitySet;
 }
 
 /**

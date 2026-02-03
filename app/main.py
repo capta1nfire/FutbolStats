@@ -13369,7 +13369,7 @@ async def get_matches_dashboard(
             pe.away_prob
           FROM predictions_experiments pe
           JOIN matches m ON m.id = pe.match_id
-          WHERE pe.model_version IN ('v1.0.2-ext-A','v1.0.2-ext-B','v1.0.2-ext-C')
+          WHERE pe.model_version IN ('v1.0.2-ext-A','v1.0.2-ext-B','v1.0.2-ext-C','v1.0.1-league-only-20260202')
             AND pe.snapshot_at <= m.date
           ORDER BY pe.match_id, pe.model_version, pe.snapshot_at DESC, pe.created_at DESC
         )
@@ -13383,7 +13383,10 @@ async def get_matches_dashboard(
           MAX(CASE WHEN model_version='v1.0.2-ext-B' THEN away_prob END) AS ext_b_away,
           MAX(CASE WHEN model_version='v1.0.2-ext-C' THEN home_prob END) AS ext_c_home,
           MAX(CASE WHEN model_version='v1.0.2-ext-C' THEN draw_prob END) AS ext_c_draw,
-          MAX(CASE WHEN model_version='v1.0.2-ext-C' THEN away_prob END) AS ext_c_away
+          MAX(CASE WHEN model_version='v1.0.2-ext-C' THEN away_prob END) AS ext_c_away,
+          MAX(CASE WHEN model_version='v1.0.1-league-only-20260202' THEN home_prob END) AS ext_d_home,
+          MAX(CASE WHEN model_version='v1.0.1-league-only-20260202' THEN draw_prob END) AS ext_d_draw,
+          MAX(CASE WHEN model_version='v1.0.1-league-only-20260202' THEN away_prob END) AS ext_d_away
         FROM latest
         GROUP BY match_id
     """).columns(
@@ -13397,6 +13400,9 @@ async def get_matches_dashboard(
         column("ext_c_home"),
         column("ext_c_draw"),
         column("ext_c_away"),
+        column("ext_d_home"),
+        column("ext_d_draw"),
+        column("ext_d_away"),
     ).subquery("ext")
 
     base_query = (
@@ -13448,6 +13454,9 @@ async def get_matches_dashboard(
             func.max(ext_subq.c.ext_c_home).label("ext_c_home"),
             func.max(ext_subq.c.ext_c_draw).label("ext_c_draw"),
             func.max(ext_subq.c.ext_c_away).label("ext_c_away"),
+            func.max(ext_subq.c.ext_d_home).label("ext_d_home"),
+            func.max(ext_subq.c.ext_d_draw).label("ext_d_draw"),
+            func.max(ext_subq.c.ext_d_away).label("ext_d_away"),
         )
         .join(home_team, Match.home_team_id == home_team.id)
         .join(away_team, Match.away_team_id == away_team.id)
@@ -13688,6 +13697,14 @@ async def get_matches_dashboard(
                 "home": round(float(row.ext_c_home), 3),
                 "draw": round(float(row.ext_c_draw), 3),
                 "away": round(float(row.ext_c_away), 3),
+            }
+
+        # Ext-D experimental prediction (league-only retrained)
+        if row.ext_d_home is not None:
+            match_data["extD"] = {
+                "home": round(float(row.ext_d_home), 3),
+                "draw": round(float(row.ext_d_draw), 3),
+                "away": round(float(row.ext_d_away), 3),
             }
 
         matches.append(match_data)

@@ -22,7 +22,7 @@ import {
 // Model Accuracy Calculation
 // =============================================================================
 
-type ModelKey = "market" | "modelA" | "shadow" | "sensorB" | "extA" | "extB" | "extC";
+type ModelKey = "market" | "modelA" | "shadow" | "sensorB" | "extA" | "extB" | "extC" | "extD";
 
 interface ModelAccuracyStats {
   correct: number;
@@ -41,6 +41,7 @@ function calculateModelAccuracies(
     extA: { correct: 0, total: 0, accuracy: null },
     extB: { correct: 0, total: 0, accuracy: null },
     extC: { correct: 0, total: 0, accuracy: null },
+    extD: { correct: 0, total: 0, accuracy: null },
   };
 
   for (const match of data) {
@@ -57,6 +58,7 @@ function calculateModelAccuracies(
       { key: "extA", probs: match.extA },
       { key: "extB", probs: match.extB },
       { key: "extC", probs: match.extC },
+      { key: "extD", probs: match.extD },
     ];
 
     for (const { key, probs } of models) {
@@ -231,6 +233,7 @@ export const MATCHES_COLUMN_OPTIONS: ColumnOption[] = [
   { id: "extA", label: "Ext A", enableHiding: true },
   { id: "extB", label: "Ext B", enableHiding: true },
   { id: "extC", label: "Ext C", enableHiding: true },
+  { id: "extD", label: "Ext D", enableHiding: true },
 ];
 
 export const MATCHES_DEFAULT_VISIBILITY: VisibilityState = {};
@@ -293,6 +296,7 @@ export function MatchesTable({
     if (isVisible("extA")) w += MODEL_COL_WIDTH;
     if (isVisible("extB")) w += MODEL_COL_WIDTH;
     if (isVisible("extC")) w += MODEL_COL_WIDTH;
+    if (isVisible("extD")) w += MODEL_COL_WIDTH;
     return w;
   }, [columnVisibility]);
 
@@ -355,6 +359,7 @@ export function MatchesTable({
               {isVisible("extA") && <col style={{ width: MODEL_COL_WIDTH }} />}
               {isVisible("extB") && <col style={{ width: MODEL_COL_WIDTH }} />}
               {isVisible("extC") && <col style={{ width: MODEL_COL_WIDTH }} />}
+              {isVisible("extD") && <col style={{ width: MODEL_COL_WIDTH }} />}
             </colgroup>
 
             {/* Sticky header */}
@@ -472,6 +477,14 @@ export function MatchesTable({
                     style={{ minWidth: MODEL_COL_WIDTH }}
                   >
                     <ModelHeader label="Ext C" stats={modelAccuracies.extC} />
+                  </th>
+                )}
+                {isVisible("extD") && (
+                  <th
+                    className="px-3 py-3 text-center font-semibold text-sm whitespace-nowrap"
+                    style={{ minWidth: MODEL_COL_WIDTH }}
+                  >
+                    <ModelHeader label="Ext D" stats={modelAccuracies.extD} />
                   </th>
                 )}
               </tr>
@@ -655,6 +668,13 @@ export function MatchesTable({
                     {isVisible("extC") && (
                       <td className="px-3 py-2.5 text-center" style={{ minWidth: MODEL_COL_WIDTH }}>
                         <ProbabilityCell probs={match.extC} outcome={outcome} compact={compactPredictions} />
+                      </td>
+                    )}
+
+                    {/* Ext D cell */}
+                    {isVisible("extD") && (
+                      <td className="px-3 py-2.5 text-center" style={{ minWidth: MODEL_COL_WIDTH }}>
+                        <ProbabilityCell probs={match.extD} outcome={outcome} compact={compactPredictions} />
                       </td>
                     )}
                   </tr>
