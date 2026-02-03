@@ -201,12 +201,12 @@ function createApiBudget(scenario: string): ApiBudget {
   if (scenario === "empty") {
     return {
       status: "ok",
-      plan: "Ultra",
+      plan: "Mega",
       plan_end: "2026-06-15",
       active: true,
       requests_today: 0,
-      requests_limit: 75000,
-      requests_remaining: 75000,
+      requests_limit: 150000,
+      requests_remaining: 150000,
       cached: false,
       cache_age_seconds: 0,
       tokens_reset_at_la: resetDate.toISOString(),
@@ -216,11 +216,11 @@ function createApiBudget(scenario: string): ApiBudget {
 
   // Normal scenario: moderate usage
   const requestsToday = 2847;
-  const requestsLimit = 75000;
+  const requestsLimit = 150000;
 
   return {
     status: "ok",
-    plan: "Ultra",
+    plan: "Mega",
     plan_end: "2026-06-15",
     active: true,
     requests_today: requestsToday,

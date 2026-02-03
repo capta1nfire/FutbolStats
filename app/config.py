@@ -19,9 +19,9 @@ class Settings(BaseSettings):
     ROLLING_WINDOW: int = 5
     TIME_DECAY_LAMBDA: float = 0.01
 
-    # Rate Limiting (Ultra Plan: 450 r/m, 75K/day)
-    API_REQUESTS_PER_MINUTE: int = 450
-    API_DAILY_BUDGET: int = 75000
+    # Rate Limiting (Mega Plan: 600 r/m, 150K/day)
+    API_REQUESTS_PER_MINUTE: int = 600
+    API_DAILY_BUDGET: int = 150000
     RATE_LIMIT_PER_MINUTE: str = "60/minute"
 
     # API Security

@@ -102,7 +102,7 @@ const reportDefinitions: Omit<AnalyticsReportRow, "id" | "lastUpdated">[] = [
     title: "API-Football Consumption",
     periodLabel: "Last 30 days",
     status: "ok",
-    summary: { requests: 45230, daily: 1507, remaining: 29770, plan: "Ultra" },
+    summary: { requests: 45230, daily: 1507, remaining: 104770, plan: "Mega" },
   },
   {
     type: "api_usage",
