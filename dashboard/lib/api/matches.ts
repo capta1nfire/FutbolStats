@@ -190,6 +190,10 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
   const extC = parseProbabilitySet(raw.extC ?? raw.ext_c);
   if (extC) result.extC = extC;
 
+  // Optional: Ext-D experimental prediction (league-only retrained)
+  const extD = parseProbabilitySet(raw.extD ?? raw.ext_d);
+  if (extD) result.extD = extD;
+
   return result;
 }
 
