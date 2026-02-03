@@ -8,10 +8,12 @@ All functions return data dicts (no cache handling - that's in main.py).
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -705,14 +707,29 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
     # Load league cache (DB-first)
     await _load_league_cache(session)
 
-    # Get team info
-    team_query = text("""
-        SELECT id, external_id, name, country, team_type, logo_url
+    # Get team info (attempt v2 with optional wiki fields; fallback if migration not applied)
+    wiki_supported = True
+    team_row = None
+    team_query_v2 = text("""
+        SELECT
+            id, external_id, name, country, team_type, logo_url,
+            wiki_url, wikidata_id, wiki_title, wiki_lang,
+            wiki_url_cached, wiki_source, wiki_confidence, wiki_matched_at
         FROM teams
         WHERE id = :tid
     """)
-    team_result = await session.execute(team_query, {"tid": team_id})
-    team_row = team_result.fetchone()
+    try:
+        team_result = await session.execute(team_query_v2, {"tid": team_id})
+        team_row = team_result.fetchone()
+    except ProgrammingError:
+        wiki_supported = False
+        team_query_v1 = text("""
+            SELECT id, external_id, name, country, team_type, logo_url
+            FROM teams
+            WHERE id = :tid
+        """)
+        team_result = await session.execute(team_query_v1, {"tid": team_id})
+        team_row = team_result.fetchone()
 
     if not team_row:
         return None
@@ -834,7 +851,7 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
         },
     }
 
-    return {
+    payload = {
         "team": {
             "team_id": team_row.id,
             "external_id": team_row.external_id,
@@ -848,6 +865,21 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
         "recent_matches": recent_matches,
         "predictions_stats": predictions_stats,
     }
+
+    if wiki_supported:
+        wiki_matched_at = getattr(team_row, "wiki_matched_at", None)
+        payload["team"]["wiki"] = {
+            "wiki_url": getattr(team_row, "wiki_url", None),
+            "wikidata_id": getattr(team_row, "wikidata_id", None),
+            "wiki_title": getattr(team_row, "wiki_title", None),
+            "wiki_lang": getattr(team_row, "wiki_lang", None),
+            "wiki_url_cached": getattr(team_row, "wiki_url_cached", None),
+            "wiki_source": getattr(team_row, "wiki_source", None),
+            "wiki_confidence": getattr(team_row, "wiki_confidence", None),
+            "wiki_matched_at": (wiki_matched_at.isoformat() + "Z") if wiki_matched_at else None,
+        }
+
+    return payload
 
 
 # =============================================================================
@@ -874,6 +906,168 @@ VALID_PAIRED_HANDLING = {"grouped", "separate"}
 class ValidationError(Exception):
     """Raised when patch validation fails."""
     pass
+
+
+# =============================================================================
+# P0 - Team Wiki mutation helpers
+# =============================================================================
+
+_WIKIDATA_ID_RE = re.compile(r"^Q\d+$")
+
+
+def _normalize_wiki_url(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValidationError("wiki_url must be a string or null")
+    v = value.strip()
+    return v or None
+
+
+def _validate_wiki_url(value: Optional[str]) -> None:
+    if value is None:
+        return
+    if len(value) > 2000:
+        raise ValidationError("wiki_url too long")
+    if not value.startswith("https://"):
+        raise ValidationError("wiki_url must start with https://")
+    if "m.wikipedia.org" in value:
+        raise ValidationError("wiki_url must not be a mobile URL (m.wikipedia.org)")
+    if "/Special:" in value:
+        raise ValidationError("wiki_url must not be a Special: page")
+    if "?" in value or "#" in value:
+        raise ValidationError("wiki_url must not include query params or fragments")
+    if ".wikipedia.org/wiki/" not in value:
+        raise ValidationError("wiki_url must be a Wikipedia /wiki/ URL")
+
+
+def _normalize_wikidata_id(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValidationError("wikidata_id must be a string or null")
+    v = value.strip().upper()
+    return v or None
+
+
+def _validate_wikidata_id(value: Optional[str]) -> None:
+    if value is None:
+        return
+    if not _WIKIDATA_ID_RE.match(value):
+        raise ValidationError("wikidata_id must match format Q<digits> (e.g., Q42)")
+
+
+async def patch_team_wiki(
+    session: AsyncSession,
+    team_id: int,
+    patch_data: dict,
+    actor: str = "dashboard",
+) -> dict:
+    """
+    PATCH wiki fields for a team (P0).
+
+    Allowed fields:
+      - wiki_url (nullable string)
+      - wikidata_id (nullable string)
+
+    Returns:
+      { team_id, updated_fields, wiki }
+    """
+    if not isinstance(patch_data, dict):
+        raise ValidationError("Invalid JSON body")
+
+    wiki_url = _normalize_wiki_url(patch_data.get("wiki_url"))
+    wikidata_id = _normalize_wikidata_id(patch_data.get("wikidata_id"))
+
+    _validate_wiki_url(wiki_url)
+    _validate_wikidata_id(wikidata_id)
+
+    # Ensure migration applied + team exists
+    try:
+        current = await session.execute(
+            text("""
+                SELECT id, wiki_url, wikidata_id
+                FROM teams
+                WHERE id = :tid
+            """),
+            {"tid": team_id},
+        )
+    except ProgrammingError as e:
+        raise NotImplementedError("Teams wiki fields not available (migration missing)") from e
+
+    row = current.fetchone()
+    if not row:
+        raise ValueError(f"Team {team_id} not found")
+
+    updated_fields: List[str] = []
+    if (row.wiki_url or None) != (wiki_url or None):
+        updated_fields.append("wiki_url")
+    if (row.wikidata_id or None) != (wikidata_id or None):
+        updated_fields.append("wikidata_id")
+
+    if not updated_fields:
+        return {
+            "team_id": team_id,
+            "updated_fields": [],
+            "wiki": {
+                "wiki_url": row.wiki_url,
+                "wikidata_id": row.wikidata_id,
+            },
+        }
+
+    # If both cleared, clear all derived fields too
+    clear_all = wiki_url is None and wikidata_id is None
+    now = datetime.utcnow()
+
+    update_sql = text("""
+        UPDATE teams
+        SET
+            wiki_url = :wiki_url,
+            wikidata_id = :wikidata_id,
+            wiki_source = :wiki_source,
+            wiki_matched_at = :wiki_matched_at,
+            wiki_title = :wiki_title,
+            wiki_lang = :wiki_lang,
+            wiki_url_cached = :wiki_url_cached,
+            wiki_confidence = :wiki_confidence
+        WHERE id = :tid
+        RETURNING
+            wiki_url, wikidata_id, wiki_title, wiki_lang,
+            wiki_url_cached, wiki_source, wiki_confidence, wiki_matched_at
+    """)
+
+    params = {
+        "tid": team_id,
+        "wiki_url": wiki_url,
+        "wikidata_id": wikidata_id,
+        "wiki_source": None if clear_all else "manual",
+        "wiki_matched_at": None if clear_all else now,
+        # Derived fields not computed yet (P0); clear on change
+        "wiki_title": None,
+        "wiki_lang": None,
+        "wiki_url_cached": None,
+        "wiki_confidence": None,
+    }
+
+    result = await session.execute(update_sql, params)
+    updated = result.fetchone()
+    await session.commit()
+
+    wiki_matched_at = updated.wiki_matched_at
+    return {
+        "team_id": team_id,
+        "updated_fields": updated_fields,
+        "wiki": {
+            "wiki_url": updated.wiki_url,
+            "wikidata_id": updated.wikidata_id,
+            "wiki_title": updated.wiki_title,
+            "wiki_lang": updated.wiki_lang,
+            "wiki_url_cached": updated.wiki_url_cached,
+            "wiki_source": updated.wiki_source,
+            "wiki_confidence": updated.wiki_confidence,
+            "wiki_matched_at": (wiki_matched_at.isoformat() + "Z") if wiki_matched_at else None,
+        },
+    }
 
 
 def _validate_rules_json_v1(rules: dict) -> None:

@@ -6110,6 +6110,48 @@ async def dashboard_admin_patch_league(request: Request, league_id: int):
     }
 
 
+@app.patch("/dashboard/admin/team/{team_id}.json")
+async def dashboard_admin_patch_team(request: Request, team_id: int):
+    """
+    Admin Panel - Patch team wiki fields.
+
+    Supported fields (P0):
+      - wiki_url (nullable string)
+      - wikidata_id (nullable string)
+
+    Returns (unwrapped, by dashboard client contract):
+      { team_id, updated_fields, wiki }
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    from app.dashboard.admin import ValidationError, patch_team_wiki
+
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await patch_team_wiki(session, team_id, body, actor="dashboard")
+    except NotImplementedError as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    # Invalidate team detail cache
+    try:
+        if str(team_id) in _admin_cache["team_detail"]:
+            del _admin_cache["team_detail"][str(team_id)]
+    except Exception:
+        pass
+
+    return result
+
+
 @app.get("/dashboard/admin/audit.json")
 async def dashboard_admin_audit(
     request: Request,
