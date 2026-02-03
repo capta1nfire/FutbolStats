@@ -285,6 +285,24 @@ export type FootballOverviewResponse = FootballApiResponse<FootballOverview>;
 // Team Detail (admin/team/{id}.json) - Temporary for P0
 // =============================================================================
 
+/**
+ * Wikipedia/Wikidata info for a team
+ * - Editable: wiki_url, wikidata_id (user input)
+ * - Read-only: wiki_title, wiki_lang, etc. (backend-derived)
+ */
+export interface TeamWikiInfo {
+  // Editable fields (user input)
+  wiki_url?: string | null;
+  wikidata_id?: string | null;
+  // Read-only fields (derived by backend)
+  wiki_title?: string | null;
+  wiki_lang?: string | null;
+  wiki_url_cached?: string | null;
+  wiki_source?: string | null;
+  wiki_confidence?: number | null;
+  wiki_matched_at?: string | null;
+}
+
 export interface TeamInfo {
   team_id: number;
   name: string;
@@ -294,6 +312,7 @@ export interface TeamInfo {
   venue_name: string | null;
   venue_city: string | null;
   logo_url: string | null;
+  wiki?: TeamWikiInfo;
 }
 
 export interface TeamStats {

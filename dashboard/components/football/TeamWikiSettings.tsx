@@ -1,0 +1,317 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import { useTeamWikiMutation } from "@/lib/hooks";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import {
+  Globe,
+  Loader2,
+  CheckCircle,
+  AlertTriangle,
+  ExternalLink,
+} from "lucide-react";
+import { toast } from "sonner";
+import type { TeamWikiInfo } from "@/lib/types/football";
+
+// =============================================================================
+// Validation
+// =============================================================================
+
+// Soporta idiomas como en, es, pt-br, simple, zh-yue, etc.
+const WIKI_URL_REGEX = /^https:\/\/[a-z]{2,}(-[a-z]+)?\.wikipedia\.org\/wiki\/.+$/;
+const WIKIDATA_URL_REGEX = /^https:\/\/www\.wikidata\.org\/wiki\/(Q\d+)$/;
+const WIKIDATA_ID_REGEX = /^Q\d+$/;
+
+interface ValidationResult {
+  isValid: boolean;
+  error?: string;
+  extractedQId?: string; // If wikidata URL was pasted in wiki_url field
+}
+
+function validateWikiUrl(url: string): ValidationResult {
+  if (!url.trim()) {
+    return { isValid: true }; // Optional field
+  }
+
+  const trimmed = url.trim();
+
+  // Check if user pasted a wikidata URL - extract Q-id
+  const wikidataMatch = trimmed.match(WIKIDATA_URL_REGEX);
+  if (wikidataMatch) {
+    return {
+      isValid: true,
+      extractedQId: wikidataMatch[1],
+    };
+  }
+
+  // Reject mobile URLs
+  if (trimmed.includes("m.wikipedia.org")) {
+    return { isValid: false, error: "No usar URLs mobile (m.wikipedia.org)" };
+  }
+
+  // Reject Special pages
+  if (trimmed.includes("/Special:")) {
+    return { isValid: false, error: "No usar páginas especiales (Special:)" };
+  }
+
+  // Reject querystring/fragment
+  if (trimmed.includes("?") || trimmed.includes("#")) {
+    return { isValid: false, error: "No incluir parámetros (?...) ni fragmentos (#...)" };
+  }
+
+  // Validate Wikipedia URL format
+  if (!WIKI_URL_REGEX.test(trimmed)) {
+    return { isValid: false, error: "Formato: https://XX.wikipedia.org/wiki/..." };
+  }
+
+  return { isValid: true };
+}
+
+function validateWikidataId(id: string): ValidationResult {
+  if (!id.trim()) {
+    return { isValid: true }; // Optional field
+  }
+
+  const normalized = id.trim().toUpperCase();
+
+  if (!WIKIDATA_ID_REGEX.test(normalized)) {
+    return { isValid: false, error: "Formato: Q seguido de números (ej: Q42)" };
+  }
+
+  return { isValid: true };
+}
+
+// =============================================================================
+// Component
+// =============================================================================
+
+interface TeamWikiSettingsProps {
+  teamId: number;
+  teamName: string;
+  wiki?: TeamWikiInfo;
+}
+
+export function TeamWikiSettings({ teamId, teamName, wiki }: TeamWikiSettingsProps) {
+  // Form state
+  const [wikiUrl, setWikiUrl] = useState(wiki?.wiki_url ?? "");
+  const [wikidataId, setWikidataId] = useState(wiki?.wikidata_id ?? "");
+
+  // Validation state
+  const [urlError, setUrlError] = useState<string | null>(null);
+  const [idError, setIdError] = useState<string | null>(null);
+
+  // Mutation
+  const mutation = useTeamWikiMutation();
+
+  // Sync form state when wiki prop changes (e.g., after refresh)
+  useEffect(() => {
+    setWikiUrl(wiki?.wiki_url ?? "");
+    setWikidataId(wiki?.wikidata_id ?? "");
+  }, [wiki?.wiki_url, wiki?.wikidata_id]);
+
+  // Check if form has changes
+  const isDirty =
+    wikiUrl.trim() !== (wiki?.wiki_url ?? "") ||
+    wikidataId.trim().toUpperCase() !== (wiki?.wikidata_id ?? "").toUpperCase();
+
+  // Handle wiki_url change with wikidata URL detection
+  const handleWikiUrlChange = useCallback((value: string) => {
+    setWikiUrl(value);
+
+    const result = validateWikiUrl(value);
+    setUrlError(result.error ?? null);
+
+    // If user pasted a wikidata URL, extract Q-id and move it
+    if (result.extractedQId) {
+      setWikidataId(result.extractedQId);
+      setWikiUrl(""); // Clear the URL field
+      toast.info(`Q-id extraído: ${result.extractedQId}`);
+    }
+  }, []);
+
+  // Handle wikidata_id change
+  const handleWikidataIdChange = useCallback((value: string) => {
+    setWikidataId(value.toUpperCase());
+    const result = validateWikidataId(value);
+    setIdError(result.error ?? null);
+  }, []);
+
+  // Handle save
+  const handleSave = useCallback(() => {
+    // Final validation
+    const urlResult = validateWikiUrl(wikiUrl);
+    const idResult = validateWikidataId(wikidataId);
+
+    if (!urlResult.isValid || !idResult.isValid) {
+      if (!urlResult.isValid) setUrlError(urlResult.error ?? null);
+      if (!idResult.isValid) setIdError(idResult.error ?? null);
+      return;
+    }
+
+    mutation.mutate(
+      {
+        teamId,
+        data: {
+          wiki_url: wikiUrl.trim() || null,
+          wikidata_id: wikidataId.trim().toUpperCase() || null,
+        },
+      },
+      {
+        onSuccess: () => {
+          toast.success("Wikipedia actualizado");
+        },
+        onError: (error) => {
+          // Handle backend not supporting wiki fields (ATI condition #1)
+          if ((error as Error & { isNotSupported?: boolean }).isNotSupported) {
+            toast.info("Backend aún no soporta campos wiki");
+          } else {
+            toast.error(error.message);
+          }
+        },
+      }
+    );
+  }, [teamId, wikiUrl, wikidataId, mutation]);
+
+  const hasValidationErrors = !!urlError || !!idError;
+  const canSave = isDirty && !hasValidationErrors && !mutation.isPending;
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Globe className="h-4 w-4 text-muted-foreground" />
+          <h4 className="text-sm font-medium">Wikipedia</h4>
+        </div>
+        {wiki?.wikidata_id && (
+          <Badge variant="secondary" className="text-xs">
+            {wiki.wikidata_id}
+          </Badge>
+        )}
+      </div>
+
+      {/* Form */}
+      <div className="bg-card border border-border rounded-lg p-3 space-y-4">
+        {/* Wiki URL Input */}
+        <div className="space-y-1.5">
+          <label className="text-xs text-muted-foreground">
+            Wikipedia URL
+          </label>
+          <Input
+            type="url"
+            placeholder="https://es.wikipedia.org/wiki/Club_Atlético..."
+            value={wikiUrl}
+            onChange={(e) => handleWikiUrlChange(e.target.value)}
+            className={urlError ? "border-destructive" : ""}
+            disabled={mutation.isPending}
+          />
+          {urlError && (
+            <p className="text-xs text-destructive">{urlError}</p>
+          )}
+        </div>
+
+        {/* Wikidata ID Input */}
+        <div className="space-y-1.5">
+          <label className="text-xs text-muted-foreground">
+            Wikidata ID <span className="opacity-50">(opcional)</span>
+          </label>
+          <Input
+            type="text"
+            placeholder="Q12345"
+            value={wikidataId}
+            onChange={(e) => handleWikidataIdChange(e.target.value)}
+            className={idError ? "border-destructive" : ""}
+            disabled={mutation.isPending}
+          />
+          {idError && (
+            <p className="text-xs text-destructive">{idError}</p>
+          )}
+        </div>
+
+        {/* Save Button */}
+        <Button
+          size="sm"
+          onClick={handleSave}
+          disabled={!canSave}
+          className="w-full"
+        >
+          {mutation.isPending ? (
+            <>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              Guardando...
+            </>
+          ) : (
+            "Guardar"
+          )}
+        </Button>
+      </div>
+
+      {/* Derived Fields (Read-only) */}
+      {wiki && (wiki.wiki_title || wiki.wiki_confidence != null) && (
+        <div className="bg-muted/50 rounded-lg p-3 space-y-2">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <CheckCircle className="h-3 w-3" />
+            <span>Datos derivados</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            {wiki.wiki_title && (
+              <div>
+                <span className="text-muted-foreground">Título:</span>{" "}
+                <span className="text-foreground">{wiki.wiki_title}</span>
+              </div>
+            )}
+            {wiki.wiki_lang && (
+              <div>
+                <span className="text-muted-foreground">Idioma:</span>{" "}
+                <span className="text-foreground">{wiki.wiki_lang}</span>
+              </div>
+            )}
+            {wiki.wiki_source && (
+              <div>
+                <span className="text-muted-foreground">Fuente:</span>{" "}
+                <span className="text-foreground">{wiki.wiki_source}</span>
+              </div>
+            )}
+            {wiki.wiki_confidence != null && (
+              <div>
+                <span className="text-muted-foreground">Confianza:</span>{" "}
+                <span className="text-foreground">
+                  {(wiki.wiki_confidence * 100).toFixed(0)}%
+                </span>
+              </div>
+            )}
+          </div>
+
+          {wiki.wiki_url_cached && (
+            <a
+              href={wiki.wiki_url_cached}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Ver en Wikipedia
+            </a>
+          )}
+        </div>
+      )}
+
+      {/* Low Confidence Warning */}
+      {wiki?.wiki_confidence != null && wiki.wiki_confidence < 0.5 && (
+        <div className="flex items-start gap-2 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+          <AlertTriangle className="h-4 w-4 text-yellow-500 mt-0.5" />
+          <div className="text-xs">
+            <p className="font-medium text-yellow-500">Match para revisión manual</p>
+            <p className="text-muted-foreground">
+              La confianza del match es baja ({((wiki.wiki_confidence ?? 0) * 100).toFixed(0)}%).
+              Verifica que el artículo corresponde a {teamName}.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

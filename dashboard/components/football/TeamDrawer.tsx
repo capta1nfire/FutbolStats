@@ -28,6 +28,7 @@ import type {
   TeamFormMatch,
 } from "@/lib/types";
 import { TeamLogoSettings } from "./TeamLogoSettings";
+import { TeamWikiSettings } from "./TeamWikiSettings";
 
 /**
  * Country Flag Component
@@ -354,11 +355,19 @@ export function TeamDrawer({ teamId, open, onClose }: TeamDrawerProps) {
         )}
 
         {activeTab === "settings" && (
-          <TeamLogoSettings
-            teamId={data.team.team_id}
-            teamName={data.team.name}
-            fallbackLogoUrl={data.team.logo_url || undefined}
-          />
+          <>
+            <TeamLogoSettings
+              teamId={data.team.team_id}
+              teamName={data.team.name}
+              fallbackLogoUrl={data.team.logo_url || undefined}
+            />
+            <div className="border-t border-border my-4" />
+            <TeamWikiSettings
+              teamId={data.team.team_id}
+              teamName={data.team.name}
+              wiki={data.team.wiki}
+            />
+          </>
         )}
 
         {/* Footer with cache info */}
