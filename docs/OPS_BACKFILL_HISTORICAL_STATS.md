@@ -1,13 +1,148 @@
+# Backfill Historical Stats - Plan Operativo
+
+**Fecha**: 2026-02-01
+**Estado**: Pendiente aprobación ATI para --dry-run piloto
+**Objetivo**: Recuperar estadísticas históricas (shots, corners) de API-Football
+
+---
+
+## Contexto
+
+### Problema Detectado (P0 "Data Fantasma")
+- Las 4 features de shots/corners están en 0 para partidos históricos
+- Impacto: ~30% del dataset de training tiene features contaminados
+- Causa: `stats_backfill` job solo corre para partidos recientes (72h)
+
+### Features Afectados
+| # | Feature | Requiere |
+|---|---------|----------|
+| 3 | `home_shots_avg` | `stats->'home'->>'total_shots'` |
+| 4 | `home_corners_avg` | `stats->'home'->>'corner_kicks'` |
+| 9 | `away_shots_avg` | `stats->'away'->>'total_shots'` |
+| 10 | `away_corners_avg` | `stats->'away'->>'corner_kicks'` |
+
+Los otros 10 features (goals, rest_days, matches_played, goal_diff, rest_diff) se calculan de datos que ya tenemos.
+
+---
+
+## Arquitectura por Fases
+
+### Fase 0: Pilot (OBLIGATORIO)
+- **Objetivo**: Validar cobertura real de API-Football antes de backfill masivo
+- **Scope**: 200 fixtures por (liga, temporada)
+- **Output**: CSV con métricas de cobertura por segmento
+- **Decisión**: `GO/HOLD/STOP` por segmento basado en evidencia
+
+### Fase 1: Backfill Segmentos GO
+- **Scope**: Solo segmentos que pasaron Fase 0 con umbral
+- **Umbral GO**: ≥70% `API_OK` (ligas principales), ≥50% (secundarias)
+
+### Fase 2: Marcado de Segmentos STOP
+- **Scope**: Segmentos con `NO_DATA_RATIO > 0.50` después del piloto
+- **Acción**: Marcar con `tainted=true` + `tainted_evidence` JSON
+
+---
+
+## Estados de Respuesta API
+
+| Estado | Descripción | Acción |
+|--------|-------------|--------|
+| `API_OK` | Stats completos (shots + corners) | Merge a DB |
+| `PARTIAL` | Solo algunos campos | Merge parcial, log warning |
+| `NO_DATA` | API retorna `response: []` o vacío | Skip, registrar en evidencia |
+| `ERROR` | HTTP error, timeout, rate limit | Retry con backoff |
+
+---
+
+## Hipótesis Iniciales (NO VINCULANTE)
+
+> **IMPORTANTE**: Estas son hipótesis basadas en pruebas manuales.
+> El piloto determinará la realidad. NO excluir ligas antes del piloto.
+
+### Hipótesis de Cobertura API-Football
+
+| Liga | Hipótesis | Verificar en Piloto |
+|------|-----------|---------------------|
+| Venezuela | Probablemente sin stats | Confirmar con sample |
+| Bolivia | Stats parciales desde ~2023 | Confirmar desde cuándo |
+| Uruguay | Stats parciales desde ~2020 | Confirmar desde cuándo |
+| Paraguay | Stats parciales, fecha incierta | Confirmar desde cuándo |
+| Turquía | API tiene stats desde 2015, DB vacía | Confirmar backfill viable |
+| Top 5 Europa | Alta cobertura esperada | Confirmar % real |
+
+### Decisión Post-Piloto
+
+El piloto generará un CSV con:
+```
+league_id, league_name, season, sampled, api_ok, partial, no_data, error, coverage_pct, decision
+```
+
+Decisiones automáticas:
+- `coverage_pct >= 70%` → `GO` (backfill)
+- `coverage_pct >= 50% AND < 70%` → `HOLD` (revisar manualmente)
+- `coverage_pct < 50%` → `STOP` (candidato a tainted)
+
+---
+
+## CLI del Script
+
+### Argumentos
+
+```
+--mode pilot|backfill     # Fase 0 (pilot) o Fase 1+ (backfill)
+--dry-run                 # Solo reporte, sin writes a DB
+--league-id INT           # Filtrar por liga específica
+--season INT              # Filtrar por temporada
+--checkpoint FILE         # Archivo para resume (JSON)
+--rate-limit INT          # Requests por minuto (default: 75)
+--output-csv FILE         # Exportar resultados a CSV
+--batch-size INT          # Fixtures por segmento (default: 200 para pilot)
+```
+
+### Ejemplos de Uso
+
+```bash
+# Fase 0: Pilot completo (dry-run primero)
+python scripts/backfill_historical_stats.py \
+  --mode pilot \
+  --dry-run \
+  --output-csv logs/pilot_dryrun.csv
+
+# Fase 0: Pilot real (con llamadas API)
+python scripts/backfill_historical_stats.py \
+  --mode pilot \
+  --output-csv logs/pilot_results.csv
+
+# Fase 0: Pilot solo para una liga
+python scripts/backfill_historical_stats.py \
+  --mode pilot \
+  --league-id 39 \
+  --output-csv logs/pilot_epl.csv
+
+# Fase 1: Backfill con checkpoint (después de aprobar piloto)
+python scripts/backfill_historical_stats.py \
+  --mode backfill \
+  --checkpoint logs/backfill_cp.json \
+  --rate-limit 75
+```
+
+---
+
+## Estructura del Script
+
+**Archivo**: `scripts/backfill_historical_stats.py`
+
+```python
 #!/usr/bin/env python3
 """
-Backfill Historical Stats from API-Football.
+Backfill historical stats from API-Football.
 
 Phases:
   - pilot: Sample fixtures per (league, season) to validate API coverage
   - backfill: Full backfill for segments that passed pilot
 
 IMPORTANTE: No hay ligas hardcodeadas como excluidas.
-            El piloto determina que segmentos son GO/HOLD/STOP.
+            El piloto determina qué segmentos son GO/HOLD/STOP.
 """
 
 import argparse
@@ -20,7 +155,6 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Tuple
 
 import aiohttp
 from sqlalchemy import text
@@ -28,7 +162,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
 # ═══════════════════════════════════════════════════════════════
-# CONFIGURACION
+# CONFIGURACIÓN
 # ═══════════════════════════════════════════════════════════════
 
 # API key MUST come from environment (never hardcode secrets in repo)
@@ -39,13 +173,13 @@ if not API_KEY:
 API_BASE = "https://v3.football.api-sports.io"
 HEADERS = {"x-apisports-key": API_KEY}
 
-# Umbrales de decision (configurables)
-THRESHOLD_GO = 70.0       # >= 70% coverage -> GO
-THRESHOLD_HOLD = 50.0     # >= 50% AND < 70% -> HOLD
-# < 50% -> STOP
+# Umbrales de decisión (configurables)
+THRESHOLD_GO = 70.0       # >= 70% coverage → GO
+THRESHOLD_HOLD = 50.0     # >= 50% AND < 70% → HOLD
+# < 50% → STOP
 
 # Circuit breaker: parar segmento si NO_DATA streak muy alto
-CIRCUIT_BREAKER_RATIO = 0.30  # 30% NO_DATA consecutivos -> parar segmento
+CIRCUIT_BREAKER_RATIO = 0.30  # 30% NO_DATA consecutivos → parar segmento
 
 # Estados de respuesta
 class ApiStatus:
@@ -79,7 +213,7 @@ async def fetch_fixture_stats(
     session: aiohttp.ClientSession,
     fixture_id: int,
     rate_limiter: RateLimiter
-) -> Tuple[str, Optional[Dict], float]:
+) -> tuple[str, dict | None, float]:
     """
     Fetch stats for a single fixture from API-Football.
 
@@ -137,50 +271,49 @@ async def fetch_fixture_stats(
         return ApiStatus.ERROR, {"error": str(e)}, 0
 
 
-def parse_stats(response: list) -> Optional[Dict]:
-    """Parse API response into stats by position (home/away).
-
-    API-Football returns stats in order: [home_team, away_team].
-    We use position index instead of team_id because our DB uses
-    different team_ids than API-Football.
-    """
+def parse_stats(response: list) -> dict | None:
+    """Parse API response into stats by team_id."""
     if not response or len(response) < 2:
         return None
 
-    result = {"home": {}, "away": {}}
+    stats_by_team = {}
+    for team_data in response:
+        team_id = team_data.get("team", {}).get("id")
+        if not team_id:
+            continue
 
-    for i, team_data in enumerate(response[:2]):
-        side = "home" if i == 0 else "away"
-
+        team_stats = {}
         for stat in team_data.get("statistics", []):
             stat_type = stat.get("type", "")
             value = stat.get("value")
 
             if stat_type == "Total Shots":
-                result[side]["total_shots"] = value
+                team_stats["total_shots"] = value
             elif stat_type == "Shots on Goal":
-                result[side]["shots_on_goal"] = value
+                team_stats["shots_on_goal"] = value
             elif stat_type == "Corner Kicks":
-                result[side]["corner_kicks"] = value
+                team_stats["corner_kicks"] = value
             elif stat_type == "Ball Possession":
                 if isinstance(value, str) and value.endswith("%"):
                     value = value.rstrip("%")
-                result[side]["possession"] = int(value) if value else None
+                team_stats["possession"] = int(value) if value else None
             elif stat_type == "Fouls":
-                result[side]["fouls"] = value
+                team_stats["fouls"] = value
             elif stat_type == "Yellow Cards":
-                result[side]["yellow_cards"] = value
+                team_stats["yellow_cards"] = value
             elif stat_type == "Red Cards":
-                result[side]["red_cards"] = value
+                team_stats["red_cards"] = value
 
-    return result
+        stats_by_team[team_id] = team_stats
+
+    return stats_by_team
 
 # ═══════════════════════════════════════════════════════════════
 # MERGE LOGIC (IDEMPOTENTE)
 # ═══════════════════════════════════════════════════════════════
 
 def merge_stats(
-    existing: Optional[Dict],
+    existing: dict | None,
     new: dict,
     home_team_id: int,
     away_team_id: int
@@ -188,9 +321,6 @@ def merge_stats(
     """
     Merge new stats into existing WITHOUT overwriting.
     Only fills missing fields.
-
-    Note: home_team_id and away_team_id are kept for signature
-    compatibility but not used - new dict uses "home"/"away" keys.
     """
     result = existing.copy() if existing else {}
 
@@ -199,21 +329,17 @@ def merge_stats(
     if "away" not in result:
         result["away"] = {}
 
-    home_stats = new.get("home", {})
-    away_stats = new.get("away", {})
-
-    def _is_missing(v) -> bool:
-        # Treat None and empty-string as missing. Some historical rows have "" stored.
-        return v is None or v == ""
+    home_stats = new.get(home_team_id, {})
+    away_stats = new.get(away_team_id, {})
 
     # Merge home (only fill missing)
     for key, value in home_stats.items():
-        if value is not None and _is_missing(result["home"].get(key)):
+        if value is not None and result["home"].get(key) is None:
             result["home"][key] = value
 
     # Merge away (only fill missing)
     for key, value in away_stats.items():
-        if value is not None and _is_missing(result["away"].get(key)):
+        if value is not None and result["away"].get(key) is None:
             result["away"][key] = value
 
     return result
@@ -226,11 +352,10 @@ async def run_pilot(
     db_session: AsyncSession,
     http_session: aiohttp.ClientSession,
     rate_limiter: RateLimiter,
-    league_id: Optional[int],
-    season: Optional[int],
-    include_cups: bool,
+    league_id: int | None,
+    season: int | None,
     batch_size: int,
-    output_csv: Optional[str],
+    output_csv: str | None,
     dry_run: bool
 ) -> dict:
     """
@@ -249,14 +374,12 @@ async def run_pilot(
         FROM matches m
         JOIN admin_leagues al ON m.league_id = al.league_id
         WHERE m.status = 'FT'
-          AND m.external_id IS NOT NULL
+          AND m.api_football_id IS NOT NULL
           AND (m.stats IS NULL
                OR m.stats->'home'->>'total_shots' IS NULL
                OR m.stats->'home'->>'total_shots' = '')
-          AND al.kind IN ('league'{cup_clause})
+          AND al.kind = 'league'
     """
-    cup_clause = ", 'cup'" if include_cups else ""
-    query = query.format(cup_clause=cup_clause)
 
     params = {}
     if league_id:
@@ -307,12 +430,12 @@ async def run_pilot(
 
         # Sample fixtures for this segment
         sample_query = text("""
-            SELECT m.id, m.external_id, m.home_team_id, m.away_team_id
+            SELECT m.id, m.api_football_id, m.home_team_id, m.away_team_id
             FROM matches m
             WHERE m.league_id = :league_id
               AND EXTRACT(YEAR FROM m.date) = :season
               AND m.status = 'FT'
-              AND m.external_id IS NOT NULL
+              AND m.api_football_id IS NOT NULL
               AND (m.stats IS NULL
                    OR m.stats->'home'->>'total_shots' IS NULL
                    OR m.stats->'home'->>'total_shots' = '')
@@ -338,7 +461,7 @@ async def run_pilot(
 
         for fix in fixtures:
             status, stats, latency = await fetch_fixture_stats(
-                http_session, fix["external_id"], rate_limiter
+                http_session, fix["api_football_id"], rate_limiter
             )
             counts[status] += 1
             latencies.append(latency)
@@ -419,14 +542,13 @@ async def run_backfill(
     db_session: AsyncSession,
     http_session: aiohttp.ClientSession,
     rate_limiter: RateLimiter,
-    league_id: Optional[int],
-    season: Optional[int],
-    checkpoint_file: Optional[str],
-    pilot_csv: Optional[str],
+    league_id: int | None,
+    season: int | None,
+    checkpoint_file: str | None,
+    pilot_csv: str | None,
     force_all: bool,
     dry_run: bool,
-    output_csv: Optional[str],
-    include_cups: bool,
+    output_csv: str | None
 ) -> dict:
     """
     Run backfill for segments marked GO in pilot.
@@ -458,7 +580,7 @@ async def run_backfill(
     query = """
         SELECT
             m.id,
-            m.external_id,
+            m.api_football_id,
             m.home_team_id,
             m.away_team_id,
             m.stats,
@@ -468,14 +590,12 @@ async def run_backfill(
         FROM matches m
         JOIN admin_leagues al ON m.league_id = al.league_id
         WHERE m.status = 'FT'
-          AND m.external_id IS NOT NULL
+          AND m.api_football_id IS NOT NULL
           AND (m.stats IS NULL
                OR m.stats->'home'->>'total_shots' IS NULL
                OR m.stats->'home'->>'total_shots' = '')
-          AND al.kind IN ('league'{cup_clause})
+          AND al.kind = 'league'
     """
-    cup_clause = ", 'cup'" if include_cups else ""
-    query = query.format(cup_clause=cup_clause)
 
     params = {}
     if league_id:
@@ -513,12 +633,12 @@ async def run_backfill(
 
         # Fetch from API
         status, stats, latency = await fetch_fixture_stats(
-            http_session, fix["external_id"], rate_limiter
+            http_session, fix["api_football_id"], rate_limiter
         )
 
         result_row = {
             "match_id": fix["id"],
-            "external_id": fix["external_id"],
+            "api_football_id": fix["api_football_id"],
             "league_id": lid,
             "league": fix["league_name"],
             "season": syear,
@@ -536,24 +656,14 @@ async def run_backfill(
             )
 
             if not dry_run:
-                # Fail-loud: ensure we actually updated 1 row.
-                res = await db_session.execute(
-                    text(
-                        "UPDATE matches "
-                        "SET stats = CAST(:stats AS json) "
-                        "WHERE id = :id "
-                        "RETURNING id"
-                    ),
-                    {"stats": json.dumps(merged), "id": fix["id"]},
+                await db_session.execute(
+                    text("UPDATE matches SET stats = :stats WHERE id = :id"),
+                    {"stats": json.dumps(merged), "id": fix["id"]}
                 )
-                returned = res.fetchone()
-                if not returned:
-                    errors += 1
-                    result_row["status"] = ApiStatus.ERROR
-                    result_row["updated"] = False
-                    result_row["error"] = "update_returned_0_rows"
-                    results.append(result_row)
-                    continue
+
+                if (i + 1) % 100 == 0:
+                    await db_session.commit()
+                    logging.info(f"Progress: {i+1}/{len(fixtures)} ({updated} updated)")
 
             updated += 1
             result_row["updated"] = True
@@ -565,12 +675,7 @@ async def run_backfill(
 
         results.append(result_row)
 
-        # Commit every 100 fixtures (moved outside status check)
-        if not dry_run and (i + 1) % 100 == 0:
-            await db_session.commit()
-            logging.info(f"Progress: {i+1}/{len(fixtures)} ({updated} updated)")
-
-        # Save checkpoint every 500 fixtures
+        # Save checkpoint
         if checkpoint_file and (i + 1) % 500 == 0:
             with open(checkpoint_file, "w") as f:
                 json.dump({"last_id": fix["id"], "updated": updated}, f)
@@ -620,10 +725,6 @@ async def main():
         help="Backfill ALL segments without pilot CSV (use with caution)"
     )
     parser.add_argument(
-        "--include-cups", action="store_true",
-        help="Include cup competitions (admin_leagues.kind='cup'). Default is league-only."
-    )
-    parser.add_argument(
         "--rate-limit", type=int, default=75,
         help="Requests per minute (default: 75)"
     )
@@ -667,14 +768,14 @@ async def main():
             if args.mode == "pilot":
                 result = await run_pilot(
                     db_session, http_session, rate_limiter,
-                    args.league_id, args.season, args.include_cups, args.batch_size,
+                    args.league_id, args.season, args.batch_size,
                     args.output_csv, args.dry_run
                 )
             else:
                 result = await run_backfill(
                     db_session, http_session, rate_limiter,
                     args.league_id, args.season, args.checkpoint,
-                    args.pilot_csv, args.force_all, args.dry_run, args.output_csv, args.include_cups
+                    args.pilot_csv, args.force_all, args.dry_run, args.output_csv
                 )
 
     await engine.dispose()
@@ -684,3 +785,124 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+```
+
+---
+
+## Flujo de Ejecución
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ PASO 1: PILOT DRY-RUN (ver segmentos sin llamar API)            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  python scripts/backfill_historical_stats.py \                  │
+│    --mode pilot \                                               │
+│    --dry-run \                                                  │
+│    --output-csv logs/pilot_dryrun.csv                           │
+│                                                                  │
+│  Output: Lista de segmentos (liga, temporada) con total_missing │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ PASO 2: PILOT REAL (sample 200 fixtures por segmento)           │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  python scripts/backfill_historical_stats.py \                  │
+│    --mode pilot \                                               │
+│    --output-csv logs/pilot_results.csv                          │
+│                                                                  │
+│  Output: CSV con decision=GO/HOLD/STOP por segmento             │
+│                                                                  │
+│  Revisar resultados:                                            │
+│    - GO (>=70%): Proceder a backfill                            │
+│    - HOLD (50-70%): Revisar manualmente                         │
+│    - STOP (<50%): Candidato a tainted                           │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ PASO 3: BACKFILL SEGMENTOS GO                                    │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  python scripts/backfill_historical_stats.py \                  │
+│    --mode backfill \                                            │
+│    --pilot-csv logs/pilot_results.csv \                         │
+│    --checkpoint logs/backfill_cp.json \                         │
+│    --output-csv logs/backfill_results.csv                       │
+│                                                                  │
+│  Solo procesa segmentos marcados GO en el pilot                 │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ PASO 4: MARCAR TAINTED (solo con evidencia)                      │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Para segmentos STOP con evidencia del piloto:                  │
+│                                                                  │
+│  -- Ejemplo: Venezuela confirmado sin datos                     │
+│  UPDATE matches                                                 │
+│  SET tainted = true,                                            │
+│      tainted_evidence = '{"reason": "api_no_data",              │
+│                           "pilot_date": "2026-02-01",           │
+│                           "sampled": 200,                       │
+│                           "no_data_pct": 100}'::jsonb           │
+│  WHERE league_id = 299                                          │
+│    AND (stats IS NULL OR stats->'home'->>'total_shots' IS NULL);│
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Verificación Post-Backfill
+
+```sql
+-- Comparar cobertura antes/después
+SELECT
+    al.name,
+    al.country,
+    COUNT(*) as total_ft,
+    COUNT(CASE WHEN m.stats->'home'->>'total_shots' IS NOT NULL THEN 1 END) as with_shots,
+    ROUND(100.0 * COUNT(CASE WHEN m.stats->'home'->>'total_shots' IS NOT NULL THEN 1 END) / COUNT(*), 1) as pct
+FROM matches m
+JOIN admin_leagues al ON m.league_id = al.league_id
+WHERE m.status = 'FT' AND al.kind = 'league'
+GROUP BY al.name, al.country
+ORDER BY pct;
+
+-- Verificar home/away correctamente mapeados
+SELECT
+    m.id,
+    th.name as home_team,
+    ta.name as away_team,
+    m.home_goals || '-' || m.away_goals as score,
+    m.stats->'home'->>'total_shots' as home_shots,
+    m.stats->'away'->>'total_shots' as away_shots
+FROM matches m
+JOIN teams th ON m.home_team_id = th.id
+JOIN teams ta ON m.away_team_id = ta.id
+WHERE m.stats->'home'->>'total_shots' IS NOT NULL
+ORDER BY m.date DESC
+LIMIT 20;
+```
+
+---
+
+## Recursos
+
+| Métrica | Valor |
+|---------|-------|
+| Budget API diario | 75,000 requests |
+| Rate limit script | 75 req/min (configurable) |
+| Pilot: fixtures por segmento | 200 |
+| Backfill: tiempo estimado | Depende de segmentos GO |
+
+---
+
+## Referencias
+
+- Dashboard SOTA/Features: Vista de cobertura actual por liga/temporada
+- API-Football docs: https://www.api-football.com/documentation-v3

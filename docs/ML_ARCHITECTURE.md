@@ -1,25 +1,102 @@
 # ML Architecture - FutbolStats
 
-Documentación técnica del sistema de predicciones ML.
+Documentación técnica del sistema de predicciones ML, sus guardrails y mecanismos de evaluación/shadow.
 
-## Modelo de Producción (v1.0.0)
+## Estado actual (Feb 2026)
+
+- **Producción**: Model A `v1.0.1-league-only` (XGBoost baseline, 14 features league-only) + kill-switch + policy draw cap.
+- **Shadow two-stage**: disponible en código, pero **pausado/deshabilitado** mientras se evalúa ext-C.
+- **Sensor B**: diagnóstico de calibración (LogReg L2) con guardrails de estabilidad numérica + sanity en OPS.
+- **ext-C (Automatic Shadow)**: job automático que genera predicciones `v1.0.2-ext-C` en `predictions_experiments` (no servido).
+
+---
+
+## Model A (producción) - v1.0.1-league-only
 
 ### Configuración
-- **Algoritmo**: XGBoost
-- **Features**: 14 (form, head-to-head, odds implícitas)
-- **Output**: Probabilidades 1X2 (home, draw, away)
-- **Archivo**: `models/xgb_v1.0.0_*.json`
 
-### Draw Label Canónico
+- **Algoritmo**: XGBoost (baseline)
+- **Output**: Probabilidades 1X2 (home/draw/away)
+- **Artefacto**: `models/xgb_v1.0.1-league-only_*.json`
+- **Flags**:
+  - `MODEL_ARCHITECTURE=baseline`
+  - `MODEL_VERSION=v1.0.1-league-only`
+
+### Features (14)
+
+Features baseline (misma lista usada por Sensor B para comparación justa):
+
+- `home_goals_scored_avg`
+- `home_goals_conceded_avg`
+- `home_shots_avg`
+- `home_corners_avg`
+- `home_rest_days`
+- `home_matches_played`
+- `away_goals_scored_avg`
+- `away_goals_conceded_avg`
+- `away_shots_avg`
+- `away_corners_avg`
+- `away_rest_days`
+- `away_matches_played`
+- `goal_diff_avg`
+- `rest_diff`
+
+### Draw label canónico
+
 **Draw = home_goals == away_goals** donde el score almacenado representa:
-- **FT (Full Time)**: Resultado a los 90 minutos
-- **PEN (Penalties)**: Score ANTES de penales (empate a 90'/120')
-- **AET (After Extra Time)**: Score DESPUÉS de prórroga
 
-### Training Dataset
-- Solo partidos con `status = 'FT'` (~69K muestras)
-- Draw rate: ~24.5%
-- Excluye AET/PEN (dinámicas de copa knockout diferentes)
+- **FT (Full Time)**: resultado a los 90 minutos
+- **PEN (Penalties)**: score ANTES de penales (empate a 90'/120')
+- **AET (After Extra Time)**: score DESPUÉS de prórroga
+
+### Dataset de entrenamiento (league-only + PIT-safe)
+
+- **Solo** partidos con `status = 'FT'` (excluye AET/PEN por dinámica distinta).
+- **League-only para features**: rolling averages calculadas usando únicamente matches donde `admin_leagues.kind = 'league'`.
+- **PIT-safe**: para un match objetivo con kickoff \(t\), el history usa solo partidos con `match.date < t` (sin mirar el futuro).
+- **Rolling window**: últimos 10 partidos de liga (por equipo) previos al match (ventana configurable en scripts).
+
+---
+
+## Guardrails Fase 0/1 (anti-Exeter + robustez operativa)
+
+### 1) Feature engineering league-only (anti-Exeter)
+
+Motivación: evitar el “Modo Exeter” (stats infladas por copas vs rivales amateurs) contaminando rolling averages.
+
+Implementación: el `FeatureEngineer` calcula features para upcoming matches con `league_only=True` (history solo de liga), aunque el match a predecir sea copa/internacional.
+
+### 2) Kill-switch router (historial mínimo)
+
+Objetivo: no predecir cuando las features son inestables por falta de historial.
+
+Criterio: ambos equipos deben tener al menos **N partidos de liga** en los últimos **LOOKBACK_DAYS** previos al kickoff:
+
+- `KILLSWITCH_ENABLED` (default true)
+- `KILLSWITCH_MIN_LEAGUE_MATCHES` (default 5)
+- `KILLSWITCH_LOOKBACK_DAYS` (default 90)
+
+Telemetría:
+- `predictions_killswitch_filtered_total{reason}` (`home_insufficient|away_insufficient|both_insufficient`)
+- `predictions_killswitch_eligible`
+
+---
+
+## Betting policy (value bets) - Draw cap (portfolio guardrail)
+
+Motivación: el modelo mejoró en detección de empates, pero el selector “best_edge” puede concentrar demasiado el portfolio en draws.
+
+El cap **no cambia** probabilidades del modelo; solo filtra/remueve apuestas “draw” marginales en la selección de value bets.
+
+Flags:
+
+```
+POLICY_DRAW_CAP_ENABLED=true
+POLICY_MAX_DRAW_SHARE=0.35
+POLICY_EDGE_THRESHOLD=0.05
+```
+
+Regla: si los value bets de outcome=draw superan `POLICY_MAX_DRAW_SHARE`, se mantienen solo los draws con mayor edge.
 
 ---
 
@@ -55,9 +132,101 @@ MODEL_DRAW_THRESHOLD=0.0                 # Deshabilitado, usar argmax
 - **NO-GO**: Cualquier degradación fuera de tolerancia
 
 ### Estado Actual
-Ver `/dashboard/ops.json` → `shadow_mode` para métricas actuales.
+Disponible en código. Actualmente se considera **pausado/deshabilitado** mientras se evalúa `ext-C`.
+
+Ver `/dashboard/ops.json` → `shadow_mode` para el estado/métricas actuales.
 
 ---
+
+## ext-C (Automatic Shadow) - v1.0.2-ext-C
+
+### Propósito
+
+Evaluar si una variante entrenada con rango histórico distinto / filtros de cold-start mejora calibración/skill de forma OOS **sin tocar serving**.
+
+### Entrenamiento
+
+- **Algoritmo**: XGBoost baseline (mismas 14 features)
+- **Artefacto**: `models/xgb_v1.0.2-ext-C_*.json`
+- **Notas**:
+  - ext-C se compara OOS contra `v1.0.1-league-only` antes de considerar un switch.
+  - Es un candidato “shadow”: genera predicciones, pero **no se sirve** al usuario.
+
+### Shadow automático (scheduler)
+
+Job: `extc_shadow` (cada `EXTC_SHADOW_INTERVAL_MINUTES`), con guardrails:
+
+- **Write target**: solo `predictions_experiments` (nunca `predictions`)
+- **Idempotencia**: `ON CONFLICT (snapshot_id, model_version) DO NOTHING`
+- **PIT-safe**: `created_at = snapshot_at - 1s`
+- **Gating**: `snapshot_type='lineup_confirmed'` + ventana 10–90 min pre-kickoff
+- **Anti-join**: selecciona snapshots pendientes con `LEFT JOIN ... IS NULL` (evita gaps)
+
+Flags:
+
+```
+EXTC_SHADOW_ENABLED=false
+EXTC_SHADOW_MODEL_VERSION=v1.0.2-ext-C
+EXTC_SHADOW_MODEL_PATH=models/xgb_v1.0.2-ext-C_*.json
+EXTC_SHADOW_BATCH_SIZE=200
+EXTC_SHADOW_INTERVAL_MINUTES=30
+EXTC_SHADOW_START_AT=2026-02-01
+EXTC_SHADOW_OOS_ONLY=true
+```
+
+### Telemetría
+
+- Prometheus:
+  - `extc_shadow_predictions_inserted_total`
+  - `extc_shadow_predictions_skipped_total`
+  - `extc_shadow_errors_total`
+  - `extc_shadow_last_success_timestamp`
+- ops.json:
+  - `extc_shadow` (state, counts, last_success_at, predictions_count)
+
+---
+
+## ext-D (Interim Evaluation Shadow) - v1.0.1-league-only retrained (2026-02-02)
+
+### Propósito
+
+Evaluar en producción (solo logging) el **modelo reentrenado** con contrato **league-only end-to-end** habilitado por el backfill de `matches.stats` (shots/corners).  
+Este modelo **NO se sirve** al usuario y funciona como **modelo interino de evaluación** para decidir promoción a producción.
+
+### Entrenamiento (Opción A aprobada ATI)
+
+- **Algoritmo**: XGBoost baseline (mismas 14 features)
+- **Artefacto**: `models/xgb_v1.0.1-league-only_20260202.json`
+- **Rango temporal**:
+  - `min_date = 2020-01-01`
+  - `cutoff = 2026-01-15` (dataset usa `m.date < cutoff`)
+  - `date_range entrenado`: 2020-01-01 → 2026-01-14
+- **Filtros del dataset**:
+  - `matches.status = 'FT'`
+  - `home_goals/away_goals NOT NULL`
+  - `tainted = false` (o NULL)
+  - **Targets league-only**: `admin_leagues.kind = 'league'`
+  - **History league-only**: rolling averages usan solo `admin_leagues.kind = 'league'`
+- **Exclusiones por calidad de stats (ligas sin datos API-Football)**:
+  - `league_id NOT IN (242, 250, 252, 268, 270, 299, 344)`
+  - Motivación: estas ligas tienen alto % de stats faltantes; `COALESCE(..., 0)` introduciría ceros sistemáticos en shots/corners y degradaría el training.
+
+### Shadow automático (scheduler)
+
+Se ejecuta en paralelo como una variante adicional del job shadow (no reemplaza ext-A/B/C).  
+Write target: solo `predictions_experiments` con `model_version` propio (p.ej. `v1.0.1-league-only-20260202`).
+
+Guardrails:
+- **Idempotencia**: `ON CONFLICT (snapshot_id, model_version) DO NOTHING`
+- **PIT-safe**: `created_at = snapshot_at - 1s`
+- **Gating**: `snapshot_type='lineup_confirmed'` + ventana 10–90 min pre-kickoff
+- **Fail-closed por variante**: si el artefacto no existe o falla, no afecta serving
+
+### Criterio de promoción
+
+No se promueve con N pequeño. Requiere evaluación extendida:
+- **≥ 2,000** predicciones PIT-safe **o** 2–4 semanas OOS
+- Mejoras sostenidas en: **Brier, ECE, skill_vs_market**, sin degradación en ligas top (estratificado)
 
 ## Sensor B - Calibration Diagnostics
 
@@ -80,6 +249,8 @@ SENSOR_RETRAIN_INTERVAL_HOURS=6
 SENSOR_SIGNAL_SCORE_GO=1.1
 SENSOR_SIGNAL_SCORE_NOISE=0.9
 SENSOR_EVAL_WINDOW_DAYS=14
+SENSOR_TEMPERATURE=2.0
+SENSOR_PROB_EPS=1e-12
 ```
 
 ### Signal Score
@@ -101,6 +272,25 @@ signal = (brier_uniform - brier_B) / (brier_uniform - brier_A)
 2. NUNCA afecta predicciones de producción
 3. Si signal > 1.1 consistentemente: revisar Model A manualmente
 4. No tomar decisiones con < 100 samples evaluados
+
+### Estabilidad numérica (fix 2026-02)
+
+Sensor B aplica guardrails para evitar overconfidence extremo (probs pegadas a 0/1) y mejorar la estabilidad de métricas:
+
+- `StandardScaler + LogisticRegression` (reduce logits extremos por escala)
+- sanitización + clipping de features (anti-outliers)
+- temperature scaling (`SENSOR_TEMPERATURE`)
+- clipping de probabilidades (`SENSOR_PROB_EPS`)
+
+### Sanity check (OPS)
+
+En `ops.json` se expone `sensor_b.sanity` calculado sobre las últimas 24h de `sensor_predictions`:
+
+- `overconfident_ratio`: % con `max_prob > 0.9999`
+- `mean_entropy` y `low_entropy_ratio` (entropía < 0.25)
+- `min_prob`
+
+Estado: `HEALTHY` / `OVERCONFIDENT` (solo alerta; no bloquea).
 
 ### Semántica de b_* = NULL
 
@@ -146,6 +336,16 @@ sensor_predictions_evaluated_total
 sensor_predictions_errors_total
 sensor_retrain_runs_total{status}
 sensor_state  # 0=disabled, 1=learning, 2=ready, 3=error
+
+# Kill-switch router
+predictions_killswitch_filtered_total{reason}
+predictions_killswitch_eligible
+
+# ext-C shadow
+extc_shadow_predictions_inserted_total
+extc_shadow_predictions_skipped_total
+extc_shadow_errors_total
+extc_shadow_last_success_timestamp
 ```
 
 ### Health en ops.json
@@ -159,7 +359,13 @@ sensor_state  # 0=disabled, 1=learning, 2=ready, 3=error
     }
   },
   "sensor_b": {
-    "health": { /* misma estructura */ }
+    "health": { /* misma estructura */ },
+    "sanity": { /* HEALTHY|OVERCONFIDENT + ratios */ }
+  },
+  "extc_shadow": {
+    "state": "DISABLED|ACTIVE|ERROR",
+    "predictions_count": 0,
+    "last_success_at": "2026-02-01T..."
   }
 }
 ```
@@ -170,7 +376,35 @@ sensor_state  # 0=disabled, 1=learning, 2=ready, 3=error
 
 ---
 
+## Data quality: `matches.stats` (shots/corners) y backtests PIT
+
+### Cobertura de stats (shots/corners)
+
+Las features `*_shots_avg` y `*_corners_avg` dependen de `matches.stats`. Históricamente, muchos partidos antiguos no tienen stats y el pipeline puede imputar 0 (vía `COALESCE`), lo cual contamina el training si se entrena muy atrás en el tiempo.
+
+Regla práctica:
+
+- **Sin backfill**: entrenar desde el primer período con coverage consistente (p.ej. `min_date >= 2024-01-01`).
+- **Con backfill**: ampliar `min_date` solo cuando el % de stats faltantes esté dentro de tolerancia.
+
+### Backtests PIT-safe (evitar leakage temporal)
+
+Para cualquier evaluación con `min_snapshot_date = D`:
+
+- el modelo debe entrenarse con **cutoff ≤ D** (solo FT anteriores a D),
+- y las features deben respetar **as-of** (`match.date < snapshot_at` / `match.date < kickoff`).
+
+Esto evita “mejoras falsas” por entrenar con resultados incluidos luego en el período evaluado.
+
+---
+
 ## Histórico de Experimentos
+
+### FASE 0/1 (2026-02) - Exeter fix + league-only
+- **v1.0.1-league-only**: Model A en producción (features league-only + kill-switch).
+- **Draw cap**: guardrail de portfolio para value bets (evita sobreconcentración en draws).
+- **ext-C**: shadow automático en paralelo (no servido) para evaluación OOS.
+- **Two-stage shadow**: pausado mientras se evalúa ext-C.
 
 ### FASE 1 (v1.1.0) - NO-GO
 - 17 features (14 base + 3 competitividad)
@@ -178,7 +412,7 @@ sensor_state  # 0=disabled, 1=learning, 2=ready, 3=error
 - Draw predictions: 16.1% pero degradó Brier/LogLoss
 - Resultado: Sweep de pesos no encontró punto aceptable
 
-### FASE 2 (v1.1.0-twostage) - EN EVALUACIÓN
+### FASE 2 (v1.1.0-twostage) - PAUSADO
 - Arquitectura two-stage descrita arriba
-- Shadow mode activo, acumulando samples
-- Decisión pendiente tras >= 200 evaluaciones
+- En pausa mientras se prioriza evaluación OOS de `ext-C`
+- Reanudar cuando haya ventana de evaluación dedicada (>=200 evaluaciones)

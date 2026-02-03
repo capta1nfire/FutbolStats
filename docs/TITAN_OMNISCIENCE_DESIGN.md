@@ -3033,6 +3033,17 @@ Dashboard TITAN agregado a `/dashboard/ops.json` con:
    - Si TITAN aporta valor → Continuar con FASE 3B-2 (Entity Resolution)
    - Si no hay lift → Revisar arquitectura del modelo o pausar TITAN
 
+### Framework Oficial: Tier Comparison (PIT-safe)
+
+Para ejecutar la comparación **baseline vs +T1b/+T1c/+T1d** de forma reproducible y **sin leakage**, usar el framework operativo:
+
+- `docs/TITAN_TIER_COMPARISON_FRAMEWORK.md`
+
+Este framework define:
+- Cohorte por `snapshot_id` (1:1), no por match
+- Tabla separada `predictions_experiments`
+- Guardrails PIT (`cutoff_train < eval_start`, features as-of, `created_at <= snapshot_at`)
+
 ### Trabajo Completado Pre-Pausa
 
 | Fase | Entregables | Estado |

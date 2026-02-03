@@ -25,6 +25,52 @@ class Team(SQLModel, table=True):
     )
     logo_url: Optional[str] = Field(default=None, max_length=500, description="Team crest URL")
 
+    # Wikipedia / Wikidata linkage (optional, admin-managed)
+    wiki_url: Optional[str] = Field(
+        default=None,
+        sa_column_kwargs={"nullable": True},
+        description="User-provided Wikipedia URL (source input)",
+    )
+    wikidata_id: Optional[str] = Field(
+        default=None,
+        max_length=20,
+        sa_column_kwargs={"nullable": True},
+        description="Wikidata Q-number (e.g., Q12345)",
+    )
+    wiki_title: Optional[str] = Field(
+        default=None,
+        max_length=255,
+        sa_column_kwargs={"nullable": True},
+        description="Canonical Wikipedia title (derived)",
+    )
+    wiki_lang: Optional[str] = Field(
+        default=None,
+        max_length=32,
+        sa_column_kwargs={"nullable": True},
+        description="Wikipedia language/project code (derived, e.g., en, es, pt-br)",
+    )
+    wiki_url_cached: Optional[str] = Field(
+        default=None,
+        sa_column_kwargs={"nullable": True},
+        description="Canonical Wikipedia URL (derived)",
+    )
+    wiki_source: Optional[str] = Field(
+        default=None,
+        max_length=32,
+        sa_column_kwargs={"nullable": True},
+        description="How the wiki link was established (manual, api, fuzzy, etc.)",
+    )
+    wiki_confidence: Optional[float] = Field(
+        default=None,
+        sa_column_kwargs={"nullable": True},
+        description="Match confidence in [0,1] (derived)",
+    )
+    wiki_matched_at: Optional[datetime] = Field(
+        default=None,
+        sa_column_kwargs={"nullable": True},
+        description="When the wiki link was last established/updated (UTC)",
+    )
+
     # Relationships
     home_matches: list["Match"] = Relationship(
         back_populates="home_team",
