@@ -6527,13 +6527,14 @@ def start_scheduler(ml_engine):
             replace_existing=True,
         )
 
-    # ext-A/B/C Shadow job: Generate experimental predictions for all enabled variants
-    # ATI: Un solo job genérico procesa A/B/C en paralelo
+    # ext-A/B/C/D Shadow job: Generate experimental predictions for all enabled variants
+    # ATI: Un solo job genérico procesa A/B/C/D en paralelo
     # ATI guardrails: default OFF per variant, max_instances=1, coalesce=True
     ext_shadow_enabled = (
         sensor_settings.EXTA_SHADOW_ENABLED or
         sensor_settings.EXTB_SHADOW_ENABLED or
-        sensor_settings.EXTC_SHADOW_ENABLED
+        sensor_settings.EXTC_SHADOW_ENABLED or
+        sensor_settings.EXTD_SHADOW_ENABLED
     )
     if ext_shadow_enabled:
         enabled_variants = []
@@ -6543,6 +6544,8 @@ def start_scheduler(ml_engine):
             enabled_variants.append("B")
         if sensor_settings.EXTC_SHADOW_ENABLED:
             enabled_variants.append("C")
+        if sensor_settings.EXTD_SHADOW_ENABLED:
+            enabled_variants.append("D")
 
         scheduler.add_job(
             generate_ext_shadow_predictions,
