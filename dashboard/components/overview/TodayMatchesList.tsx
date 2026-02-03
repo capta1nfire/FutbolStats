@@ -144,7 +144,7 @@ export function TodayMatchesList({
             key={group.leagueName}
             className={cn(
               "rounded-lg bg-background border border-border overflow-hidden",
-              group.hasLive && "border-success/50"
+              group.hasLive && "border-success/15"
             )}
           >
             {/* League header */}

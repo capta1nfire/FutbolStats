@@ -416,7 +416,7 @@ function MatchesPageContent() {
       />
 
       {/* Main content: Table */}
-      <div className="flex-1 flex flex-col overflow-hidden bg-background">
+      <div className="flex-1 flex flex-col overflow-hidden bg-background min-w-0">
         {/* Table */}
         <MatchesTable
           data={matches}
