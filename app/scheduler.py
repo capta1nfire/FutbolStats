@@ -2659,10 +2659,12 @@ EXTC_14_FEATURES = EXT_14_FEATURES
 
 async def generate_ext_shadow_predictions():
     """
-    Generate shadow predictions for ext-A/B/C models.
+    Generate shadow predictions for ext-A/B/C/D models.
 
     ATI: Un solo job genérico que procesa todas las variantes habilitadas.
     Cada variante se procesa independientemente (fail-closed por variante).
+    - ext-A/B/C: Modelos con diferentes min_date de training
+    - ext-D: Candidato league-only (v1.0.1-league-only-20260202)
 
     Writes ONLY to predictions_experiments (never to predictions).
     """
@@ -2697,6 +2699,12 @@ async def generate_ext_shadow_predictions():
             "name": "C",
             "model_version": settings.EXTC_SHADOW_MODEL_VERSION,
             "model_path": settings.EXTC_SHADOW_MODEL_PATH,
+        })
+    if settings.EXTD_SHADOW_ENABLED:
+        variants.append({
+            "name": "D",
+            "model_version": settings.EXTD_SHADOW_MODEL_VERSION,
+            "model_path": settings.EXTD_SHADOW_MODEL_PATH,
         })
 
     if not variants:

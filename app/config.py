@@ -104,6 +104,12 @@ class Settings(BaseSettings):
     EXTC_SHADOW_MODEL_VERSION: str = "v1.0.2-ext-C"
     EXTC_SHADOW_MODEL_PATH: str = "models/xgb_v1.0.2-ext-C_20260201.json"
 
+    # ext-D: league-only candidato (v1.0.1-league-only trained 2026-02-02)
+    # ATI: Shadow paralelo para evaluación extendida sin tocar ext-A/B/C
+    EXTD_SHADOW_ENABLED: bool = False  # ATI: default OFF
+    EXTD_SHADOW_MODEL_VERSION: str = "v1.0.1-league-only-20260202"
+    EXTD_SHADOW_MODEL_PATH: str = "models/xgb_v1.0.1-league-only_20260202.json"
+
     # Shared settings for all ext variants
     EXT_SHADOW_BATCH_SIZE: int = 200  # Max snapshots per run per variant
     EXT_SHADOW_INTERVAL_MINUTES: int = 30  # Run every 30 min
