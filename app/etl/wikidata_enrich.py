@@ -581,10 +581,10 @@ async def _upsert_enrichment(
             full_name, short_name, social_handles, website,
             enrichment_source
         ) VALUES (
-            :team_id, :wikidata_id, (NOW() AT TIME ZONE 'UTC'), :raw_jsonb::jsonb,
+            :team_id, :wikidata_id, (NOW() AT TIME ZONE 'UTC'), CAST(:raw_jsonb AS jsonb),
             :stadium_name, :stadium_wikidata_id, :stadium_capacity, :stadium_altitude_m,
             :lat, :lon, :admin_location_label,
-            :full_name, :short_name, :social_handles::jsonb, :website,
+            :full_name, :short_name, CAST(:social_handles AS jsonb), :website,
             :enrichment_source
         )
         ON CONFLICT (team_id) DO UPDATE SET
