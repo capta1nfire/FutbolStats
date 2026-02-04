@@ -96,10 +96,10 @@ function StandingsTable({
                   {canClick ? (
                     <button
                       onClick={() => onTeamSelect!(entry.team_id!)}
-                      className="flex items-center gap-2 hover:text-primary transition-colors"
+                      className="flex items-center gap-2 text-primary hover:text-primary-hover transition-colors no-underline hover:no-underline"
                     >
                       <TeamFlag name={entry.name} logoUrl={entry.logo_url} size={16} />
-                      <span className="font-medium text-foreground hover:underline">
+                      <span className="font-medium">
                         {entry.name}
                       </span>
                     </button>
@@ -167,7 +167,7 @@ function MatchesList({
                 {match.home_team_id && onTeamSelect ? (
                   <button
                     onClick={() => onTeamSelect(match.home_team_id!)}
-                    className="hover:text-primary hover:underline transition-colors"
+                    className="text-primary hover:text-primary-hover transition-colors no-underline hover:no-underline"
                   >
                     {match.home_team}
                   </button>
@@ -178,7 +178,7 @@ function MatchesList({
                 {match.away_team_id && onTeamSelect ? (
                   <button
                     onClick={() => onTeamSelect(match.away_team_id!)}
-                    className="hover:text-primary hover:underline transition-colors"
+                    className="text-primary hover:text-primary-hover transition-colors no-underline hover:no-underline"
                   >
                     {match.away_team}
                   </button>

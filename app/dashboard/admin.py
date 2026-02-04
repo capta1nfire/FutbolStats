@@ -734,6 +734,34 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
     if not team_row:
         return None
 
+    # Wikidata enrichment (optional; fail-soft if migration not applied)
+    enrichment_supported = True
+    enrichment_row = None
+    enrichment_query = text("""
+        SELECT
+            wikidata_id,
+            fetched_at,
+            stadium_name,
+            stadium_wikidata_id,
+            stadium_capacity,
+            stadium_altitude_m,
+            admin_location_label,
+            lat,
+            lon,
+            full_name,
+            short_name,
+            website,
+            social_handles->>'twitter' AS twitter,
+            social_handles->>'instagram' AS instagram
+        FROM team_wikidata_enrichment
+        WHERE team_id = :tid
+    """)
+    try:
+        enrichment_result = await session.execute(enrichment_query, {"tid": team_id})
+        enrichment_row = enrichment_result.fetchone()
+    except ProgrammingError:
+        enrichment_supported = False
+
     # Leagues played
     leagues_query = text("""
         SELECT
@@ -878,6 +906,28 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
             "wiki_confidence": getattr(team_row, "wiki_confidence", None),
             "wiki_matched_at": (wiki_matched_at.isoformat() + "Z") if wiki_matched_at else None,
         }
+
+    if enrichment_supported:
+        if enrichment_row:
+            fetched_at = getattr(enrichment_row, "fetched_at", None)
+            payload["wikidata_enrichment"] = {
+                "wikidata_id": getattr(enrichment_row, "wikidata_id", None),
+                "wikidata_updated_at": (fetched_at.isoformat() + "Z") if fetched_at else None,
+                "stadium_name": getattr(enrichment_row, "stadium_name", None),
+                "stadium_wikidata_id": getattr(enrichment_row, "stadium_wikidata_id", None),
+                "stadium_capacity": getattr(enrichment_row, "stadium_capacity", None),
+                "stadium_altitude_m": getattr(enrichment_row, "stadium_altitude_m", None),
+                "city": getattr(enrichment_row, "admin_location_label", None),
+                "lat": getattr(enrichment_row, "lat", None),
+                "lon": getattr(enrichment_row, "lon", None),
+                "full_name": getattr(enrichment_row, "full_name", None),
+                "short_name": getattr(enrichment_row, "short_name", None),
+                "website": getattr(enrichment_row, "website", None),
+                "twitter": getattr(enrichment_row, "twitter", None),
+                "instagram": getattr(enrichment_row, "instagram", None),
+            }
+        else:
+            payload["wikidata_enrichment"] = None
 
     return payload
 

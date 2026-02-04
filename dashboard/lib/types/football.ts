@@ -303,6 +303,23 @@ export interface TeamWikiInfo {
   wiki_matched_at?: string | null;
 }
 
+export interface TeamWikidataEnrichment {
+  wikidata_id: string | null;
+  wikidata_updated_at: string | null;
+  stadium_name: string | null;
+  stadium_wikidata_id: string | null;
+  stadium_capacity: number | null;
+  stadium_altitude_m: number | null;
+  city: string | null;
+  lat: number | null;
+  lon: number | null;
+  full_name: string | null;
+  short_name: string | null;
+  website: string | null;
+  twitter: string | null;
+  instagram: string | null;
+}
+
 export interface TeamInfo {
   team_id: number;
   name: string;
@@ -344,6 +361,7 @@ export interface TeamFormMatch {
 
 export interface TeamDetail {
   team: TeamInfo;
+  wikidata_enrichment?: TeamWikidataEnrichment | null;
   stats?: TeamStats;
   leagues_played?: TeamLeague[];
   recent_form?: TeamFormMatch[];

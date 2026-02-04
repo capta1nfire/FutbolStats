@@ -92,7 +92,7 @@ function AlertItem({ alert, onMarkRead }: { alert: Alert; onMarkRead: (id: numbe
                 href={alert.source_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-[10px] text-primary hover:underline flex items-center gap-1"
+                className="text-[10px] text-primary hover:text-primary-hover transition-colors no-underline hover:no-underline flex items-center gap-1"
               >
                 <ExternalLink className="h-3 w-3" />
                 View in Grafana
@@ -232,7 +232,7 @@ export function AlertsBell() {
             <button
               onClick={handleMarkAllRead}
               disabled={isAcking}
-              className="text-xs text-primary hover:underline disabled:opacity-50"
+              className="text-xs text-primary hover:text-primary-hover transition-colors no-underline hover:no-underline disabled:opacity-50"
             >
               Mark all read
             </button>

@@ -199,7 +199,7 @@ function RecentMatchesList({
                 {match.home_team_id && onTeamSelect ? (
                   <button
                     onClick={() => onTeamSelect(match.home_team_id!)}
-                    className="hover:text-primary hover:underline transition-colors"
+                    className="text-primary hover:text-primary-hover transition-colors no-underline hover:no-underline"
                   >
                     {match.home_team}
                   </button>
@@ -210,7 +210,7 @@ function RecentMatchesList({
                 {match.away_team_id && onTeamSelect ? (
                   <button
                     onClick={() => onTeamSelect(match.away_team_id!)}
-                    className="hover:text-primary hover:underline transition-colors"
+                    className="text-primary hover:text-primary-hover transition-colors no-underline hover:no-underline"
                   >
                     {match.away_team}
                   </button>
@@ -286,7 +286,7 @@ function GroupStandingsTable({
                     {teamClickable ? (
                       <button
                         onClick={() => onTeamSelect(entry.teamId)}
-                        className="text-foreground hover:text-primary hover:underline transition-colors text-left truncate"
+                        className="text-primary hover:text-primary-hover transition-colors no-underline hover:no-underline text-left truncate"
                       >
                         {entry.teamName}
                       </button>

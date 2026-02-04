@@ -1,11 +1,15 @@
 "use client";
 
 import Image from "next/image";
-import { useFootballLeague, useStandings } from "@/lib/hooks";
+import { useCallback, useMemo, useState } from "react";
+import { useFootballLeague, useFootballTeam, useStandings } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
 import type { StandingEntry } from "@/lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import { IconTabs } from "@/components/ui/icon-tabs";
+import { QualificationBadge } from "@/components/ui/qualification-badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Loader } from "@/components/ui/loader";
 import { getCountryIsoCode } from "@/lib/utils/country-flags";
 import {
@@ -19,6 +23,14 @@ import {
   Users,
   TrendingUp,
 } from "lucide-react";
+
+const LEAGUE_DETAIL_TABS = [
+  { id: "standings", icon: null, label: "Standings" },
+  { id: "next", icon: null, label: "Next Matches" },
+  { id: "stats", icon: null, label: "Stats by Season" },
+] as const;
+
+type LeagueDetailTabId = (typeof LEAGUE_DETAIL_TABS)[number]["id"];
 
 /**
  * Country Flag Component
@@ -149,7 +161,7 @@ function RecentMatchesList({
                 {match.home_team_id && onTeamSelect ? (
                   <button
                     onClick={() => onTeamSelect(match.home_team_id!)}
-                    className="hover:text-primary hover:underline transition-colors"
+                    className="text-primary hover:text-primary-hover transition-colors no-underline hover:no-underline"
                   >
                     {match.home_team}
                   </button>
@@ -160,7 +172,7 @@ function RecentMatchesList({
                 {match.away_team_id && onTeamSelect ? (
                   <button
                     onClick={() => onTeamSelect(match.away_team_id!)}
-                    className="hover:text-primary hover:underline transition-colors"
+                    className="text-primary hover:text-primary-hover transition-colors no-underline hover:no-underline"
                   >
                     {match.away_team}
                   </button>
@@ -225,7 +237,9 @@ function StandingsTable({
 
             return (
               <tr key={entry.position} className="border-b border-border last:border-0 hover:bg-muted/30">
-                <td className="text-center py-1.5 px-2 text-muted-foreground">{entry.position}</td>
+                <td className="text-center py-1.5 px-2">
+                  <QualificationBadge value={entry.position} active={entry.position <= 8} />
+                </td>
                 <td className="py-1.5 px-2">
                   <div className="flex items-center gap-2">
                     {entry.teamLogo ? (
@@ -236,14 +250,14 @@ function StandingsTable({
                     {teamClickable ? (
                       <button
                         onClick={() => onTeamSelect(entry.teamId)}
-                        className="text-foreground hover:text-primary hover:underline transition-colors text-left truncate"
+                        className="text-primary hover:text-primary-hover transition-colors no-underline hover:no-underline text-left truncate"
                       >
                         {entry.teamName}
                       </button>
                     ) : (
                       <span className="text-foreground truncate">{entry.teamName}</span>
                     )}
-                    {entry.description && (
+                    {entry.description && entry.position > 8 && (
                       <span className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
                         {entry.description}
                       </span>
@@ -299,8 +313,26 @@ function StandingsTable({
  * - Standings
  */
 export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailProps) {
+  const [activeTab, setActiveTab] = useState<LeagueDetailTabId>("standings");
+  const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
   const { data, isLoading, error, refetch } = useFootballLeague(leagueId);
   const { data: standingsData, isLoading: isStandingsLoading } = useStandings(leagueId);
+  const selectedTeam = useFootballTeam(selectedTeamId);
+
+  // MUST be called on every render (Rules of Hooks). Keep defensive for loading/error.
+  const nextMatches = useMemo(() => {
+    const matches = data?.recent_matches ?? [];
+    // Treat "no score" as upcoming. Status may vary; keep it defensive.
+    return matches.filter((m) => !m.score);
+  }, [data?.recent_matches]);
+
+  const handleTeamSelect = useCallback(
+    (teamId: number) => {
+      setSelectedTeamId(teamId);
+      onTeamSelect(teamId);
+    },
+    [onTeamSelect]
+  );
 
   // Loading state
   if (isLoading) {
@@ -353,7 +385,27 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
           <div className="flex-1">
             <div className="flex items-center gap-2">
               <Trophy className="h-5 w-5 text-primary" />
-              <h1 className="text-lg font-semibold text-foreground">{league.name}</h1>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <h1 className="text-lg font-semibold text-foreground cursor-help">
+                    {league.name}
+                  </h1>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" sideOffset={6}>
+                  <div className="space-y-1">
+                    <div className="text-foreground">
+                      <span className="text-muted-foreground">Match Weight:</span>{" "}
+                      <span className="font-medium text-foreground">
+                        {league.match_weight ?? 1}
+                      </span>
+                    </div>
+                    <div className="text-muted-foreground">
+                      1 = peso estándar. Valores mayores aumentan la influencia de esta liga
+                      en cálculos internos; menores la reducen.
+                    </div>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
             </div>
             <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
               <span className="flex items-center gap-1">
@@ -373,6 +425,229 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
           </Button>
         </div>
 
+        {/* Tabs (UniFi style) */}
+        <div className="w-full lg:max-w-[30%] lg:mr-auto min-w-0">
+          <IconTabs
+            tabs={LEAGUE_DETAIL_TABS as unknown as { id: string; icon: React.ReactNode; label: string }[]}
+            value={activeTab}
+            onValueChange={(v) => setActiveTab(v as LeagueDetailTabId)}
+            showLabels
+            className="w-full"
+          />
+        </div>
+
+        {/* Tab Content */}
+        {activeTab === "standings" && (
+          <div className="w-full flex flex-col lg:flex-row gap-4 lg:items-start min-w-0">
+            {/* Standings */}
+            <div
+              className={cn(
+                "bg-transparent border border-border rounded-lg overflow-hidden w-full min-w-0",
+                selectedTeamId !== null ? "lg:w-[30%]" : "lg:max-w-[30%] lg:mr-auto"
+              )}
+            >
+              <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+                <Trophy className="h-4 w-4 text-muted-foreground" />
+                <h2 className="text-sm font-semibold text-foreground">Standings</h2>
+                {standingsData && (
+                  <span className="text-xs text-muted-foreground ml-auto">
+                    {standingsData.season} &middot; {standingsData.source}
+                  </span>
+                )}
+                {standingsData?.isPlaceholder && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]">
+                    Placeholder
+                  </span>
+                )}
+                {standingsData?.isCalculated && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--status-info-bg)] text-[var(--status-info-text)]">
+                    Calculated
+                  </span>
+                )}
+              </div>
+              {isStandingsLoading ? (
+                <div className="flex items-center justify-center py-6">
+                  <Loader size="sm" />
+                </div>
+              ) : standingsData && standingsData.standings.length > 0 ? (
+                <StandingsTable standings={standingsData.standings} onTeamSelect={handleTeamSelect} />
+              ) : (
+                <div className="px-4 py-4 text-sm text-muted-foreground">
+                  No standings available for this league
+                </div>
+              )}
+            </div>
+
+            {/* Team details (only when selected) */}
+            {selectedTeamId !== null && (
+              <div className="bg-transparent border border-border rounded-lg overflow-hidden w-full lg:w-[30%] min-w-0">
+                <div className="px-4 py-3 border-b border-border flex items-center gap-3">
+                  {selectedTeam.data?.team?.logo_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={selectedTeam.data.team.logo_url}
+                      alt=""
+                      className="h-5 w-5 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div className="h-5 w-5 rounded-full bg-muted" />
+                  )}
+                  <div className="min-w-0">
+                    <h2 className="text-sm font-semibold text-foreground truncate">
+                      {selectedTeam.data?.team?.name ?? "Team details"}
+                    </h2>
+                    <p className="text-[11px] text-muted-foreground truncate">
+                      Wikidata enrichment
+                    </p>
+                  </div>
+                  <div className="ml-auto">
+                    {selectedTeam.isLoading ? (
+                      <Loader size="sm" />
+                    ) : null}
+                  </div>
+                </div>
+
+                {!selectedTeam.isLoading && selectedTeam.data?.wikidata_enrichment ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <tbody className="divide-y divide-border">
+                        {[
+                          ["Full name", selectedTeam.data.wikidata_enrichment.full_name],
+                          ["Short name", selectedTeam.data.wikidata_enrichment.short_name],
+                          ["City", selectedTeam.data.wikidata_enrichment.city],
+                          ["Stadium", selectedTeam.data.wikidata_enrichment.stadium_name],
+                          [
+                            "Capacity",
+                            selectedTeam.data.wikidata_enrichment.stadium_capacity != null
+                              ? selectedTeam.data.wikidata_enrichment.stadium_capacity.toLocaleString()
+                              : null,
+                          ],
+                          [
+                            "Altitude (m)",
+                            selectedTeam.data.wikidata_enrichment.stadium_altitude_m != null
+                              ? selectedTeam.data.wikidata_enrichment.stadium_altitude_m.toLocaleString()
+                              : null,
+                          ],
+                          [
+                            "Coords",
+                            selectedTeam.data.wikidata_enrichment.lat != null &&
+                            selectedTeam.data.wikidata_enrichment.lon != null
+                              ? `${selectedTeam.data.wikidata_enrichment.lat.toFixed(6)}, ${selectedTeam.data.wikidata_enrichment.lon.toFixed(6)}`
+                              : null,
+                          ],
+                          ["Wikidata ID", selectedTeam.data.wikidata_enrichment.wikidata_id],
+                          ["Stadium Wikidata", selectedTeam.data.wikidata_enrichment.stadium_wikidata_id],
+                          ["Updated", selectedTeam.data.wikidata_enrichment.wikidata_updated_at],
+                        ].map(([label, value]) => (
+                          <tr key={label}>
+                            <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
+                              {label}
+                            </td>
+                            <td className="py-2 px-3 text-sm text-foreground">
+                              {value ? (
+                                <span className="break-words">{value}</span>
+                              ) : (
+                                <span className="text-muted-foreground">-</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                        <tr>
+                          <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
+                            Website
+                          </td>
+                          <td className="py-2 px-3 text-sm text-foreground">
+                            {selectedTeam.data.wikidata_enrichment.website ? (
+                              <Button variant="link" size="sm" className="px-0 h-auto" asChild>
+                                <a
+                                  href={selectedTeam.data.wikidata_enrichment.website}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {selectedTeam.data.wikidata_enrichment.website}
+                                </a>
+                              </Button>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
+                            Twitter
+                          </td>
+                          <td className="py-2 px-3 text-sm text-foreground">
+                            {selectedTeam.data.wikidata_enrichment.twitter ? (
+                              <Button variant="link" size="sm" className="px-0 h-auto" asChild>
+                                <a
+                                  href={`https://x.com/${selectedTeam.data.wikidata_enrichment.twitter}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  @{selectedTeam.data.wikidata_enrichment.twitter}
+                                </a>
+                              </Button>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
+                            Instagram
+                          </td>
+                          <td className="py-2 px-3 text-sm text-foreground">
+                            {selectedTeam.data.wikidata_enrichment.instagram ? (
+                              <Button variant="link" size="sm" className="px-0 h-auto" asChild>
+                                <a
+                                  href={`https://www.instagram.com/${selectedTeam.data.wikidata_enrichment.instagram}/`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  @{selectedTeam.data.wikidata_enrichment.instagram}
+                                </a>
+                              </Button>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                ) : !selectedTeam.isLoading ? (
+                  <div className="px-4 py-4 text-sm text-muted-foreground">
+                    No enrichment data for this team
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "next" && (
+          <div className="bg-transparent border border-border rounded-lg overflow-hidden w-full lg:max-w-[30%] lg:mr-auto min-w-0">
+            <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-muted-foreground" />
+              <h2 className="text-sm font-semibold text-foreground">Next Matches</h2>
+              <span className="text-xs text-muted-foreground ml-auto">
+                {nextMatches.length}
+              </span>
+            </div>
+            <RecentMatchesList matches={nextMatches} onTeamSelect={handleTeamSelect} />
+          </div>
+        )}
+
+        {activeTab === "stats" && (
+          <div className="bg-transparent border border-border rounded-lg overflow-hidden w-full lg:max-w-[30%] lg:mr-auto min-w-0">
+            <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 text-muted-foreground" />
+              <h2 className="text-sm font-semibold text-foreground">Stats by Season</h2>
+            </div>
+            <StatsTable stats={stats_by_season} />
+          </div>
+        )}
+
         {/* Group Info */}
         {group && (
           <div className="bg-[var(--tag-purple-bg)] border border-[var(--tag-purple-border)] rounded-lg p-4">
@@ -390,22 +665,6 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
             )}
           </div>
         )}
-
-        {/* League Meta */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="bg-transparent border border-border rounded-lg p-3">
-            <p className="text-xs text-muted-foreground">Match Type</p>
-            <p className="text-sm font-medium text-foreground capitalize">
-              {league.match_type || "-"}
-            </p>
-          </div>
-          {league.match_weight !== null && (
-            <div className="bg-transparent border border-border rounded-lg p-3">
-              <p className="text-xs text-muted-foreground">Match Weight</p>
-              <p className="text-sm font-medium text-foreground">{league.match_weight}</p>
-            </div>
-          )}
-        </div>
 
         {/* TITAN Coverage */}
         {titan && (
@@ -442,53 +701,6 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
           </div>
         )}
 
-        {/* Stats by Season */}
-        <div className="bg-transparent border border-border rounded-lg overflow-hidden">
-          <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-            <BarChart3 className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold text-foreground">Stats by Season</h2>
-          </div>
-          <StatsTable stats={stats_by_season} />
-        </div>
-
-        {/* Recent Matches */}
-        <div className="bg-transparent border border-border rounded-lg overflow-hidden">
-          <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-            <Calendar className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold text-foreground">Recent Matches</h2>
-          </div>
-          <RecentMatchesList matches={recent_matches} onTeamSelect={onTeamSelect} />
-        </div>
-
-        {/* Standings */}
-        <div className="bg-transparent border border-border rounded-lg overflow-hidden">
-          <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-            <Trophy className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold text-foreground">Standings</h2>
-            {standingsData && (
-              <span className="text-xs text-muted-foreground ml-auto">
-                {standingsData.season} &middot; {standingsData.source}
-              </span>
-            )}
-            {standingsData?.isPlaceholder && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]">Placeholder</span>
-            )}
-            {standingsData?.isCalculated && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--status-info-bg)] text-[var(--status-info-text)]">Calculated</span>
-            )}
-          </div>
-          {isStandingsLoading ? (
-            <div className="flex items-center justify-center py-6">
-              <Loader size="sm" />
-            </div>
-          ) : standingsData && standingsData.standings.length > 0 ? (
-            <StandingsTable standings={standingsData.standings} onTeamSelect={onTeamSelect} />
-          ) : (
-            <div className="px-4 py-4 text-sm text-muted-foreground">
-              No standings available for this league
-            </div>
-          )}
-        </div>
       </div>
     </ScrollArea>
   );

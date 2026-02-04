@@ -123,12 +123,16 @@ function IconTabButton({ tab, isSelected, onSelect, showLabel = false }: IconTab
         transitionTimingFunction: "cubic-bezier(0.7, 0, 0.3, 1)",
       }}
     >
-      <span className={cn(
-        "flex items-center justify-center [&>svg]:w-4 [&>svg]:h-4",
-        !showLabel && "w-6 h-6 [&>svg]:w-5 [&>svg]:h-5"
-      )}>
-        {tab.icon}
-      </span>
+      {tab.icon ? (
+        <span
+          className={cn(
+            "flex items-center justify-center [&>svg]:w-4 [&>svg]:h-4",
+            !showLabel && "w-6 h-6 [&>svg]:w-5 [&>svg]:h-5"
+          )}
+        >
+          {tab.icon}
+        </span>
+      ) : null}
       {showLabel && (
         <span className="text-sm font-medium">{tab.label}</span>
       )}
