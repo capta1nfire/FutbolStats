@@ -6847,6 +6847,148 @@ async def pit_dashboard_debug(request: Request):
     return result
 
 
+@app.get("/dashboard/debug/experiment-gating/{match_id}")
+async def debug_experiment_gating(
+    match_id: int,
+    request: Request,
+    variant: str = Query("A", regex="^[ABCD]$"),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Debug endpoint for ext-A/B/C/D experiment gating. Read-only.
+
+    Explains why a match does/doesn't have an ext prediction.
+    Uses EXACT same gating logic as the job (strict inequalities).
+
+    ATI: Observability endpoint - no side effects.
+    """
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from pathlib import Path
+
+    # Config por variante
+    variant_config = {
+        "A": (settings.EXTA_SHADOW_ENABLED, settings.EXTA_SHADOW_MODEL_VERSION, settings.EXTA_SHADOW_MODEL_PATH),
+        "B": (settings.EXTB_SHADOW_ENABLED, settings.EXTB_SHADOW_MODEL_VERSION, settings.EXTB_SHADOW_MODEL_PATH),
+        "C": (settings.EXTC_SHADOW_ENABLED, settings.EXTC_SHADOW_MODEL_VERSION, settings.EXTC_SHADOW_MODEL_PATH),
+        "D": (settings.EXTD_SHADOW_ENABLED, settings.EXTD_SHADOW_MODEL_VERSION, settings.EXTD_SHADOW_MODEL_PATH),
+    }
+    enabled, model_version, model_path = variant_config[variant]
+    start_at = settings.EXT_SHADOW_START_AT
+
+    checks = []
+    failure_reason = None
+
+    # 1. Get match info
+    match_result = await session.execute(text("""
+        SELECT m.id, m.date as kickoff_at, m.status, ht.name as home_team, at.name as away_team
+        FROM matches m
+        LEFT JOIN teams ht ON m.home_team_id = ht.id
+        LEFT JOIN teams at ON m.away_team_id = at.id
+        WHERE m.id = :match_id
+    """), {"match_id": match_id})
+    match_row = match_result.fetchone()
+    if not match_row:
+        raise HTTPException(status_code=404, detail=f"Match {match_id} not found")
+
+    kickoff_at = match_row[1]
+
+    # 2. Check lineup_confirmed snapshot exists
+    snapshot_result = await session.execute(text("""
+        SELECT os.id, os.snapshot_at FROM odds_snapshots os
+        WHERE os.match_id = :match_id AND os.snapshot_type = 'lineup_confirmed'
+        ORDER BY os.snapshot_at DESC LIMIT 1
+    """), {"match_id": match_id})
+    snapshot_row = snapshot_result.fetchone()
+
+    has_lineup = snapshot_row is not None
+    checks.append({"check": "lineup_confirmed_exists", "status": "PASS" if has_lineup else "FAIL"})
+    if not has_lineup:
+        failure_reason = "no_lineup_confirmed"
+
+    snapshot_id = snapshot_row[0] if has_lineup else None
+    snapshot_at = snapshot_row[1] if has_lineup else None
+    delta_minutes = None
+    has_pred = None
+
+    if has_lineup:
+        delta_minutes = (kickoff_at - snapshot_at).total_seconds() / 60
+
+        # 3. Check snapshot_after_start_at
+        start_dt = datetime.fromisoformat(start_at)
+        is_after_start = snapshot_at >= start_dt
+        checks.append({
+            "check": "snapshot_after_start_at",
+            "status": "PASS" if is_after_start else "FAIL",
+            "detail": f"snapshot_at={snapshot_at.isoformat()}, start_at={start_at}"
+        })
+        if not is_after_start and not failure_reason:
+            failure_reason = "snapshot_before_start_at"
+
+        # 4. Check window (STRICT: > 10 and < 90, matching job logic)
+        # Job uses: m.date > os.snapshot_at + INTERVAL '10 minutes'
+        #           m.date < os.snapshot_at + INTERVAL '90 minutes'
+        in_window = delta_minutes > 10 and delta_minutes < 90
+        window_detail = f"delta={round(delta_minutes, 1)}min"
+        if delta_minutes <= 10:
+            window_detail += " (<=10min, too late)"
+        elif delta_minutes >= 90:
+            window_detail += " (>=90min, too early)"
+        checks.append({
+            "check": "window_10_90_min_strict",
+            "status": "PASS" if in_window else "FAIL",
+            "detail": window_detail
+        })
+        if not in_window and not failure_reason:
+            failure_reason = "outside_window_too_late" if delta_minutes <= 10 else "outside_window_too_early"
+
+        # 5. Check model exists
+        model_exists = Path(model_path).exists()
+        checks.append({
+            "check": "model_exists",
+            "status": "PASS" if model_exists else "FAIL",
+            "detail": f"path={model_path}"
+        })
+        if not model_exists and not failure_reason:
+            failure_reason = "model_not_found"
+
+        # 6. Check existing prediction (PIT-safe: by match_id + model_version with snapshot_at <= kickoff)
+        # ATI FIX: No buscar por snapshot_id, buscar por match_id + model_version
+        pred_result = await session.execute(text("""
+            SELECT pe.id, pe.snapshot_at
+            FROM predictions_experiments pe
+            WHERE pe.match_id = :match_id
+              AND pe.model_version = :model_version
+              AND pe.snapshot_at <= :kickoff_at
+            ORDER BY pe.snapshot_at DESC
+            LIMIT 1
+        """), {"match_id": match_id, "model_version": model_version, "kickoff_at": kickoff_at})
+        pred_row = pred_result.fetchone()
+        has_pred = pred_row is not None
+        checks.append({
+            "check": "has_pit_safe_prediction",
+            "status": "PASS" if has_pred else "FAIL",
+            "detail": f"prediction_snapshot_at={pred_row[1].isoformat() if has_pred else 'none'}"
+        })
+
+    return {
+        "match_id": match_id,
+        "variant": variant,
+        "variant_enabled": enabled,
+        "model_version": model_version,
+        "kickoff_at": kickoff_at.isoformat() if kickoff_at else None,
+        "match_info": {"home_team": match_row[3], "away_team": match_row[4], "status": match_row[2]},
+        "latest_lineup_confirmed_snapshot_at": snapshot_at.isoformat() if snapshot_at else None,
+        "snapshot_id": snapshot_id,
+        "delta_minutes_to_kickoff": round(delta_minutes, 1) if delta_minutes else None,
+        "start_at": start_at,
+        "has_prediction_experiment": has_pred,
+        "failure_reason": failure_reason,
+        "checks": checks,
+    }
+
+
 @app.post("/dashboard/pit/trigger")
 async def pit_trigger_evaluation(request: Request):
     """

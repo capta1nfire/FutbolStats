@@ -341,6 +341,37 @@ EXT_SHADOW_LAST_SUCCESS = Gauge(
     ["variant"],
 )
 
+# ATI: Counter de rechazos por variante y razón (observabilidad gating)
+EXT_SHADOW_REJECTIONS = Counter(
+    "ext_shadow_rejections_total",
+    "Shadow prediction candidates rejected by gating checks",
+    ["variant", "reason"],
+    # Labels:
+    #   variant: A, B, C, D
+    #   reason: no_pending_snapshots, model_not_found, insert_error
+    # NOTA ATI: snapshot_before_start_at, outside_window_* NO se miden aquí
+    # porque el query ya los filtra. Solo se diagnostican en endpoint debug.
+)
+
+
+def record_ext_shadow_rejection(variant: str, reason: str, count: int = 1) -> None:
+    """
+    Record ext shadow rejections by variant and reason.
+
+    Args:
+        variant: A, B, C, D
+        reason: Enum value from:
+            - no_pending_snapshots (query returned 0 eligible snapshots)
+            - model_not_found (model file doesn't exist)
+            - insert_error (error during INSERT)
+        count: Number of rejections (default 1)
+    """
+    try:
+        EXT_SHADOW_REJECTIONS.labels(variant=variant, reason=reason).inc(count)
+    except Exception as e:
+        logger.warning(f"Failed to record ext shadow rejection metric: {e}")
+
+
 # Legacy aliases (for backwards compatibility with existing dashboards)
 EXTC_SHADOW_INSERTED = Counter(
     "extc_shadow_predictions_inserted_total",

@@ -45,6 +45,8 @@ from app.telemetry.metrics import (
     record_job_run,
     record_stats_backfill_result,
     record_fastpath_tick,
+    # ATI: Ext shadow observability
+    record_ext_shadow_rejection,
 )
 
 # Sentry context for job error tracking
@@ -2762,6 +2764,7 @@ async def _generate_ext_shadow_for_variant(
     # Load model (fail-closed if not found)
     if not Path(model_path).exists():
         logger.warning(f"[EXT_SHADOW] ext-{variant_name}: Model not found: {model_path}")
+        record_ext_shadow_rejection(variant_name, "model_not_found")
         return {"status": "error", "reason": "model_not_found", "path": model_path}
 
     model = xgb.XGBClassifier()
@@ -2799,6 +2802,11 @@ async def _generate_ext_shadow_for_variant(
         snapshots = [dict(r._mapping) for r in snapshots_result.fetchall()]
 
         if not snapshots:
+            record_ext_shadow_rejection(variant_name, "no_pending_snapshots")
+            logger.info(
+                f"[EXT_SHADOW] ext_shadow_no_snapshots variant={variant_name} "
+                f"model_version={model_version} start_at={settings.EXT_SHADOW_START_AT}"
+            )
             return {"status": "ok", "inserted": 0, "skipped": 0}
 
         # Get all team IDs and build match history index
@@ -2890,12 +2898,18 @@ async def _generate_ext_shadow_for_variant(
                     skipped += 1
             except Exception as e:
                 logger.warning(f"[EXT_SHADOW] ext-{variant_name} error for snapshot {snap['snapshot_id']}: {e}")
+                record_ext_shadow_rejection(variant_name, "insert_error")
                 errors += 1
 
         await session.commit()
 
-        if inserted > 0 or skipped > 0:
-            logger.info(f"[EXT_SHADOW] ext-{variant_name}: inserted={inserted}, skipped={skipped}, errors={errors}")
+        # ATI: Log resumen con batch_size para contexto
+        logger.info(
+            f"[EXT_SHADOW] ext-{variant_name} run_summary: "
+            f"batch_size={settings.EXT_SHADOW_BATCH_SIZE}, "
+            f"processed={len(snapshots)}, "
+            f"inserted={inserted}, skipped={skipped}, errors={errors}"
+        )
 
         return {"status": "ok", "inserted": inserted, "skipped": skipped, "errors": errors}
 
