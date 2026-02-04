@@ -292,13 +292,22 @@ def _parse_wikipedia_response(data: dict, team_name: str) -> dict[str, Any]:
 
     # Try to extract full name from extract (first sentence often has it)
     # Pattern: "Club Deportivo Cali, commonly known as Deportivo Cali, is..."
+    # Pattern: "América de Cali S. A., best known as América de Cali, is..."
     full_name = None
     if extract:
-        # Look for pattern: "X, commonly known as Y, is..."
-        # Or: "X (Spanish: Y) is..."
         first_sentence = extract.split(".")[0] if extract else ""
-        if "commonly known as" in first_sentence.lower():
-            # Extract the official name before "commonly known as"
+        first_lower = first_sentence.lower()
+
+        # Look for pattern: "X, commonly/best/also known as Y, is..."
+        known_as_patterns = ["commonly known as", "best known as", "also known as"]
+        matched_pattern = None
+        for pattern in known_as_patterns:
+            if pattern in first_lower:
+                matched_pattern = pattern
+                break
+
+        if matched_pattern:
+            # Extract the official name before "known as"
             parts = first_sentence.split(",")
             if parts:
                 full_name = parts[0].strip()
