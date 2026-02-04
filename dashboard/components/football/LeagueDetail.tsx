@@ -572,7 +572,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
                         </tr>
                         <tr>
                           <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
-                            Twitter
+                            X.com (Twitter)
                           </td>
                           <td className="py-2 px-3 text-sm text-foreground">
                             {selectedTeam.data.wikidata_enrichment.twitter ? (
