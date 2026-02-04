@@ -142,7 +142,7 @@ class Settings(BaseSettings):
     WIKIDATA_ENRICH_BATCH_SIZE: int = 100  # Teams per run (736 teams / 100 = ~8 days catch-up)
     WIKIDATA_SPARQL_ENDPOINT: str = "https://query.wikidata.org/sparql"
     WIKIDATA_RATE_LIMIT_DELAY: float = 0.2  # 5 req/sec (conservative, Wikidata allows 500/min)
-    WIKIPEDIA_RATE_LIMIT_DELAY: float = 0.1  # 10 req/sec (Wikipedia allows 200/min, ABE fix)
+    WIKIPEDIA_RATE_LIMIT_DELAY: float = 0.3  # ~3 req/sec (Wikipedia allows 200/min = 3.3 req/sec)
 
     # RunPod LLM Narrative Configuration
     RUNPOD_API_KEY: str = ""
