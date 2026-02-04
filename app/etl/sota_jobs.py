@@ -395,7 +395,10 @@ async def backfill_understat_ft(
 
             except Exception as e:
                 metrics["errors"] += 1
-                logger.error(f"[SOTA_XG] Error processing match {match_id}: {e}")
+                logger.error(
+                    f"[SOTA_XG] Error processing match {match_id} ({type(e).__name__}): {e!r}",
+                    exc_info=True
+                )
                 continue
 
         await session.commit()
@@ -406,7 +409,16 @@ async def backfill_understat_ft(
 
     except Exception as e:
         metrics["errors"] += 1
-        logger.error(f"[SOTA_XG] Job failed: {e}")
+        metrics["job_failed"] = True
+        logger.error(
+            f"[SOTA_XG] Job failed ({type(e).__name__}): {e!r}",
+            exc_info=True
+        )
+        # Rollback defensivo para evitar dejar la conexión en estado "failed transaction"
+        try:
+            await session.rollback()
+        except Exception:
+            pass
 
     finally:
         await provider.close()

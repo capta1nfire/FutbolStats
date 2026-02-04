@@ -5813,7 +5813,13 @@ async def sota_understat_ft_backfill() -> dict:
 
             # Record in DB for ops dashboard fallback
             duration_ms = (_time.time() - start_time) * 1000
-            status = "ok" if metrics.get("errors", 0) == 0 else "partial"
+            # Determine status: job_failed=True means global failure, not just partial errors
+            if metrics.get("job_failed"):
+                status = "error"
+            elif metrics.get("errors", 0) == 0:
+                status = "ok"
+            else:
+                status = "partial"
             await record_job_run_db(session, job_name, status, started_at, metrics=metrics)
 
         # Record in Prometheus
