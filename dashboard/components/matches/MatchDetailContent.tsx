@@ -6,7 +6,8 @@
  * Extracted from MatchDetailDrawer for reuse in OverviewDrawer.
  */
 
-import { useState } from "react";
+import { useState, useMemo, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { MatchSummary, MatchWeather, ProbabilitySet, StandingEntry } from "@/lib/types";
 import { useStandings, useTeamLogos } from "@/lib/hooks";
 import { Loader } from "@/components/ui/loader";
@@ -408,8 +409,55 @@ export function MatchHeader({
   match: MatchSummary;
   getLogoUrl: (teamName: string) => string | null;
 }) {
+  const router = useRouter();
   const { formatTime } = useRegion();
   const formattedTime = formatTime(match.kickoffISO);
+
+  // Fetch standings para resolver nombres → IDs
+  const { data: standingsData } = useStandings(match.leagueId);
+
+  // Normaliza nombre: lowercase, trim, colapsar espacios múltiples
+  const normalizeName = useCallback(
+    (name: string) => name.toLowerCase().trim().replace(/\s+/g, " "),
+    []
+  );
+
+  // Mapa normalizado nombre → id
+  const teamNameToId = useMemo(() => {
+    const map = new Map<string, number>();
+    if (standingsData?.standings) {
+      for (const entry of standingsData.standings) {
+        if (entry.teamId > 0 && entry.teamName) {
+          map.set(normalizeName(entry.teamName), entry.teamId);
+        }
+      }
+    }
+    return map;
+  }, [standingsData, normalizeName]);
+
+  // Handler click en logo → navega a Football con TeamDrawer abierto
+  const handleTeamClick = useCallback(
+    (teamName: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+
+      const teamId = teamNameToId.get(normalizeName(teamName)) ?? null;
+      const params = new URLSearchParams({
+        category: "leagues_by_country",
+        league: String(match.leagueId),
+      });
+
+      if (match.leagueCountry) {
+        params.set("country", match.leagueCountry);
+      }
+
+      if (teamId) {
+        params.set("team", String(teamId));
+      }
+
+      router.push(`/football?${params.toString()}`);
+    },
+    [router, match.leagueId, match.leagueCountry, teamNameToId, normalizeName]
+  );
 
   const hasScore = match.score !== undefined && match.score !== null;
   const isLive = match.status === "live" || match.status === "ht";
@@ -441,11 +489,18 @@ export function MatchHeader({
       <div className="flex items-start justify-between">
         <div className="flex items-start gap-6">
           <div className="flex flex-col items-center gap-1">
-            <TeamLogo
-              src={getLogoUrl(match.home) ?? null}
-              teamName={match.home}
-              size={48}
-            />
+            <button
+              type="button"
+              onClick={(e) => handleTeamClick(match.home, e)}
+              className="cursor-pointer rounded-full transition-all hover:ring-2 hover:ring-primary/50 hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+              aria-label={`Ver detalles de ${match.home}`}
+            >
+              <TeamLogo
+                src={getLogoUrl(match.home) ?? null}
+                teamName={match.home}
+                size={48}
+              />
+            </button>
             <span className="text-[10px] text-muted-foreground text-center line-clamp-1 max-w-[80px]">
               {match.home}
             </span>
@@ -485,11 +540,18 @@ export function MatchHeader({
             </span>
           )}
           <div className="flex flex-col items-center gap-1">
-            <TeamLogo
-              src={getLogoUrl(match.away) ?? null}
-              teamName={match.away}
-              size={48}
-            />
+            <button
+              type="button"
+              onClick={(e) => handleTeamClick(match.away, e)}
+              className="cursor-pointer rounded-full transition-all hover:ring-2 hover:ring-primary/50 hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+              aria-label={`Ver detalles de ${match.away}`}
+            >
+              <TeamLogo
+                src={getLogoUrl(match.away) ?? null}
+                teamName={match.away}
+                size={48}
+              />
+            </button>
             <span className="text-[10px] text-muted-foreground text-center line-clamp-1 max-w-[80px]">
               {match.away}
             </span>
