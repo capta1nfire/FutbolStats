@@ -33,9 +33,14 @@ const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           className={cn(
-            "flex h-9 w-full rounded-md border border-border bg-accent px-8 py-2 text-sm",
-            "placeholder:text-muted-foreground",
-            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+            // Match global Input styling (UniFi drawer feel)
+            "flex h-9 w-full rounded-md border px-8 py-2 text-sm",
+            "bg-[color:var(--field-bg)] hover:bg-[color:var(--field-bg-hover)] text-foreground",
+            // No border on hover (only focus)
+            "border-transparent",
+            "placeholder:text-muted-foreground/70",
+            "shadow-xs transition-[border-color,box-shadow,background-color,color] outline-none",
+            "focus-visible:border-primary focus-visible:ring-0",
             "disabled:cursor-not-allowed disabled:opacity-50",
             className
           )}

@@ -352,7 +352,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
           </Button>
           <div className="flex-1">
             <div className="flex items-center gap-2">
-              <Trophy className="h-5 w-5 text-amber-500" />
+              <Trophy className="h-5 w-5 text-primary" />
               <h1 className="text-lg font-semibold text-foreground">{league.name}</h1>
             </div>
             <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">

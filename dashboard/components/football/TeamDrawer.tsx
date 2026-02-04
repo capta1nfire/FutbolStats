@@ -69,10 +69,10 @@ function TeamInfoSection({ team }: { team: TeamInfo }) {
           <img
             src={team.logo_url}
             alt={team.name}
-            className="w-16 h-16 object-contain rounded-lg bg-muted p-2"
+            className="w-16 h-16 object-contain"
           />
         ) : (
-          <div className="w-16 h-16 rounded-lg bg-muted flex items-center justify-center">
+          <div className="w-16 h-16 flex items-center justify-center">
             <Users className="h-8 w-8 text-muted-foreground" />
           </div>
         )}
@@ -177,7 +177,7 @@ function LeaguesSection({ leagues }: { leagues: TeamLeague[] }) {
   return (
     <div className="space-y-3">
       <h4 className="text-sm font-medium text-foreground flex items-center gap-2">
-        <Trophy className="h-4 w-4 text-amber-500" />
+        <Trophy className="h-4 w-4 text-primary" />
         Competitions ({leagues.length})
       </h4>
       <div className="space-y-2">
@@ -188,11 +188,10 @@ function LeaguesSection({ leagues }: { leagues: TeamLeague[] }) {
           >
             <div className="flex-1 min-w-0">
               <p className="text-sm text-foreground truncate">{league.name}</p>
-              <p className="text-xs text-muted-foreground">{league.country}</p>
+              <p className="text-xs text-muted-foreground">
+                {league.matches} matches · {league.seasons_range[0]}-{league.seasons_range[1]}
+              </p>
             </div>
-            <span className="text-xs text-muted-foreground shrink-0">
-              {league.seasons.length} season{league.seasons.length !== 1 ? "s" : ""}
-            </span>
           </div>
         ))}
         {leagues.length > 5 && (
@@ -337,7 +336,7 @@ export function TeamDrawer({ teamId, open, onClose }: TeamDrawerProps) {
             {data.stats && <StatsSummarySection stats={data.stats} />}
 
             {/* Competitions */}
-            {data.leagues && <LeaguesSection leagues={data.leagues} />}
+            {data.leagues_played && <LeaguesSection leagues={data.leagues_played} />}
 
             {/* Recent Form */}
             {data.recent_form && <RecentFormSection form={data.recent_form} />}
@@ -361,7 +360,6 @@ export function TeamDrawer({ teamId, open, onClose }: TeamDrawerProps) {
               teamName={data.team.name}
               fallbackLogoUrl={data.team.logo_url || undefined}
             />
-            <div className="border-t border-border my-4" />
             <TeamWikiSettings
               teamId={data.team.team_id}
               teamName={data.team.name}
@@ -369,13 +367,6 @@ export function TeamDrawer({ teamId, open, onClose }: TeamDrawerProps) {
             />
           </>
         )}
-
-        {/* Footer with cache info */}
-        <div className="pt-4 border-t border-border">
-          <p className="text-xs text-muted-foreground text-center">
-            Team ID: {teamId}
-          </p>
-        </div>
       </div>
     );
   }

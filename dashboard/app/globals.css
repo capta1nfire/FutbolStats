@@ -125,6 +125,13 @@
   --input: rgba(249, 250, 250, 0.10);
   --ring: #4797FF;
 
+  /* Form fields (UniFi drawer) */
+  --field-border: rgba(115, 124, 135, 0.55); /* ~ rgb(115,124,135) */
+  --field-border-hover: rgba(183, 188, 194, 0.45); /* ~ muted-foreground */
+  --field-border-strong: rgba(249, 250, 250, 0.65); /* active/strong border */
+  --field-bg: rgba(249, 250, 250, 0.04); /* input fill: white 96% transparencia */
+  --field-bg-hover: rgba(249, 250, 250, 0.08); /* hover fill: white 92% transparencia */
+
   /* Sidebar - same as background for unified rails */
   --sidebar: #131416;
   --sidebar-foreground: #dee0e3;
@@ -218,7 +225,9 @@
 
   /* Focus states - visible for a11y */
   :focus-visible {
-    @apply outline-2 outline-offset-2 outline-ring;
+    /* Default focus: 1px solid primary (UniFi style).
+       Components may override, but should keep this baseline. */
+    @apply outline outline-1 outline-offset-2 outline-primary;
   }
 
   /* UniFi-style thin scrollbar (8px variant for tables) */

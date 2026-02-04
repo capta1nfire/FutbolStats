@@ -1,7 +1,8 @@
 "use client";
 
-import { Suspense, useCallback, useMemo } from "react";
+import { Suspense, useCallback, useMemo, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useFootballTeam } from "@/lib/hooks";
 import { Loader } from "@/components/ui/loader";
 import { Flag } from "lucide-react";
 import {
@@ -91,6 +92,38 @@ function FootballPageContent() {
   const worldCupTab = searchParams.get("wcTab") || "overview";
   const worldCupGroup = searchParams.get("wcGroup");
 
+  // Fetch team data to auto-select primary league
+  const { data: teamData } = useFootballTeam(teamId);
+
+  // Track if we've already auto-selected the league for this team
+  const autoSelectedLeagueRef = useRef<number | null>(null);
+
+  // Auto-select primary league when team is selected from search
+  // Only runs when: teamId exists, no leagueId selected, team data loaded with leagues
+  useEffect(() => {
+    if (
+      teamId &&
+      !leagueId &&
+      teamData?.leagues_played &&
+      teamData.leagues_played.length > 0 &&
+      autoSelectedLeagueRef.current !== teamId
+    ) {
+      const primaryLeague = teamData.leagues_played[0];
+      autoSelectedLeagueRef.current = teamId;
+
+      router.replace(
+        buildFootballUrl({
+          category: "leagues_by_country",
+          country: teamData.team?.country || country,
+          league: primaryLeague.league_id,
+          group: null,
+          team: teamId,
+        }),
+        { scroll: false }
+      );
+    }
+  }, [teamId, leagueId, teamData, country, router]);
+
   // Navigation handlers
   const handleCategoryChange = useCallback(
     (newCategory: string) => {
@@ -157,13 +190,18 @@ function FootballPageContent() {
   );
 
   const handleTeamSelect = useCallback(
-    (newTeamId: number) => {
+    (newTeamId: number, teamCountry?: string) => {
+      // If teamCountry is provided (from search), navigate to that country's context
+      // This ensures the background shows the team's league context
+      const targetCountry = teamCountry || country;
+      const targetCategory = teamCountry ? "leagues_by_country" : category;
+
       router.replace(
         buildFootballUrl({
-          category,
-          country,
-          league: leagueId,
-          group: groupId,
+          category: targetCategory,
+          country: targetCountry,
+          league: teamCountry ? null : leagueId, // Clear league when coming from search
+          group: teamCountry ? null : groupId,   // Clear group when coming from search
           team: newTeamId,
         }),
         { scroll: false }

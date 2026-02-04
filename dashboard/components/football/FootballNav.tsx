@@ -51,7 +51,7 @@ interface FootballNavProps {
   onCategoryChange: (category: string) => void;
   selectedCountry: string | null;
   onCountrySelect: (country: string) => void;
-  onTeamSelect?: (teamId: number) => void;
+  onTeamSelect?: (teamId: number, teamCountry?: string) => void;
 }
 
 /**
@@ -116,10 +116,10 @@ export function FootballNav({
     setShowTeamResults(value.length >= 2);
   }, []);
 
-  const handleTeamClick = useCallback((teamId: number) => {
+  const handleTeamClick = useCallback((teamId: number, teamCountry: string) => {
     setTeamSearchQuery("");
     setShowTeamResults(false);
-    onTeamSelect?.(teamId);
+    onTeamSelect?.(teamId, teamCountry);
   }, [onTeamSelect]);
 
   // Fetch navigation categories
@@ -160,12 +160,8 @@ export function FootballNav({
     <div className="w-[277px] border-r border-border bg-sidebar flex flex-col">
       {/* Header */}
       <div className="shrink-0">
-        <div className="px-4 py-3 border-b border-border">
-          <h2 className="text-sm font-semibold text-foreground">Football</h2>
-        </div>
-
         {/* Team Search */}
-        <div className="px-3 py-2 border-b border-border relative" ref={teamSearchRef}>
+        <div className="px-3 pt-3 pb-2 relative" ref={teamSearchRef}>
           <SearchInput
             placeholder="Search teams..."
             value={teamSearchQuery}
@@ -185,7 +181,7 @@ export function FootballNav({
                   {teamSearchData.teams.map((team) => (
                     <button
                       key={team.team_id}
-                      onClick={() => handleTeamClick(team.team_id)}
+                      onClick={() => handleTeamClick(team.team_id, team.country)}
                       className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted text-left"
                     >
                       {team.logo_url ? (

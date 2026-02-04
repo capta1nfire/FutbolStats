@@ -171,7 +171,7 @@ export function WorldCup2026Groups({ onBack, onGroupSelect }: WorldCup2026Groups
           </Button>
           <div className="flex-1">
             <div className="flex items-center gap-2">
-              <Trophy className="h-5 w-5 text-amber-500" />
+              <Trophy className="h-5 w-5 text-primary" />
               <h1 className="text-lg font-semibold text-foreground">
                 World Cup 2026 Groups
               </h1>

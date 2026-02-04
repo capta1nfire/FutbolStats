@@ -5,12 +5,15 @@ import { useTeamWikiMutation } from "@/lib/hooks";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { SurfaceCard } from "@/components/ui/surface-card";
+import { Label } from "@/components/ui/label";
 import {
   Globe,
   Loader2,
   CheckCircle,
   AlertTriangle,
   ExternalLink,
+  Copy,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { TeamWikiInfo } from "@/lib/types/football";
@@ -138,6 +141,14 @@ export function TeamWikiSettings({ teamId, teamName, wiki }: TeamWikiSettingsPro
     setIdError(result.error ?? null);
   }, []);
 
+  // Handle reset (cancel changes)
+  const handleReset = useCallback(() => {
+    setWikiUrl(wiki?.wiki_url ?? "");
+    setWikidataId(wiki?.wikidata_id ?? "");
+    setUrlError(null);
+    setIdError(null);
+  }, [wiki?.wiki_url, wiki?.wikidata_id]);
+
   // Handle save
   const handleSave = useCallback(() => {
     // Final validation
@@ -176,37 +187,45 @@ export function TeamWikiSettings({ teamId, teamName, wiki }: TeamWikiSettingsPro
 
   const hasValidationErrors = !!urlError || !!idError;
   const canSave = isDirty && !hasValidationErrors && !mutation.isPending;
+  const wikiUrlInputId = `team-${teamId}-wiki-url`;
+  const wikidataIdInputId = `team-${teamId}-wikidata-id`;
 
   return (
-    <div className="space-y-4">
+    <SurfaceCard className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Globe className="h-4 w-4 text-muted-foreground" />
-          <h4 className="text-sm font-medium">Wikipedia</h4>
-        </div>
-        {wiki?.wikidata_id && (
-          <Badge variant="secondary" className="text-xs">
-            {wiki.wikidata_id}
-          </Badge>
-        )}
+      <div className="flex items-center gap-2">
+        <Globe className="h-4 w-4 text-muted-foreground" />
+        <h4 className="text-sm font-medium">Wikipedia</h4>
       </div>
 
       {/* Form */}
-      <div className="bg-card border border-border rounded-lg p-3 space-y-4">
+      <div className="space-y-4">
         {/* Wiki URL Input */}
         <div className="space-y-1.5">
-          <label className="text-xs text-muted-foreground">
-            Wikipedia URL
-          </label>
-          <Input
-            type="url"
-            placeholder="https://es.wikipedia.org/wiki/Club_Atlético..."
-            value={wikiUrl}
-            onChange={(e) => handleWikiUrlChange(e.target.value)}
-            className={urlError ? "border-destructive" : ""}
-            disabled={mutation.isPending}
-          />
+          <Label htmlFor={wikiUrlInputId}>Wikipedia URL</Label>
+          <div className="relative">
+            <Input
+              id={wikiUrlInputId}
+              type="url"
+              placeholder="https://xx.wikipedia.org/wiki/..."
+              value={wikiUrl}
+              onChange={(e) => handleWikiUrlChange(e.target.value)}
+              aria-invalid={!!urlError}
+              className="pr-9"
+              disabled={mutation.isPending}
+            />
+            {wikiUrl && !urlError && WIKI_URL_REGEX.test(wikiUrl.trim()) && (
+              <a
+                href={wikiUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-primary hover:text-primary/80 transition-colors"
+                aria-label="Abrir en Wikipedia"
+              >
+                <ExternalLink className="h-4 w-4" />
+              </a>
+            )}
+          </div>
           {urlError && (
             <p className="text-xs text-destructive">{urlError}</p>
           )}
@@ -214,70 +233,98 @@ export function TeamWikiSettings({ teamId, teamName, wiki }: TeamWikiSettingsPro
 
         {/* Wikidata ID Input */}
         <div className="space-y-1.5">
-          <label className="text-xs text-muted-foreground">
-            Wikidata ID <span className="opacity-50">(opcional)</span>
-          </label>
-          <Input
-            type="text"
-            placeholder="Q12345"
-            value={wikidataId}
-            onChange={(e) => handleWikidataIdChange(e.target.value)}
-            className={idError ? "border-destructive" : ""}
-            disabled={mutation.isPending}
-          />
+          <Label htmlFor={wikidataIdInputId}>
+            Wikidata ID <span className="opacity-50">(optional)</span>
+          </Label>
+          <div className="relative">
+            <Input
+              id={wikidataIdInputId}
+              type="text"
+              placeholder="Q00000"
+              value={wikidataId}
+              onChange={(e) => handleWikidataIdChange(e.target.value)}
+              aria-invalid={!!idError}
+              className="pr-9"
+              disabled={mutation.isPending}
+            />
+            {wikidataId && !idError && (
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(wikidataId);
+                  toast.success("Wikidata ID copied");
+                }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-primary hover:text-primary/80 transition-colors"
+                aria-label="Copy Wikidata ID"
+              >
+                <Copy className="h-4 w-4" />
+              </button>
+            )}
+          </div>
           {idError && (
             <p className="text-xs text-destructive">{idError}</p>
           )}
         </div>
 
-        {/* Save Button */}
-        <Button
-          size="sm"
-          onClick={handleSave}
-          disabled={!canSave}
-          className="w-full"
-        >
-          {mutation.isPending ? (
-            <>
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              Guardando...
-            </>
-          ) : (
-            "Guardar"
-          )}
-        </Button>
+        {/* Action Buttons - only show when dirty */}
+        {isDirty && (
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={handleReset}
+              disabled={mutation.isPending}
+              className="text-sm px-3 py-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-[color:var(--field-bg-hover)] transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <Button
+              size="sm"
+              onClick={handleSave}
+              disabled={!canSave}
+            >
+              {mutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                "Apply Changes"
+              )}
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Derived Fields (Read-only) */}
       {wiki && (wiki.wiki_title || wiki.wiki_confidence != null) && (
-        <div className="bg-muted/50 rounded-lg p-3 space-y-2">
+        <div className="bg-background/20 rounded-lg p-3 border border-border space-y-2">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <CheckCircle className="h-3 w-3" />
-            <span>Datos derivados</span>
+            <span>Derived data</span>
           </div>
 
           <div className="grid grid-cols-2 gap-2 text-xs">
             {wiki.wiki_title && (
               <div>
-                <span className="text-muted-foreground">Título:</span>{" "}
+                <span className="text-muted-foreground">Title:</span>{" "}
                 <span className="text-foreground">{wiki.wiki_title}</span>
               </div>
             )}
             {wiki.wiki_lang && (
               <div>
-                <span className="text-muted-foreground">Idioma:</span>{" "}
+                <span className="text-muted-foreground">Language:</span>{" "}
                 <span className="text-foreground">{wiki.wiki_lang}</span>
               </div>
             )}
             {wiki.wiki_source && (
               <div>
-                <span className="text-muted-foreground">Fuente:</span>{" "}
+                <span className="text-muted-foreground">Source:</span>{" "}
                 <span className="text-foreground">{wiki.wiki_source}</span>
               </div>
             )}
             {wiki.wiki_confidence != null && (
               <div>
-                <span className="text-muted-foreground">Confianza:</span>{" "}
+                <span className="text-muted-foreground">Confidence:</span>{" "}
                 <span className="text-foreground">
                   {(wiki.wiki_confidence * 100).toFixed(0)}%
                 </span>
@@ -286,32 +333,33 @@ export function TeamWikiSettings({ teamId, teamName, wiki }: TeamWikiSettingsPro
           </div>
 
           {wiki.wiki_url_cached && (
-            <a
-              href={wiki.wiki_url_cached}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-            >
-              <ExternalLink className="h-3 w-3" />
-              Ver en Wikipedia
-            </a>
+            <Button variant="link" size="sm" className="px-0 h-auto text-xs" asChild>
+              <a
+                href={wiki.wiki_url_cached}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <ExternalLink className="h-3 w-3" />
+                View on Wikipedia
+              </a>
+            </Button>
           )}
         </div>
       )}
 
       {/* Low Confidence Warning */}
       {wiki?.wiki_confidence != null && wiki.wiki_confidence < 0.5 && (
-        <div className="flex items-start gap-2 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
-          <AlertTriangle className="h-4 w-4 text-yellow-500 mt-0.5" />
+        <div className="flex items-start gap-2 p-3 bg-[var(--status-warning-bg)] border border-[var(--status-warning-border)] rounded-lg">
+          <AlertTriangle className="h-4 w-4 text-[var(--status-warning-text)] mt-0.5" />
           <div className="text-xs">
-            <p className="font-medium text-yellow-500">Match para revisión manual</p>
+            <p className="font-medium text-[var(--status-warning-text)]">Needs manual review</p>
             <p className="text-muted-foreground">
-              La confianza del match es baja ({((wiki.wiki_confidence ?? 0) * 100).toFixed(0)}%).
-              Verifica que el artículo corresponde a {teamName}.
+              Match confidence is low ({((wiki.wiki_confidence ?? 0) * 100).toFixed(0)}%).
+              Verify that the article corresponds to {teamName}.
             </p>
           </div>
         </div>
       )}
-    </div>
+    </SurfaceCard>
   );
 }

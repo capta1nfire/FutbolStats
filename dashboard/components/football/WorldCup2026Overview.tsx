@@ -112,7 +112,7 @@ export function WorldCup2026Overview({ onGroupsClick }: WorldCup2026OverviewProp
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Trophy className="h-6 w-6 text-amber-500" />
+            <Trophy className="h-6 w-6 text-primary" />
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-semibold text-foreground">

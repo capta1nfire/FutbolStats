@@ -329,8 +329,8 @@ export interface TeamStats {
 export interface TeamLeague {
   league_id: number;
   name: string;
-  country: string;
-  seasons: number[];
+  matches: number;
+  seasons_range: [number, number];
 }
 
 export interface TeamFormMatch {
@@ -345,7 +345,7 @@ export interface TeamFormMatch {
 export interface TeamDetail {
   team: TeamInfo;
   stats?: TeamStats;
-  leagues?: TeamLeague[];
+  leagues_played?: TeamLeague[];
   recent_form?: TeamFormMatch[];
 }
 

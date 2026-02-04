@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useTeamLogoStatus, useUploadTeamLogo, useTeamGenerationPolling } from "@/lib/hooks";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { SurfaceCard } from "@/components/ui/surface-card";
 import {
   Upload,
   Loader2,
@@ -239,9 +240,12 @@ export function TeamLogoSettings({
   // No logo record - show upload prompt
   if (!logoStatus || error) {
     return (
-      <div className="space-y-4">
+      <SurfaceCard className="space-y-4">
         <div className="flex items-center justify-between">
-          <h4 className="text-sm font-medium">3D Logo</h4>
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-muted-foreground" />
+            <h4 className="text-sm font-medium">3D Logo</h4>
+          </div>
           <Badge variant="outline" className="text-xs">
             Not Configured
           </Badge>
@@ -262,7 +266,7 @@ export function TeamLogoSettings({
             <span className="text-foreground">API-Football</span>
           </div>
         )}
-      </div>
+      </SurfaceCard>
     );
   }
 
@@ -275,10 +279,13 @@ export function TeamLogoSettings({
   const hasError = logoStatus.status === "error";
 
   return (
-    <div className="space-y-4">
+    <SurfaceCard className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h4 className="text-sm font-medium">3D Logo</h4>
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-muted-foreground" />
+          <h4 className="text-sm font-medium">3D Logo</h4>
+        </div>
         <Badge
           variant="outline"
           className={cn(
@@ -304,7 +311,7 @@ export function TeamLogoSettings({
 
       {/* Logo Variants Preview */}
       {(hasOriginal || hasVariants) && (
-        <div className="bg-muted/30 rounded-lg p-3">
+        <div className="bg-background/20 rounded-lg p-3 border border-border">
           <div className="flex items-center justify-center gap-4">
             <LogoVariantPreview
               label="Front"
@@ -382,14 +389,14 @@ export function TeamLogoSettings({
 
       {/* Refresh button */}
       <Button
-        variant="ghost"
+        variant="link"
         size="sm"
-        className="w-full text-xs"
+        className="w-full text-xs justify-center"
         onClick={() => refetch()}
       >
         <RefreshCw className="h-3 w-3 mr-1" />
         Refresh Status
       </Button>
-    </div>
+    </SurfaceCard>
   );
 }

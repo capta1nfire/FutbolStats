@@ -214,7 +214,7 @@ export function TournamentsList({ onLeagueSelect }: TournamentsListProps) {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Trophy className="h-6 w-6 text-amber-500" />
+            <Trophy className="h-6 w-6 text-primary" />
             <div>
               <h1 className="text-lg font-semibold text-foreground">Tournaments & Cups</h1>
               <p className="text-sm text-muted-foreground">
@@ -251,7 +251,7 @@ export function TournamentsList({ onLeagueSelect }: TournamentsListProps) {
         {cups.length > 0 && (
           <div className="space-y-3">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
-              <Trophy className="h-4 w-4 text-amber-500" />
+              <Trophy className="h-4 w-4 text-primary" />
               National Cups ({cups.length})
             </h2>
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">

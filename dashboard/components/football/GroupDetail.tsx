@@ -73,7 +73,7 @@ function MemberLeagueCard({
     >
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          <Trophy className="h-4 w-4 text-amber-500 shrink-0" />
+          <Trophy className="h-4 w-4 text-primary shrink-0" />
           <span className="text-sm font-medium text-foreground truncate">
             {league.name}
           </span>
@@ -527,7 +527,7 @@ export function GroupDetail({
         {/* Member Leagues */}
         <div className="space-y-3">
           <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
-            <Trophy className="h-4 w-4 text-amber-500" />
+            <Trophy className="h-4 w-4 text-primary" />
             Member Leagues ({member_leagues.length})
           </h2>
           <div className="space-y-2">
