@@ -201,10 +201,14 @@ async def fetch_wikipedia_for_team(
     base_name = team_name.strip().replace(" ", "_")
 
     # Build Wikipedia title variants to try
+    # Order matters: most specific first (football club suffixes), generic last
     titles_to_try = [
-        f"{base_name}_F.C.",
-        f"{base_name}_FC",
-        base_name,
+        f"{base_name}_F.C.",          # "Manchester_United_F.C."
+        f"{base_name}_FC",            # "Manchester_United_FC"
+        f"FC_{base_name}",            # "FC_Utrecht", "FC_Barcelona"
+        f"{base_name}_(football_club)",  # "Arsenal_(football_club)"
+        f"{base_name}_football_club",    # "Chelsea_football_club"
+        base_name,                    # Last resort: plain name
     ]
 
     for title in titles_to_try:
@@ -229,6 +233,31 @@ async def fetch_wikipedia_for_team(
 
             # Verify it's about a football club (not disambiguation)
             if data.get("type") == "disambiguation":
+                continue
+
+            # Validate it's actually a football club page (not a city, person, etc.)
+            description = (data.get("description") or "").lower()
+            extract = (data.get("extract") or "").lower()
+
+            football_indicators = [
+                "football club",
+                "soccer club",
+                "association football",
+                "football team",
+                "soccer team",
+                "futbol",
+                "fútbol",
+                "calcio",
+                "fußball",
+            ]
+
+            is_football = any(
+                indicator in description or indicator in extract[:500]
+                for indicator in football_indicators
+            )
+
+            if not is_football:
+                logger.debug(f"[WIKIPEDIA] Skipping {title}: not a football club page")
                 continue
 
             return _parse_wikipedia_response(data, team_name)
