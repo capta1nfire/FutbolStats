@@ -701,6 +701,52 @@ async def build_teams_list(
 # Team Detail
 # =============================================================================
 
+
+def _get_source_badge(enrichment_source: str) -> dict:
+    """
+    Generate badge indicator for data source (per Kimi recommendation).
+
+    Returns dict with emoji, label, and tooltip for dashboard display.
+    """
+    badges = {
+        "wikidata": {
+            "emoji": "check",
+            "label": "Wikidata",
+            "tooltip": "Data from Wikidata SPARQL API",
+            "color": "green",
+        },
+        "wikipedia": {
+            "emoji": "warning",
+            "label": "Wikipedia",
+            "tooltip": "Fallback: Data from Wikipedia REST API (Wikidata incomplete)",
+            "color": "yellow",
+        },
+        "wikidata+wikipedia": {
+            "emoji": "check",
+            "label": "Wikidata+WP",
+            "tooltip": "Primary from Wikidata, some fields from Wikipedia fallback",
+            "color": "green",
+        },
+    }
+
+    # Handle override sources (format: "override:manual", "override:transfermarkt")
+    if enrichment_source and enrichment_source.startswith("override:"):
+        override_type = enrichment_source.split(":")[1] if ":" in enrichment_source else "manual"
+        return {
+            "emoji": "edit",
+            "label": f"Override ({override_type})",
+            "tooltip": f"Manual correction: {override_type}",
+            "color": "blue",
+        }
+
+    return badges.get(enrichment_source, {
+        "emoji": "question",
+        "label": enrichment_source or "Unknown",
+        "tooltip": "Unknown data source",
+        "color": "gray",
+    })
+
+
 async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dict]:
     """Build detail for a specific team."""
 
@@ -752,7 +798,8 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
             short_name,
             website,
             social_handles->>'twitter' AS twitter,
-            social_handles->>'instagram' AS instagram
+            social_handles->>'instagram' AS instagram,
+            COALESCE(enrichment_source, 'wikidata') AS enrichment_source
         FROM team_wikidata_enrichment
         WHERE team_id = :tid
     """)
@@ -910,6 +957,7 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
     if enrichment_supported:
         if enrichment_row:
             fetched_at = getattr(enrichment_row, "fetched_at", None)
+            enrichment_source = getattr(enrichment_row, "enrichment_source", "wikidata")
             payload["wikidata_enrichment"] = {
                 "wikidata_id": getattr(enrichment_row, "wikidata_id", None),
                 "wikidata_updated_at": (fetched_at.isoformat() + "Z") if fetched_at else None,
@@ -925,6 +973,9 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
                 "website": getattr(enrichment_row, "website", None),
                 "twitter": getattr(enrichment_row, "twitter", None),
                 "instagram": getattr(enrichment_row, "instagram", None),
+                "enrichment_source": enrichment_source,
+                # Badge indicators for ADB
+                "source_badge": _get_source_badge(enrichment_source),
             }
         else:
             payload["wikidata_enrichment"] = None
