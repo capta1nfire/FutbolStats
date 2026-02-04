@@ -535,8 +535,6 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
                               ? `${selectedTeam.data.wikidata_enrichment.lat.toFixed(6)}, ${selectedTeam.data.wikidata_enrichment.lon.toFixed(6)}`
                               : null,
                           ],
-                          ["Wikidata ID", selectedTeam.data.wikidata_enrichment.wikidata_id],
-                          ["Stadium Wikidata", selectedTeam.data.wikidata_enrichment.stadium_wikidata_id],
                           ["Updated", selectedTeam.data.wikidata_enrichment.wikidata_updated_at],
                         ].map(([label, value]) => (
                           <tr key={label}>
@@ -607,6 +605,60 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
                                   @{selectedTeam.data.wikidata_enrichment.instagram}
                                 </a>
                               </Button>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
+                            Wikipedia
+                          </td>
+                          <td className="py-2 px-3 text-sm text-foreground">
+                            {selectedTeam.data.team.wiki?.wiki_url_cached ||
+                            selectedTeam.data.team.wiki?.wiki_url ? (
+                              <Button variant="link" size="sm" className="px-0 h-auto" asChild>
+                                <a
+                                  href={
+                                    selectedTeam.data.team.wiki?.wiki_url_cached ||
+                                    selectedTeam.data.team.wiki?.wiki_url ||
+                                    "#"
+                                  }
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {selectedTeam.data.team.wiki?.wiki_url_cached ||
+                                    selectedTeam.data.team.wiki?.wiki_url}
+                                </a>
+                              </Button>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
+                            Wikidata ID
+                          </td>
+                          <td className="py-2 px-3 text-sm text-foreground">
+                            {selectedTeam.data.wikidata_enrichment.wikidata_id ? (
+                              <span className="break-words">
+                                {selectedTeam.data.wikidata_enrichment.wikidata_id}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
+                            Stadium Wikidata
+                          </td>
+                          <td className="py-2 px-3 text-sm text-foreground">
+                            {selectedTeam.data.wikidata_enrichment.stadium_wikidata_id ? (
+                              <span className="break-words">
+                                {selectedTeam.data.wikidata_enrichment.stadium_wikidata_id}
+                              </span>
                             ) : (
                               <span className="text-muted-foreground">-</span>
                             )}
