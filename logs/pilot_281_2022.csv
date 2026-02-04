@@ -1,0 +1,2 @@
+league_id,league_name,country,season,total_missing,sampled,api_ok,partial,no_data,error,coverage_pct,avg_latency_ms,decision
+281,Perú Liga 1,Peru,2022,346,100,89,5,6,0,94.0,164.0,GO

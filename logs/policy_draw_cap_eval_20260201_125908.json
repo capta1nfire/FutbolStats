@@ -1,0 +1,155 @@
+{
+  "generated_at": "2026-02-01T20:59:04.349611",
+  "evaluation_type": "Policy Draw Cap Comparison",
+  "min_snapshot_date": "2026-01-08",
+  "policy_config": {
+    "edge_threshold": 0.05,
+    "max_draw_share": 0.35
+  },
+  "cohort": {
+    "n": 536
+  },
+  "policy_comparison": {
+    "without_cap": {
+      "n_bets": 466,
+      "n_draws_dropped": 0,
+      "concentration": {
+        "home": 20.39,
+        "draw": 71.03,
+        "away": 8.58
+      },
+      "roi": {
+        "total": 2.27,
+        "home": 7.71,
+        "draw": 3.07,
+        "away": -17.25
+      },
+      "win_rate": {
+        "total": 27.04,
+        "home": 29.47,
+        "draw": 27.19,
+        "away": 20.0
+      },
+      "edge_stats": {
+        "mean": 0.1029,
+        "by_pick": {
+          "home": {
+            "mean": 0.1276,
+            "min": 0.0528,
+            "max": 0.2915
+          },
+          "draw": {
+            "mean": 0.0951,
+            "min": 0.0504,
+            "max": 0.2278
+          },
+          "away": {
+            "mean": 0.1095,
+            "min": 0.0504,
+            "max": 0.3072
+          }
+        }
+      },
+      "by_pick_detail": {
+        "draw": {
+          "n_bets": 331,
+          "mean_odds": 4.291,
+          "mean_p_model": 0.3341,
+          "mean_p_market": 0.2391
+        },
+        "away": {
+          "n_bets": 40,
+          "mean_odds": 4.838,
+          "mean_p_model": 0.3334,
+          "mean_p_market": 0.2239
+        },
+        "home": {
+          "n_bets": 95,
+          "mean_odds": 4.13,
+          "mean_p_model": 0.3904,
+          "mean_p_market": 0.2627
+        }
+      },
+      "roi_ci95": [
+        -14.11,
+        18.52
+      ]
+    },
+    "with_cap": {
+      "n_bets": 207,
+      "n_draws_dropped": 259,
+      "concentration": {
+        "home": 45.89,
+        "draw": 34.78,
+        "away": 19.32
+      },
+      "roi": {
+        "total": 3.04,
+        "home": 7.71,
+        "draw": 8.17,
+        "away": -17.25
+      },
+      "win_rate": {
+        "total": 25.12,
+        "home": 29.47,
+        "draw": 22.22,
+        "away": 20.0
+      },
+      "edge_stats": {
+        "mean": 0.1315,
+        "by_pick": {
+          "home": {
+            "mean": 0.1276,
+            "min": 0.0528,
+            "max": 0.2915
+          },
+          "draw": {
+            "mean": 0.1489,
+            "min": 0.1179,
+            "max": 0.2278
+          },
+          "away": {
+            "mean": 0.1095,
+            "min": 0.0504,
+            "max": 0.3072
+          }
+        }
+      },
+      "by_pick_detail": {
+        "draw": {
+          "n_bets": 72,
+          "mean_odds": 5.906,
+          "mean_p_model": 0.3256,
+          "mean_p_market": 0.1767
+        },
+        "away": {
+          "n_bets": 40,
+          "mean_odds": 4.838,
+          "mean_p_model": 0.3334,
+          "mean_p_market": 0.2239
+        },
+        "home": {
+          "n_bets": 95,
+          "mean_odds": 4.13,
+          "mean_p_model": 0.3904,
+          "mean_p_market": 0.2627
+        }
+      },
+      "roi_ci95": [
+        -22.48,
+        29.84
+      ]
+    }
+  },
+  "delta": {
+    "n_bets_change": -259,
+    "n_draws_dropped": 259,
+    "concentration_draw_change": -36.25,
+    "roi_total_change": 0.77
+  },
+  "verdict": {
+    "draw_share_reduced": true,
+    "roi_acceptable": true,
+    "recommendation": "GO"
+  }
+}

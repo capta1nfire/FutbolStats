@@ -1,0 +1,58 @@
+Filtering predictions to model_version: v1.0.2-ext-C
+Running PIT evaluation (live odds only, snapshot >= 2026-01-08)...
+Config: devig=proportional, calibrator=none, require_ev_positive=True
+Using predictions_experiments table
+============================================================
+PIT EVALUATION - LIVE ODDS ONLY
+Protocol v3.0
+============================================================
+
+Coverage (Auditor-traceable):
+  N_total_snapshots:   575
+  N_live:              575
+  N_valid_window:      538  (10-90 min pre-KO)
+  N_ideal_window:      241  (45-75 min)
+  N_pit_safe:          538  (pred.created_at < snapshot_at)
+  N_any_pred:          538
+  N_no_pred_asof:      0
+  N_not_pit_safe:      0  (pred after snapshot)
+  PIT integrity:       enforced
+
+FASE 3C Config:
+  De-vig method:       proportional
+  Calibrator:          none
+  N test (eval):       538
+
+Brier (calibration):
+  Model:               0.6149
+  Market:              0.5730
+  Uniform:             0.6667
+  Skill vs uniform:    7.77%
+  Skill vs market:     -7.30%
+
+Betting (primary - observable metrics):
+  N bets:              456
+  ROI:                 -7.32%
+  ROI CI95%:           [-22.63%, 9.24%]
+  Win rate:            25.22%
+
+CLV (Closing Line Value - observable):
+  CLV mean:            -0.0000
+  CLV median:          0.0000
+  CLV CI95%:           [-0.0023, 0.0021]
+  CLV positive %:      5.90%
+  CLV n:               373
+
+EV Model (diagnostic only - NOT observable):
+  ev_model:            0.4330  (model's belief, not real profit)
+
+Phase: formal
+
+Interpretation:
+  Confidence:          medium
+  Verdict:             HOLD
+  • model worse than market (early signal): skill_vs_market=-7.30%
+  • ROI CI95 includes zero: [-22.63%, 9.24%]
+============================================================
+
+Resultados guardados en: /Users/inseqio/FutbolStats/logs/pit_evaluation_v3_20260201_135333_from_2026-01-08_v1_0_2-ext-C.json

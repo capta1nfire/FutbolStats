@@ -1,0 +1,10 @@
+league_id,league_name,country,season,total_missing,sampled,api_ok,partial,no_data,error,coverage_pct,avg_latency_ms,decision
+140,La Liga,Spain,2021,407,50,50,0,0,0,100.0,164.4,GO
+140,La Liga,Spain,2019,391,50,50,0,0,0,100.0,158.3,GO
+140,La Liga,Spain,2017,390,50,50,0,0,0,100.0,166.6,GO
+140,La Liga,Spain,2018,380,50,50,0,0,0,100.0,158.3,GO
+140,La Liga,Spain,2016,370,50,50,0,0,0,100.0,158.0,GO
+140,La Liga,Spain,2020,355,50,50,0,0,0,100.0,160.2,GO
+140,La Liga,Spain,2022,348,50,50,0,0,0,100.0,157.9,GO
+140,La Liga,Spain,2023,230,50,50,0,0,0,100.0,159.9,GO
+140,La Liga,Spain,2015,169,50,50,0,0,0,100.0,158.3,GO

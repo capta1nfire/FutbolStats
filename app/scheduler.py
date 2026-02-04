@@ -6047,6 +6047,91 @@ async def sota_team_home_city_sync() -> dict:
         return {"status": "error", "error": str(e), "duration_ms": duration_ms}
 
 
+async def sota_wikidata_team_enrich() -> dict:
+    """
+    Enrich teams with Wikidata data (stadium coords, admin location, social).
+
+    Dual mode:
+    - CATCH-UP (daily): If teams lack enrichment, process batch_size=100
+    - REFRESH (weekly): If all have enrichment, refresh > 30 days (Sundays only)
+
+    736 teams / 100 batch = ~8 days for complete catch-up.
+
+    Frequency: Daily 04:30 UTC (before team_home_city_sync at 05:00)
+    Guardrail: WIKIDATA_ENRICH_ENABLED env var (default off)
+    """
+    import time as _time
+    from datetime import datetime
+
+    start_time = _time.time()
+    started_at = datetime.utcnow()
+    job_name = "sota_wikidata_team_enrich"
+
+    # Check if enabled (default off)
+    if os.environ.get("WIKIDATA_ENRICH_ENABLED", "false").lower() in ("false", "0", "no"):
+        logger.debug(f"[{job_name}] Disabled via env var (set WIKIDATA_ENRICH_ENABLED=true)")
+        return {"status": "disabled"}
+
+    try:
+        from app.etl.wikidata_enrich import get_enrichment_stats, run_wikidata_enrichment_batch
+        from app.jobs.tracking import record_job_run as record_job_run_db
+
+        async with AsyncSessionLocal() as session:
+            # Check pending count to decide mode
+            stats = await get_enrichment_stats(session)
+            pending = stats["total_with_wikidata"] - stats["enriched"]
+
+            if pending > 0:
+                # CATCH-UP mode: process teams without enrichment
+                mode = "catch-up"
+                batch_size = int(os.environ.get("WIKIDATA_ENRICH_BATCH_SIZE", "100"))
+            elif datetime.utcnow().weekday() == 6:  # Sunday
+                # REFRESH mode: refresh > 30 days (only Sundays)
+                mode = "refresh"
+                batch_size = 50
+            else:
+                # No work to do
+                duration_ms = (_time.time() - start_time) * 1000
+                logger.debug(f"[{job_name}] No catch-up pending, not refresh day (Sunday)")
+                return {
+                    "status": "ok",
+                    "mode": "idle",
+                    "message": "No catch-up pending, not refresh day",
+                    "stats": stats,
+                    "duration_ms": duration_ms,
+                }
+
+            metrics = await run_wikidata_enrichment_batch(
+                session, batch_size=batch_size, mode=mode
+            )
+
+            duration_ms = (_time.time() - start_time) * 1000
+            status = "ok" if metrics.get("errors", 0) == 0 else "partial"
+            await record_job_run_db(session, job_name, status, started_at, metrics=metrics)
+
+        record_job_run(job=job_name, status=status, duration_ms=duration_ms)
+
+        logger.info(
+            f"[{job_name}] Complete ({mode}): enriched={metrics.get('enriched', 0)}, "
+            f"errors={metrics.get('errors', 0)}, pct_complete={stats.get('pct_complete', 0)}%"
+        )
+        return {**metrics, "status": status, "duration_ms": duration_ms, "stats": stats}
+
+    except Exception as e:
+        duration_ms = (_time.time() - start_time) * 1000
+        logger.error(f"[{job_name}] Failed: {e}", exc_info=True)
+        sentry_capture_exception(e, job_id=job_name)
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        try:
+            from app.jobs.tracking import record_job_run as record_job_run_db
+
+            async with AsyncSessionLocal() as session:
+                await record_job_run_db(session, job_name, "error", started_at, error=str(e))
+        except Exception:
+            pass
+        return {"status": "error", "error": str(e), "duration_ms": duration_ms}
+
+
 async def sota_sofascore_refs_sync() -> dict:
     """
     Sync Sofascore refs (match_external_refs) for upcoming matches.
@@ -6934,8 +7019,22 @@ def start_scheduler(ml_engine):
         misfire_grace_time=24 * 3600,  # 24h grace for daily job
     )
 
+    # SOTA: Wikidata Team Enrich - daily at 04:30 UTC
+    # Enriches teams with Wikidata data (stadium coords, admin location, social)
+    # Guardrail: WIKIDATA_ENRICH_ENABLED (default off)
+    scheduler.add_job(
+        sota_wikidata_team_enrich,
+        trigger=CronTrigger(hour=4, minute=30),
+        id="sota_wikidata_team_enrich",
+        name="SOTA Wikidata Team Enrich (daily 04:30 UTC)",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=24 * 3600,  # 24h grace for daily job
+    )
+
     # SOTA: Team Home City Sync - daily at 05:00 UTC
-    # Cascade pipeline: venue_city -> venue_name geocoding -> LLM -> overrides
+    # Cascade pipeline: venue_city -> venue_name geocoding -> wikidata -> LLM -> overrides
     # Guardrail: TEAM_PROFILE_SYNC_ENABLED (default off)
     scheduler.add_job(
         sota_team_home_city_sync,

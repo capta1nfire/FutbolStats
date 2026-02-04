@@ -1,0 +1,2 @@
+league_id,league_name,country,season,total_missing,sampled,api_ok,partial,no_data,error,coverage_pct,avg_latency_ms,decision
+270,Uruguay Primera División - Clausura,Uruguay,2022,120,100,0,0,0,100,0.0,156.6,STOP

@@ -491,6 +491,8 @@ async def capture_weather_prekickoff(
     metrics = {
         "matches_checked": 0,
         "with_geo": 0,
+        "with_geo_venue": 0,  # From venue_geo table
+        "with_geo_wikidata": 0,  # From team_wikidata_enrichment (fallback)
         "inserted": 0,
         "updated": 0,
         "skipped_no_geo": 0,
@@ -503,19 +505,26 @@ async def capture_weather_prekickoff(
     try:
         # Find NS matches in next N hours with venue geo coordinates
         # Join via home team's country to resolve venue_geo
+        # Fallback: COALESCE to team_wikidata_enrichment (stadium coords) if venue_geo missing
+        # ABE: Using home_team stadium coords for neutral venues is acceptable for MVP
         result = await session.execute(text(f"""
             SELECT
                 m.id AS match_id,
                 m.date AS kickoff_utc,
                 m.venue_city,
                 t_home.country AS home_country,
-                vg.lat,
-                vg.lon
+                COALESCE(vg.lat, twe.lat) AS lat,
+                COALESCE(vg.lon, twe.lon) AS lon,
+                CASE WHEN vg.lat IS NOT NULL THEN 'venue_geo'
+                     WHEN twe.lat IS NOT NULL THEN 'wikidata_stadium'
+                     ELSE NULL END AS geo_source
             FROM matches m
             JOIN teams t_home ON m.home_team_id = t_home.id
             LEFT JOIN venue_geo vg
                 ON m.venue_city = vg.venue_city
                 AND t_home.country = vg.country
+            LEFT JOIN team_wikidata_enrichment twe
+                ON m.home_team_id = twe.team_id
             LEFT JOIN match_weather mw
                 ON m.id = mw.match_id
                 AND mw.forecast_horizon_hours = :horizon
@@ -541,6 +550,7 @@ async def capture_weather_prekickoff(
             kickoff_utc = match.kickoff_utc
             lat = match.lat
             lon = match.lon
+            geo_source = match.geo_source
 
             try:
                 if lat is None or lon is None:
@@ -548,6 +558,13 @@ async def capture_weather_prekickoff(
                     continue
 
                 metrics["with_geo"] += 1
+
+                # Track geo source for observability
+                if geo_source == "venue_geo":
+                    metrics["with_geo_venue"] += 1
+                elif geo_source == "wikidata_stadium":
+                    metrics["with_geo_wikidata"] += 1
+                    logger.debug(f"[SOTA_WEATHER] Using wikidata fallback for match {match_id}")
 
                 # Fetch weather forecast
                 forecast = await provider.get_forecast(

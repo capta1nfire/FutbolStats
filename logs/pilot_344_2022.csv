@@ -1,0 +1,2 @@
+league_id,league_name,country,season,total_missing,sampled,api_ok,partial,no_data,error,coverage_pct,avg_latency_ms,decision
+344,Bolivia Primera División,Bolivia,2022,332,30,0,0,30,0,0.0,161.4,STOP_CIRCUIT

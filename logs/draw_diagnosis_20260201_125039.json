@@ -1,0 +1,505 @@
+{
+  "generated_at": "2026-02-01T20:50:35.442912",
+  "diagnosis_type": "Draw Problem Deep Dive",
+  "min_snapshot_date": "2026-01-08",
+  "1_exclusion_analysis": {
+    "total_with_both_predictions": 528,
+    "exclusion_reasons": {
+      "match_not_finished": 10,
+      "timing_window_invalid": 17
+    },
+    "final_valid": 501
+  },
+  "2_argmax_distribution": {
+    "n": 501,
+    "v1.0.0-control": {
+      "argmax_picks": {
+        "pct_home": 78.44,
+        "pct_draw": 3.39,
+        "pct_away": 18.16,
+        "n_home": 393,
+        "n_draw": 17,
+        "n_away": 91
+      },
+      "p_draw_stats": {
+        "mean": 0.2166,
+        "std": 0.0752,
+        "p25": 0.1639,
+        "p50": 0.2071,
+        "p75": 0.264,
+        "p90": 0.3158
+      },
+      "p_draw_histogram": {
+        "0.00-0.20": 227,
+        "0.20-0.25": 126,
+        "0.25-0.30": 78,
+        "0.30-0.35": 45,
+        "0.35-0.40": 14,
+        "0.40-0.50": 11,
+        "0.50-1.00": 0
+      },
+      "draw_confidence": {
+        "n_draw_picks": 17,
+        "n_high_conf_draw_gt_40pct": 10,
+        "pct_high_conf": 58.82,
+        "n_low_conf_draw_lt_35pct": 1,
+        "pct_low_conf": 5.88
+      }
+    },
+    "v1.0.1-league-only": {
+      "argmax_picks": {
+        "pct_home": 65.07,
+        "pct_draw": 17.56,
+        "pct_away": 17.37,
+        "n_home": 326,
+        "n_draw": 88,
+        "n_away": 87
+      },
+      "p_draw_stats": {
+        "mean": 0.3262,
+        "std": 0.0442,
+        "p25": 0.305,
+        "p50": 0.3371,
+        "p75": 0.3554,
+        "p90": 0.3719
+      },
+      "p_draw_histogram": {
+        "0.00-0.20": 9,
+        "0.20-0.25": 21,
+        "0.25-0.30": 80,
+        "0.30-0.35": 239,
+        "0.35-0.40": 149,
+        "0.40-0.50": 3,
+        "0.50-1.00": 0
+      },
+      "draw_confidence": {
+        "n_draw_picks": 88,
+        "n_high_conf_draw_gt_40pct": 3,
+        "pct_high_conf": 3.41,
+        "n_low_conf_draw_lt_35pct": 7,
+        "pct_low_conf": 7.95
+      }
+    },
+    "market": {
+      "argmax_picks": {
+        "pct_home": 63.87,
+        "pct_draw": 0.6,
+        "pct_away": 35.53,
+        "n_home": 320,
+        "n_draw": 3,
+        "n_away": 178
+      },
+      "p_draw_stats": {
+        "mean": 0.2495,
+        "std": 0.0551,
+        "p25": 0.2236,
+        "p50": 0.2614,
+        "p75": 0.2873,
+        "p90": 0.3084
+      },
+      "p_draw_histogram": {
+        "0.00-0.20": 90,
+        "0.20-0.25": 113,
+        "0.25-0.30": 226,
+        "0.30-0.35": 69,
+        "0.35-0.40": 3,
+        "0.40-0.50": 0,
+        "0.50-1.00": 0
+      }
+    },
+    "actual_outcomes": {
+      "n_home": 209,
+      "n_draw": 125,
+      "n_away": 167,
+      "pct_home": 41.72,
+      "pct_draw": 24.95,
+      "pct_away": 33.33
+    }
+  },
+  "3_metrics_by_class": {
+    "v1.0.0-control": {
+      "by_class": {
+        "home": {
+          "n_actual": 209,
+          "n_predicted": 393,
+          "brier": 0.2476,
+          "logloss": 0.6893,
+          "accuracy_when_predicted": 0.4555,
+          "mean_prob_when_actual": 0.5198
+        },
+        "draw": {
+          "n_actual": 125,
+          "n_predicted": 17,
+          "brier": 0.6164,
+          "logloss": 1.5842,
+          "accuracy_when_predicted": 0.1765,
+          "mean_prob_when_actual": 0.2188
+        },
+        "away": {
+          "n_actual": 167,
+          "n_predicted": 91,
+          "brier": 0.4631,
+          "logloss": 1.1759,
+          "accuracy_when_predicted": 0.4396,
+          "mean_prob_when_actual": 0.3291
+        }
+      },
+      "total_brier": 0.6463,
+      "total_logloss": 1.0748
+    },
+    "v1.0.1-league-only": {
+      "by_class": {
+        "home": {
+          "n_actual": 209,
+          "n_predicted": 326,
+          "brier": 0.3241,
+          "logloss": 0.85,
+          "accuracy_when_predicted": 0.5123,
+          "mean_prob_when_actual": 0.442
+        },
+        "draw": {
+          "n_actual": 125,
+          "n_predicted": 88,
+          "brier": 0.4363,
+          "logloss": 1.0834,
+          "accuracy_when_predicted": 0.3977,
+          "mean_prob_when_actual": 0.3404
+        },
+        "away": {
+          "n_actual": 167,
+          "n_predicted": 87,
+          "brier": 0.4828,
+          "logloss": 1.2158,
+          "accuracy_when_predicted": 0.5862,
+          "mean_prob_when_actual": 0.3127
+        }
+      },
+      "total_brier": 0.6177,
+      "total_logloss": 1.0302
+    },
+    "market": {
+      "by_class": {
+        "home": {
+          "n_actual": 209,
+          "n_predicted": 320,
+          "brier": 0.2594,
+          "logloss": 0.7179,
+          "accuracy_when_predicted": 0.5281,
+          "mean_prob_when_actual": 0.5225
+        },
+        "draw": {
+          "n_actual": 125,
+          "n_predicted": 3,
+          "brier": 0.5427,
+          "logloss": 1.3464,
+          "accuracy_when_predicted": 0.3333,
+          "mean_prob_when_actual": 0.2647
+        },
+        "away": {
+          "n_actual": 167,
+          "n_predicted": 178,
+          "brier": 0.3838,
+          "logloss": 1.006,
+          "accuracy_when_predicted": 0.5112,
+          "mean_prob_when_actual": 0.4057
+        }
+      },
+      "total_brier": 0.578,
+      "total_logloss": 0.9707
+    },
+    "confusion_control": {
+      "pred_home_actual_home": 179,
+      "pred_home_actual_draw": 93,
+      "pred_home_actual_away": 121,
+      "pred_draw_actual_home": 8,
+      "pred_draw_actual_draw": 3,
+      "pred_draw_actual_away": 6,
+      "pred_away_actual_home": 22,
+      "pred_away_actual_draw": 29,
+      "pred_away_actual_away": 40
+    },
+    "confusion_new": {
+      "pred_home_actual_home": 167,
+      "pred_home_actual_draw": 74,
+      "pred_home_actual_away": 85,
+      "pred_draw_actual_home": 22,
+      "pred_draw_actual_draw": 35,
+      "pred_draw_actual_away": 31,
+      "pred_away_actual_home": 20,
+      "pred_away_actual_draw": 16,
+      "pred_away_actual_away": 51
+    }
+  },
+  "4_policy_analysis": {
+    "v1.0.0-control": {
+      "edge_threshold": 0.05,
+      "edge_stats": {
+        "home": {
+          "mean": 0.055,
+          "p50": 0.057,
+          "p75": 0.1835,
+          "p90": 0.2771,
+          "n_above_threshold": 257
+        },
+        "draw": {
+          "mean": -0.0329,
+          "p50": -0.0365,
+          "p75": 0.0213,
+          "p90": 0.0762,
+          "n_above_threshold": 83
+        },
+        "away": {
+          "mean": -0.0222,
+          "p50": -0.0075,
+          "p75": 0.082,
+          "p90": 0.1675,
+          "n_above_threshold": 172
+        }
+      },
+      "bet_summary": {
+        "home": {
+          "n_bets": 247,
+          "roi": -10.83,
+          "win_rate": 31.58,
+          "mean_odds": 3.7,
+          "mean_edge": 0.2018,
+          "mean_p_model": 0.5175,
+          "mean_p_market": 0.3157,
+          "mean_p_diff": 0.2018
+        },
+        "draw": {
+          "n_bets": 38,
+          "roi": -38.16,
+          "win_rate": 15.79,
+          "mean_odds": 4.215,
+          "mean_edge": 0.1189,
+          "mean_p_model": 0.3569,
+          "mean_p_market": 0.238,
+          "mean_p_diff": 0.1189
+        },
+        "away": {
+          "n_bets": 156,
+          "roi": 26.06,
+          "win_rate": 26.92,
+          "mean_odds": 6.645,
+          "mean_edge": 0.1465,
+          "mean_p_model": 0.3452,
+          "mean_p_market": 0.1987,
+          "mean_p_diff": 0.1465
+        }
+      },
+      "total_bets": 441
+    },
+    "v1.0.1-league-only": {
+      "edge_threshold": 0.05,
+      "edge_stats": {
+        "home": {
+          "mean": -0.0317,
+          "p50": -0.0338,
+          "p75": 0.0585,
+          "p90": 0.1224,
+          "n_above_threshold": 134
+        },
+        "draw": {
+          "mean": 0.0767,
+          "p50": 0.0732,
+          "p75": 0.1024,
+          "p90": 0.131,
+          "n_above_threshold": 375
+        },
+        "away": {
+          "mean": -0.0451,
+          "p50": -0.0192,
+          "p75": 0.033,
+          "p90": 0.0835,
+          "n_above_threshold": 102
+        }
+      },
+      "bet_summary": {
+        "home": {
+          "n_bets": 94,
+          "roi": 5.93,
+          "win_rate": 28.72,
+          "mean_odds": 4.145,
+          "mean_edge": 0.1281,
+          "mean_p_model": 0.3901,
+          "mean_p_market": 0.2619,
+          "mean_p_diff": 0.1281
+        },
+        "draw": {
+          "n_bets": 301,
+          "roi": -0.77,
+          "win_rate": 25.91,
+          "mean_odds": 4.302,
+          "mean_edge": 0.0956,
+          "mean_p_model": 0.3344,
+          "mean_p_market": 0.2387,
+          "mean_p_diff": 0.0956
+        },
+        "away": {
+          "n_bets": 39,
+          "roi": -15.13,
+          "win_rate": 20.51,
+          "mean_odds": 4.882,
+          "mean_edge": 0.1109,
+          "mean_p_model": 0.3329,
+          "mean_p_market": 0.2221,
+          "mean_p_diff": 0.1109
+        }
+      },
+      "total_bets": 434
+    },
+    "policy_rule": {
+      "description": "Select best edge if edge >= threshold",
+      "edge_threshold": 0.05,
+      "same_rule_both_models": true
+    }
+  },
+  "5_killswitch_detailed": {
+    "n_would_be_filtered": 138,
+    "by_reason": {
+      "non_league_competition": 113,
+      "away_insufficient_history": 9,
+      "both_insufficient_history": 5,
+      "home_insufficient_history": 11
+    },
+    "examples_by_reason": {
+      "non_league_competition": [
+        {
+          "match_id": 65415,
+          "league": "Africa Cup of Nations",
+          "league_kind": "international",
+          "home_team": "Cameroon",
+          "away_team": "Unknown Team 31",
+          "home_matches": 0,
+          "away_matches": 0
+        },
+        {
+          "match_id": 65419,
+          "league": "FA Cup",
+          "league_kind": "cup",
+          "home_team": "Wrexham",
+          "away_team": "Nottingham Forest",
+          "home_matches": 17,
+          "away_matches": 14
+        },
+        {
+          "match_id": 65416,
+          "league": "FA Cup",
+          "league_kind": "cup",
+          "home_team": "Milton Keynes Dons",
+          "away_team": "Oxford United",
+          "home_matches": 0,
+          "away_matches": 16
+        }
+      ],
+      "away_insufficient_history": [
+        {
+          "match_id": 66098,
+          "league": "Mexico Liga MX",
+          "league_kind": "league",
+          "home_team": "U.N.A.M. - Pumas",
+          "away_team": "Club Queretaro",
+          "home_matches": 6,
+          "away_matches": 4
+        },
+        {
+          "match_id": 67569,
+          "league": "Mexico Liga MX",
+          "league_kind": "league",
+          "home_team": "Guadalajara Chivas",
+          "away_team": "Club Queretaro",
+          "home_matches": 7,
+          "away_matches": 4
+        },
+        {
+          "match_id": 73248,
+          "league": "Argentina Primera Divisi\u00f3n",
+          "league_kind": "league",
+          "home_team": "Talleres Cordoba",
+          "away_team": "Newells Old Boys",
+          "home_matches": 6,
+          "away_matches": 4
+        }
+      ],
+      "both_insufficient_history": [
+        {
+          "match_id": 73239,
+          "league": "Argentina Primera Divisi\u00f3n",
+          "league_kind": "league",
+          "home_team": "Aldosivi",
+          "away_team": "Defensa Y Justicia",
+          "home_matches": 4,
+          "away_matches": 4
+        },
+        {
+          "match_id": 73361,
+          "league": "Per\u00fa Liga 1",
+          "league_kind": "league",
+          "home_team": "Sport Huancayo",
+          "away_team": "Alianza Lima",
+          "home_matches": 3,
+          "away_matches": 4
+        },
+        {
+          "match_id": 73363,
+          "league": "Per\u00fa Liga 1",
+          "league_kind": "league",
+          "home_team": "UTC",
+          "away_team": "Atletico Grau",
+          "home_matches": 3,
+          "away_matches": 3
+        }
+      ],
+      "home_insufficient_history": [
+        {
+          "match_id": 73243,
+          "league": "Argentina Primera Divisi\u00f3n",
+          "league_kind": "league",
+          "home_team": "Instituto Cordoba",
+          "away_team": "Velez Sarsfield",
+          "home_matches": 4,
+          "away_matches": 6
+        },
+        {
+          "match_id": 73330,
+          "league": "Argentina Primera Divisi\u00f3n",
+          "league_kind": "league",
+          "home_team": "Newells Old Boys",
+          "away_team": "Independiente",
+          "home_matches": 4,
+          "away_matches": 5
+        },
+        {
+          "match_id": 73332,
+          "league": "Argentina Primera Divisi\u00f3n",
+          "league_kind": "league",
+          "home_team": "Aldosivi",
+          "away_team": "Barracas Central",
+          "home_matches": 4,
+          "away_matches": 5
+        }
+      ]
+    },
+    "threshold": {
+      "min_league_matches": 5,
+      "lookback_days": 90
+    }
+  },
+  "6_diagnosis_summary": {
+    "model_argmax_draw_inflation": {
+      "control_pct": 3.39,
+      "new_pct": 17.56,
+      "delta": 14.17,
+      "interpretation": "Positive delta = new model predicts draw more often as argmax"
+    },
+    "policy_draw_inflation": {
+      "control_pct": 8.62,
+      "new_pct": 69.35,
+      "delta": 60.74,
+      "interpretation": "Positive delta = policy bets on draw more often with new model"
+    },
+    "root_cause_hypothesis": "MODEL: New model significantly inflates p_draw in argmax predictions",
+    "recommended_action": "Retrain with reduced draw_weight or regularization targeting draw class"
+  }
+}

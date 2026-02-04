@@ -1,0 +1,10 @@
+league_id,league_name,country,season,total_missing,sampled,api_ok,partial,no_data,error,coverage_pct,avg_latency_ms,decision
+78,Bundesliga,Germany,2021,344,50,50,0,0,0,100.0,166.3,GO
+78,Bundesliga,Germany,2017,315,50,50,0,0,0,100.0,159.4,GO
+78,Bundesliga,Germany,2019,308,50,50,0,0,0,100.0,160.0,GO
+78,Bundesliga,Germany,2018,306,50,50,0,0,0,100.0,159.1,GO
+78,Bundesliga,Germany,2016,297,50,50,0,0,0,100.0,160.3,GO
+78,Bundesliga,Germany,2022,290,50,50,0,0,0,100.0,160.4,GO
+78,Bundesliga,Germany,2020,272,50,50,0,0,0,100.0,159.9,GO
+78,Bundesliga,Germany,2023,173,50,50,0,0,0,100.0,158.2,GO
+78,Bundesliga,Germany,2015,153,50,50,0,0,0,100.0,157.1,GO

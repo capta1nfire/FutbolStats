@@ -137,6 +137,12 @@ class Settings(BaseSettings):
     STATS_BACKFILL_LOOKBACK_HOURS: int = 72
     STATS_BACKFILL_MAX_CALLS_PER_RUN: int = 200
 
+    # Wikidata Team Enrichment
+    WIKIDATA_ENRICH_ENABLED: bool = False  # Feature flag (off by default)
+    WIKIDATA_ENRICH_BATCH_SIZE: int = 100  # Teams per run (736 teams / 100 = ~8 days catch-up)
+    WIKIDATA_SPARQL_ENDPOINT: str = "https://query.wikidata.org/sparql"
+    WIKIDATA_RATE_LIMIT_DELAY: float = 0.2  # 5 req/sec (conservative, Wikidata allows 500/min)
+
     # RunPod LLM Narrative Configuration
     RUNPOD_API_KEY: str = ""
     RUNPOD_ENDPOINT_ID: str = "a49n0iddpgsv7r"

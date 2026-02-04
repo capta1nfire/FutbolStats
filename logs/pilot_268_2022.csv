@@ -1,0 +1,2 @@
+league_id,league_name,country,season,total_missing,sampled,api_ok,partial,no_data,error,coverage_pct,avg_latency_ms,decision
+268,Uruguay Primera División - Apertura,Uruguay,2022,176,100,88,0,12,0,88.0,162.2,GO

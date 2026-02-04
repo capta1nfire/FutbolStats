@@ -1,0 +1,2 @@
+league_id,league_name,country,season,total_missing,sampled,api_ok,partial,no_data,error,coverage_pct,avg_latency_ms,decision
+265,Chile Primera División,Chile,2022,240,100,100,0,0,0,100.0,160.3,GO

@@ -6,6 +6,7 @@ Cascade order:
   1. Manual overrides (team_home_city_overrides WHERE active=true)
   2. venue_city mode (≥3 home FT matches with venue_city)
   3. venue_name geocoding (Open-Meteo, extracts city from admin fields)
+  3.5. Wikidata enrichment (admin_location_label from P131) — ABE: after venue_* because P131 is noisier
   4. LLM candidate (Gemini, if enabled) — always needs_review=true
 
 Delta mode: only teams without profile OR llm_candidates without active override.
@@ -359,6 +360,48 @@ async def _geocode_timezone(
 
 
 # =========================================================================
+# Step 3.5: Wikidata enrichment (admin_location_label)
+# ABE: P131 is noisier than match evidence, so goes AFTER venue_city/venue_name
+# =========================================================================
+async def _derive_wikidata_enrichment(
+    session: AsyncSession,
+    team_id: int,
+) -> Optional[CascadeResult]:
+    """
+    Step 3.5: Use admin_location_label from team_wikidata_enrichment.
+
+    If the team has enrichment with admin_location_label populated:
+    - Use admin_location_label directly as home_city
+    - Timezone is resolved downstream via _resolve_timezone_for_result()
+
+    Confidence 0.80 (Wikidata is curated but P131 can be noisy).
+    """
+    result = await session.execute(
+        text("""
+        SELECT admin_location_label, lat, lon, stadium_name
+        FROM team_wikidata_enrichment
+        WHERE team_id = :team_id
+          AND admin_location_label IS NOT NULL
+    """),
+        {"team_id": team_id},
+    )
+
+    row = result.fetchone()
+    if not row or not row.admin_location_label:
+        return None
+
+    return CascadeResult(
+        team_id=team_id,
+        home_city=row.admin_location_label,
+        timezone=None,  # Resolved downstream in _resolve_timezone_for_result()
+        source="wikidata_enrichment",
+        confidence=0.80,
+        needs_review=False,
+        resolved=True,
+    )
+
+
+# =========================================================================
 # Step 4: LLM candidate (Gemini)
 # ABE correction #4: always needs_review=true, confidence=0.5
 # =========================================================================
@@ -535,6 +578,12 @@ async def _resolve_single_team(
     vn = await _derive_venue_name(session, team_id, country, geocode_cache, http_session)
     if vn:
         return vn  # Already has timezone from geocoding
+
+    # Step 3.5: Wikidata enrichment (after venue_city/venue_name, before LLM)
+    # ABE: P131 is noisier than match evidence, so goes after steps 2-3
+    wikidata = await _derive_wikidata_enrichment(session, team_id)
+    if wikidata:
+        return await _resolve_timezone_for_result(wikidata, country, geocode_cache, http_session)
 
     # Step 4: LLM (if enabled)
     if llm_enabled:

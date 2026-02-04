@@ -1,0 +1,352 @@
+{
+  "generated_at": "2026-01-29T17:53:39.063848",
+  "protocol_version": "3.0",
+  "filters": {
+    "snapshot_type": "lineup_confirmed",
+    "odds_freshness": "live",
+    "timing_window_valid": "10-90 min",
+    "timing_window_ideal": "45-75 min",
+    "edge_threshold": 0.05,
+    "min_snapshot_date": "2026-01-07",
+    "model_version": "v1.0.0+T1c"
+  },
+  "counts": {
+    "n_total_snapshots": 470,
+    "n_live": 470,
+    "n_pre_kickoff": 470,
+    "n_pit_valid_10_90": 445,
+    "n_pit_valid_ideal_45_75": 208,
+    "n_with_pit_safe_predictions": 445,
+    "n_no_prediction_asof": 0
+  },
+  "timing_distribution": {
+    "p10": 20.903333333333332,
+    "p50": 42.5,
+    "p90": 56.053333333333335,
+    "min": 10.5,
+    "max": 59.36666666666667
+  },
+  "breakdown_by_league": [
+    {
+      "league_id": 3,
+      "n": 36
+    },
+    {
+      "league_id": 2,
+      "n": 36
+    },
+    {
+      "league_id": 135,
+      "n": 35
+    },
+    {
+      "league_id": 78,
+      "n": 34
+    },
+    {
+      "league_id": 40,
+      "n": 34
+    },
+    {
+      "league_id": 307,
+      "n": 30
+    },
+    {
+      "league_id": 39,
+      "n": 29
+    },
+    {
+      "league_id": 140,
+      "n": 28
+    },
+    {
+      "league_id": 88,
+      "n": 25
+    },
+    {
+      "league_id": 45,
+      "n": 25
+    }
+  ],
+  "breakdown_by_bookmaker": [
+    {
+      "bookmaker": "Bet365_live",
+      "n": 445
+    }
+  ],
+  "brier": {
+    "n_with_predictions": 445,
+    "brier_model": 0.6783632472089517,
+    "brier_uniform": 0.6666666666666711,
+    "brier_market": 0.5777968122724337,
+    "skill_vs_uniform": -0.01754487081342071,
+    "skill_vs_market": -0.17405155722648824,
+    "n_calib_train": 0,
+    "n_calib_test": 445,
+    "calibrator_used": "none",
+    "devig_method": "proportional",
+    "logloss_model": 1.1474077033888987,
+    "logloss_market": 0.9702508064998195,
+    "logloss_skill_vs_market": -0.18258876540198177,
+    "ece": 0.1154,
+    "mce": 0.2086,
+    "paired_differential": {
+      "n": 445,
+      "brier_diff_mean": 0.1006,
+      "brier_diff_ci95": [
+        0.0634,
+        0.1359
+      ],
+      "logloss_diff_mean": 0.1772,
+      "logloss_diff_ci95": [
+        0.1111,
+        0.2412
+      ],
+      "status": "ok"
+    }
+  },
+  "segmented_by_bucket": [
+    {
+      "bucket": "10-20",
+      "n": 34,
+      "brier_model": 0.6689,
+      "brier_market": 0.6245,
+      "skill_vs_market": -0.0712,
+      "logloss_model": 1.1223,
+      "ece": 0.1072
+    },
+    {
+      "bucket": "20-30",
+      "n": 88,
+      "brier_model": 0.8395,
+      "brier_market": 0.6578,
+      "skill_vs_market": -0.2762,
+      "logloss_model": 1.4132,
+      "ece": 0.2035
+    },
+    {
+      "bucket": "30-45",
+      "n": 115,
+      "brier_model": 0.6247,
+      "brier_market": 0.5452,
+      "skill_vs_market": -0.1458,
+      "logloss_model": 1.0318,
+      "ece": 0.0946
+    },
+    {
+      "bucket": "45-60",
+      "n": 208,
+      "brier_model": 0.6414,
+      "brier_market": 0.5544,
+      "skill_vs_market": -0.157,
+      "logloss_model": 1.103,
+      "ece": 0.1051
+    },
+    {
+      "bucket": "60-75",
+      "n": 0
+    },
+    {
+      "bucket": "75-90",
+      "n": 0
+    }
+  ],
+  "betting": {
+    "n_bets": 421,
+    "roi": 0.006603325415677029,
+    "ev_model": 0.8874,
+    "total_staked": 421,
+    "total_returns": 423.78000000000003,
+    "roi_ci95_low": -0.14800475059382423,
+    "roi_ci95_high": 0.18945368171021382,
+    "roi_ci_status": "ok",
+    "win_rate": 0.34679334916864607,
+    "clv_mean": 0.0001,
+    "clv_median": 0.0,
+    "clv_positive_pct": 0.0518,
+    "clv_n": 309,
+    "clv_ci95_low": -0.0021713872914124214,
+    "clv_ci95_high": 0.002340527220498325,
+    "clv_ci_status": "ok",
+    "pick_distribution": {
+      "home": 213,
+      "draw": 68,
+      "away": 140
+    },
+    "pick_roi": {
+      "home": -0.0536,
+      "draw": 0.1037,
+      "away": 0.0511
+    },
+    "roi_by_odds_range": {
+      "<2.0": {
+        "n": 76,
+        "roi": -0.0378
+      },
+      "2.0-3.0": {
+        "n": 112,
+        "roi": -0.0908
+      },
+      "3.0-4.0": {
+        "n": 95,
+        "roi": 0.2995
+      },
+      ">4.0": {
+        "n": 138,
+        "roi": -0.0915
+      }
+    },
+    "roi_by_bucket": {
+      "20-30": {
+        "n": 86,
+        "roi": -0.0693
+      },
+      "30-45": {
+        "n": 108,
+        "roi": -0.0968
+      },
+      "10-20": {
+        "n": 32,
+        "roi": 0.5303
+      },
+      "45-60": {
+        "n": 195,
+        "roi": 0.0114
+      }
+    },
+    "roi_by_edge_decile": [
+      {
+        "decile": 1,
+        "n": 42,
+        "edge_range": [
+          0.0515,
+          0.0817
+        ],
+        "roi": 0.3555,
+        "clv_mean": 0.0045,
+        "clv_n": 30
+      },
+      {
+        "decile": 2,
+        "n": 42,
+        "edge_range": [
+          0.083,
+          0.1136
+        ],
+        "roi": 0.1955,
+        "clv_mean": -0.0003,
+        "clv_n": 28
+      },
+      {
+        "decile": 3,
+        "n": 42,
+        "edge_range": [
+          0.1147,
+          0.1407
+        ],
+        "roi": 0.18,
+        "clv_mean": 0.0036,
+        "clv_n": 31
+      },
+      {
+        "decile": 4,
+        "n": 42,
+        "edge_range": [
+          0.1416,
+          0.1683
+        ],
+        "roi": -0.3167,
+        "clv_mean": -0.003,
+        "clv_n": 33
+      },
+      {
+        "decile": 5,
+        "n": 42,
+        "edge_range": [
+          0.1704,
+          0.1999
+        ],
+        "roi": -0.1986,
+        "clv_mean": 0.0049,
+        "clv_n": 34
+      },
+      {
+        "decile": 6,
+        "n": 42,
+        "edge_range": [
+          0.2001,
+          0.2331
+        ],
+        "roi": 0.1636,
+        "clv_mean": 0.0007,
+        "clv_n": 30
+      },
+      {
+        "decile": 7,
+        "n": 42,
+        "edge_range": [
+          0.2337,
+          0.2751
+        ],
+        "roi": 0.4012,
+        "clv_mean": 0.0003,
+        "clv_n": 33
+      },
+      {
+        "decile": 8,
+        "n": 42,
+        "edge_range": [
+          0.2758,
+          0.328
+        ],
+        "roi": -0.6407,
+        "clv_mean": -0.0067,
+        "clv_n": 29
+      },
+      {
+        "decile": 9,
+        "n": 42,
+        "edge_range": [
+          0.3298,
+          0.4125
+        ],
+        "roi": -0.3012,
+        "clv_mean": -0.0091,
+        "clv_n": 29
+      },
+      {
+        "decile": 10,
+        "n": 43,
+        "edge_range": [
+          0.4152,
+          0.8365
+        ],
+        "roi": 0.2223,
+        "clv_mean": 0.0051,
+        "clv_n": 32
+      }
+    ]
+  },
+  "phase": "preliminar",
+  "interpretation": {
+    "confidence": "medium",
+    "verdict": "HOLD",
+    "bullet_notes": [
+      "model worse than market (early signal): skill_vs_market=-17.41%",
+      "ROI CI95 includes zero: [-14.80%, 18.95%]"
+    ]
+  },
+  "prediction_integrity": {
+    "table_exists": true,
+    "has_created_at": true,
+    "pit_prediction_integrity": "enforced",
+    "source": "predictions_experiments",
+    "keyed_by": "snapshot_id",
+    "n_unique_snapshots": 469,
+    "n_predictions_pit_safe": 445,
+    "n_no_prediction_asof": 0,
+    "n_had_prediction_but_not_pit_safe": 0
+  },
+  "clv_note": "CLV uses T5 (5 min pre-KO) from market_movement_snapshots as closing line",
+  "notes": "read-only evaluation; no writes to DB; probs normalized; PIT integrity enforced (pred.created_at < snapshot_at)"
+}

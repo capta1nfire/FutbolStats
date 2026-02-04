@@ -1,0 +1,349 @@
+{
+  "generated_at": "2026-02-01T20:36:14.214610",
+  "audit_type": "Fase 1 Apples-to-Apples",
+  "min_snapshot_date": "2026-01-08",
+  "coverage": {
+    "n_overlap_snapshots": 501,
+    "n_control_total": 539,
+    "n_new_model_total": 572,
+    "n_only_control": 11,
+    "n_only_new": 44,
+    "overlap_explanation": "528 snapshots have predictions from both models; difference due to generation timing"
+  },
+  "1_comparative_metrics": {
+    "same_cohort": true,
+    "n": 501,
+    "v1.0.0-control": {
+      "brier": 0.6463,
+      "logloss": 1.0748,
+      "skill_vs_market": -11.81,
+      "skill_vs_uniform": 3.06
+    },
+    "v1.0.1-league-only-trained": {
+      "brier": 0.6177,
+      "logloss": 1.0302,
+      "skill_vs_market": -6.86,
+      "skill_vs_uniform": 7.35
+    },
+    "market_baseline": {
+      "brier": 0.578,
+      "logloss": 0.9707
+    },
+    "delta_new_vs_control": {
+      "brier_improvement": 0.0286,
+      "logloss_improvement": 0.0446,
+      "skill_vs_market_improvement": 4.94
+    },
+    "paired_differential": {
+      "brier_diff_mean": 0.0286,
+      "brier_diff_ci95": [
+        0.0036,
+        0.0535
+      ],
+      "interpretation": "positive = control worse, negative = new worse"
+    }
+  },
+  "2_segmentation": {
+    "top_leagues": {
+      "n": 228,
+      "brier_ctrl": 0.6228,
+      "brier_new": 0.602,
+      "brier_market": 0.5576,
+      "logloss_ctrl": 1.0456,
+      "logloss_new": 1.0085,
+      "skill_vs_market_ctrl": -11.69,
+      "skill_vs_market_new": -7.96
+    },
+    "long_tail": {
+      "n": 273,
+      "brier_ctrl": 0.6659,
+      "brier_new": 0.6308,
+      "brier_market": 0.5951,
+      "logloss_ctrl": 1.0991,
+      "logloss_new": 1.0483,
+      "skill_vs_market_ctrl": -11.9,
+      "skill_vs_market_new": -6.0
+    }
+  },
+  "3_killswitch": {
+    "n_would_be_filtered": 103,
+    "by_reason": {
+      "non_league_competition": 103
+    },
+    "exeter_examples": [
+      {
+        "match_id": 65417,
+        "league_id": 45,
+        "league_name": "FA Cup",
+        "league_kind": "cup",
+        "snapshot_at": "2026-01-09 19:17:37.897822"
+      },
+      {
+        "match_id": 65418,
+        "league_id": 45,
+        "league_name": "FA Cup",
+        "league_kind": "cup",
+        "snapshot_at": "2026-01-09 19:17:42.384932"
+      },
+      {
+        "match_id": 65426,
+        "league_id": 45,
+        "league_name": "FA Cup",
+        "league_kind": "cup",
+        "snapshot_at": "2026-01-10 11:36:57.197879"
+      },
+      {
+        "match_id": 65423,
+        "league_id": 45,
+        "league_name": "FA Cup",
+        "league_kind": "cup",
+        "snapshot_at": "2026-01-10 11:40:52.867241"
+      },
+      {
+        "match_id": 65425,
+        "league_id": 45,
+        "league_name": "FA Cup",
+        "league_kind": "cup",
+        "snapshot_at": "2026-01-10 11:40:57.356957"
+      }
+    ],
+    "note": "Kill-switch filters matches where teams lack 5+ league matches in 90 days"
+  },
+  "4_calibration": {
+    "v1.0.0-control": {
+      "ece": 0.0773,
+      "mce": 0.2247,
+      "bins": [
+        {
+          "bin": "0.3-0.4",
+          "n": 45,
+          "avg_confidence": 0.38,
+          "avg_accuracy": 0.3111,
+          "error": 0.0689
+        },
+        {
+          "bin": "0.4-0.5",
+          "n": 194,
+          "avg_confidence": 0.4487,
+          "avg_accuracy": 0.3814,
+          "error": 0.0672
+        },
+        {
+          "bin": "0.5-0.6",
+          "n": 158,
+          "avg_confidence": 0.5455,
+          "avg_accuracy": 0.4747,
+          "error": 0.0708
+        },
+        {
+          "bin": "0.6-0.7",
+          "n": 70,
+          "avg_confidence": 0.6399,
+          "avg_accuracy": 0.5571,
+          "error": 0.0828
+        },
+        {
+          "bin": "0.7-0.8",
+          "n": 29,
+          "avg_confidence": 0.7411,
+          "avg_accuracy": 0.5862,
+          "error": 0.1549
+        },
+        {
+          "bin": "0.8-0.9",
+          "n": 5,
+          "avg_confidence": 0.8247,
+          "avg_accuracy": 0.6,
+          "error": 0.2247
+        }
+      ],
+      "overconfidence": {
+        ">=0.5": {
+          "n": 262,
+          "pct_of_total": 52.3,
+          "accuracy": 0.5115,
+          "avg_confidence": 0.5977,
+          "overconfidence_error": 0.0863
+        },
+        ">=0.6": {
+          "n": 104,
+          "pct_of_total": 20.76,
+          "accuracy": 0.5673,
+          "avg_confidence": 0.677,
+          "overconfidence_error": 0.1097
+        },
+        ">=0.7": {
+          "n": 34,
+          "pct_of_total": 6.79,
+          "accuracy": 0.5882,
+          "avg_confidence": 0.7534,
+          "overconfidence_error": 0.1652
+        },
+        ">=0.8": {
+          "n": 5,
+          "pct_of_total": 1.0,
+          "accuracy": 0.6,
+          "avg_confidence": 0.8247,
+          "overconfidence_error": 0.2247
+        }
+      }
+    },
+    "v1.0.1-league-only-trained": {
+      "ece": 0.0646,
+      "mce": 0.1743,
+      "bins": [
+        {
+          "bin": "0.3-0.4",
+          "n": 205,
+          "avg_confidence": 0.3738,
+          "avg_accuracy": 0.4244,
+          "error": 0.0506
+        },
+        {
+          "bin": "0.4-0.5",
+          "n": 190,
+          "avg_confidence": 0.4426,
+          "avg_accuracy": 0.5316,
+          "error": 0.089
+        },
+        {
+          "bin": "0.5-0.6",
+          "n": 83,
+          "avg_confidence": 0.536,
+          "avg_accuracy": 0.5542,
+          "error": 0.0182
+        },
+        {
+          "bin": "0.6-0.7",
+          "n": 16,
+          "avg_confidence": 0.6382,
+          "avg_accuracy": 0.8125,
+          "error": 0.1743
+        },
+        {
+          "bin": "0.7-0.8",
+          "n": 7,
+          "avg_confidence": 0.7424,
+          "avg_accuracy": 0.8571,
+          "error": 0.1147
+        }
+      ],
+      "overconfidence": {
+        ">=0.5": {
+          "n": 106,
+          "pct_of_total": 21.16,
+          "accuracy": 0.6132,
+          "avg_confidence": 0.5651,
+          "overconfidence_error": -0.0481
+        },
+        ">=0.6": {
+          "n": 23,
+          "pct_of_total": 4.59,
+          "accuracy": 0.8261,
+          "avg_confidence": 0.6699,
+          "overconfidence_error": -0.1562
+        },
+        ">=0.7": {
+          "n": 7,
+          "pct_of_total": 1.4,
+          "accuracy": 0.8571,
+          "avg_confidence": 0.7424,
+          "overconfidence_error": -0.1147
+        }
+      }
+    },
+    "delta": {
+      "ece_improvement": 0.0127,
+      "mce_improvement": 0.0504
+    }
+  },
+  "5_draw_distribution": {
+    "v1.0.0-control": {
+      "mean_p_draw_model": 0.2166,
+      "mean_p_draw_market": 0.2495,
+      "std_p_draw_model": 0.0752,
+      "std_p_draw_market": 0.0551,
+      "model_histogram": {
+        "0.00-0.20": 227,
+        "0.20-0.25": 126,
+        "0.25-0.30": 78,
+        "0.30-0.35": 45,
+        "0.35-0.40": 14,
+        "0.40-0.50": 11,
+        "0.50-1.00": 0
+      },
+      "market_histogram": {
+        "0.00-0.20": 90,
+        "0.20-0.25": 113,
+        "0.25-0.30": 226,
+        "0.30-0.35": 69,
+        "0.35-0.40": 3,
+        "0.40-0.50": 0,
+        "0.50-1.00": 0
+      }
+    },
+    "v1.0.1-league-only-trained": {
+      "mean_p_draw_model": 0.3262,
+      "mean_p_draw_market": 0.2495,
+      "std_p_draw_model": 0.0442,
+      "std_p_draw_market": 0.0551,
+      "model_histogram": {
+        "0.00-0.20": 9,
+        "0.20-0.25": 21,
+        "0.25-0.30": 80,
+        "0.30-0.35": 239,
+        "0.35-0.40": 149,
+        "0.40-0.50": 3,
+        "0.50-1.00": 0
+      },
+      "market_histogram": {
+        "0.00-0.20": 90,
+        "0.20-0.25": 113,
+        "0.25-0.30": 226,
+        "0.30-0.35": 69,
+        "0.35-0.40": 3,
+        "0.40-0.50": 0,
+        "0.50-1.00": 0
+      }
+    },
+    "roi_by_pick_control": {
+      "home": {
+        "n_bets": 247,
+        "roi": "-10.83",
+        "win_rate": 31.58
+      },
+      "draw": {
+        "n_bets": 38,
+        "roi": "-38.16",
+        "win_rate": 15.79
+      },
+      "away": {
+        "n_bets": 156,
+        "roi": "26.06",
+        "win_rate": 26.92
+      }
+    },
+    "roi_by_pick_new": {
+      "home": {
+        "n_bets": 94,
+        "roi": "5.93",
+        "win_rate": 28.72
+      },
+      "draw": {
+        "n_bets": 301,
+        "roi": "-0.77",
+        "win_rate": 25.91
+      },
+      "away": {
+        "n_bets": 39,
+        "roi": "-15.13",
+        "win_rate": 20.51
+      }
+    }
+  },
+  "6_verdict": {
+    "brier_improved": "True",
+    "skill_improved": "True",
+    "recommendation": "PENDING_REVIEW"
+  }
+}

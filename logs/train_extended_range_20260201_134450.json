@@ -1,0 +1,132 @@
+[
+  {
+    "variant": "C",
+    "model_version": "v1.0.2-ext-C",
+    "model_path": "models/xgb_v1.0.2-ext-C_20260201.json",
+    "min_date": "2023-08-01",
+    "cutoff": "2026-01-08",
+    "exclude_coldstart": true,
+    "samples_trained": 14346,
+    "cv_brier": 0.2091,
+    "cv_scores": [
+      0.2086,
+      0.2098,
+      0.2089
+    ],
+    "class_distribution": {
+      "home": 6476,
+      "draw": 3666,
+      "away": 4204
+    },
+    "guardrail_stats": {
+      "total_candidates": 24628,
+      "excluded_home_insufficient": 552,
+      "excluded_away_insufficient": 520,
+      "excluded_both_insufficient": 6972,
+      "excluded_coldstart": 2238,
+      "included": 14346
+    },
+    "feature_stats": {
+      "home_goals_scored_avg": {
+        "mean": 1.3543847740313655,
+        "std": 0.5302278524559483,
+        "min": 0.1,
+        "max": 4.0
+      },
+      "home_goals_conceded_avg": {
+        "mean": 1.3281574256636992,
+        "std": 0.47469577367594695,
+        "min": 0.1,
+        "max": 3.3333333333333335
+      },
+      "home_shots_avg": {
+        "mean": 10.382060510202502,
+        "std": 5.232726748388488,
+        "min": 0.0,
+        "max": 25.8
+      },
+      "home_corners_avg": {
+        "mean": 3.9333963728620778,
+        "std": 2.06611523547252,
+        "min": 0.0,
+        "max": 10.3
+      },
+      "home_rest_days": {
+        "mean": 7.2077234072215255,
+        "std": 4.6735536976661525,
+        "min": 1.0,
+        "max": 30.0
+      },
+      "home_matches_played": {
+        "mean": 9.938310330405688,
+        "std": 0.462644635465412,
+        "min": 5.0,
+        "max": 10.0
+      },
+      "away_goals_scored_avg": {
+        "mean": 1.3686631581393187,
+        "std": 0.5341548187792404,
+        "min": 0.1,
+        "max": 4.3
+      },
+      "away_goals_conceded_avg": {
+        "mean": 1.3154361096174148,
+        "std": 0.4708287586544532,
+        "min": 0.1,
+        "max": 3.4
+      },
+      "away_shots_avg": {
+        "mean": 10.487817078594995,
+        "std": 5.2792850449947295,
+        "min": 0.0,
+        "max": 26.0
+      },
+      "away_corners_avg": {
+        "mean": 3.9785148893890003,
+        "std": 2.0847765220514343,
+        "min": 0.0,
+        "max": 10.7
+      },
+      "away_rest_days": {
+        "mean": 7.203471350899205,
+        "std": 4.66762891052175,
+        "min": 1.0,
+        "max": 30.0
+      },
+      "away_matches_played": {
+        "mean": 9.938380036247038,
+        "std": 0.4616734946021391,
+        "min": 5.0,
+        "max": 10.0
+      },
+      "goal_diff_avg": {
+        "mean": -0.014278384107953323,
+        "std": 0.6955175498780373,
+        "min": -3.4000000000000004,
+        "max": 2.9000000000000004
+      },
+      "rest_diff": {
+        "mean": 0.00425205632231981,
+        "std": 2.871097795813309,
+        "min": -27.0,
+        "max": 27.0
+      }
+    },
+    "feature_importance": {
+      "home_goals_scored_avg": 0.09880848973989487,
+      "home_goals_conceded_avg": 0.07815148681402206,
+      "home_shots_avg": 0.07269667088985443,
+      "home_corners_avg": 0.06864503026008606,
+      "home_rest_days": 0.04270781949162483,
+      "home_matches_played": 0.03437937796115875,
+      "away_goals_scored_avg": 0.07743792235851288,
+      "away_goals_conceded_avg": 0.08917832374572754,
+      "away_shots_avg": 0.06156954541802406,
+      "away_corners_avg": 0.06644627451896667,
+      "away_rest_days": 0.03444954752922058,
+      "away_matches_played": 0.035077400505542755,
+      "goal_diff_avg": 0.20834743976593018,
+      "rest_diff": 0.032104652374982834
+    }
+  }
+]

@@ -1,0 +1,62 @@
+{
+  "tier": "T1b_v2_on_v1",
+  "cutoff": "2026-01-06",
+  "n_samples": 845,
+  "n_features": 22,
+  "features": [
+    "home_goals_scored_avg",
+    "home_goals_conceded_avg",
+    "home_shots_avg",
+    "home_corners_avg",
+    "home_rest_days",
+    "home_matches_played",
+    "away_goals_scored_avg",
+    "away_goals_conceded_avg",
+    "away_shots_avg",
+    "away_corners_avg",
+    "away_rest_days",
+    "away_matches_played",
+    "goal_diff_avg",
+    "rest_diff",
+    "xg_diff_last5",
+    "xga_diff_last5",
+    "npxg_diff_last5",
+    "xg_net_home_last5",
+    "xg_net_away_last5",
+    "net_diff_last5",
+    "xg_home_missing",
+    "xg_away_missing"
+  ],
+  "cv_metrics": [
+    {
+      "fold": 1,
+      "brier": 0.8248647757138795,
+      "logloss": 1.5142765358605985,
+      "accuracy": 0.3791469194312796,
+      "n_train": 212,
+      "n_val": 211
+    },
+    {
+      "fold": 2,
+      "brier": 0.6986036721559509,
+      "logloss": 1.2052508823108583,
+      "accuracy": 0.4597156398104265,
+      "n_train": 423,
+      "n_val": 211
+    },
+    {
+      "fold": 3,
+      "brier": 0.6848922128993175,
+      "logloss": 1.1462102300703043,
+      "accuracy": 0.4312796208530806,
+      "n_train": 634,
+      "n_val": 211
+    }
+  ],
+  "cv_mean": {
+    "brier": 0.7361202202563826,
+    "logloss": 1.288579216080587,
+    "accuracy": 0.42338072669826216
+  },
+  "trained_at": "2026-01-30T22:35:10.278920"
+}

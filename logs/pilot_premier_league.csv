@@ -1,0 +1,10 @@
+league_id,league_name,country,season,total_missing,sampled,api_ok,partial,no_data,error,coverage_pct,avg_latency_ms,decision
+39,Premier League,England,2021,408,50,50,0,0,0,100.0,162.1,GO
+39,Premier League,England,2017,401,50,50,0,0,0,100.0,158.4,GO
+39,Premier League,England,2019,379,50,50,0,0,0,100.0,158.2,GO
+39,Premier League,England,2016,378,50,50,0,0,0,100.0,159.4,GO
+39,Premier League,England,2018,371,50,50,0,0,0,100.0,159.2,GO
+39,Premier League,England,2022,361,50,50,0,0,0,100.0,164.1,GO
+39,Premier League,England,2020,336,50,50,0,0,0,100.0,159.3,GO
+39,Premier League,England,2023,216,50,50,0,0,0,100.0,164.1,GO
+39,Premier League,England,2015,190,50,49,0,1,0,98.0,161.5,GO

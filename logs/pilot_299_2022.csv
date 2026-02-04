@@ -1,0 +1,2 @@
+league_id,league_name,country,season,total_missing,sampled,api_ok,partial,no_data,error,coverage_pct,avg_latency_ms,decision
+299,Venezuela Primera División,Venezuela,2022,276,30,0,0,30,0,0.0,158.4,STOP_CIRCUIT

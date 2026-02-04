@@ -1,0 +1,150 @@
+{
+  "generated_at": "2026-01-29T11:21:09.903891",
+  "protocol_version": "3.0",
+  "filters": {
+    "snapshot_type": "lineup_confirmed",
+    "odds_freshness": "live",
+    "timing_window_valid": "10-90 min",
+    "timing_window_ideal": "45-75 min",
+    "edge_threshold": 0.05,
+    "min_snapshot_date": "2026-01-07",
+    "model_version": "v1.0.0-exp"
+  },
+  "counts": {
+    "n_total_snapshots": 460,
+    "n_live": 460,
+    "n_pre_kickoff": 460,
+    "n_pit_valid_10_90": 421,
+    "n_pit_valid_ideal_45_75": 190,
+    "n_with_pit_safe_predictions": 0,
+    "n_no_prediction_asof": 421
+  },
+  "timing_distribution": {
+    "p10": 20.883333333333333,
+    "p50": 42.06666666666667,
+    "p90": 56.016666666666666,
+    "min": 10.5,
+    "max": 59.36666666666667
+  },
+  "breakdown_by_league": [
+    {
+      "league_id": 2,
+      "n": 36
+    },
+    {
+      "league_id": 135,
+      "n": 35
+    },
+    {
+      "league_id": 78,
+      "n": 34
+    },
+    {
+      "league_id": 40,
+      "n": 34
+    },
+    {
+      "league_id": 39,
+      "n": 29
+    },
+    {
+      "league_id": 307,
+      "n": 28
+    },
+    {
+      "league_id": 140,
+      "n": 28
+    },
+    {
+      "league_id": 88,
+      "n": 25
+    },
+    {
+      "league_id": 45,
+      "n": 25
+    },
+    {
+      "league_id": 94,
+      "n": 20
+    }
+  ],
+  "breakdown_by_bookmaker": [
+    {
+      "bookmaker": "Bet365_live",
+      "n": 421
+    }
+  ],
+  "brier": {
+    "n_with_predictions": 0,
+    "brier_model": null,
+    "brier_uniform": null,
+    "brier_market": null,
+    "skill_vs_uniform": null,
+    "skill_vs_market": null,
+    "n_calib_train": 0,
+    "n_calib_test": 0,
+    "calibrator_used": "none",
+    "devig_method": "proportional"
+  },
+  "segmented_by_bucket": [
+    {
+      "bucket": "10-20",
+      "n": 0
+    },
+    {
+      "bucket": "20-30",
+      "n": 0
+    },
+    {
+      "bucket": "30-45",
+      "n": 0
+    },
+    {
+      "bucket": "45-60",
+      "n": 0
+    },
+    {
+      "bucket": "60-75",
+      "n": 0
+    },
+    {
+      "bucket": "75-90",
+      "n": 0
+    }
+  ],
+  "betting": {
+    "n_bets": 0,
+    "roi": null,
+    "ev_model": null,
+    "total_staked": 0,
+    "total_returns": 0,
+    "roi_ci95_low": null,
+    "roi_ci95_high": null,
+    "roi_ci_status": "no_bets",
+    "win_rate": null,
+    "clv_ci95_low": null,
+    "clv_ci95_high": null,
+    "clv_ci_status": "no_bets"
+  },
+  "phase": "preliminar",
+  "interpretation": {
+    "confidence": "medium",
+    "verdict": "HOLD",
+    "bullet_notes": [
+      "low_n_predictions: n_with_predictions=0 (<30), metrics have high variance",
+      "no_bets: edge threshold not met by any prediction"
+    ]
+  },
+  "prediction_integrity": {
+    "table_exists": false,
+    "has_created_at": true,
+    "pit_prediction_integrity": "enforced",
+    "source": "predictions_experiments",
+    "keyed_by": "snapshot_id",
+    "n_predictions_pit_safe": 0,
+    "n_no_prediction_asof": 421,
+    "n_had_prediction_but_not_pit_safe": 0
+  },
+  "clv_note": "CLV uses T5 (5 min pre-KO) from market_movement_snapshots as closing line",
+  "notes": "read-only evaluation; no writes to DB; probs normalized; PIT integrity enforced (pred.created_at < snapshot_at)"
+}

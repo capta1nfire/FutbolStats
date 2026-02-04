@@ -1,0 +1,10 @@
+league_id,league_name,country,season,total_missing,sampled,api_ok,partial,no_data,error,coverage_pct,avg_latency_ms,decision
+135,Serie A,Italy,2021,431,50,50,0,0,0,100.0,163.3,GO
+135,Serie A,Italy,2017,390,50,50,0,0,0,100.0,168.4,GO
+135,Serie A,Italy,2016,389,50,50,0,0,0,100.0,157.1,GO
+135,Serie A,Italy,2018,382,50,50,0,0,0,100.0,162.1,GO
+135,Serie A,Italy,2019,359,50,50,0,0,0,100.0,159.9,GO
+135,Serie A,Italy,2020,349,50,50,0,0,0,100.0,170.5,GO
+135,Serie A,Italy,2022,341,50,50,0,0,0,100.0,158.0,GO
+135,Serie A,Italy,2023,231,50,50,0,0,0,100.0,159.9,GO
+135,Serie A,Italy,2015,169,50,50,0,0,0,100.0,159.9,GO
