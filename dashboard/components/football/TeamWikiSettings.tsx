@@ -8,7 +8,6 @@ import { Badge } from "@/components/ui/badge";
 import { SurfaceCard } from "@/components/ui/surface-card";
 import { Label } from "@/components/ui/label";
 import {
-  Globe,
   Loader2,
   CheckCircle,
   AlertTriangle,
@@ -193,10 +192,7 @@ export function TeamWikiSettings({ teamId, teamName, wiki }: TeamWikiSettingsPro
   return (
     <SurfaceCard className="space-y-4">
       {/* Header */}
-      <div className="flex items-center gap-2">
-        <Globe className="h-4 w-4 text-muted-foreground" />
-        <h4 className="text-sm font-medium">Wikipedia</h4>
-      </div>
+      <h4 className="text-sm font-medium">Wikipedia</h4>
 
       {/* Form */}
       <div className="space-y-4">

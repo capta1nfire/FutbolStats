@@ -14,7 +14,6 @@ import {
   AlertTriangle,
   ImageIcon,
   RefreshCw,
-  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -242,10 +241,7 @@ export function TeamLogoSettings({
     return (
       <SurfaceCard className="space-y-4">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-muted-foreground" />
-            <h4 className="text-sm font-medium">3D Logo</h4>
-          </div>
+          <h4 className="text-sm font-medium">3D Logo</h4>
           <Badge variant="outline" className="text-xs">
             Not Configured
           </Badge>
@@ -282,10 +278,7 @@ export function TeamLogoSettings({
     <SurfaceCard className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-muted-foreground" />
-          <h4 className="text-sm font-medium">3D Logo</h4>
-        </div>
+        <h4 className="text-sm font-medium">3D Logo</h4>
         <Badge
           variant="outline"
           className={cn(
@@ -389,7 +382,7 @@ export function TeamLogoSettings({
 
       {/* Refresh button */}
       <Button
-        variant="link"
+        variant="actionLink"
         size="sm"
         className="w-full text-xs justify-center"
         onClick={() => refetch()}
