@@ -970,17 +970,30 @@ async def patch_team_wiki(
       - wiki_url (nullable string)
       - wikidata_id (nullable string)
 
+    PATCH semantics: Only fields present in the payload are updated.
+    Absent fields retain their current values.
+
     Returns:
       { team_id, updated_fields, wiki }
     """
     if not isinstance(patch_data, dict):
         raise ValidationError("Invalid JSON body")
 
-    wiki_url = _normalize_wiki_url(patch_data.get("wiki_url"))
-    wikidata_id = _normalize_wikidata_id(patch_data.get("wikidata_id"))
+    # Check which fields are present in the payload (PATCH semantics)
+    has_wiki_url = "wiki_url" in patch_data
+    has_wikidata_id = "wikidata_id" in patch_data
 
-    _validate_wiki_url(wiki_url)
-    _validate_wikidata_id(wikidata_id)
+    if not has_wiki_url and not has_wikidata_id:
+        raise ValidationError("No valid fields to update (wiki_url or wikidata_id)")
+
+    # Normalize and validate only fields that are present
+    wiki_url = _normalize_wiki_url(patch_data["wiki_url"]) if has_wiki_url else None
+    wikidata_id = _normalize_wikidata_id(patch_data["wikidata_id"]) if has_wikidata_id else None
+
+    if has_wiki_url:
+        _validate_wiki_url(wiki_url)
+    if has_wikidata_id:
+        _validate_wikidata_id(wikidata_id)
 
     # Ensure migration applied + team exists
     try:
@@ -999,10 +1012,11 @@ async def patch_team_wiki(
     if not row:
         raise ValueError(f"Team {team_id} not found")
 
+    # Determine which fields actually changed (only check fields present in payload)
     updated_fields: List[str] = []
-    if (row.wiki_url or None) != (wiki_url or None):
+    if has_wiki_url and (row.wiki_url or None) != (wiki_url or None):
         updated_fields.append("wiki_url")
-    if (row.wikidata_id or None) != (wikidata_id or None):
+    if has_wikidata_id and (row.wikidata_id or None) != (wikidata_id or None):
         updated_fields.append("wikidata_id")
 
     if not updated_fields:
@@ -1015,8 +1029,12 @@ async def patch_team_wiki(
             },
         }
 
-    # If both cleared, clear all derived fields too
-    clear_all = wiki_url is None and wikidata_id is None
+    # Compute final values: use new value if present, else keep existing
+    final_wiki_url = wiki_url if has_wiki_url else row.wiki_url
+    final_wikidata_id = wikidata_id if has_wikidata_id else row.wikidata_id
+
+    # If both are now cleared, clear all derived fields too
+    clear_all = final_wiki_url is None and final_wikidata_id is None
     now = datetime.utcnow()
 
     update_sql = text("""
@@ -1038,8 +1056,8 @@ async def patch_team_wiki(
 
     params = {
         "tid": team_id,
-        "wiki_url": wiki_url,
-        "wikidata_id": wikidata_id,
+        "wiki_url": final_wiki_url,
+        "wikidata_id": final_wikidata_id,
         "wiki_source": None if clear_all else "manual",
         "wiki_matched_at": None if clear_all else now,
         # Derived fields not computed yet (P0); clear on change
