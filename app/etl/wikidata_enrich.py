@@ -19,6 +19,7 @@ import json
 import logging
 from datetime import datetime
 from typing import Any, Optional
+from urllib.parse import quote
 
 import httpx
 from sqlalchemy import text
@@ -193,19 +194,25 @@ async def fetch_wikipedia_for_team(
 
     Returns partial enrichment data for fields missing in Wikidata.
     Fail-open: returns None on error.
+
+    ABE fix: Proper URL encoding to avoid 404 false negatives.
     """
-    # Build Wikipedia title (spaces -> underscores, handle special chars)
-    # Try with " F.C." suffix first (common pattern), then plain name
+    # ABE fix: Normalize base name first (strip + spaces to underscores)
+    base_name = team_name.strip().replace(" ", "_")
+
+    # Build Wikipedia title variants to try
     titles_to_try = [
-        f"{team_name}_F.C.",
-        f"{team_name}_FC",
-        team_name.replace(" ", "_"),
+        f"{base_name}_F.C.",
+        f"{base_name}_FC",
+        base_name,
     ]
 
     for title in titles_to_try:
         try:
+            # ABE fix: URL encode title to handle special characters
+            encoded_title = quote(title, safe="")
             response = await client.get(
-                f"{WIKIPEDIA_API_BASE}/{title}",
+                f"{WIKIPEDIA_API_BASE}/{encoded_title}",
                 headers={
                     "User-Agent": "FutbolStats/1.0 (contact@futbolstats.app)",
                     "Accept": "application/json",
@@ -294,51 +301,54 @@ def _parse_wikipedia_response(data: dict, team_name: str) -> dict[str, Any]:
     }
 
 
-async def get_override_for_team(
+async def get_overrides_bulk(
     session: AsyncSession,
-    team_id: int,
-) -> Optional[dict[str, Any]]:
+    team_ids: list[int],
+) -> dict[int, dict[str, Any]]:
     """
-    Check if team has manual override in team_enrichment_overrides.
+    Bulk fetch overrides for multiple teams (ABE fix: avoid N+1).
 
-    Overrides take priority over Wikidata and Wikipedia.
+    Returns dict mapping team_id -> override_data.
     """
+    if not team_ids:
+        return {}
+
     try:
         result = await session.execute(
             text("""
                 SELECT
-                    full_name, short_name, stadium_name, admin_location_label,
+                    team_id, full_name, short_name, stadium_name, admin_location_label,
                     lat, lon, website, twitter_handle, instagram_handle,
                     source, notes
                 FROM team_enrichment_overrides
-                WHERE team_id = :team_id
+                WHERE team_id = ANY(:team_ids)
             """),
-            {"team_id": team_id},
+            {"team_ids": team_ids},
         )
-        row = result.fetchone()
+        rows = result.fetchall()
 
-        if not row:
-            return None
-
-        return {
-            "full_name": row.full_name,
-            "short_name": row.short_name,
-            "stadium_name": row.stadium_name,
-            "admin_location_label": row.admin_location_label,
-            "lat": row.lat,
-            "lon": row.lon,
-            "website": row.website,
-            "social_handles": {
-                "twitter": row.twitter_handle,
-                "instagram": row.instagram_handle,
-            },
-            "enrichment_source": f"override:{row.source}",
-            "override_notes": row.notes,
-        }
+        overrides = {}
+        for row in rows:
+            overrides[row.team_id] = {
+                "full_name": row.full_name,
+                "short_name": row.short_name,
+                "stadium_name": row.stadium_name,
+                "admin_location_label": row.admin_location_label,
+                "lat": row.lat,
+                "lon": row.lon,
+                "website": row.website,
+                "social_handles": {
+                    "twitter": row.twitter_handle,
+                    "instagram": row.instagram_handle,
+                },
+                "enrichment_source": f"override:{row.source}",
+                "override_notes": row.notes,
+            }
+        return overrides
     except Exception as e:
         # Table might not exist yet
         logger.debug(f"[OVERRIDE] Could not check overrides: {e}")
-        return None
+        return {}
 
 
 def merge_enrichment_data(
@@ -350,6 +360,9 @@ def merge_enrichment_data(
     Merge enrichment data with cascade priority: override > wikidata > wikipedia.
 
     Only fills missing fields from lower priority sources.
+
+    ABE fix: raw_jsonb now preserves ALL source payloads for full provenance.
+    When fallback is used, structure is: {"wikidata": <raw>, "wikipedia": <raw>}
     """
     # Start with empty base
     merged = {
@@ -371,6 +384,13 @@ def merge_enrichment_data(
     # Track which source contributed
     sources_used = []
 
+    # ABE fix: Build composite raw_jsonb for full provenance
+    raw_provenance = {}
+    if wikidata and wikidata.get("raw_jsonb"):
+        raw_provenance["wikidata"] = wikidata.get("raw_jsonb")
+    if wikipedia and wikipedia.get("raw_jsonb"):
+        raw_provenance["wikipedia"] = wikipedia.get("raw_jsonb")
+
     # Apply in reverse priority order (lowest first, highest last wins)
     for source_name, source_data in [
         ("wikipedia", wikipedia),
@@ -389,13 +409,17 @@ def merge_enrichment_data(
                     if handle_val and not merged["social_handles"].get(handle_key):
                         merged["social_handles"][handle_key] = handle_val
             elif key == "raw_jsonb":
-                # Keep wikidata raw_jsonb as primary (for provenance)
-                if source_name == "wikidata" and value:
-                    merged["raw_jsonb"] = value
-                elif source_name == "wikipedia" and value and not merged["raw_jsonb"]:
-                    merged["raw_jsonb"] = value
+                # Skip - handled separately for composite provenance
+                continue
             elif value is not None and merged.get(key) is None:
                 merged[key] = value
+
+    # ABE fix: Set raw_jsonb with composite provenance
+    # If only one source, use it directly; if multiple, use composite structure
+    if len(raw_provenance) == 1:
+        merged["raw_jsonb"] = list(raw_provenance.values())[0]
+    elif len(raw_provenance) > 1:
+        merged["raw_jsonb"] = raw_provenance  # {"wikidata": ..., "wikipedia": ...}
 
     # Set enrichment_source based on primary contributor
     if override:
@@ -468,21 +492,23 @@ async def run_wikidata_enrichment_batch(
             "message": "No teams to enrich",
         }
 
+    # ABE fix: Bulk fetch overrides to avoid N+1
+    team_ids = [t[0] for t in teams]
+    overrides_map = await get_overrides_bulk(session, team_ids)
+
     enriched = 0
     errors = 0
     skipped = 0
     wikipedia_fallbacks = 0
-    override_applied = 0
+    override_applied = len(overrides_map)
 
     async with httpx.AsyncClient() as client:
         for team_id, wikidata_id, team_name in teams:
             # Rate limiting (conservative: 5 req/sec)
             await asyncio.sleep(settings.WIKIDATA_RATE_LIMIT_DELAY)
 
-            # Step 1: Check for manual override
-            override_data = await get_override_for_team(session, team_id)
-            if override_data:
-                override_applied += 1
+            # Step 1: Get override from pre-fetched map (ABE fix: no N+1)
+            override_data = overrides_map.get(team_id)
 
             # Step 2: Fetch from Wikidata
             wikidata_data = await fetch_wikidata_for_team(wikidata_id, client)
@@ -495,7 +521,7 @@ async def run_wikidata_enrichment_batch(
                     or not wikidata_data.get("full_name")
                 )
                 if needs_fallback and team_name:
-                    await asyncio.sleep(0.1)  # Extra rate limit for Wikipedia
+                    await asyncio.sleep(settings.WIKIPEDIA_RATE_LIMIT_DELAY)
                     wikipedia_data = await fetch_wikipedia_for_team(team_name, client)
                     if wikipedia_data:
                         wikipedia_fallbacks += 1
