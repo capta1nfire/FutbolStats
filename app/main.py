@@ -7983,86 +7983,75 @@ async def _calculate_telemetry_summary(session) -> dict:
     """
     now = datetime.utcnow()
 
-    # 1) Quarantined odds in last 24h
+    # NOTE (2026-02): Keep /dashboard/ops.json cheap.
+    # Consolidate multiple counts into a single statement to reduce
+    # "Consecutive DB Queries" noise and DB round-trips.
     quarantined_odds_24h = 0
-    try:
-        res = await session.execute(
-            text("""
-                SELECT COUNT(*) FROM odds_history
-                WHERE quarantined = true
-                  AND recorded_at > NOW() - INTERVAL '24 hours'
-            """)
-        )
-        quarantined_odds_24h = int(res.scalar() or 0)
-    except Exception:
-        pass  # Table may not exist yet
-
-    # 2) Tainted matches (recent matches that are tainted)
     tainted_matches_24h = 0
-    try:
-        res = await session.execute(
-            text("""
-                SELECT COUNT(*) FROM matches
-                WHERE tainted = true
-                  AND date > NOW() - INTERVAL '7 days'
-            """)
-        )
-        tainted_matches_24h = int(res.scalar() or 0)
-    except Exception:
-        pass  # Column may not exist yet
-
-    # 3) Unmapped entities (teams without logo - proxy for incomplete data)
     unmapped_entities_24h = 0
-    try:
-        # Check for teams missing logo_url (proxy for unmapped/incomplete)
-        res = await session.execute(
-            text("""
-                SELECT COUNT(DISTINCT t.id) FROM teams t
-                WHERE t.logo_url IS NULL
-            """)
-        )
-        unmapped_entities_24h = int(res.scalar() or 0)
-    except Exception:
-        pass
-
-    # 4) Odds desync: matches with live snapshot but NULL odds in matches table
-    # P1 sensor (2026-01-14): Detects when write-through fails silently
     odds_desync_6h = 0
     odds_desync_90m = 0
-    try:
-        # 6h window - early warning
-        res = await session.execute(
-            text("""
-                SELECT COUNT(DISTINCT m.id)
-                FROM matches m
-                JOIN odds_snapshots os ON os.match_id = m.id
-                WHERE m.status = 'NS'
-                  AND m.date BETWEEN NOW() AND NOW() + INTERVAL '6 hours'
-                  AND os.odds_freshness = 'live'
-                  AND os.snapshot_type = 'lineup_confirmed'
-                  AND os.snapshot_at >= NOW() - INTERVAL '120 minutes'
-                  AND (m.odds_home IS NULL OR m.odds_draw IS NULL OR m.odds_away IS NULL)
-            """)
-        )
-        odds_desync_6h = int(res.scalar() or 0)
 
-        # 90m window - critical (near kickoff)
+    try:
         res = await session.execute(
             text("""
-                SELECT COUNT(DISTINCT m.id)
-                FROM matches m
-                JOIN odds_snapshots os ON os.match_id = m.id
-                WHERE m.status = 'NS'
-                  AND m.date BETWEEN NOW() AND NOW() + INTERVAL '90 minutes'
-                  AND os.odds_freshness = 'live'
-                  AND os.snapshot_type = 'lineup_confirmed'
-                  AND os.snapshot_at >= NOW() - INTERVAL '120 minutes'
-                  AND (m.odds_home IS NULL OR m.odds_draw IS NULL OR m.odds_away IS NULL)
+                SELECT
+                  -- 1) Quarantined odds in last 24h
+                  (SELECT COUNT(*)
+                     FROM odds_history
+                    WHERE quarantined = true
+                      AND recorded_at > NOW() - INTERVAL '24 hours'
+                  ) AS quarantined_odds_24h,
+
+                  -- 2) Tainted matches (recent)
+                  (SELECT COUNT(*)
+                     FROM matches
+                    WHERE tainted = true
+                      AND date > NOW() - INTERVAL '7 days'
+                  ) AS tainted_matches_7d,
+
+                  -- 3) Unmapped entities (teams without logo)
+                  (SELECT COUNT(DISTINCT t.id)
+                     FROM teams t
+                    WHERE t.logo_url IS NULL
+                  ) AS unmapped_entities,
+
+                  -- 4a) Odds desync 6h window (early warning)
+                  (SELECT COUNT(DISTINCT m.id)
+                     FROM matches m
+                     JOIN odds_snapshots os ON os.match_id = m.id
+                    WHERE m.status = 'NS'
+                      AND m.date BETWEEN NOW() AND NOW() + INTERVAL '6 hours'
+                      AND os.odds_freshness = 'live'
+                      AND os.snapshot_type = 'lineup_confirmed'
+                      AND os.snapshot_at >= NOW() - INTERVAL '120 minutes'
+                      AND (m.odds_home IS NULL OR m.odds_draw IS NULL OR m.odds_away IS NULL)
+                  ) AS odds_desync_6h,
+
+                  -- 4b) Odds desync 90m window (near kickoff, critical)
+                  (SELECT COUNT(DISTINCT m.id)
+                     FROM matches m
+                     JOIN odds_snapshots os ON os.match_id = m.id
+                    WHERE m.status = 'NS'
+                      AND m.date BETWEEN NOW() AND NOW() + INTERVAL '90 minutes'
+                      AND os.odds_freshness = 'live'
+                      AND os.snapshot_type = 'lineup_confirmed'
+                      AND os.snapshot_at >= NOW() - INTERVAL '120 minutes'
+                      AND (m.odds_home IS NULL OR m.odds_draw IS NULL OR m.odds_away IS NULL)
+                  ) AS odds_desync_90m
             """)
         )
-        odds_desync_90m = int(res.scalar() or 0)
+        row = res.first()
+        if row:
+            quarantined_odds_24h = int(row[0] or 0)
+            tainted_matches_24h = int(row[1] or 0)
+            unmapped_entities_24h = int(row[2] or 0)
+            odds_desync_6h = int(row[3] or 0)
+            odds_desync_90m = int(row[4] or 0)
     except Exception:
-        pass  # Table/column may not exist
+        # Fail-soft: keep ops dashboard alive if a table/column is missing.
+        # (The older multi-query approach was more granular; this is the minimal-safe fallback.)
+        pass
 
     # Determine status
     # RED: desync near kickoff (90m) OR tainted/quarantined

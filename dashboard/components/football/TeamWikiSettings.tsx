@@ -211,15 +211,21 @@ export function TeamWikiSettings({ teamId, teamName, wiki }: TeamWikiSettingsPro
               disabled={mutation.isPending}
             />
             {wikiUrl && !urlError && WIKI_URL_REGEX.test(wikiUrl.trim()) && (
-              <a
-                href={wikiUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-primary hover:text-primary/80 transition-colors"
-                aria-label="Abrir en Wikipedia"
+              <Button
+                variant="actionLink"
+                size="icon-sm"
+                className="absolute right-2 top-1/2 -translate-y-1/2"
+                asChild
               >
-                <ExternalLink className="h-4 w-4" />
-              </a>
+                <a
+                  href={wikiUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Abrir en Wikipedia"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              </Button>
             )}
           </div>
           {urlError && (
@@ -244,17 +250,19 @@ export function TeamWikiSettings({ teamId, teamName, wiki }: TeamWikiSettingsPro
               disabled={mutation.isPending}
             />
             {wikidataId && !idError && (
-              <button
+              <Button
                 type="button"
+                variant="actionLink"
+                size="icon-sm"
+                className="absolute right-2 top-1/2 -translate-y-1/2"
                 onClick={() => {
                   navigator.clipboard.writeText(wikidataId);
                   toast.success("Wikidata ID copied");
                 }}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-primary hover:text-primary/80 transition-colors"
                 aria-label="Copy Wikidata ID"
               >
                 <Copy className="h-4 w-4" />
-              </button>
+              </Button>
             )}
           </div>
           {idError && (

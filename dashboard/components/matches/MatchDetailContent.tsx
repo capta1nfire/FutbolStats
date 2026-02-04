@@ -492,7 +492,7 @@ export function MatchHeader({
             <button
               type="button"
               onClick={(e) => handleTeamClick(match.home, e)}
-              className="cursor-pointer rounded-full transition-all hover:ring-2 hover:ring-primary/50 hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+              className="cursor-pointer rounded-full transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
               aria-label={`Ver detalles de ${match.home}`}
             >
               <TeamLogo
@@ -543,7 +543,7 @@ export function MatchHeader({
             <button
               type="button"
               onClick={(e) => handleTeamClick(match.away, e)}
-              className="cursor-pointer rounded-full transition-all hover:ring-2 hover:ring-primary/50 hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+              className="cursor-pointer rounded-full transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
               aria-label={`Ver detalles de ${match.away}`}
             >
               <TeamLogo

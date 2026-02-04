@@ -368,7 +368,7 @@ function GroupStandingsSection({
   }
 
   return (
-    <div className="bg-card border border-border rounded-lg overflow-hidden">
+    <div className="bg-transparent border border-border rounded-lg overflow-hidden">
       <div className="px-4 py-3 border-b border-border flex items-center gap-2">
         <Trophy className="h-4 w-4 text-muted-foreground" />
         <h2 className="text-sm font-semibold text-foreground">Standings</h2>
@@ -568,7 +568,7 @@ export function GroupDetail({
         )}
 
         {/* Stats by Season (Aggregated) */}
-        <div className="bg-card border border-border rounded-lg overflow-hidden">
+        <div className="bg-transparent border border-border rounded-lg overflow-hidden">
           <div className="px-4 py-3 border-b border-border flex items-center gap-2">
             <BarChart3 className="h-4 w-4 text-muted-foreground" />
             <h2 className="text-sm font-semibold text-foreground">Stats by Season (Aggregated)</h2>
@@ -577,7 +577,7 @@ export function GroupDetail({
         </div>
 
         {/* Recent Matches */}
-        <div className="bg-card border border-border rounded-lg overflow-hidden">
+        <div className="bg-transparent border border-border rounded-lg overflow-hidden">
           <div className="px-4 py-3 border-b border-border flex items-center gap-2">
             <Calendar className="h-4 w-4 text-muted-foreground" />
             <h2 className="text-sm font-semibold text-foreground">Recent Matches (All Leagues)</h2>

@@ -383,24 +383,64 @@ async def ensure_kickoff_predictions() -> dict:
         from app.models import Prediction
 
         async with AsyncSessionLocal() as session:
-            # Find NS matches in next 30 minutes WITHOUT any prediction
-            result = await session.execute(
+            # Find NS matches in next 30 minutes WITHOUT any prediction.
+            #
+            # NOTE (2026-02): Keep this query extremely lightweight.
+            # - Avoid JOIN teams (not needed for gating)
+            # - Use parameters instead of NOW() to help planner/cache stability
+            # - LIMIT to bound work under contention
+            now = datetime.utcnow()
+            end = now + timedelta(minutes=30)
+            max_candidates = 50
+
+            try:
+                result = await session.execute(
+                    text("""
+                        SELECT m.id
+                        FROM matches m
+                        LEFT JOIN predictions p ON p.match_id = m.id
+                        WHERE m.status = 'NS'
+                          AND m.date > :now
+                          AND m.date <= :end
+                          AND p.match_id IS NULL
+                        ORDER BY m.date ASC
+                        LIMIT :limit
+                    """),
+                    {"now": now, "end": end, "limit": max_candidates},
+                )
+                match_ids = [row[0] for row in result.fetchall()]
+            except Exception as e:
+                # Avoid noisy Sentry errors on transient DB contention.
+                # When Postgres cancels the statement due to statement_timeout,
+                # SQLAlchemy wraps asyncpg.exceptions.QueryCanceledError.
+                msg = str(e).lower()
+                if "statement timeout" in msg or "querycancelederror" in msg:
+                    duration_ms = (time.time() - start_time) * 1000
+                    logger.warning(
+                        "[KICKOFF-SAFETY] Query timed out (statement_timeout); skipping this run",
+                        extra={"duration_ms": int(duration_ms)},
+                    )
+                    record_job_run(job="kickoff_safety_net", status="error", duration_ms=duration_ms)
+                    return {"generated": 0, "error": "statement_timeout"}
+                raise
+
+            if not match_ids:
+                return {"generated": 0, "message": "no_imminent_gaps"}
+
+            # Fetch match context for logging only (small IN-list)
+            rows = await session.execute(
                 text("""
                     SELECT m.id, m.external_id, m.date, m.league_id,
                            ht.name as home_team, at.name as away_team
                     FROM matches m
                     JOIN teams ht ON ht.id = m.home_team_id
                     JOIN teams at ON at.id = m.away_team_id
-                    WHERE m.status = 'NS'
-                      AND m.date > NOW()
-                      AND m.date <= NOW() + INTERVAL '30 minutes'
-                      AND NOT EXISTS (
-                          SELECT 1 FROM predictions p WHERE p.match_id = m.id
-                      )
+                    WHERE m.id = ANY(:match_ids)
                     ORDER BY m.date ASC
-                """)
+                """),
+                {"match_ids": match_ids},
             )
-            imminent_gaps = result.fetchall()
+            imminent_gaps = rows.fetchall()
 
             if not imminent_gaps:
                 return {"generated": 0, "message": "no_imminent_gaps"}

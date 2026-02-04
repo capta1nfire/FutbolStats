@@ -5,7 +5,8 @@ import { SettingsSummary } from "@/lib/types";
 import { SettingsSectionHeader } from "./SettingsSectionHeader";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Clock, Globe2, Check, RotateCcw, Search } from "lucide-react";
+import { SearchInput } from "@/components/ui/search-input";
+import { Clock, Globe2, Check, RotateCcw } from "lucide-react";
 import { useRegion } from "@/components/providers/RegionProvider";
 import { getSupportedTimeZones, formatCurrentTime, formatCurrentDate } from "@/lib/region";
 import { cn } from "@/lib/utils";
@@ -132,16 +133,11 @@ export function TimezoneSection({ settings }: TimezoneSectionProps) {
           </div>
 
           {/* Search */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <input
-              type="text"
-              placeholder="Search timezones..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full h-9 pl-9 pr-3 bg-background border border-border rounded-md text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
+          <SearchInput
+            placeholder="Search timezones..."
+            value={searchQuery}
+            onChange={setSearchQuery}
+          />
 
           {/* Timezone List */}
           <div className="h-64 overflow-y-auto border border-border rounded-md bg-background">

@@ -393,14 +393,14 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
 
         {/* League Meta */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="bg-card border border-border rounded-lg p-3">
+          <div className="bg-transparent border border-border rounded-lg p-3">
             <p className="text-xs text-muted-foreground">Match Type</p>
             <p className="text-sm font-medium text-foreground capitalize">
               {league.match_type || "-"}
             </p>
           </div>
           {league.match_weight !== null && (
-            <div className="bg-card border border-border rounded-lg p-3">
+            <div className="bg-transparent border border-border rounded-lg p-3">
               <p className="text-xs text-muted-foreground">Match Weight</p>
               <p className="text-sm font-medium text-foreground">{league.match_weight}</p>
             </div>
@@ -443,7 +443,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
         )}
 
         {/* Stats by Season */}
-        <div className="bg-card border border-border rounded-lg overflow-hidden">
+        <div className="bg-transparent border border-border rounded-lg overflow-hidden">
           <div className="px-4 py-3 border-b border-border flex items-center gap-2">
             <BarChart3 className="h-4 w-4 text-muted-foreground" />
             <h2 className="text-sm font-semibold text-foreground">Stats by Season</h2>
@@ -452,7 +452,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
         </div>
 
         {/* Recent Matches */}
-        <div className="bg-card border border-border rounded-lg overflow-hidden">
+        <div className="bg-transparent border border-border rounded-lg overflow-hidden">
           <div className="px-4 py-3 border-b border-border flex items-center gap-2">
             <Calendar className="h-4 w-4 text-muted-foreground" />
             <h2 className="text-sm font-semibold text-foreground">Recent Matches</h2>
@@ -461,7 +461,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
         </div>
 
         {/* Standings */}
-        <div className="bg-card border border-border rounded-lg overflow-hidden">
+        <div className="bg-transparent border border-border rounded-lg overflow-hidden">
           <div className="px-4 py-3 border-b border-border flex items-center gap-2">
             <Trophy className="h-4 w-4 text-muted-foreground" />
             <h2 className="text-sm font-semibold text-foreground">Standings</h2>

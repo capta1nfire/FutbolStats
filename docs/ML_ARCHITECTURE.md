@@ -176,13 +176,44 @@ EXTC_SHADOW_OOS_ONLY=true
 
 ### Telemetría
 
-- Prometheus:
-  - `extc_shadow_predictions_inserted_total`
-  - `extc_shadow_predictions_skipped_total`
-  - `extc_shadow_errors_total`
-  - `extc_shadow_last_success_timestamp`
-- ops.json:
-  - `extc_shadow` (state, counts, last_success_at, predictions_count)
+**Prometheus (genérico ext-A/B/C/D, recomendado)**
+
+- `ext_shadow_predictions_inserted_total{variant}` (`variant` = A|B|C|D)
+- `ext_shadow_predictions_skipped_total{variant}`
+- `ext_shadow_errors_total{variant}`
+- `ext_shadow_last_success_timestamp{variant}`
+- `ext_shadow_rejections_total{variant,reason}`
+  - `reason` (observabilidad mínima, sin sobrecontar): `no_pending_snapshots | model_not_found | insert_error`
+  - **Nota**: `snapshot_before_start_at` y `outside_window_*` NO se miden en el job (porque el query ya filtra).
+
+**Prometheus (legacy ext-C)**
+
+- `extc_shadow_predictions_inserted_total`
+- `extc_shadow_predictions_skipped_total`
+- `extc_shadow_errors_total`
+- `extc_shadow_last_success_timestamp`
+
+**Logs (Railway)**
+
+- `"[EXT_SHADOW] ext_shadow_no_snapshots variant=... model_version=... start_at=..."`  
+  Indica que el job corrió pero no encontró snapshots pendientes (dentro del `LIMIT` y gating PIT).
+- `"[EXT_SHADOW] ext-<X> run_summary: batch_size=..., processed=..., inserted=..., skipped=..., errors=..."`  
+  Resumen por variante (A/B/C/D) del batch procesado.
+
+**Debug on-demand (dashboard, read-only)**
+
+- `GET /dashboard/debug/experiment-gating/{match_id}?variant=A|B|C|D` (requiere `X-Dashboard-Token`)  
+  Devuelve checks y `failure_reason` usando la misma lógica estricta del job:
+  - `lineup_confirmed_exists`
+  - `snapshot_after_start_at` (vs `EXT_SHADOW_START_AT`)
+  - `window_10_90_min_strict` (estricto: \(delta > 10\) y \(delta < 90\))
+  - `model_exists`
+  - `has_pit_safe_prediction` (por `match_id + model_version` y `snapshot_at <= kickoff`)
+
+**ops.json**
+
+- `extc_shadow` (state, counts, last_success_at, predictions_count)  
+  Nota: actualmente el resumen en ops.json está orientado a ext-C; para A/B/D usar Prometheus + logs.
 
 ---
 
@@ -341,7 +372,14 @@ sensor_state  # 0=disabled, 1=learning, 2=ready, 3=error
 predictions_killswitch_filtered_total{reason}
 predictions_killswitch_eligible
 
-# ext-C shadow
+# ext shadow (A/B/C/D)
+ext_shadow_predictions_inserted_total{variant}
+ext_shadow_predictions_skipped_total{variant}
+ext_shadow_errors_total{variant}
+ext_shadow_last_success_timestamp{variant}
+ext_shadow_rejections_total{variant,reason}
+
+# ext-C shadow (legacy)
 extc_shadow_predictions_inserted_total
 extc_shadow_predictions_skipped_total
 extc_shadow_errors_total

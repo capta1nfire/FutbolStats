@@ -5,6 +5,7 @@ import { usePromptTemplates, useUpdatePrompt } from "@/lib/hooks/use-logos";
 import type { PromptTemplate } from "@/lib/api/logos";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Save,
   Loader2,
@@ -130,14 +131,13 @@ function PromptCard({
           </div>
 
           {/* Textarea */}
-          <textarea
+          <Textarea
             value={editedText}
             onChange={handleTextChange}
             rows={6}
             className={cn(
-              "w-full p-3 text-sm font-mono rounded-lg border resize-none",
-              "bg-background focus:outline-none focus:ring-2 focus:ring-primary/50",
-              hasChanges ? "border-primary" : "border-border"
+              "w-full font-mono resize-none",
+              hasChanges ? "border-primary" : ""
             )}
             placeholder="Enter generation prompt..."
           />
