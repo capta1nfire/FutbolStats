@@ -6131,6 +6131,7 @@ async def dashboard_admin_patch_team(request: Request, team_id: int):
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
     from app.dashboard.admin import ValidationError, patch_team_wiki
+    from sqlalchemy.exc import IntegrityError
 
     try:
         async with AsyncSessionLocal() as session:
@@ -6141,9 +6142,11 @@ async def dashboard_admin_patch_team(request: Request, team_id: int):
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        logger.error(f"[PATCH team/{team_id}] Unhandled error: {type(e).__name__}: {e}")
-        raise
+    except IntegrityError as e:
+        # Handle unique constraint violations (e.g., duplicate wikidata_id)
+        if "wikidata_id" in str(e):
+            raise HTTPException(status_code=409, detail="wikidata_id already assigned to another team")
+        raise HTTPException(status_code=409, detail="Data conflict: value already exists")
 
     # Invalidate team detail cache
     try:
