@@ -6141,6 +6141,9 @@ async def dashboard_admin_patch_team(request: Request, team_id: int):
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"[PATCH team/{team_id}] Unhandled error: {type(e).__name__}: {e}")
+        raise
 
     # Invalidate team detail cache
     try:
