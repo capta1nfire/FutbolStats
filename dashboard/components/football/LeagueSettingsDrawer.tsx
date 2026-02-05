@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Settings } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { DetailDrawer } from "@/components/shell/DetailDrawer";
@@ -71,10 +70,7 @@ export function LeagueSettingsDrawer({
 
         {/* Display Settings Card */}
         <div className="bg-muted/50 rounded-lg p-3 space-y-3">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Settings className="h-3 w-3" />
-            <span>Display</span>
-          </div>
+          <div className="text-xs text-muted-foreground">Display</div>
 
           {/* use_short_names toggle */}
           <div className="flex items-center justify-between gap-4">
