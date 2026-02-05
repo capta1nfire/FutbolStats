@@ -394,6 +394,7 @@ function FootballPageContent() {
             onBack={category === "tournaments_competitions" ? handleBackToTournaments : handleBackToCountry}
             onTeamSelect={handleTeamSelect}
             onSettingsClick={handleSettingsOpen}
+            initialTeamId={teamId}
           />
         )}
         {contentView === "group" && groupId && (

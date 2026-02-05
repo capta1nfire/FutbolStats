@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useFootballLeague, useFootballTeam, useStandings } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
 import type { StandingEntry } from "@/lib/types";
@@ -71,6 +71,8 @@ interface LeagueDetailProps {
   onBack: () => void;
   onTeamSelect: (teamId: number) => void;
   onSettingsClick?: () => void;
+  /** Initial team to show in details panel (from URL param) */
+  initialTeamId?: number | null;
 }
 
 /**
@@ -329,10 +331,17 @@ function StandingsTable({
  * - Recent matches
  * - Standings
  */
-export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick }: LeagueDetailProps) {
+export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, initialTeamId }: LeagueDetailProps) {
   const [activeTab, setActiveTab] = useState<LeagueDetailTabId>("standings");
-  const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
+  const [selectedTeamId, setSelectedTeamId] = useState<number | null>(initialTeamId ?? null);
   const [teamTab, setTeamTab] = useState<TeamDetailTabId>("overview");
+
+  // Sync selectedTeamId when initialTeamId changes (e.g., navigation from match detail)
+  useEffect(() => {
+    if (initialTeamId !== undefined) {
+      setSelectedTeamId(initialTeamId);
+    }
+  }, [initialTeamId]);
   const { data, isLoading, error, refetch } = useFootballLeague(leagueId);
   const { data: standingsData, isLoading: isStandingsLoading } = useStandings(leagueId);
   const selectedTeam = useFootballTeam(selectedTeamId);
