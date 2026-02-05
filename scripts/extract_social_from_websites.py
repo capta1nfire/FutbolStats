@@ -494,7 +494,7 @@ async def update_social_handles(
                     SET social_handles = jsonb_set(
                         COALESCE(social_handles, '{}'::jsonb),
                         '{twitter}',
-                        to_jsonb(:new_twitter::text),
+                        to_jsonb(CAST(:new_twitter AS text)),
                         true
                     )
                     WHERE team_id = :team_id
@@ -510,7 +510,7 @@ async def update_social_handles(
                     SET social_handles = jsonb_set(
                         COALESCE(social_handles, '{}'::jsonb),
                         '{instagram}',
-                        to_jsonb(:new_instagram::text),
+                        to_jsonb(CAST(:new_instagram AS text)),
                         true
                     )
                     WHERE team_id = :team_id
