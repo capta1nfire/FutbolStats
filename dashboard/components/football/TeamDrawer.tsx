@@ -370,21 +370,26 @@ export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDr
   const handleCopyId = () => {
     if (teamId) {
       navigator.clipboard.writeText(String(teamId));
-      toast.success("Team ID copied");
+      toast.success(`Team ID ${teamId} copied`);
     }
   };
 
-  // Title varies based on whether a team is selected
+  // Title: display name (clickable to copy ID) or fallback
+  const displayName = data?.wikidata_enrichment?.short_name ?? data?.team?.name;
   const drawerTitle = teamId ? (
-    <span>
-      Team ID{" "}
+    displayName ? (
       <button
         onClick={handleCopyId}
-        className="text-primary hover:opacity-80 transition-opacity"
+        className="text-foreground hover:text-primary transition-colors cursor-pointer"
+        title={`Click to copy ID: ${teamId}`}
       >
-        {teamId}
+        {displayName}
       </button>
-    </span>
+    ) : isLoading ? (
+      <span className="text-muted-foreground">Loading...</span>
+    ) : (
+      <span>Team {teamId}</span>
+    )
   ) : (
     "Team 360"
   );
