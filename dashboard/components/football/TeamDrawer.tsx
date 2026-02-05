@@ -43,14 +43,6 @@ interface TeamDrawerProps {
 function TeamInfoSection({ team }: { team: TeamInfo }) {
   return (
     <div className="space-y-3">
-      {/* Basic Info */}
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <span>{team.country}</span>
-        {team.founded && (
-          <span>Est. {team.founded}</span>
-        )}
-      </div>
-
       {/* Venue Info */}
       {(team.venue_name || team.venue_city) && (
         <div className="bg-muted/50 rounded-lg p-3">
