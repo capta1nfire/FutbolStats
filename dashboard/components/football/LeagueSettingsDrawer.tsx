@@ -67,22 +67,27 @@ export function LeagueSettingsDrawer({
       }
       variant="overlay"
     >
-      <div className="space-y-6">
-        {/* League name header */}
+      <div className="space-y-4">
+        {/* League info header */}
         <div className="text-sm text-muted-foreground">
           {league.name} ({league.country})
         </div>
 
-        {/* Settings section */}
-        <div className="space-y-4">
-          <h3 className="text-sm font-medium">Display</h3>
+        {/* Display Settings Card */}
+        <div className="bg-muted/50 rounded-lg p-3 space-y-3">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Settings className="h-3 w-3" />
+            <span>Display</span>
+          </div>
 
           {/* use_short_names toggle */}
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-4">
             <div className="space-y-0.5">
-              <Label htmlFor="short-names">Use short names</Label>
+              <Label htmlFor="short-names" className="text-sm text-foreground">
+                Use short names
+              </Label>
               <p className="text-xs text-muted-foreground">
-                Show abbreviated team names (e.g. &quot;America&quot; instead of &quot;America de Cali&quot;)
+                Show abbreviated team names (e.g. &quot;América&quot; instead of &quot;América de Cali&quot;)
               </p>
             </div>
             <Switch
@@ -92,17 +97,17 @@ export function LeagueSettingsDrawer({
               disabled={mutation.isPending}
             />
           </div>
-        </div>
 
-        {/* Status feedback */}
-        {mutation.isPending && (
-          <p className="text-xs text-muted-foreground">Saving...</p>
-        )}
-        {mutation.isError && (
-          <p className="text-xs text-destructive">
-            Error saving settings. Try again.
-          </p>
-        )}
+          {/* Status feedback */}
+          {mutation.isPending && (
+            <p className="text-xs text-muted-foreground">Saving...</p>
+          )}
+          {mutation.isError && (
+            <p className="text-xs text-destructive">
+              Error saving settings. Try again.
+            </p>
+          )}
+        </div>
       </div>
     </DetailDrawer>
   );
