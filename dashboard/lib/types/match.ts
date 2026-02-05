@@ -118,6 +118,7 @@ export interface StandingEntry {
   position: number;
   teamId: number;
   teamName: string;
+  displayName: string; // COALESCE(override.short_name, wikidata.short_name, name)
   teamLogo: string | null;
   points: number;
   played: number;

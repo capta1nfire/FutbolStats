@@ -293,3 +293,66 @@ async def apply_team_overrides_to_standings(
             entry["_identity_override"] = True
 
     return standings
+
+
+async def enrich_standings_with_display_names(
+    session: AsyncSession,
+    standings: list[dict],
+) -> list[dict]:
+    """
+    Enrich standings with display_name for use_short_names toggle.
+
+    For each team, calculates:
+        COALESCE(override.short_name, wikidata.short_name, team.name) AS display_name
+
+    This enables the frontend to show shortened team names when the league's
+    use_short_names setting is enabled.
+
+    Args:
+        session: Database session.
+        standings: List of standings dicts with team_id (internal, not external).
+
+    Returns:
+        Modified standings list with display_name added to each entry.
+    """
+    if not standings:
+        return standings
+
+    # Extract team_ids (internal IDs after translation)
+    team_ids = [s.get("team_id") for s in standings if s.get("team_id")]
+    if not team_ids:
+        return standings
+
+    # Query display_name for all teams in one query
+    from sqlalchemy import text
+    result = await session.execute(
+        text("""
+            SELECT
+                t.id AS team_id,
+                COALESCE(
+                    teo.short_name,
+                    twe.short_name,
+                    t.name
+                ) AS display_name
+            FROM teams t
+            LEFT JOIN team_enrichment_overrides teo ON t.id = teo.team_id
+            LEFT JOIN team_wikidata_enrichment twe ON t.id = twe.team_id
+            WHERE t.id = ANY(:team_ids)
+        """),
+        {"team_ids": team_ids}
+    )
+    rows = result.fetchall()
+
+    # Build lookup map
+    display_name_map = {row.team_id: row.display_name for row in rows}
+
+    # Enrich standings
+    for entry in standings:
+        team_id = entry.get("team_id")
+        if team_id and team_id in display_name_map:
+            entry["display_name"] = display_name_map[team_id]
+        else:
+            # Fallback to team_name if no display_name found
+            entry["display_name"] = entry.get("team_name", "Unknown")
+
+    return standings

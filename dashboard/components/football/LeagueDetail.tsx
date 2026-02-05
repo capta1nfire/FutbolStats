@@ -217,9 +217,11 @@ function RecentMatchesList({
 function StandingsTable({
   standings,
   onTeamSelect,
+  useShortNames = false,
 }: {
   standings: StandingEntry[];
   onTeamSelect?: (teamId: number) => void;
+  useShortNames?: boolean;
 }) {
   if (standings.length === 0) {
     return (
@@ -266,10 +268,10 @@ function StandingsTable({
                         onClick={() => onTeamSelect(entry.teamId)}
                         className="text-primary hover:text-primary-hover transition-colors no-underline hover:no-underline text-left truncate"
                       >
-                        {entry.teamName}
+                        {useShortNames ? entry.displayName : entry.teamName}
                       </button>
                     ) : (
-                      <span className="text-foreground truncate">{entry.teamName}</span>
+                      <span className="text-foreground truncate">{useShortNames ? entry.displayName : entry.teamName}</span>
                     )}
                     {entry.description && entry.position > 8 && (
                       <span className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
@@ -502,6 +504,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick }
                   <StandingsTable
                     standings={standingsData.standings}
                     onTeamSelect={handleTeamSelect}
+                    useShortNames={league.tags?.use_short_names ?? false}
                   />
                 ) : (
                   <div className="px-4 py-4 text-sm text-muted-foreground">

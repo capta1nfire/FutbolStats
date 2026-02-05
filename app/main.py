@@ -3771,6 +3771,11 @@ async def get_league_standings(
                 if ext_id and ext_id in ext_to_internal:
                     standing["team_id"] = ext_to_internal[ext_id]
 
+        # Enrich with display_name for use_short_names toggle
+        # (uses internal team_id, so must run after external->internal translation)
+        from app.teams.overrides import enrich_standings_with_display_names
+        standings = await enrich_standings_with_display_names(session, standings)
+
         elapsed_ms = int((time.time() - _t_start) * 1000)
         logger.info(f"[PERF] get_standings league_id={league_id} season={season} source={source} time_ms={elapsed_ms}")
 

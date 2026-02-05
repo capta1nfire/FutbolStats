@@ -10,10 +10,13 @@ function adaptStanding(raw: unknown): StandingEntry | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
 
+  const teamName = typeof r.team_name === "string" ? r.team_name : "Unknown";
+
   return {
     position: typeof r.position === "number" ? r.position : 0,
     teamId: typeof r.team_id === "number" ? r.team_id : 0,
-    teamName: typeof r.team_name === "string" ? r.team_name : "Unknown",
+    teamName,
+    displayName: typeof r.display_name === "string" ? r.display_name : teamName,
     teamLogo: typeof r.team_logo === "string" ? r.team_logo : null,
     points: typeof r.points === "number" ? r.points : 0,
     played: typeof r.played === "number" ? r.played : 0,
