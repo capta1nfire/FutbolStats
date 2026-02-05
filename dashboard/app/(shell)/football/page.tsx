@@ -451,10 +451,10 @@ function FootballPageContent() {
         />
       )}
 
-      {/* Col 5: Team Drawer (persistent/fixed) */}
+      {/* Col 5: Team Drawer (persistent/fixed) - hidden when LeagueSettings is open */}
       <TeamDrawer
         teamId={teamId}
-        open={true}
+        open={!leagueSettingsOpen}
         onClose={handleTeamDrawerClose}
         persistent
       />
