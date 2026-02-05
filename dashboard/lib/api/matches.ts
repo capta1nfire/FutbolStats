@@ -129,6 +129,10 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
   const homeDisplayName = raw.home_display_name ?? raw.homeDisplayName;
   const awayDisplayName = raw.away_display_name ?? raw.awayDisplayName;
 
+  // Team IDs for navigation (accept both snake_case and camelCase)
+  const homeTeamId = raw.home_team_id ?? raw.homeTeamId;
+  const awayTeamId = raw.away_team_id ?? raw.awayTeamId;
+
   // Build result
   const result: MatchSummary = {
     id,
@@ -138,6 +142,8 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
     leagueCountry: leagueCountryStr,
     home,
     away,
+    homeTeamId: typeof homeTeamId === "number" ? homeTeamId : 0,
+    awayTeamId: typeof awayTeamId === "number" ? awayTeamId : 0,
     homeDisplayName: typeof homeDisplayName === "string" ? homeDisplayName : home,
     awayDisplayName: typeof awayDisplayName === "string" ? awayDisplayName : away,
     kickoffISO,

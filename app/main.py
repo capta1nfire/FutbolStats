@@ -13960,6 +13960,8 @@ async def get_matches_dashboard(
             Match.elapsed_extra,
             Match.venue_name,
             Match.venue_city,
+            Match.home_team_id,
+            Match.away_team_id,
             home_team.name.label("home_name"),
             away_team.name.label("away_name"),
             # Display names for use_short_names toggle
@@ -14024,6 +14026,8 @@ async def get_matches_dashboard(
             Match.elapsed_extra,
             Match.venue_name,
             Match.venue_city,
+            Match.home_team_id,
+            Match.away_team_id,
             home_team.name,
             away_team.name,
             # Display names
@@ -14161,6 +14165,8 @@ async def get_matches_dashboard(
             "round": row.round,
             "home": row.home_name,
             "away": row.away_name,
+            "home_team_id": row.home_team_id,
+            "away_team_id": row.away_team_id,
             "home_display_name": row.home_display_name or row.home_name,
             "away_display_name": row.away_display_name or row.away_name,
             "status": row.status,

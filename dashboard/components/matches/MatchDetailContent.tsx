@@ -413,34 +413,12 @@ export function MatchHeader({
   const { formatTime } = useRegion();
   const formattedTime = formatTime(match.kickoffISO);
 
-  // Fetch standings para resolver nombres → IDs
-  const { data: standingsData } = useStandings(match.leagueId);
-
-  // Normaliza nombre: lowercase, trim, colapsar espacios múltiples
-  const normalizeName = useCallback(
-    (name: string) => name.toLowerCase().trim().replace(/\s+/g, " "),
-    []
-  );
-
-  // Mapa normalizado nombre → id
-  const teamNameToId = useMemo(() => {
-    const map = new Map<string, number>();
-    if (standingsData?.standings) {
-      for (const entry of standingsData.standings) {
-        if (entry.teamId > 0 && entry.teamName) {
-          map.set(normalizeName(entry.teamName), entry.teamId);
-        }
-      }
-    }
-    return map;
-  }, [standingsData, normalizeName]);
-
   // Handler click en logo → navega a Football con TeamDrawer abierto
+  // Usa directamente homeTeamId/awayTeamId del match (no necesita resolver via standings)
   const handleTeamClick = useCallback(
-    (teamName: string, e: React.MouseEvent) => {
+    (teamId: number, e: React.MouseEvent) => {
       e.stopPropagation();
 
-      const teamId = teamNameToId.get(normalizeName(teamName)) ?? null;
       const params = new URLSearchParams({
         category: "leagues_by_country",
         league: String(match.leagueId),
@@ -450,13 +428,13 @@ export function MatchHeader({
         params.set("country", match.leagueCountry);
       }
 
-      if (teamId) {
+      if (teamId > 0) {
         params.set("team", String(teamId));
       }
 
       router.push(`/football?${params.toString()}`);
     },
-    [router, match.leagueId, match.leagueCountry, teamNameToId, normalizeName]
+    [router, match.leagueId, match.leagueCountry]
   );
 
   const hasScore = match.score !== undefined && match.score !== null;
@@ -491,7 +469,7 @@ export function MatchHeader({
           <div className="flex flex-col items-center gap-1">
             <button
               type="button"
-              onClick={(e) => handleTeamClick(match.home, e)}
+              onClick={(e) => handleTeamClick(match.homeTeamId, e)}
               className="cursor-pointer rounded-full transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
               aria-label={`Ver detalles de ${match.home}`}
             >
@@ -542,7 +520,7 @@ export function MatchHeader({
           <div className="flex flex-col items-center gap-1">
             <button
               type="button"
-              onClick={(e) => handleTeamClick(match.away, e)}
+              onClick={(e) => handleTeamClick(match.awayTeamId, e)}
               className="cursor-pointer rounded-full transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
               aria-label={`Ver detalles de ${match.away}`}
             >

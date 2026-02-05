@@ -72,6 +72,10 @@ function createDeterministicMatch(index: number): MatchSummary {
     leagueCountry: league.country,
     home: teamPair[0],
     away: teamPair[1],
+    homeTeamId: 1000 + index * 2,
+    awayTeamId: 1001 + index * 2,
+    homeDisplayName: teamPair[0],
+    awayDisplayName: teamPair[1],
     kickoffISO: new Date(kickoffTimestamp).toISOString(),
   };
 
