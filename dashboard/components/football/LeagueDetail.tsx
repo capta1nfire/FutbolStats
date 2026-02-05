@@ -133,6 +133,7 @@ function StatsTable({
 function RecentMatchesList({
   matches,
   onTeamSelect,
+  useShortNames = false,
 }: {
   matches: {
     match_id: number;
@@ -140,11 +141,14 @@ function RecentMatchesList({
     status: string;
     home_team: string;
     away_team: string;
+    home_display_name?: string;
+    away_display_name?: string;
     home_team_id?: number;
     away_team_id?: number;
     score: string | null;
   }[];
   onTeamSelect?: (teamId: number) => void;
+  useShortNames?: boolean;
 }) {
   if (!matches || matches.length === 0) {
     return (
@@ -177,10 +181,10 @@ function RecentMatchesList({
                     onClick={() => onTeamSelect(match.home_team_id!)}
                     className="text-primary hover:text-primary-hover transition-colors no-underline hover:no-underline"
                   >
-                    {match.home_team}
+                    {useShortNames ? (match.home_display_name ?? match.home_team) : match.home_team}
                   </button>
                 ) : (
-                  <span>{match.home_team}</span>
+                  <span>{useShortNames ? (match.home_display_name ?? match.home_team) : match.home_team}</span>
                 )}
                 <span className="text-muted-foreground"> vs </span>
                 {match.away_team_id && onTeamSelect ? (
@@ -188,10 +192,10 @@ function RecentMatchesList({
                     onClick={() => onTeamSelect(match.away_team_id!)}
                     className="text-primary hover:text-primary-hover transition-colors no-underline hover:no-underline"
                   >
-                    {match.away_team}
+                    {useShortNames ? (match.away_display_name ?? match.away_team) : match.away_team}
                   </button>
                 ) : (
-                  <span>{match.away_team}</span>
+                  <span>{useShortNames ? (match.away_display_name ?? match.away_team) : match.away_team}</span>
                 )}
               </p>
             </div>
@@ -523,7 +527,11 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick }
                     {nextMatches.length}
                   </span>
                 </div>
-                <RecentMatchesList matches={nextMatches} onTeamSelect={handleTeamSelect} />
+                <RecentMatchesList
+                  matches={nextMatches}
+                  onTeamSelect={handleTeamSelect}
+                  useShortNames={league.tags?.use_short_names ?? false}
+                />
               </div>
             )}
 

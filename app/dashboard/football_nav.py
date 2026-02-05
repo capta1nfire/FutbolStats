@@ -456,16 +456,22 @@ async def build_league_nav_detail(session: AsyncSession, league_id: int) -> Opti
     except Exception:
         titan = None
 
-    # Get recent matches
+    # Get recent matches (with display_name for use_short_names toggle)
     recent_query = text("""
         SELECT
             m.id as match_id, m.date, m.status,
             m.home_team_id, m.away_team_id,
             ht.name as home_team, at.name as away_team,
+            COALESCE(hto.short_name, htw.short_name, ht.name) as home_display_name,
+            COALESCE(ato.short_name, atw.short_name, at.name) as away_display_name,
             m.home_goals, m.away_goals
         FROM matches m
         JOIN teams ht ON m.home_team_id = ht.id
         JOIN teams at ON m.away_team_id = at.id
+        LEFT JOIN team_enrichment_overrides hto ON ht.id = hto.team_id
+        LEFT JOIN team_wikidata_enrichment htw ON ht.id = htw.team_id
+        LEFT JOIN team_enrichment_overrides ato ON at.id = ato.team_id
+        LEFT JOIN team_wikidata_enrichment atw ON at.id = atw.team_id
         WHERE m.league_id = :lid
         ORDER BY m.date DESC
         LIMIT 10
@@ -480,6 +486,8 @@ async def build_league_nav_detail(session: AsyncSession, league_id: int) -> Opti
             "away_team_id": r.away_team_id,
             "home_team": r.home_team,
             "away_team": r.away_team,
+            "home_display_name": r.home_display_name,
+            "away_display_name": r.away_display_name,
             "score": f"{r.home_goals}-{r.away_goals}" if r.home_goals is not None else None,
         }
         for r in recent_result.fetchall()
@@ -642,16 +650,22 @@ async def build_group_nav_detail(session: AsyncSession, group_id: int) -> Option
     except Exception:
         titan = None
 
-    # Get recent matches across all members
+    # Get recent matches across all members (with display_name for use_short_names toggle)
     recent_query = text("""
         SELECT
             m.id as match_id, m.date, m.league_id, m.status,
             m.home_team_id, m.away_team_id,
             ht.name as home_team, at.name as away_team,
+            COALESCE(hto.short_name, htw.short_name, ht.name) as home_display_name,
+            COALESCE(ato.short_name, atw.short_name, at.name) as away_display_name,
             m.home_goals, m.away_goals
         FROM matches m
         JOIN teams ht ON m.home_team_id = ht.id
         JOIN teams at ON m.away_team_id = at.id
+        LEFT JOIN team_enrichment_overrides hto ON ht.id = hto.team_id
+        LEFT JOIN team_wikidata_enrichment htw ON ht.id = htw.team_id
+        LEFT JOIN team_enrichment_overrides ato ON at.id = ato.team_id
+        LEFT JOIN team_wikidata_enrichment atw ON at.id = atw.team_id
         WHERE m.league_id = ANY(:lids)
         ORDER BY m.date DESC
         LIMIT 10
@@ -667,6 +681,8 @@ async def build_group_nav_detail(session: AsyncSession, group_id: int) -> Option
             "away_team_id": r.away_team_id,
             "home_team": r.home_team,
             "away_team": r.away_team,
+            "home_display_name": r.home_display_name,
+            "away_display_name": r.away_display_name,
             "score": f"{r.home_goals}-{r.away_goals}" if r.home_goals is not None else None,
         }
         for r in recent_result.fetchall()
@@ -771,17 +787,23 @@ async def build_football_overview(session: AsyncSession) -> dict:
         "teams_active_count": teams_row.teams_active,
     }
 
-    # 3. Upcoming matches (próximos 20)
+    # 3. Upcoming matches (próximos 20) - with display_name for use_short_names toggle
     upcoming_query = text("""
         SELECT
             m.id as match_id, m.date, m.league_id, m.status,
             al.name as league_name,
             ht.name as home_team, at.name as away_team,
+            COALESCE(hto.short_name, htw.short_name, ht.name) as home_display_name,
+            COALESCE(ato.short_name, atw.short_name, at.name) as away_display_name,
             EXISTS(SELECT 1 FROM predictions p WHERE p.match_id = m.id) as has_prediction
         FROM matches m
         JOIN admin_leagues al ON m.league_id = al.league_id AND al.is_active = true
         JOIN teams ht ON m.home_team_id = ht.id
         JOIN teams at ON m.away_team_id = at.id
+        LEFT JOIN team_enrichment_overrides hto ON ht.id = hto.team_id
+        LEFT JOIN team_wikidata_enrichment htw ON ht.id = htw.team_id
+        LEFT JOIN team_enrichment_overrides ato ON at.id = ato.team_id
+        LEFT JOIN team_wikidata_enrichment atw ON at.id = atw.team_id
         WHERE m.date >= NOW() AND m.status = 'NS'
         ORDER BY m.date ASC
         LIMIT 20
@@ -795,6 +817,8 @@ async def build_football_overview(session: AsyncSession) -> dict:
             "league_name": r.league_name,
             "home_team": r.home_team,
             "away_team": r.away_team,
+            "home_display_name": r.home_display_name,
+            "away_display_name": r.away_display_name,
             "status": r.status,
             "has_prediction": r.has_prediction,
         }
@@ -1055,15 +1079,21 @@ async def build_nationals_country_detail(session: AsyncSession, country: str) ->
         for r in comps_result.fetchall()
     ]
 
-    # Recent matches
+    # Recent matches (with display_name for use_short_names toggle)
     recent_query = text("""
         SELECT
             m.id as match_id, m.date, m.league_id, m.status,
             m.home_goals, m.away_goals,
-            ht.name as home_team, at.name as away_team
+            ht.name as home_team, at.name as away_team,
+            COALESCE(hto.short_name, htw.short_name, ht.name) as home_display_name,
+            COALESCE(ato.short_name, atw.short_name, at.name) as away_display_name
         FROM matches m
         JOIN teams ht ON m.home_team_id = ht.id
         JOIN teams at ON m.away_team_id = at.id
+        LEFT JOIN team_enrichment_overrides hto ON ht.id = hto.team_id
+        LEFT JOIN team_wikidata_enrichment htw ON ht.id = htw.team_id
+        LEFT JOIN team_enrichment_overrides ato ON at.id = ato.team_id
+        LEFT JOIN team_wikidata_enrichment atw ON at.id = atw.team_id
         WHERE (m.home_team_id = ANY(:tids) OR m.away_team_id = ANY(:tids))
             AND m.league_id = ANY(:intl_ids)
         ORDER BY m.date DESC
@@ -1077,6 +1107,8 @@ async def build_nationals_country_detail(session: AsyncSession, country: str) ->
             "competition_name": intl_leagues.get(r.league_id, "Unknown"),
             "home_team": r.home_team,
             "away_team": r.away_team,
+            "home_display_name": r.home_display_name,
+            "away_display_name": r.away_display_name,
             "status": r.status,
             "score": f"{r.home_goals}-{r.away_goals}" if r.home_goals is not None else None
         }
@@ -1206,16 +1238,22 @@ async def build_nationals_team_detail(session: AsyncSession, team_id: int) -> Op
     goals_result = await session.execute(goals_query, {"tid": team_id, "intl_ids": intl_ids})
     goals = goals_result.fetchone()
 
-    # Recent matches
+    # Recent matches (with display_name for use_short_names toggle)
     recent_query = text("""
         SELECT
             m.id as match_id, m.date, m.league_id, m.status,
             m.home_team_id, m.away_team_id,
             m.home_goals, m.away_goals,
-            ht.name as home_team, at.name as away_team
+            ht.name as home_team, at.name as away_team,
+            COALESCE(hto.short_name, htw.short_name, ht.name) as home_display_name,
+            COALESCE(ato.short_name, atw.short_name, at.name) as away_display_name
         FROM matches m
         JOIN teams ht ON m.home_team_id = ht.id
         JOIN teams at ON m.away_team_id = at.id
+        LEFT JOIN team_enrichment_overrides hto ON ht.id = hto.team_id
+        LEFT JOIN team_wikidata_enrichment htw ON ht.id = htw.team_id
+        LEFT JOIN team_enrichment_overrides ato ON at.id = ato.team_id
+        LEFT JOIN team_wikidata_enrichment atw ON at.id = atw.team_id
         WHERE (m.home_team_id = :tid OR m.away_team_id = :tid)
             AND m.league_id = ANY(:intl_ids)
         ORDER BY m.date DESC
@@ -1227,6 +1265,7 @@ async def build_nationals_team_detail(session: AsyncSession, team_id: int) -> Op
     for r in recent_result.fetchall():
         is_home = r.home_team_id == team_id
         opponent = r.away_team if is_home else r.home_team
+        opponent_display_name = r.away_display_name if is_home else r.home_display_name
         result = None
         if r.home_goals is not None:
             if is_home:
@@ -1240,6 +1279,7 @@ async def build_nationals_team_detail(session: AsyncSession, team_id: int) -> Op
             "competition_id": r.league_id,
             "competition_name": intl_leagues.get(r.league_id, "Unknown"),
             "opponent": opponent,
+            "opponent_display_name": opponent_display_name,
             "home_away": "home" if is_home else "away",
             "result": result,
             "status": r.status
@@ -1538,17 +1578,23 @@ async def build_world_cup_overview(session: AsyncSession) -> dict:
     if summary["matches_total"] == 0:
         alerts.append({"type": "fixtures_missing", "message": "No fixtures available yet", "value": None})
 
-    # Get upcoming matches (next 10)
+    # Get upcoming matches (next 10) - with display_name for use_short_names toggle
     if status == "ok" or summary["matches_upcoming"] > 0:
         upcoming_query = text("""
             SELECT
                 m.id as match_id, m.date, m.status,
                 m.home_team_id, m.away_team_id,
                 ht.name as home_team, at.name as away_team,
+                COALESCE(hto.short_name, htw.short_name, ht.name) as home_display_name,
+                COALESCE(ato.short_name, atw.short_name, at.name) as away_display_name,
                 EXISTS(SELECT 1 FROM predictions p WHERE p.match_id = m.id) as has_prediction
             FROM matches m
             JOIN teams ht ON m.home_team_id = ht.id
             JOIN teams at ON m.away_team_id = at.id
+            LEFT JOIN team_enrichment_overrides hto ON ht.id = hto.team_id
+            LEFT JOIN team_wikidata_enrichment htw ON ht.id = htw.team_id
+            LEFT JOIN team_enrichment_overrides ato ON at.id = ato.team_id
+            LEFT JOIN team_wikidata_enrichment atw ON at.id = atw.team_id
             WHERE m.league_id = :lid AND m.season = :season
                 AND m.date > NOW() AND m.status = 'NS'
             ORDER BY m.date ASC
@@ -1581,6 +1627,8 @@ async def build_world_cup_overview(session: AsyncSession) -> dict:
                 "group": match_group,
                 "home_team": r.home_team,
                 "away_team": r.away_team,
+                "home_display_name": r.home_display_name,
+                "away_display_name": r.away_display_name,
                 "home_team_id": r.home_team_id,
                 "away_team_id": r.away_team_id,
                 "status": r.status,
@@ -1749,7 +1797,7 @@ async def build_world_cup_group_detail(session: AsyncSession, group: str) -> Opt
             "description": s.get("description"),
         })
 
-    # Get matches for this group (both teams from this group)
+    # Get matches for this group (both teams from this group) - with display_name
     matches = []
     if db_team_ids:
         matches_query = text("""
@@ -1758,10 +1806,16 @@ async def build_world_cup_group_detail(session: AsyncSession, group: str) -> Opt
                 m.home_team_id, m.away_team_id,
                 m.home_goals, m.away_goals,
                 ht.name as home_team, at.name as away_team,
+                COALESCE(hto.short_name, htw.short_name, ht.name) as home_display_name,
+                COALESCE(ato.short_name, atw.short_name, at.name) as away_display_name,
                 EXISTS(SELECT 1 FROM predictions p WHERE p.match_id = m.id) as has_prediction
             FROM matches m
             JOIN teams ht ON m.home_team_id = ht.id
             JOIN teams at ON m.away_team_id = at.id
+            LEFT JOIN team_enrichment_overrides hto ON ht.id = hto.team_id
+            LEFT JOIN team_wikidata_enrichment htw ON ht.id = htw.team_id
+            LEFT JOIN team_enrichment_overrides ato ON at.id = ato.team_id
+            LEFT JOIN team_wikidata_enrichment atw ON at.id = atw.team_id
             WHERE m.league_id = :lid AND m.season = :season
                 AND m.home_team_id = ANY(:tids) AND m.away_team_id = ANY(:tids)
             ORDER BY m.date ASC
@@ -1779,6 +1833,8 @@ async def build_world_cup_group_detail(session: AsyncSession, group: str) -> Opt
                 "status": r.status,
                 "home_team": r.home_team,
                 "away_team": r.away_team,
+                "home_display_name": r.home_display_name,
+                "away_display_name": r.away_display_name,
                 "home_team_id": r.home_team_id,
                 "away_team_id": r.away_team_id,
                 "score": f"{r.home_goals}-{r.away_goals}" if r.home_goals is not None else None,

@@ -170,6 +170,8 @@ export interface RecentMatch {
   status: string;
   home_team: string;
   away_team: string;
+  home_display_name?: string;  // Short name for use_short_names toggle
+  away_display_name?: string;  // Short name for use_short_names toggle
   home_team_id?: number;
   away_team_id?: number;
   score: string | null;
@@ -250,6 +252,8 @@ export interface FootballUpcomingMatch {
   league_name: string;
   home_team: string;
   away_team: string;
+  home_display_name?: string;  // Short name for use_short_names toggle
+  away_display_name?: string;  // Short name for use_short_names toggle
   status: string;
   has_prediction: boolean;
 }
@@ -491,6 +495,8 @@ export interface WorldCupUpcomingMatch {
   group: string | null;
   home_team: string;
   away_team: string;
+  home_display_name?: string;  // Short name for use_short_names toggle
+  away_display_name?: string;  // Short name for use_short_names toggle
   home_team_id: number | null;
   away_team_id: number | null;
   status: string;
@@ -556,6 +562,8 @@ export interface WorldCupGroupMatch {
   date: string | null;
   home_team: string;
   away_team: string;
+  home_display_name?: string;  // Short name for use_short_names toggle
+  away_display_name?: string;  // Short name for use_short_names toggle
   home_team_id: number | null;
   away_team_id: number | null;
   score: string | null;
@@ -618,6 +626,8 @@ export interface NationalsRecentMatch {
   competition_name: string;
   home_team: string;
   away_team: string;
+  home_display_name?: string;  // Short name for use_short_names toggle
+  away_display_name?: string;  // Short name for use_short_names toggle
   status: string;
   score: string | null;
 }
