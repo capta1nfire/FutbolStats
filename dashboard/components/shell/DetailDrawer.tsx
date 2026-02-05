@@ -133,10 +133,7 @@ export function DetailDrawer({
         aria-label="Details panel"
       >
       {/* Header */}
-      <div className={cn(
-        "h-14 flex items-center justify-center px-4 shrink-0 relative",
-        persistent && "border-b border-border"
-      )}>
+      <div className="h-14 flex items-center justify-center px-4 shrink-0 relative">
         <h2 className="text-sm font-semibold text-foreground truncate">
           {title || "Details"}
         </h2>
