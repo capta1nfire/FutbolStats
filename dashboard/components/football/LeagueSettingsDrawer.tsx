@@ -59,12 +59,7 @@ export function LeagueSettingsDrawer({
     <DetailDrawer
       open={open}
       onClose={onClose}
-      title={
-        <div className="flex items-center gap-2">
-          <Settings className="h-4 w-4" />
-          <span>League Settings</span>
-        </div>
-      }
+      title="League Settings"
       variant="overlay"
       className="shadow-none"
     >
