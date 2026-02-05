@@ -32,6 +32,7 @@ from app.security import limiter, verify_api_key, verify_api_key_or_ops_session
 from app.telemetry.sentry import init_sentry, sentry_job_context, is_sentry_enabled
 from app.logos.routes import router as logos_router
 from app.dashboard.model_benchmark import router as model_benchmark_router
+from app.utils.standings import select_standings_view, StandingsGroupNotFound
 
 # Configure logging
 logging.basicConfig(
@@ -3050,9 +3051,29 @@ async def get_match_details(
 
     # Only use standings for club teams when cache hit
     # Note: standings now use internal team_id (teams.id), not external_id
+    # ABE P0: Apply group filtering to avoid duplicates from multi-group standings
     if home_team and home_team.team_type == "club" and standings:
         try:
-            for standing in standings:
+            # Get rules_json for group selection
+            rules_result = await session.execute(
+                text("SELECT rules_json FROM admin_leagues WHERE league_id = :lid"),
+                {"lid": match.league_id}
+            )
+            rules_row = rules_result.fetchone()
+            rules_json = (
+                rules_row.rules_json if rules_row and isinstance(rules_row.rules_json, dict)
+                else {}
+            )
+
+            # Filter standings to selected group (ABE P0: avoid duplicates)
+            view_result = select_standings_view(
+                standings=standings,
+                rules_json=rules_json,
+                requested_group=None,  # Use heuristic, no override
+            )
+            filtered_standings = view_result.standings
+
+            for standing in filtered_standings:
                 if home_team and standing.get("team_id") == home_team.id:
                     home_position = standing.get("position")
                     home_league_points = standing.get("points")
@@ -3706,6 +3727,7 @@ async def get_match_odds_history(
 async def get_league_standings(
     league_id: int,
     season: int = None,
+    group: Optional[str] = None,
     session: AsyncSession = Depends(get_async_session),
     _: bool = Depends(verify_api_key),
 ):
@@ -3714,6 +3736,16 @@ async def get_league_standings(
 
     DB-first architecture: serves from DB, falls back to provider on miss.
     Returns all teams with position, points, matches played, goals, form, etc.
+
+    Query params:
+    - season: Year (default: current season for league)
+    - group: Specific group name to filter (default: auto-selected via heuristic)
+
+    Response includes `meta` field with:
+    - available_groups: All groups in standings
+    - selected_group: Currently shown group
+    - selection_reason: Why this group was selected
+    - tie_warning: List of groups if TIE detected (requires manual config)
     """
     _t_start = time.time()
     source = None
@@ -3801,24 +3833,63 @@ async def get_league_standings(
         from app.teams.overrides import enrich_standings_with_display_names
         standings = await enrich_standings_with_display_names(session, standings)
 
+        # Get rules_json for standings view selection (ABE P0: DB-first filtering)
+        rules_result = await session.execute(
+            text("SELECT rules_json FROM admin_leagues WHERE league_id = :lid"),
+            {"lid": league_id}
+        )
+        rules_row = rules_result.fetchone()
+        rules_json = (
+            rules_row.rules_json if rules_row and isinstance(rules_row.rules_json, dict)
+            else {}
+        )
+
+        # Apply standings view selection (filter by group)
+        try:
+            view_result = select_standings_view(
+                standings=standings,
+                rules_json=rules_json,
+                requested_group=group,
+            )
+        except StandingsGroupNotFound as e:
+            # ABE P0: Return 404 with available_groups in body AND header
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "message": f"Group '{e.requested}' not found",
+                    "available_groups": e.available,
+                },
+                headers={"X-Available-Groups": ",".join(e.available)},
+            )
+
         elapsed_ms = int((time.time() - _t_start) * 1000)
-        logger.info(f"[PERF] get_standings league_id={league_id} season={season} source={source} time_ms={elapsed_ms}")
+        logger.info(
+            f"[PERF] get_standings league_id={league_id} season={season} "
+            f"source={source} group={view_result.selected_group} time_ms={elapsed_ms}"
+        )
 
         # Determine if standings are placeholder or calculated
         is_placeholder = source == "placeholder" or (
-            standings and standings[0].get("is_placeholder", False)
+            view_result.standings and view_result.standings[0].get("is_placeholder", False)
         )
         is_calculated = source == "calculated" or (
-            standings and standings[0].get("is_calculated", False)
+            view_result.standings and view_result.standings[0].get("is_calculated", False)
         )
 
+        # ABE P0: Backwards-compatible response with added `meta` field
         return {
             "league_id": league_id,
             "season": season,
-            "standings": standings,
+            "standings": view_result.standings,
             "source": source,
             "is_placeholder": is_placeholder,
             "is_calculated": is_calculated,
+            "meta": {
+                "available_groups": view_result.available_groups,
+                "selected_group": view_result.selected_group,
+                "selection_reason": view_result.selection_reason,
+                "tie_warning": view_result.tie_warning,
+            },
         }
     except HTTPException:
         raise

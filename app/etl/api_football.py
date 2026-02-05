@@ -713,6 +713,10 @@ class APIFootballProvider(DataProvider):
         Fetch league standings/table.
 
         Returns list of team standings with position, points, etc.
+
+        ABE P0 (2026-02-05): Persist ALL groups/phases to DB.
+        Filtering to a single group happens at endpoint level via select_standings_view(),
+        NOT during ingestion. This preserves provenance and enables ?group= query param.
         """
         data = await self._rate_limited_request(
             "standings", {"league": league_id, "season": season}, entity="standings"
@@ -725,7 +729,7 @@ class APIFootballProvider(DataProvider):
         results: list[dict] = []
         for league_data in standings_data:
             league_standings = league_data.get("league", {}).get("standings", [])
-            # Standings can be nested (for groups) - flatten
+            # Standings can be nested (for groups) - flatten but keep ALL groups
             for group in league_standings:
                 if isinstance(group, list):
                     for team_standing in group:
@@ -733,10 +737,18 @@ class APIFootballProvider(DataProvider):
                 else:
                     results.append(self._parse_standing(group))
 
-        return self._select_primary_standings_group(results)
+        # ABE P0: Return ALL groups - filtering happens at endpoint level
+        # See: app/utils/standings.py::select_standings_view()
+        return results
 
     def _select_primary_standings_group(self, standings: list[dict]) -> list[dict]:
         """
+        DEPRECATED (2026-02-05): No longer used in ingestion path.
+
+        Filtering now happens at endpoint level via app/utils/standings.py::select_standings_view().
+        This function is kept for backwards compatibility but should not be called.
+
+        Original description:
         API-Football can return multiple tables for the same league/season (groups/stages).
         If we blindly flatten, some leagues show duplicated teams (e.g., Apertura/Clausura).
 
