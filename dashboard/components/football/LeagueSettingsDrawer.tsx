@@ -66,6 +66,7 @@ export function LeagueSettingsDrawer({
         </div>
       }
       variant="overlay"
+      className="shadow-none"
     >
       <div className="space-y-4">
         {/* League info header */}
