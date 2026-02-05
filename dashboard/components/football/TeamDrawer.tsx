@@ -18,6 +18,7 @@ import {
   Trophy,
   TrendingUp,
   BarChart3,
+  Image as ImageIcon,
   Info,
   Settings,
 } from "lucide-react";
@@ -28,6 +29,7 @@ import type {
   TeamFormMatch,
 } from "@/lib/types";
 import { TeamLogoSettings } from "./TeamLogoSettings";
+import { TeamEnrichmentSettings } from "./TeamEnrichmentSettings";
 import { TeamWikiSettings } from "./TeamWikiSettings";
 
 /**
@@ -55,6 +57,8 @@ interface TeamDrawerProps {
   teamId: number | null;
   open: boolean;
   onClose: () => void;
+  /** Persistent mode: always visible, no close functionality */
+  persistent?: boolean;
 }
 
 /**
@@ -62,36 +66,17 @@ interface TeamDrawerProps {
  */
 function TeamInfoSection({ team }: { team: TeamInfo }) {
   return (
-    <div className="space-y-4">
-      {/* Team Header */}
-      <div className="flex items-start gap-4">
-        {team.logo_url ? (
-          <img
-            src={team.logo_url}
-            alt={team.name}
-            className="w-16 h-16 object-contain"
-          />
-        ) : (
-          <div className="w-16 h-16 flex items-center justify-center">
-            <Users className="h-8 w-8 text-muted-foreground" />
-          </div>
+    <div className="space-y-3">
+      {/* Basic Info */}
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <CountryFlag country={team.country} size={14} />
+        <span>{team.country}</span>
+        {team.founded && (
+          <>
+            <span>·</span>
+            <span>Est. {team.founded}</span>
+          </>
         )}
-        <div className="flex-1 min-w-0">
-          <h3 className="text-base font-semibold text-foreground">{team.name}</h3>
-          {team.short_name && (
-            <p className="text-sm text-muted-foreground">{team.short_name}</p>
-          )}
-          <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-            <CountryFlag country={team.country} size={12} />
-            <span>{team.country}</span>
-            {team.founded && (
-              <>
-                <span>·</span>
-                <span>Est. {team.founded}</span>
-              </>
-            )}
-          </div>
-        </div>
       </div>
 
       {/* Venue Info */}
@@ -271,7 +256,7 @@ function RecentFormSection({ form }: { form: TeamFormMatch[] }) {
 /** Tab definitions for team drawer */
 const TEAM_TABS = [
   { id: "overview", icon: <Info />, label: "Overview" },
-  { id: "stats", icon: <BarChart3 />, label: "Stats" },
+  { id: "multimedia", icon: <ImageIcon />, label: "Multimedia" },
   { id: "settings", icon: <Settings />, label: "Settings" },
 ];
 
@@ -284,14 +269,25 @@ const TEAM_TABS = [
  * - Competitions
  * - Recent form
  */
-export function TeamDrawer({ teamId, open, onClose }: TeamDrawerProps) {
+export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDrawerProps) {
   const [activeTab, setActiveTab] = useState("overview");
   const { data, isLoading, error, refetch } = useFootballTeam(teamId);
 
   // Content based on state
   let content: React.ReactNode;
 
-  if (isLoading) {
+  // No team selected - show placeholder (only relevant in persistent mode)
+  if (!teamId) {
+    content = (
+      <div className="flex flex-col items-center justify-center h-full py-12 px-4">
+        <Users className="h-12 w-12 text-muted-foreground mb-4" />
+        <h3 className="text-sm font-medium text-foreground mb-1">Team 360</h3>
+        <p className="text-xs text-muted-foreground text-center">
+          Select a team from the list to view detailed information, statistics, and settings.
+        </p>
+      </div>
+    );
+  } else if (isLoading) {
     content = (
       <div className="flex items-center justify-center py-12">
         <Loader size="md" />
@@ -343,29 +339,29 @@ export function TeamDrawer({ teamId, open, onClose }: TeamDrawerProps) {
           </>
         )}
 
-        {activeTab === "stats" && (
-          <>
-            {/* Stats Summary (expanded view) */}
-            {data.stats && <StatsSummarySection stats={data.stats} />}
-
-            {/* Recent Form */}
-            {data.recent_form && <RecentFormSection form={data.recent_form} />}
-          </>
-        )}
-
-        {activeTab === "settings" && (
-          <>
+        {activeTab === "multimedia" && (
+          <div className="space-y-4 pb-4">
             <TeamLogoSettings
               teamId={data.team.team_id}
               teamName={data.team.name}
               fallbackLogoUrl={data.team.logo_url || undefined}
+            />
+          </div>
+        )}
+
+        {activeTab === "settings" && (
+          <div className="space-y-4 pb-4">
+            <TeamEnrichmentSettings
+              teamId={data.team.team_id}
+              teamName={data.team.name}
+              enrichment={data.wikidata_enrichment}
             />
             <TeamWikiSettings
               teamId={data.team.team_id}
               teamName={data.team.name}
               wiki={data.team.wiki}
             />
-          </>
+          </div>
         )}
       </div>
     );
@@ -378,22 +374,28 @@ export function TeamDrawer({ teamId, open, onClose }: TeamDrawerProps) {
     }
   };
 
+  // Title varies based on whether a team is selected
+  const drawerTitle = teamId ? (
+    <span>
+      Team ID{" "}
+      <button
+        onClick={handleCopyId}
+        className="text-primary hover:opacity-80 transition-opacity"
+      >
+        {teamId}
+      </button>
+    </span>
+  ) : (
+    "Team 360"
+  );
+
   return (
     <DetailDrawer
       open={open}
       onClose={onClose}
-      title={
-        <span>
-          Team ID{" "}
-          <button
-            onClick={handleCopyId}
-            className="text-primary hover:opacity-80 transition-opacity"
-          >
-            {teamId}
-          </button>
-        </span>
-      }
-      variant="overlay"
+      title={drawerTitle}
+      variant={persistent ? "inline" : "overlay"}
+      persistent={persistent}
     >
       {content}
     </DetailDrawer>

@@ -39,6 +39,7 @@ export * from "./use-football-league";
 export * from "./use-football-group";
 export * from "./use-football-team";
 export * from "./use-team-wiki-mutation";
+export * from "./use-team-enrichment-mutation";
 export * from "./use-football-tournaments";
 export * from "./use-team-search";
 export * from "./use-world-cup-overview";

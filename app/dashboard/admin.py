@@ -596,7 +596,7 @@ async def build_teams_list(
     count_result = await session.execute(count_query, params)
     total = count_result.fetchone().total
 
-    # FAST PATH: Lightweight query for search (no JOINs, no stats)
+    # FAST PATH: Lightweight query for search (minimal JOINs for display_name)
     # Optimized for typeahead dropdown performance
     if is_search:
         teams_query = text(f"""
@@ -606,8 +606,11 @@ async def build_teams_list(
                 t.name,
                 t.country,
                 t.team_type,
-                t.logo_url
+                t.logo_url,
+                COALESCE(o.short_name, twe.short_name) as short_name
             FROM teams t
+            LEFT JOIN team_wikidata_enrichment twe ON t.id = twe.team_id
+            LEFT JOIN team_enrichment_overrides o ON t.id = o.team_id
             {where_clause}
             ORDER BY t.name ASC
             LIMIT :limit OFFSET :offset
@@ -616,10 +619,13 @@ async def build_teams_list(
 
         teams = []
         for r in teams_result.fetchall():
+            # display_name: COALESCE(override.short_name, wikidata.short_name, teams.name)
+            display_name = r.short_name if r.short_name else r.name
             teams.append({
                 "team_id": r.team_id,
                 "external_id": r.external_id,
                 "name": r.name,
+                "display_name": display_name,  # ADB P0: short_name cascade for UI
                 "country": r.country,
                 "team_type": r.team_type,
                 "logo_url": r.logo_url,
@@ -987,11 +993,20 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
         },
     }
 
+    # Compute display_name: COALESCE(override.short_name, wikidata.short_name, teams.name)
+    # This provides a friendly short name for UI display
+    display_name = team_row.name  # fallback
+    if enrichment_row:
+        short_name = getattr(enrichment_row, "short_name", None)
+        if short_name:
+            display_name = short_name
+
     payload = {
         "team": {
             "team_id": team_row.id,
             "external_id": team_row.external_id,
             "name": team_row.name,
+            "display_name": display_name,  # ADB P0: short_name cascade for UI
             "country": team_row.country,
             "team_type": team_row.team_type,
             "logo_url": team_row.logo_url,

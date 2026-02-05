@@ -22,7 +22,10 @@ import {
   BarChart3,
   Users,
   TrendingUp,
+  MapPin,
+  Building2,
 } from "lucide-react";
+import { toast } from "sonner";
 
 const LEAGUE_DETAIL_TABS = [
   { id: "standings", icon: null, label: "Standings" },
@@ -31,6 +34,15 @@ const LEAGUE_DETAIL_TABS = [
 ] as const;
 
 type LeagueDetailTabId = (typeof LEAGUE_DETAIL_TABS)[number]["id"];
+
+const TEAM_DETAIL_TABS = [
+  { id: "overview", label: "Overview" },
+  { id: "matches", label: "Matches" },
+  { id: "stats", label: "Stats" },
+  { id: "transfers", label: "Transfers" },
+] as const;
+
+type TeamDetailTabId = (typeof TEAM_DETAIL_TABS)[number]["id"];
 
 /**
  * Country Flag Component
@@ -315,6 +327,7 @@ function StandingsTable({
 export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailProps) {
   const [activeTab, setActiveTab] = useState<LeagueDetailTabId>("standings");
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
+  const [teamTab, setTeamTab] = useState<TeamDetailTabId>("overview");
   const { data, isLoading, error, refetch } = useFootballLeague(leagueId);
   const { data: standingsData, isLoading: isStandingsLoading } = useStandings(leagueId);
   const selectedTeam = useFootballTeam(selectedTeamId);
@@ -377,328 +390,409 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
   return (
     <ScrollArea className="h-full">
       <div className="p-6 space-y-6">
-        {/* Header with Back button */}
-        <div className="flex items-start gap-4">
-          <Button variant="ghost" size="icon" onClick={onBack} className="shrink-0 mt-1">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <Trophy className="h-5 w-5 text-primary" />
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <h1 className="text-lg font-semibold text-foreground cursor-help">
-                    {league.name}
-                  </h1>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" sideOffset={6}>
-                  <div className="space-y-1">
-                    <div className="text-foreground">
-                      <span className="text-muted-foreground">Match Weight:</span>{" "}
-                      <span className="font-medium text-foreground">
-                        {league.match_weight ?? 1}
-                      </span>
-                    </div>
-                    <div className="text-muted-foreground">
-                      1 = peso estándar. Valores mayores aumentan la influencia de esta liga
-                      en cálculos internos; menores la reducen.
-                    </div>
+        <div className="w-full flex flex-col lg:flex-row gap-4 lg:items-start min-w-0">
+          {/* League container: header + tabs + tab content */}
+          <div
+            className={cn(
+              "rounded-lg border border-border overflow-hidden w-full min-w-0",
+              selectedTeamId !== null ? "lg:w-[30%]" : "lg:max-w-[30%] lg:mr-auto"
+            )}
+          >
+            {/* League header */}
+            <div className="px-4 py-3 border-b border-border flex items-start gap-4">
+              <Button variant="ghost" size="icon" onClick={onBack} className="shrink-0 mt-0.5">
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <Trophy className="h-5 w-5 text-primary" />
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <h1 className="text-lg font-semibold text-foreground cursor-help truncate">
+                        {league.name}
+                      </h1>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" sideOffset={6}>
+                      <div className="space-y-1">
+                        <div className="text-foreground">
+                          <span className="text-muted-foreground">Match Weight:</span>{" "}
+                          <span className="font-medium text-foreground">
+                            {league.match_weight ?? 1}
+                          </span>
+                        </div>
+                        <div className="text-muted-foreground">
+                          1 = peso estándar. Valores mayores aumentan la influencia de esta liga
+                          en cálculos internos; menores la reducen.
+                        </div>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground flex-wrap">
+                  <span className="flex items-center gap-1">
+                    <CountryFlag country={league.country} size={14} />
+                    {league.country}
+                  </span>
+                  {league.kind && <span className="capitalize">{league.kind}</span>}
+                  {league.priority && (
+                    <span className="px-1.5 py-0.5 bg-muted rounded text-xs">
+                      {league.priority}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => refetch()} className="shrink-0">
+                <RefreshCw className="h-4 w-4" />
+              </Button>
+            </div>
+
+            {/* Tabs */}
+            <div className="px-4 py-3 border-b border-border">
+              <IconTabs
+                tabs={
+                  LEAGUE_DETAIL_TABS as unknown as { id: string; icon: React.ReactNode; label: string }[]
+                }
+                value={activeTab}
+                onValueChange={(v) => setActiveTab(v as LeagueDetailTabId)}
+                showLabels
+                className="w-full"
+              />
+            </div>
+
+            {/* Tab content */}
+            {activeTab === "standings" && (
+              <div>
+                <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+                  <Trophy className="h-4 w-4 text-muted-foreground" />
+                  <h2 className="text-sm font-semibold text-foreground">Standings</h2>
+                  {standingsData && (
+                    <span className="text-xs text-muted-foreground ml-auto">
+                      {standingsData.season} &middot; {standingsData.source}
+                    </span>
+                  )}
+                  {standingsData?.isPlaceholder && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]">
+                      Placeholder
+                    </span>
+                  )}
+                  {standingsData?.isCalculated && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--status-info-bg)] text-[var(--status-info-text)]">
+                      Calculated
+                    </span>
+                  )}
+                </div>
+                {isStandingsLoading ? (
+                  <div className="flex items-center justify-center py-6">
+                    <Loader size="sm" />
                   </div>
-                </TooltipContent>
-              </Tooltip>
-            </div>
-            <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <CountryFlag country={league.country} size={14} />
-                {league.country}
-              </span>
-              {league.kind && <span className="capitalize">{league.kind}</span>}
-              {league.priority && (
-                <span className="px-1.5 py-0.5 bg-muted rounded text-xs">
-                  {league.priority}
-                </span>
-              )}
-            </div>
-          </div>
-          <Button variant="ghost" size="sm" onClick={() => refetch()}>
-            <RefreshCw className="h-4 w-4" />
-          </Button>
-        </div>
-
-        {/* Tabs (UniFi style) */}
-        <div className="w-full lg:max-w-[30%] lg:mr-auto min-w-0">
-          <IconTabs
-            tabs={LEAGUE_DETAIL_TABS as unknown as { id: string; icon: React.ReactNode; label: string }[]}
-            value={activeTab}
-            onValueChange={(v) => setActiveTab(v as LeagueDetailTabId)}
-            showLabels
-            className="w-full"
-          />
-        </div>
-
-        {/* Tab Content */}
-        {activeTab === "standings" && (
-          <div className="w-full flex flex-col lg:flex-row gap-4 lg:items-start min-w-0">
-            {/* Standings */}
-            <div
-              className={cn(
-                "bg-transparent border border-border rounded-lg overflow-hidden w-full min-w-0",
-                selectedTeamId !== null ? "lg:w-[30%]" : "lg:max-w-[30%] lg:mr-auto"
-              )}
-            >
-              <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-                <Trophy className="h-4 w-4 text-muted-foreground" />
-                <h2 className="text-sm font-semibold text-foreground">Standings</h2>
-                {standingsData && (
-                  <span className="text-xs text-muted-foreground ml-auto">
-                    {standingsData.season} &middot; {standingsData.source}
-                  </span>
-                )}
-                {standingsData?.isPlaceholder && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]">
-                    Placeholder
-                  </span>
-                )}
-                {standingsData?.isCalculated && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--status-info-bg)] text-[var(--status-info-text)]">
-                    Calculated
-                  </span>
+                ) : standingsData && standingsData.standings.length > 0 ? (
+                  <StandingsTable
+                    standings={standingsData.standings}
+                    onTeamSelect={handleTeamSelect}
+                  />
+                ) : (
+                  <div className="px-4 py-4 text-sm text-muted-foreground">
+                    No standings available for this league
+                  </div>
                 )}
               </div>
-              {isStandingsLoading ? (
-                <div className="flex items-center justify-center py-6">
-                  <Loader size="sm" />
-                </div>
-              ) : standingsData && standingsData.standings.length > 0 ? (
-                <StandingsTable standings={standingsData.standings} onTeamSelect={handleTeamSelect} />
-              ) : (
-                <div className="px-4 py-4 text-sm text-muted-foreground">
-                  No standings available for this league
-                </div>
-              )}
-            </div>
+            )}
 
-            {/* Team details (only when selected) */}
-            {selectedTeamId !== null && (
-              <div className="bg-transparent border border-border rounded-lg overflow-hidden w-full lg:w-[30%] min-w-0">
-                <div className="px-4 py-3 border-b border-border flex items-center gap-3">
-                  {selectedTeam.data?.team?.logo_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={selectedTeam.data.team.logo_url}
-                      alt=""
-                      className="h-5 w-5 rounded-full object-cover"
-                    />
-                  ) : (
-                    <div className="h-5 w-5 rounded-full bg-muted" />
+            {activeTab === "next" && (
+              <div>
+                <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <h2 className="text-sm font-semibold text-foreground">Next Matches</h2>
+                  <span className="text-xs text-muted-foreground ml-auto">
+                    {nextMatches.length}
+                  </span>
+                </div>
+                <RecentMatchesList matches={nextMatches} onTeamSelect={handleTeamSelect} />
+              </div>
+            )}
+
+            {activeTab === "stats" && (
+              <div>
+                <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+                  <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                  <h2 className="text-sm font-semibold text-foreground">Stats by Season</h2>
+                </div>
+                <StatsTable stats={stats_by_season} />
+              </div>
+            )}
+          </div>
+
+          {/* Club container (only when selected) */}
+          {selectedTeamId !== null && (
+            <div className="flex flex-col gap-4 w-full lg:w-[48%] min-w-0">
+              {/* Team Header */}
+              <div className="rounded-lg border border-border px-4 py-3 flex items-center gap-3">
+                {selectedTeam.data?.team?.logo_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={selectedTeam.data.team.logo_url}
+                    alt=""
+                    className="h-24 w-24 object-contain"
+                  />
+                ) : (
+                  <div className="h-24 w-24 rounded-full bg-muted" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-2xl font-semibold text-foreground truncate">
+                    {selectedTeam.data?.team?.display_name ?? selectedTeam.data?.team?.name ?? "Team details"}
+                  </h2>
+                  {(selectedTeam.data?.wikidata_enrichment?.city || selectedTeam.data?.team?.country) && (
+                    <div className="flex items-center gap-1.5 text-sm text-muted-foreground mt-1">
+                      <MapPin className="h-3.5 w-3.5" />
+                      <span>
+                        {[selectedTeam.data?.wikidata_enrichment?.city, selectedTeam.data?.team?.country]
+                          .filter(Boolean)
+                          .join(", ")}
+                      </span>
+                    </div>
                   )}
-                  <div className="min-w-0">
-                    <h2 className="text-sm font-semibold text-foreground truncate">
-                      {selectedTeam.data?.team?.name ?? "Team details"}
-                    </h2>
-                    <p className="text-[11px] text-muted-foreground truncate">
-                      Wikidata enrichment
-                    </p>
-                  </div>
-                  <div className="ml-auto">
-                    {selectedTeam.isLoading ? (
-                      <Loader size="sm" />
-                    ) : null}
-                  </div>
+                  {selectedTeam.data?.wikidata_enrichment?.stadium_name && (
+                    <div className="flex items-center gap-1.5 text-sm text-muted-foreground mt-0.5">
+                      <Building2 className="h-3.5 w-3.5" />
+                      <span>
+                        {selectedTeam.data.wikidata_enrichment.stadium_name}
+                        {selectedTeam.data.wikidata_enrichment.stadium_capacity && (
+                          <span className="ml-1">
+                            ({selectedTeam.data.wikidata_enrichment.stadium_capacity.toLocaleString()})
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  )}
                 </div>
+                {selectedTeam.isLoading && <Loader size="sm" />}
+              </div>
 
-                {!selectedTeam.isLoading && selectedTeam.data?.wikidata_enrichment ? (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <tbody className="divide-y divide-border">
-                        {[
-                          ["Full name", selectedTeam.data.wikidata_enrichment.full_name],
-                          ["Short name", selectedTeam.data.wikidata_enrichment.short_name],
-                          ["City", selectedTeam.data.wikidata_enrichment.city],
-                          ["Stadium", selectedTeam.data.wikidata_enrichment.stadium_name],
-                          [
-                            "Capacity",
-                            selectedTeam.data.wikidata_enrichment.stadium_capacity != null
-                              ? selectedTeam.data.wikidata_enrichment.stadium_capacity.toLocaleString()
-                              : null,
-                          ],
-                          [
-                            "Altitude (m)",
-                            selectedTeam.data.wikidata_enrichment.stadium_altitude_m != null
-                              ? selectedTeam.data.wikidata_enrichment.stadium_altitude_m.toLocaleString()
-                              : null,
-                          ],
-                          [
-                            "Coords",
-                            selectedTeam.data.wikidata_enrichment.lat != null &&
-                            selectedTeam.data.wikidata_enrichment.lon != null
-                              ? `${selectedTeam.data.wikidata_enrichment.lat.toFixed(6)}, ${selectedTeam.data.wikidata_enrichment.lon.toFixed(6)}`
-                              : null,
-                          ],
-                          ["Updated", selectedTeam.data.wikidata_enrichment.wikidata_updated_at],
-                        ].map(([label, value]) => (
-                          <tr key={label}>
+              {/* Team Tabs */}
+              <div className="flex gap-1 border-b border-border">
+                {TEAM_DETAIL_TABS.map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setTeamTab(tab.id)}
+                    className={cn(
+                      "px-4 py-2 text-sm font-medium transition-colors",
+                      teamTab === tab.id
+                        ? "text-foreground border-b-2 border-primary"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Tab Content */}
+              {teamTab === "overview" && (
+                <>
+                  {!selectedTeam.isLoading && selectedTeam.data?.wikidata_enrichment ? (
+                    <div className="rounded-lg border border-border overflow-hidden">
+                      <table className="w-full text-sm">
+                        <tbody className="divide-y divide-border">
+                          {[
+                            ["Team ID", selectedTeamId?.toString()],
+                            ["Full name", selectedTeam.data.wikidata_enrichment.full_name],
+                            ["Short name", selectedTeam.data.wikidata_enrichment.short_name],
+                            ["City", selectedTeam.data.wikidata_enrichment.city],
+                            ["Stadium", selectedTeam.data.wikidata_enrichment.stadium_name],
+                            [
+                              "Capacity",
+                              selectedTeam.data.wikidata_enrichment.stadium_capacity != null
+                                ? selectedTeam.data.wikidata_enrichment.stadium_capacity.toLocaleString()
+                                : null,
+                            ],
+                            [
+                              "Altitude (m)",
+                              selectedTeam.data.wikidata_enrichment.stadium_altitude_m != null
+                                ? selectedTeam.data.wikidata_enrichment.stadium_altitude_m.toLocaleString()
+                                : null,
+                            ],
+                            [
+                              "Coords",
+                              selectedTeam.data.wikidata_enrichment.lat != null &&
+                              selectedTeam.data.wikidata_enrichment.lon != null
+                                ? `${selectedTeam.data.wikidata_enrichment.lat.toFixed(6)}, ${selectedTeam.data.wikidata_enrichment.lon.toFixed(6)}`
+                                : null,
+                            ],
+                            ["Updated", selectedTeam.data.wikidata_enrichment.wikidata_updated_at],
+                          ].map(([label, value]) => (
+                            <tr key={label}>
+                              <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
+                                {label}
+                              </td>
+                              <td className="py-2 px-3 text-sm text-foreground">
+                                {value ? (
+                                  label === "Team ID" ? (
+                                    <button
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(value);
+                                        toast.success("Team ID copied");
+                                      }}
+                                      className="text-primary hover:opacity-80 transition-opacity"
+                                    >
+                                      {value}
+                                    </button>
+                                  ) : (
+                                    <span className="break-words">{value}</span>
+                                  )
+                                ) : (
+                                  <span className="text-muted-foreground">-</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                          <tr>
                             <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
-                              {label}
+                              Website
                             </td>
                             <td className="py-2 px-3 text-sm text-foreground">
-                              {value ? (
-                                <span className="break-words">{value}</span>
+                              {selectedTeam.data.wikidata_enrichment.website ? (
+                                <Button variant="link" size="sm" className="px-0 h-auto" asChild>
+                                  <a
+                                    href={selectedTeam.data.wikidata_enrichment.website}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    {selectedTeam.data.wikidata_enrichment.website}
+                                  </a>
+                                </Button>
                               ) : (
                                 <span className="text-muted-foreground">-</span>
                               )}
                             </td>
                           </tr>
-                        ))}
-                        <tr>
-                          <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
-                            Website
-                          </td>
-                          <td className="py-2 px-3 text-sm text-foreground">
-                            {selectedTeam.data.wikidata_enrichment.website ? (
-                              <Button variant="link" size="sm" className="px-0 h-auto" asChild>
-                                <a
-                                  href={selectedTeam.data.wikidata_enrichment.website}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  {selectedTeam.data.wikidata_enrichment.website}
-                                </a>
-                              </Button>
-                            ) : (
-                              <span className="text-muted-foreground">-</span>
-                            )}
-                          </td>
-                        </tr>
-                        <tr>
-                          <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
-                            X.com (Twitter)
-                          </td>
-                          <td className="py-2 px-3 text-sm text-foreground">
-                            {selectedTeam.data.wikidata_enrichment.twitter ? (
-                              <Button variant="link" size="sm" className="px-0 h-auto" asChild>
-                                <a
-                                  href={`https://x.com/${selectedTeam.data.wikidata_enrichment.twitter}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  @{selectedTeam.data.wikidata_enrichment.twitter}
-                                </a>
-                              </Button>
-                            ) : (
-                              <span className="text-muted-foreground">-</span>
-                            )}
-                          </td>
-                        </tr>
-                        <tr>
-                          <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
-                            Instagram
-                          </td>
-                          <td className="py-2 px-3 text-sm text-foreground">
-                            {selectedTeam.data.wikidata_enrichment.instagram ? (
-                              <Button variant="link" size="sm" className="px-0 h-auto" asChild>
-                                <a
-                                  href={`https://www.instagram.com/${selectedTeam.data.wikidata_enrichment.instagram}/`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  @{selectedTeam.data.wikidata_enrichment.instagram}
-                                </a>
-                              </Button>
-                            ) : (
-                              <span className="text-muted-foreground">-</span>
-                            )}
-                          </td>
-                        </tr>
-                        <tr>
-                          <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
-                            Wikipedia
-                          </td>
-                          <td className="py-2 px-3 text-sm text-foreground">
-                            {selectedTeam.data.team.wiki?.wiki_url_cached ||
-                            selectedTeam.data.team.wiki?.wiki_url ? (
-                              <Button variant="link" size="sm" className="px-0 h-auto" asChild>
-                                <a
-                                  href={
-                                    selectedTeam.data.team.wiki?.wiki_url_cached ||
-                                    selectedTeam.data.team.wiki?.wiki_url ||
-                                    "#"
-                                  }
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  {selectedTeam.data.team.wiki?.wiki_url_cached ||
-                                    selectedTeam.data.team.wiki?.wiki_url}
-                                </a>
-                              </Button>
-                            ) : (
-                              <span className="text-muted-foreground">-</span>
-                            )}
-                          </td>
-                        </tr>
-                        <tr>
-                          <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
-                            Wikidata ID
-                          </td>
-                          <td className="py-2 px-3 text-sm text-foreground">
-                            {selectedTeam.data.wikidata_enrichment.wikidata_id ? (
-                              <span className="break-words">
-                                {selectedTeam.data.wikidata_enrichment.wikidata_id}
-                              </span>
-                            ) : (
-                              <span className="text-muted-foreground">-</span>
-                            )}
-                          </td>
-                        </tr>
-                        <tr>
-                          <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
-                            Stadium Wikidata
-                          </td>
-                          <td className="py-2 px-3 text-sm text-foreground">
-                            {selectedTeam.data.wikidata_enrichment.stadium_wikidata_id ? (
-                              <span className="break-words">
-                                {selectedTeam.data.wikidata_enrichment.stadium_wikidata_id}
-                              </span>
-                            ) : (
-                              <span className="text-muted-foreground">-</span>
-                            )}
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                ) : !selectedTeam.isLoading ? (
-                  <div className="px-4 py-4 text-sm text-muted-foreground">
-                    No enrichment data for this team
-                  </div>
-                ) : null}
-              </div>
-            )}
-          </div>
-        )}
+                          <tr>
+                            <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
+                              X.com (Twitter)
+                            </td>
+                            <td className="py-2 px-3 text-sm text-foreground">
+                              {selectedTeam.data.wikidata_enrichment.twitter ? (
+                                <Button variant="link" size="sm" className="px-0 h-auto" asChild>
+                                  <a
+                                    href={`https://x.com/${selectedTeam.data.wikidata_enrichment.twitter}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    @{selectedTeam.data.wikidata_enrichment.twitter}
+                                  </a>
+                                </Button>
+                              ) : (
+                                <span className="text-muted-foreground">-</span>
+                              )}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
+                              Instagram
+                            </td>
+                            <td className="py-2 px-3 text-sm text-foreground">
+                              {selectedTeam.data.wikidata_enrichment.instagram ? (
+                                <Button variant="link" size="sm" className="px-0 h-auto" asChild>
+                                  <a
+                                    href={`https://www.instagram.com/${selectedTeam.data.wikidata_enrichment.instagram}/`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    @{selectedTeam.data.wikidata_enrichment.instagram}
+                                  </a>
+                                </Button>
+                              ) : (
+                                <span className="text-muted-foreground">-</span>
+                              )}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
+                              Wikipedia
+                            </td>
+                            <td className="py-2 px-3 text-sm text-foreground">
+                              {selectedTeam.data.team.wiki?.wiki_url_cached ||
+                              selectedTeam.data.team.wiki?.wiki_url ? (
+                                <Button variant="link" size="sm" className="px-0 h-auto" asChild>
+                                  <a
+                                    href={
+                                      selectedTeam.data.team.wiki?.wiki_url_cached ||
+                                      selectedTeam.data.team.wiki?.wiki_url ||
+                                      "#"
+                                    }
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    {selectedTeam.data.team.wiki?.wiki_url_cached ||
+                                      selectedTeam.data.team.wiki?.wiki_url}
+                                  </a>
+                                </Button>
+                              ) : (
+                                <span className="text-muted-foreground">-</span>
+                              )}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
+                              Wikidata ID
+                            </td>
+                            <td className="py-2 px-3 text-sm text-foreground">
+                              {selectedTeam.data.wikidata_enrichment.wikidata_id ? (
+                                <span className="break-words">
+                                  {selectedTeam.data.wikidata_enrichment.wikidata_id}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground">-</span>
+                              )}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
+                              Stadium Wikidata
+                            </td>
+                            <td className="py-2 px-3 text-sm text-foreground">
+                              {selectedTeam.data.wikidata_enrichment.stadium_wikidata_id ? (
+                                <span className="break-words">
+                                  {selectedTeam.data.wikidata_enrichment.stadium_wikidata_id}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground">-</span>
+                              )}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : !selectedTeam.isLoading ? (
+                    <div className="rounded-lg border border-border px-4 py-4 text-sm text-muted-foreground">
+                      No enrichment data for this team
+                    </div>
+                  ) : null}
+                </>
+              )}
 
-        {activeTab === "next" && (
-          <div className="bg-transparent border border-border rounded-lg overflow-hidden w-full lg:max-w-[30%] lg:mr-auto min-w-0">
-            <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-              <Calendar className="h-4 w-4 text-muted-foreground" />
-              <h2 className="text-sm font-semibold text-foreground">Next Matches</h2>
-              <span className="text-xs text-muted-foreground ml-auto">
-                {nextMatches.length}
-              </span>
-            </div>
-            <RecentMatchesList matches={nextMatches} onTeamSelect={handleTeamSelect} />
-          </div>
-        )}
+              {teamTab === "matches" && (
+                <div className="rounded-lg border border-border px-4 py-8 text-center">
+                  <Calendar className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">Matches coming soon</p>
+                </div>
+              )}
 
-        {activeTab === "stats" && (
-          <div className="bg-transparent border border-border rounded-lg overflow-hidden w-full lg:max-w-[30%] lg:mr-auto min-w-0">
-            <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-muted-foreground" />
-              <h2 className="text-sm font-semibold text-foreground">Stats by Season</h2>
+              {teamTab === "stats" && (
+                <div className="rounded-lg border border-border px-4 py-8 text-center">
+                  <BarChart3 className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">Stats coming soon</p>
+                </div>
+              )}
+
+              {teamTab === "transfers" && (
+                <div className="rounded-lg border border-border px-4 py-8 text-center">
+                  <TrendingUp className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">Transfers coming soon</p>
+                </div>
+              )}
             </div>
-            <StatsTable stats={stats_by_season} />
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Group Info */}
         {group && (

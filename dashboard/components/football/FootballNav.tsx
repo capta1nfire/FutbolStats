@@ -194,7 +194,7 @@ export function FootballNav({
                         <Users className="w-5 h-5 text-muted-foreground" />
                       )}
                       <div className="flex-1 min-w-0">
-                        <p className="truncate text-foreground">{team.name}</p>
+                        <p className="truncate text-foreground">{team.display_name}</p>
                         <p className="text-xs text-muted-foreground truncate">
                           {team.country} · {team.team_type}
                         </p>

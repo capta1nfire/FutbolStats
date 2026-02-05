@@ -403,11 +403,12 @@ function FootballPageContent() {
         )}
       </div>
 
-      {/* Col 5: Team Drawer */}
+      {/* Col 5: Team Drawer (persistent/fixed) */}
       <TeamDrawer
         teamId={teamId}
-        open={teamId !== null}
+        open={true}
         onClose={handleTeamDrawerClose}
+        persistent
       />
     </div>
   );

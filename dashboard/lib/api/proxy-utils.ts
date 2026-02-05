@@ -196,7 +196,7 @@ export async function proxyFetch(
  */
 export async function proxyFetchMutation(
   path: string,
-  method: "PATCH" | "POST" | "PUT",
+  method: "PATCH" | "POST" | "PUT" | "DELETE",
   body: unknown,
   options: ProxyOptions = {}
 ): Promise<{ data: unknown; status: number; requestId: string }> {
@@ -217,7 +217,7 @@ export async function proxyFetchMutation(
   const fetchOptions: RequestInit = {
     method,
     headers,
-    body: JSON.stringify(body),
+    body: body !== undefined ? JSON.stringify(body) : undefined,
     cache: "no-store",
   };
 

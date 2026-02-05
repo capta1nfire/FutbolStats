@@ -429,7 +429,7 @@ async def _calculate_standings_from_results(session, league_id: int, season: int
     stats = {}
     for team_id, team_data in teams.items():
         stats[team_id] = {
-            "team_id": team_data["id"],  # Use internal ID, not external_id
+            "team_id": team_data["external_id"],  # Use external_id for consistency with API-Football
             "team_name": team_data["name"],
             "team_logo": team_data["logo_url"],
             "points": 0,

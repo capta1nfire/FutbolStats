@@ -303,9 +303,44 @@ export interface TeamWikiInfo {
   wiki_matched_at?: string | null;
 }
 
+/**
+ * Source badge info for enrichment display
+ */
+export interface EnrichmentSourceBadge {
+  emoji: string;
+  label: string;
+  tooltip: string;
+  color: string;
+}
+
+/**
+ * Manual override values (only present when has_override is true)
+ */
+export interface TeamEnrichmentOverride {
+  full_name: string | null;
+  short_name: string | null;
+  stadium_name: string | null;
+  stadium_capacity: number | null;
+  city: string | null;
+  website: string | null;
+  twitter: string | null;
+  instagram: string | null;
+  source: string | null;
+  notes: string | null;
+  updated_at: string | null;
+}
+
+/**
+ * Wikidata enrichment with optional manual overrides
+ *
+ * The effective values (stadium_name, twitter, etc.) are COALESCE(override, wikidata).
+ * Use `override` object to see raw override values for edit form.
+ */
 export interface TeamWikidataEnrichment {
+  // Provenance
   wikidata_id: string | null;
   wikidata_updated_at: string | null;
+  // Effective values (COALESCE override > wikidata)
   stadium_name: string | null;
   stadium_wikidata_id: string | null;
   stadium_capacity: number | null;
@@ -318,11 +353,18 @@ export interface TeamWikidataEnrichment {
   website: string | null;
   twitter: string | null;
   instagram: string | null;
+  // Source tracking
+  enrichment_source: string;
+  source_badge: EnrichmentSourceBadge;
+  // Override state
+  has_override: boolean;
+  override: TeamEnrichmentOverride | null;
 }
 
 export interface TeamInfo {
   team_id: number;
   name: string;
+  display_name: string;  // COALESCE(override.short_name, wikidata.short_name, name) - always has value
   short_name: string | null;
   country: string;
   founded: number | null;

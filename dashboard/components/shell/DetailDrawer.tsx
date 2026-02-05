@@ -28,6 +28,11 @@ interface DetailDrawerProps {
    * This content won't scroll and tooltips won't be clipped.
    */
   fixedContent?: ReactNode;
+  /**
+   * Persistent mode: always visible, no close button, no ESC/backdrop.
+   * Used for fixed sidebars like Team 360 in Football section.
+   */
+  persistent?: boolean;
 }
 
 /**
@@ -53,23 +58,27 @@ export function DetailDrawer({
   returnFocusRef,
   variant = "overlay",
   fixedContent,
+  persistent = false,
 }: DetailDrawerProps) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
-  // Handle ESC key to close drawer
+  // Handle ESC key to close drawer (skip in persistent mode)
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
+      if (persistent) return;
       if (event.key === "Escape") {
         event.preventDefault();
         onClose();
       }
     },
-    [onClose]
+    [onClose, persistent]
   );
 
-  // Setup ESC listener and focus management
+  // Setup ESC listener and focus management (skip in persistent mode)
   useEffect(() => {
+    if (persistent) return;
+
     if (open) {
       // Store currently focused element before drawer opened
       previouslyFocusedRef.current = document.activeElement as HTMLElement;
@@ -93,16 +102,17 @@ export function DetailDrawer({
         targetElement.focus();
       }
     }
-  }, [open, handleKeyDown, returnFocusRef]);
+  }, [open, handleKeyDown, returnFocusRef, persistent]);
 
-  if (!open) {
+  // In persistent mode, always render. Otherwise, respect open prop.
+  if (!persistent && !open) {
     return null;
   }
 
   return (
     <>
-      {/* Invisible backdrop — click outside closes drawer (overlay only) */}
-      {variant === "overlay" && (
+      {/* Invisible backdrop — click outside closes drawer (overlay only, not persistent) */}
+      {variant === "overlay" && !persistent && (
         <div
           className="absolute inset-0 z-20"
           onClick={onClose}
@@ -111,30 +121,37 @@ export function DetailDrawer({
       )}
       <aside
         className={cn(
-          "bg-sidebar flex flex-col transition-smooth",
-          variant === "overlay"
-            ? "absolute right-0 top-0 h-full w-[400px] z-30 shadow-drawer-left"
-            : "w-[320px]",
+          "bg-sidebar flex flex-col transition-smooth overflow-hidden",
+          persistent
+            ? "w-[400px] border-l border-border shadow-drawer-left"
+            : variant === "overlay"
+              ? "absolute right-0 top-0 h-full w-[400px] z-30 shadow-drawer-left"
+              : "w-[320px]",
           className
         )}
         role="complementary"
         aria-label="Details panel"
       >
       {/* Header */}
-      <div className="h-14 flex items-center px-4 shrink-0 relative">
-        <h2 className="text-sm font-semibold text-foreground truncate absolute left-1/2 -translate-x-1/2">
+      <div className={cn(
+        "h-14 flex items-center justify-center px-4 shrink-0 relative",
+        persistent && "border-b border-border"
+      )}>
+        <h2 className="text-sm font-semibold text-foreground truncate">
           {title || "Details"}
         </h2>
-        <Button
-          ref={closeButtonRef}
-          variant="ghost"
-          size="icon"
-          onClick={onClose}
-          className="h-8 w-8 shrink-0 ml-auto"
-          aria-label="Close details panel"
-        >
-          <X className="h-4 w-4" strokeWidth={1.5} />
-        </Button>
+        {!persistent && (
+          <Button
+            ref={closeButtonRef}
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            className="h-8 w-8 shrink-0 ml-auto"
+            aria-label="Close details panel"
+          >
+            <X className="h-4 w-4" strokeWidth={1.5} />
+          </Button>
+        )}
       </div>
 
       {/* Fixed content (tabs, etc.) - outside ScrollArea to prevent tooltip clipping */}
@@ -145,7 +162,7 @@ export function DetailDrawer({
       )}
 
       {/* Scrollable content */}
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 min-h-0">
         <div className="p-3">
           {children}
         </div>

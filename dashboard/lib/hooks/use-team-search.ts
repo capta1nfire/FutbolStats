@@ -9,6 +9,7 @@ export interface TeamSearchResult {
   team_id: number;
   external_id: number | null;
   name: string;
+  display_name: string;  // COALESCE(override.short_name, wikidata.short_name, name) - always has value
   country: string;
   team_type: string;
   logo_url: string | null;
