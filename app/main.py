@@ -6334,6 +6334,11 @@ async def dashboard_admin_patch_league(request: Request, league_id: int):
     if str(league_id) in _admin_cache["league_detail"]:
         del _admin_cache["league_detail"][str(league_id)]
 
+    # P0 ABE: Invalidate football navigation cache for tags updates
+    cache_key = f"football_league_{league_id}"
+    if cache_key in _football_nav_cache:
+        del _football_nav_cache[cache_key]
+
     return {
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "data": result,

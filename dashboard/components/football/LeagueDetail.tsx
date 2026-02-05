@@ -24,6 +24,7 @@ import {
   TrendingUp,
   MapPin,
   Building2,
+  Settings,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -69,6 +70,7 @@ interface LeagueDetailProps {
   leagueId: number;
   onBack: () => void;
   onTeamSelect: (teamId: number) => void;
+  onSettingsClick?: () => void;
 }
 
 /**
@@ -324,7 +326,7 @@ function StandingsTable({
  * - Recent matches
  * - Standings
  */
-export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailProps) {
+export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick }: LeagueDetailProps) {
   const [activeTab, setActiveTab] = useState<LeagueDetailTabId>("standings");
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
   const [teamTab, setTeamTab] = useState<TeamDetailTabId>("overview");
@@ -444,6 +446,17 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect }: LeagueDetailPro
               <Button variant="ghost" size="sm" onClick={() => refetch()} className="shrink-0">
                 <RefreshCw className="h-4 w-4" />
               </Button>
+              {onSettingsClick && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={onSettingsClick}
+                  className="shrink-0 h-8 w-8"
+                  aria-label="League settings"
+                >
+                  <Settings className="h-4 w-4" />
+                </Button>
+              )}
             </div>
 
             {/* Tabs */}

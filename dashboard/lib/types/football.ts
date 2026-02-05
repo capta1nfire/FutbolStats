@@ -119,6 +119,14 @@ export type CountryDetailResponse = FootballApiResponse<CountryDetail>;
 // League Detail (league/{id}.json)
 // =============================================================================
 
+/**
+ * League-level configuration stored in admin_leagues.tags JSONB
+ */
+export interface LeagueTags {
+  use_short_names?: boolean;
+  // Extensible for future settings
+}
+
 export interface LeagueInfo {
   league_id: number;
   name: string;
@@ -128,6 +136,7 @@ export interface LeagueInfo {
   match_type: string;
   match_weight: number | null;
   rules_json: Record<string, unknown>;
+  tags?: LeagueTags;
 }
 
 export interface LeagueGroupInfo {

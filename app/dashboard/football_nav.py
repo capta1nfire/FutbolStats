@@ -525,6 +525,7 @@ async def build_league_nav_detail(session: AsyncSession, league_id: int) -> Opti
             "match_type": league_row.match_type,
             "match_weight": league_row.match_weight,
             "rules_json": league_row.rules_json if isinstance(league_row.rules_json, dict) else {},
+            "tags": league_row.tags if isinstance(league_row.tags, dict) else {},
         },
         "group": group_info,
         "stats_by_season": stats_by_season,

@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useMemo, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useFootballTeam } from "@/lib/hooks";
+import { useFootballTeam, useFootballLeague } from "@/lib/hooks";
 import { Loader } from "@/components/ui/loader";
 import { Flag } from "lucide-react";
 import {
@@ -18,6 +18,7 @@ import {
   WorldCup2026GroupDetail,
   NationalTeamsCountryDetail,
 } from "@/components/football";
+import { LeagueSettingsDrawer } from "@/components/football/LeagueSettingsDrawer";
 
 /**
  * Parse numeric ID from URL param
@@ -39,6 +40,7 @@ function buildFootballUrl(params: {
   team?: number | null;
   worldCupTab?: string | null;
   worldCupGroup?: string | null;
+  leagueSettings?: boolean | null;
 }): string {
   const searchParams = new URLSearchParams();
 
@@ -62,6 +64,9 @@ function buildFootballUrl(params: {
   }
   if (params.worldCupGroup) {
     searchParams.set("wcGroup", params.worldCupGroup);
+  }
+  if (params.leagueSettings) {
+    searchParams.set("leagueSettings", "true");
   }
 
   const search = searchParams.toString();
@@ -91,9 +96,13 @@ function FootballPageContent() {
   const teamId = parseNumericId(searchParams.get("team"));
   const worldCupTab = searchParams.get("wcTab") || "overview";
   const worldCupGroup = searchParams.get("wcGroup");
+  const leagueSettingsOpen = searchParams.get("leagueSettings") === "true";
 
   // Fetch team data to auto-select primary league
   const { data: teamData } = useFootballTeam(teamId);
+
+  // Fetch league data for settings drawer
+  const { data: leagueData } = useFootballLeague(leagueId);
 
   // Track if we've already auto-selected the league for this team
   const autoSelectedLeagueRef = useRef<number | null>(null);
@@ -249,6 +258,35 @@ function FootballPageContent() {
     );
   }, [router, teamId]);
 
+  // League Settings handlers
+  const handleSettingsOpen = useCallback(() => {
+    router.replace(
+      buildFootballUrl({
+        category,
+        country,
+        league: leagueId,
+        group: groupId,
+        team: teamId,
+        leagueSettings: true,
+      }),
+      { scroll: false }
+    );
+  }, [router, category, country, leagueId, groupId, teamId]);
+
+  const handleSettingsClose = useCallback(() => {
+    router.replace(
+      buildFootballUrl({
+        category,
+        country,
+        league: leagueId,
+        group: groupId,
+        team: teamId,
+        leagueSettings: null,
+      }),
+      { scroll: false }
+    );
+  }, [router, category, country, leagueId, groupId, teamId]);
+
   // World Cup navigation handlers
   const handleWorldCupGroupsClick = useCallback(() => {
     router.replace(
@@ -355,6 +393,7 @@ function FootballPageContent() {
             leagueId={leagueId}
             onBack={category === "tournaments_competitions" ? handleBackToTournaments : handleBackToCountry}
             onTeamSelect={handleTeamSelect}
+            onSettingsClick={handleSettingsOpen}
           />
         )}
         {contentView === "group" && groupId && (
@@ -402,6 +441,15 @@ function FootballPageContent() {
           />
         )}
       </div>
+
+      {/* League Settings Drawer (overlay) */}
+      {leagueData?.league && (
+        <LeagueSettingsDrawer
+          open={leagueSettingsOpen}
+          onClose={handleSettingsClose}
+          league={leagueData.league}
+        />
+      )}
 
       {/* Col 5: Team Drawer (persistent/fixed) */}
       <TeamDrawer

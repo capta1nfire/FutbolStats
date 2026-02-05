@@ -37,6 +37,8 @@ export function useAdminLeagueMutation() {
       queryClient.invalidateQueries({ queryKey: ["admin-leagues"] });
       queryClient.invalidateQueries({ queryKey: ["admin-audit"] });
       queryClient.invalidateQueries({ queryKey: ["admin-overview"] });
+      // P0 ABE: Invalidate football navigation cache for tags updates
+      queryClient.invalidateQueries({ queryKey: ["football-league", variables.id] });
     },
   });
 }
