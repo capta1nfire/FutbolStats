@@ -502,7 +502,7 @@ export function MatchHeader({
               />
             </button>
             <span className="text-[10px] text-muted-foreground text-center line-clamp-1 max-w-[80px]">
-              {match.home}
+              {match.homeDisplayName}
             </span>
           </div>
           {hasScore && (
@@ -553,7 +553,7 @@ export function MatchHeader({
               />
             </button>
             <span className="text-[10px] text-muted-foreground text-center line-clamp-1 max-w-[80px]">
-              {match.away}
+              {match.awayDisplayName}
             </span>
           </div>
         </div>
@@ -619,32 +619,32 @@ export function MatchTabContent({
                 <PredictionSection
                   label="Market"
                   probs={match.market}
-                  home={match.home}
-                  away={match.away}
+                  home={match.homeDisplayName}
+                  away={match.awayDisplayName}
                 />
               )}
               {match.modelA && (
                 <PredictionSection
                   label="Model A"
                   probs={match.modelA}
-                  home={match.home}
-                  away={match.away}
+                  home={match.homeDisplayName}
+                  away={match.awayDisplayName}
                 />
               )}
               {match.shadow && (
                 <PredictionSection
                   label="Shadow"
                   probs={match.shadow}
-                  home={match.home}
-                  away={match.away}
+                  home={match.homeDisplayName}
+                  away={match.awayDisplayName}
                 />
               )}
               {match.sensorB && (
                 <PredictionSection
                   label="Sensor B"
                   probs={match.sensorB}
-                  home={match.home}
-                  away={match.away}
+                  home={match.homeDisplayName}
+                  away={match.awayDisplayName}
                 />
               )}
             </>

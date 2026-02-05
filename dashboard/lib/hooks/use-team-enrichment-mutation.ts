@@ -27,6 +27,8 @@ export function useTeamEnrichmentPutMutation() {
     onSuccess: (_data, variables) => {
       // Invalidate team detail to refresh enrichment fields
       queryClient.invalidateQueries({ queryKey: ["football-team", variables.teamId] });
+      // Invalidate standings to reflect updated display_name
+      queryClient.invalidateQueries({ queryKey: ["standings"] });
     },
   });
 }
@@ -48,6 +50,8 @@ export function useTeamEnrichmentDeleteMutation() {
     onSuccess: (_data, variables) => {
       // Invalidate team detail to refresh enrichment fields
       queryClient.invalidateQueries({ queryKey: ["football-team", variables.teamId] });
+      // Invalidate standings to reflect updated display_name
+      queryClient.invalidateQueries({ queryKey: ["standings"] });
     },
   });
 }

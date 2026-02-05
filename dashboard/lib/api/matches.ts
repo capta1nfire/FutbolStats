@@ -125,6 +125,10 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
   const backendStatus = typeof raw.status === "string" ? raw.status : "NS";
   const status = mapStatus(backendStatus);
 
+  // Display names for use_short_names toggle (accept both snake_case and camelCase)
+  const homeDisplayName = raw.home_display_name ?? raw.homeDisplayName;
+  const awayDisplayName = raw.away_display_name ?? raw.awayDisplayName;
+
   // Build result
   const result: MatchSummary = {
     id,
@@ -134,6 +138,8 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
     leagueCountry: leagueCountryStr,
     home,
     away,
+    homeDisplayName: typeof homeDisplayName === "string" ? homeDisplayName : home,
+    awayDisplayName: typeof awayDisplayName === "string" ? awayDisplayName : away,
     kickoffISO,
   };
 

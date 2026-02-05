@@ -75,6 +75,10 @@ export interface MatchSummary {
   round?: string;
   home: string;
   away: string;
+  /** Short display name for home team (COALESCE: override > wikidata > name) */
+  homeDisplayName: string;
+  /** Short display name for away team (COALESCE: override > wikidata > name) */
+  awayDisplayName: string;
   kickoffISO: string;
   score?: MatchScore;
   elapsed?: MatchElapsed;

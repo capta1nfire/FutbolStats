@@ -2961,6 +2961,29 @@ async def get_match_details(
     )
     _timings["get_teams"] = int((time.time() - _t0) * 1000)
 
+    # Get display_names for short name toggle (COALESCE: override > wikidata > name)
+    home_display_name = home_team.name if home_team else "Unknown"
+    away_display_name = away_team.name if away_team else "Unknown"
+    team_ids = [t.id for t in [home_team, away_team] if t]
+    if team_ids:
+        display_result = await session.execute(
+            text("""
+                SELECT
+                    t.id AS team_id,
+                    COALESCE(teo.short_name, twe.short_name, t.name) AS display_name
+                FROM teams t
+                LEFT JOIN team_enrichment_overrides teo ON t.id = teo.team_id
+                LEFT JOIN team_wikidata_enrichment twe ON t.id = twe.team_id
+                WHERE t.id = ANY(:team_ids)
+            """),
+            {"team_ids": team_ids}
+        )
+        display_map = {row.team_id: row.display_name for row in display_result.fetchall()}
+        if home_team and home_team.id in display_map:
+            home_display_name = display_map[home_team.id]
+        if away_team and away_team.id in display_map:
+            away_display_name = display_map[away_team.id]
+
     # Determine season for standings lookup
     current_date = match.date or datetime.now()
     season = _season_for_league(match.league_id, current_date)
@@ -3112,6 +3135,7 @@ async def get_match_details(
         "home_team": {
             "id": home_team.external_id if home_team else None,
             "name": home_name,
+            "display_name": home_display_name,
             "logo": home_logo,
             "history": home_history["matches"],
             "position": home_position,
@@ -3120,6 +3144,7 @@ async def get_match_details(
         "away_team": {
             "id": away_team.external_id if away_team else None,
             "name": away_name,
+            "display_name": away_display_name,
             "logo": away_logo,
             "history": away_history["matches"],
             "position": away_position,
@@ -13830,6 +13855,24 @@ async def get_matches_dashboard(
     home_team = aliased(Team, name="home_team")
     away_team = aliased(Team, name="away_team")
 
+    # Team display names subquery (for use_short_names toggle)
+    # COALESCE: override.short_name > wikidata.short_name > team.name
+    display_names_subq = text("""
+        SELECT
+            t.id AS team_id,
+            COALESCE(teo.short_name, twe.short_name, t.name) AS display_name
+        FROM teams t
+        LEFT JOIN team_enrichment_overrides teo ON t.id = teo.team_id
+        LEFT JOIN team_wikidata_enrichment twe ON t.id = twe.team_id
+    """).columns(
+        column("team_id"),
+        column("display_name"),
+    ).subquery("display_names")
+
+    # Aliases for home/away display names
+    home_display = aliased(display_names_subq, name="home_display")
+    away_display = aliased(display_names_subq, name="away_display")
+
     # Base query with LEFT JOINs for predictions and weather
     # Use GROUP BY and MAX to get one row per match when there are multiple predictions
     # Weather: use raw SQL subquery with DISTINCT ON to get latest forecast per match
@@ -13919,6 +13962,9 @@ async def get_matches_dashboard(
             Match.venue_city,
             home_team.name.label("home_name"),
             away_team.name.label("away_name"),
+            # Display names for use_short_names toggle
+            home_display.c.display_name.label("home_display_name"),
+            away_display.c.display_name.label("away_display_name"),
             # Model A (production) prediction - use MAX to pick one value
             func.max(Prediction.home_prob).label("model_a_home"),
             func.max(Prediction.draw_prob).label("model_a_draw"),
@@ -13959,6 +14005,8 @@ async def get_matches_dashboard(
         )
         .join(home_team, Match.home_team_id == home_team.id)
         .join(away_team, Match.away_team_id == away_team.id)
+        .outerjoin(home_display, home_display.c.team_id == Match.home_team_id)
+        .outerjoin(away_display, away_display.c.team_id == Match.away_team_id)
         .outerjoin(Prediction, Prediction.match_id == Match.id)
         .outerjoin(ShadowPrediction, ShadowPrediction.match_id == Match.id)
         .outerjoin(SensorPrediction, SensorPrediction.match_id == Match.id)
@@ -13978,6 +14026,9 @@ async def get_matches_dashboard(
             Match.venue_city,
             home_team.name,
             away_team.name,
+            # Display names
+            home_display.c.display_name,
+            away_display.c.display_name,
             # Weather fields (from DISTINCT ON subquery, so safe to group by)
             weather_subq.c.temp_c,
             weather_subq.c.humidity,
@@ -14110,6 +14161,8 @@ async def get_matches_dashboard(
             "round": row.round,
             "home": row.home_name,
             "away": row.away_name,
+            "home_display_name": row.home_display_name or row.home_name,
+            "away_display_name": row.away_display_name or row.away_name,
             "status": row.status,
         }
 
