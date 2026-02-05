@@ -1,19 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import Image from "next/image";
 import { useFootballTeam } from "@/lib/hooks";
 import { DetailDrawer } from "@/components/shell";
 import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
 import { IconTabs } from "@/components/ui/icon-tabs";
-import { getCountryIsoCode } from "@/lib/utils/country-flags";
 import { toast } from "sonner";
 import {
   RefreshCw,
   AlertTriangle,
   Users,
-  Globe,
   MapPin,
   Trophy,
   TrendingUp,
@@ -32,27 +29,6 @@ import { TeamLogoSettings } from "./TeamLogoSettings";
 import { TeamEnrichmentSettings } from "./TeamEnrichmentSettings";
 import { TeamWikiSettings } from "./TeamWikiSettings";
 
-/**
- * Country Flag Component
- */
-function CountryFlag({ country, size = 14 }: { country: string; size?: number }) {
-  const isoCode = getCountryIsoCode(country);
-
-  if (!isoCode) {
-    return <Globe className="text-muted-foreground" style={{ width: size, height: size }} />;
-  }
-
-  return (
-    <Image
-      src={`/flags/${isoCode}.svg`}
-      alt={`${country} flag`}
-      width={size}
-      height={size}
-      className="rounded-full object-cover"
-    />
-  );
-}
-
 interface TeamDrawerProps {
   teamId: number | null;
   open: boolean;
@@ -69,13 +45,9 @@ function TeamInfoSection({ team }: { team: TeamInfo }) {
     <div className="space-y-3">
       {/* Basic Info */}
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <CountryFlag country={team.country} size={14} />
         <span>{team.country}</span>
         {team.founded && (
-          <>
-            <span>·</span>
-            <span>Est. {team.founded}</span>
-          </>
+          <span>Est. {team.founded}</span>
         )}
       </div>
 
