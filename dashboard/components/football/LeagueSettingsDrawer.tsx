@@ -79,7 +79,7 @@ export function LeagueSettingsDrawer({
                 Use short names
               </Label>
               <p className="text-xs text-muted-foreground">
-                Show abbreviated team names (e.g. &quot;América&quot; instead of &quot;América de Cali&quot;)
+                Show abbreviated team names
               </p>
             </div>
             <Switch
