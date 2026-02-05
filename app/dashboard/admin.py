@@ -727,6 +727,30 @@ def _get_source_badge(enrichment_source: str) -> dict:
             "tooltip": "Primary from Wikidata, some fields from Wikipedia fallback",
             "color": "green",
         },
+        "wikidata+website": {
+            "emoji": "check",
+            "label": "Wikidata+Web",
+            "tooltip": "Wikidata enrichment + social handles from official website",
+            "color": "green",
+        },
+        "wikipedia+website": {
+            "emoji": "warning",
+            "label": "Wikipedia+Web",
+            "tooltip": "Wikipedia fallback + social handles from official website",
+            "color": "yellow",
+        },
+        "wikidata+wikipedia+website": {
+            "emoji": "check",
+            "label": "WD+WP+Web",
+            "tooltip": "Wikidata + Wikipedia fallback + social handles from official website",
+            "color": "green",
+        },
+        "website": {
+            "emoji": "globe",
+            "label": "Website",
+            "tooltip": "Data extracted from official team website only",
+            "color": "blue",
+        },
     }
 
     # Handle override sources (format: "override:manual", "override:transfermarkt")
