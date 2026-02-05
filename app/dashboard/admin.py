@@ -804,28 +804,65 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
     if not team_row:
         return None
 
-    # Wikidata enrichment (optional; fail-soft if migration not applied)
+    # Wikidata enrichment with manual overrides (optional; fail-soft if migration not applied)
+    # P0 ABE: Use COALESCE for override > wikidata cascade
     enrichment_supported = True
     enrichment_row = None
+    override_row = None
     enrichment_query = text("""
         SELECT
-            wikidata_id,
-            fetched_at,
-            stadium_name,
-            stadium_wikidata_id,
-            stadium_capacity,
-            stadium_altitude_m,
-            admin_location_label,
-            lat,
-            lon,
-            full_name,
-            short_name,
-            website,
-            social_handles->>'twitter' AS twitter,
-            social_handles->>'instagram' AS instagram,
-            COALESCE(enrichment_source, 'wikidata') AS enrichment_source
-        FROM team_wikidata_enrichment
-        WHERE team_id = :tid
+            twe.wikidata_id,
+            twe.fetched_at,
+            -- Merged values (override > wikidata)
+            COALESCE(o.stadium_name, twe.stadium_name) AS stadium_name,
+            twe.stadium_wikidata_id,
+            COALESCE(o.stadium_capacity, twe.stadium_capacity) AS stadium_capacity,
+            twe.stadium_altitude_m,
+            COALESCE(o.admin_location_label, twe.admin_location_label) AS admin_location_label,
+            COALESCE(o.lat, twe.lat) AS lat,
+            COALESCE(o.lon, twe.lon) AS lon,
+            COALESCE(o.full_name, twe.full_name) AS full_name,
+            COALESCE(o.short_name, twe.short_name) AS short_name,
+            COALESCE(o.website, twe.website) AS website,
+            COALESCE(o.twitter_handle, twe.social_handles->>'twitter') AS twitter,
+            COALESCE(o.instagram_handle, twe.social_handles->>'instagram') AS instagram,
+            -- Enrichment source: override:{source} if any override field is set, else wikidata source
+            CASE
+                WHEN o.team_id IS NOT NULL AND (
+                    o.full_name IS NOT NULL OR o.short_name IS NOT NULL OR
+                    o.stadium_name IS NOT NULL OR o.stadium_capacity IS NOT NULL OR
+                    o.website IS NOT NULL OR o.twitter_handle IS NOT NULL OR
+                    o.instagram_handle IS NOT NULL OR o.lat IS NOT NULL OR o.lon IS NOT NULL OR
+                    o.admin_location_label IS NOT NULL
+                ) THEN 'override:' || COALESCE(o.source, 'manual')
+                ELSE COALESCE(twe.enrichment_source, 'wikidata')
+            END AS enrichment_source,
+            -- P0 ABE: has_override = at least one override field is non-null
+            CASE
+                WHEN o.team_id IS NOT NULL AND (
+                    o.full_name IS NOT NULL OR o.short_name IS NOT NULL OR
+                    o.stadium_name IS NOT NULL OR o.stadium_capacity IS NOT NULL OR
+                    o.website IS NOT NULL OR o.twitter_handle IS NOT NULL OR
+                    o.instagram_handle IS NOT NULL OR o.lat IS NOT NULL OR o.lon IS NOT NULL OR
+                    o.admin_location_label IS NOT NULL
+                ) THEN true
+                ELSE false
+            END AS has_override,
+            -- Raw override values for edit form
+            o.full_name AS override_full_name,
+            o.short_name AS override_short_name,
+            o.stadium_name AS override_stadium_name,
+            o.stadium_capacity AS override_stadium_capacity,
+            o.admin_location_label AS override_city,
+            o.website AS override_website,
+            o.twitter_handle AS override_twitter,
+            o.instagram_handle AS override_instagram,
+            o.source AS override_source,
+            o.notes AS override_notes,
+            o.updated_at AS override_updated_at
+        FROM team_wikidata_enrichment twe
+        LEFT JOIN team_enrichment_overrides o ON twe.team_id = o.team_id
+        WHERE twe.team_id = :tid
     """)
     try:
         enrichment_result = await session.execute(enrichment_query, {"tid": team_id})
@@ -982,9 +1019,13 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
         if enrichment_row:
             fetched_at = getattr(enrichment_row, "fetched_at", None)
             enrichment_source = getattr(enrichment_row, "enrichment_source", "wikidata")
+            has_override = getattr(enrichment_row, "has_override", False)
+            override_updated_at = getattr(enrichment_row, "override_updated_at", None)
+
             payload["wikidata_enrichment"] = {
                 "wikidata_id": getattr(enrichment_row, "wikidata_id", None),
                 "wikidata_updated_at": (fetched_at.isoformat() + "Z") if fetched_at else None,
+                # Merged effective values (COALESCE override > wikidata)
                 "stadium_name": getattr(enrichment_row, "stadium_name", None),
                 "stadium_wikidata_id": getattr(enrichment_row, "stadium_wikidata_id", None),
                 "stadium_capacity": getattr(enrichment_row, "stadium_capacity", None),
@@ -1000,6 +1041,22 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
                 "enrichment_source": enrichment_source,
                 # Badge indicators for ADB
                 "source_badge": _get_source_badge(enrichment_source),
+                # P0 ABE: has_override = at least one override field is non-null
+                "has_override": has_override,
+                # Raw override values for edit form (what user has set)
+                "override": {
+                    "full_name": getattr(enrichment_row, "override_full_name", None),
+                    "short_name": getattr(enrichment_row, "override_short_name", None),
+                    "stadium_name": getattr(enrichment_row, "override_stadium_name", None),
+                    "stadium_capacity": getattr(enrichment_row, "override_stadium_capacity", None),
+                    "city": getattr(enrichment_row, "override_city", None),
+                    "website": getattr(enrichment_row, "override_website", None),
+                    "twitter": getattr(enrichment_row, "override_twitter", None),
+                    "instagram": getattr(enrichment_row, "override_instagram", None),
+                    "source": getattr(enrichment_row, "override_source", None),
+                    "notes": getattr(enrichment_row, "override_notes", None),
+                    "updated_at": (override_updated_at.isoformat() + "Z") if override_updated_at else None,
+                } if has_override else None,
             }
         else:
             payload["wikidata_enrichment"] = None

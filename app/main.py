@@ -6068,6 +6068,233 @@ async def dashboard_admin_team_detail(request: Request, team_id: int):
 
 
 # =============================================================================
+# Team Enrichment Override (Manual Corrections)
+# =============================================================================
+
+@app.put("/dashboard/admin/team/{team_id}/enrichment")
+async def dashboard_admin_put_team_enrichment(request: Request, team_id: int):
+    """
+    Create or update manual override for team enrichment data.
+
+    P0 ABE Semantics:
+    - Empty string "" -> NULL (clear override for that field)
+    - If all fields become NULL -> DELETE the override row
+    - Only non-null fields are stored as overrides
+    - Audit log for every write
+    """
+    import re
+    from app.ops.audit import log_ops_action, OpsActionTimer
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    # Validate team exists
+    async with AsyncSessionLocal() as session:
+        team_result = await session.execute(
+            text("SELECT id, name FROM teams WHERE id = :tid"),
+            {"tid": team_id}
+        )
+        team = team_result.fetchone()
+        if not team:
+            raise HTTPException(status_code=404, detail=f"Team {team_id} not found")
+
+        # P0 ABE: Normalize empty strings to None
+        def normalize(val):
+            if val is None or (isinstance(val, str) and val.strip() == ""):
+                return None
+            return val.strip() if isinstance(val, str) else val
+
+        full_name = normalize(body.get("full_name"))
+        short_name = normalize(body.get("short_name"))
+        stadium_name = normalize(body.get("stadium_name"))
+        stadium_capacity = body.get("stadium_capacity")
+        website = normalize(body.get("website"))
+        twitter_handle = normalize(body.get("twitter_handle"))
+        instagram_handle = normalize(body.get("instagram_handle"))
+        source = normalize(body.get("source")) or "manual"
+        notes = normalize(body.get("notes"))
+
+        # Normalize capacity
+        if stadium_capacity is not None:
+            if isinstance(stadium_capacity, str) and stadium_capacity.strip() == "":
+                stadium_capacity = None
+            else:
+                try:
+                    stadium_capacity = int(stadium_capacity)
+                    if stadium_capacity < 0 or stadium_capacity >= 200000:
+                        raise HTTPException(status_code=400, detail="stadium_capacity must be 0-199999")
+                except (ValueError, TypeError):
+                    raise HTTPException(status_code=400, detail="stadium_capacity must be a valid integer")
+
+        # P0 ABE: Validate handles (strip @ and spaces)
+        if twitter_handle:
+            twitter_handle = twitter_handle.lstrip("@").strip()
+            if not re.match(r'^[A-Za-z0-9_]{1,15}$', twitter_handle):
+                raise HTTPException(status_code=400, detail="Invalid Twitter handle format")
+
+        if instagram_handle:
+            instagram_handle = instagram_handle.lstrip("@").strip()
+            if not re.match(r'^[A-Za-z0-9_.]{1,30}$', instagram_handle):
+                raise HTTPException(status_code=400, detail="Invalid Instagram handle format")
+
+        # P0 ABE: Validate website (only http/https)
+        if website:
+            if not website.startswith(("http://", "https://")):
+                raise HTTPException(status_code=400, detail="Website must start with http:// or https://")
+            # Block javascript: and data: schemes
+            if website.lower().startswith(("javascript:", "data:")):
+                raise HTTPException(status_code=400, detail="Invalid website URL scheme")
+
+        # P0 ABE: Check if all fields are NULL -> DELETE instead
+        all_null = all([
+            full_name is None,
+            short_name is None,
+            stadium_name is None,
+            stadium_capacity is None,
+            website is None,
+            twitter_handle is None,
+            instagram_handle is None,
+        ])
+
+        with OpsActionTimer() as timer:
+            if all_null:
+                # Delete override if exists
+                await session.execute(
+                    text("DELETE FROM team_enrichment_overrides WHERE team_id = :tid"),
+                    {"tid": team_id}
+                )
+                action_result = "deleted"
+            else:
+                # Upsert override
+                await session.execute(
+                    text("""
+                        INSERT INTO team_enrichment_overrides (
+                            team_id, full_name, short_name, stadium_name, stadium_capacity,
+                            website, twitter_handle, instagram_handle, source, notes,
+                            created_at, updated_at
+                        ) VALUES (
+                            :tid, :full_name, :short_name, :stadium_name, :stadium_capacity,
+                            :website, :twitter_handle, :instagram_handle, :source, :notes,
+                            NOW(), NOW()
+                        )
+                        ON CONFLICT (team_id) DO UPDATE SET
+                            full_name = EXCLUDED.full_name,
+                            short_name = EXCLUDED.short_name,
+                            stadium_name = EXCLUDED.stadium_name,
+                            stadium_capacity = EXCLUDED.stadium_capacity,
+                            website = EXCLUDED.website,
+                            twitter_handle = EXCLUDED.twitter_handle,
+                            instagram_handle = EXCLUDED.instagram_handle,
+                            source = EXCLUDED.source,
+                            notes = EXCLUDED.notes,
+                            updated_at = NOW()
+                    """),
+                    {
+                        "tid": team_id,
+                        "full_name": full_name,
+                        "short_name": short_name,
+                        "stadium_name": stadium_name,
+                        "stadium_capacity": stadium_capacity,
+                        "website": website,
+                        "twitter_handle": twitter_handle,
+                        "instagram_handle": instagram_handle,
+                        "source": source,
+                        "notes": notes,
+                    }
+                )
+                action_result = "upserted"
+
+            await session.commit()
+
+        # P0 ABE: Audit log
+        await log_ops_action(
+            session=session,
+            request=request,
+            action="team_enrichment_override",
+            params={
+                "team_id": team_id,
+                "team_name": team.name,
+                "fields_set": [k for k, v in {
+                    "full_name": full_name, "short_name": short_name,
+                    "stadium_name": stadium_name, "stadium_capacity": stadium_capacity,
+                    "website": website, "twitter": twitter_handle, "instagram": instagram_handle,
+                }.items() if v is not None],
+                "source": source,
+            },
+            result="ok",
+            result_detail={"action": action_result, "team_id": team_id},
+            duration_ms=timer.duration_ms,
+        )
+
+        # Invalidate team detail cache
+        if str(team_id) in _admin_cache["team_detail"]:
+            del _admin_cache["team_detail"][str(team_id)]
+
+        return {
+            "status": "ok",
+            "team_id": team_id,
+            "action": action_result,
+        }
+
+
+@app.delete("/dashboard/admin/team/{team_id}/enrichment")
+async def dashboard_admin_delete_team_enrichment(request: Request, team_id: int):
+    """
+    Delete all manual overrides for a team (revert to automatic data).
+
+    P0 ABE: Audit log for every delete.
+    """
+    from app.ops.audit import log_ops_action, OpsActionTimer
+
+    if not _verify_dashboard_token(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    async with AsyncSessionLocal() as session:
+        # Validate team exists
+        team_result = await session.execute(
+            text("SELECT id, name FROM teams WHERE id = :tid"),
+            {"tid": team_id}
+        )
+        team = team_result.fetchone()
+        if not team:
+            raise HTTPException(status_code=404, detail=f"Team {team_id} not found")
+
+        with OpsActionTimer() as timer:
+            result = await session.execute(
+                text("DELETE FROM team_enrichment_overrides WHERE team_id = :tid RETURNING team_id"),
+                {"tid": team_id}
+            )
+            deleted = result.fetchone() is not None
+            await session.commit()
+
+        # P0 ABE: Audit log
+        await log_ops_action(
+            session=session,
+            request=request,
+            action="team_enrichment_override_delete",
+            params={"team_id": team_id, "team_name": team.name},
+            result="ok",
+            result_detail={"deleted": deleted, "team_id": team_id},
+            duration_ms=timer.duration_ms,
+        )
+
+        # Invalidate team detail cache
+        if str(team_id) in _admin_cache["team_detail"]:
+            del _admin_cache["team_detail"][str(team_id)]
+
+        return {
+            "status": "ok",
+            "team_id": team_id,
+            "deleted": deleted,
+        }
+
+
+# =============================================================================
 # P2B - Admin Mutations
 # =============================================================================
 
@@ -7968,7 +8195,20 @@ _ops_dashboard_cache = {
     "data": None,
     "timestamp": 0,
     "ttl": 45,  # seconds
+    # Refresh state (avoid doing heavy DB work inside HTTP requests)
+    "refreshing": False,
+    "last_refresh_reason": None,
+    "last_refresh_error": None,
+    "last_refresh_started_at": None,   # epoch seconds
+    "last_refresh_finished_at": None,  # epoch seconds
+    "last_refresh_duration_ms": None,
+    # Backoff (prevent tight retry loops if DB is unhealthy)
+    "refresh_failures": 0,
+    "next_refresh_after": 0,  # epoch seconds
 }
+
+# Best-effort handle for the latest refresh task (debug/visibility only)
+_ops_dashboard_refresh_task = None
 
 # Rate-limit OPS_ALERT logging (once per 5 minutes max)
 _predictions_health_alert_last: float = 0
@@ -8093,6 +8333,77 @@ async def _calculate_telemetry_summary(session) -> dict:
         },
         "links": links,
     }
+
+
+async def _refresh_ops_dashboard_cache(reason: str = "unknown") -> None:
+    """Refresh ops dashboard cache in background (fail-soft)."""
+    start_ts = time.time()
+    _ops_dashboard_cache["refreshing"] = True
+    _ops_dashboard_cache["last_refresh_reason"] = reason
+    _ops_dashboard_cache["last_refresh_started_at"] = start_ts
+    _ops_dashboard_cache["last_refresh_error"] = None
+
+    try:
+        data = await _load_ops_data()
+        _ops_dashboard_cache["data"] = data
+        _ops_dashboard_cache["timestamp"] = time.time()
+        _ops_dashboard_cache["refresh_failures"] = 0
+        _ops_dashboard_cache["next_refresh_after"] = 0
+    except Exception as e:
+        # Backoff: exponential up to 5 minutes
+        failures = int(_ops_dashboard_cache.get("refresh_failures") or 0) + 1
+        _ops_dashboard_cache["refresh_failures"] = failures
+        backoff_seconds = min(300, 2 ** min(failures, 8))
+        _ops_dashboard_cache["next_refresh_after"] = time.time() + backoff_seconds
+        _ops_dashboard_cache["last_refresh_error"] = f"{type(e).__name__}: {e}"
+        logger.warning(
+            f"[OPS_DASHBOARD] Cache refresh failed ({reason}) ({type(e).__name__}): {e!r}",
+            exc_info=True,
+        )
+    finally:
+        end_ts = time.time()
+        _ops_dashboard_cache["last_refresh_finished_at"] = end_ts
+        _ops_dashboard_cache["last_refresh_duration_ms"] = int((end_ts - start_ts) * 1000)
+        _ops_dashboard_cache["refreshing"] = False
+
+
+def _schedule_ops_dashboard_cache_refresh(reason: str = "stale") -> None:
+    """
+    Schedule a cache refresh without inheriting the current request context.
+
+    Why: Sentry performance tracing can attribute async child tasks to the
+    current HTTP transaction (contextvars propagation), re-triggering the
+    "Consecutive DB Queries" alert even if we don't await the refresh.
+    """
+    import asyncio
+    import contextvars
+
+    global _ops_dashboard_refresh_task
+
+    # Avoid duplicate refreshes
+    if _ops_dashboard_cache.get("refreshing"):
+        return
+
+    # Respect backoff window after failures
+    now = time.time()
+    next_after = float(_ops_dashboard_cache.get("next_refresh_after") or 0)
+    if next_after and now < next_after:
+        return
+
+    # Mark refreshing early to prevent thundering herd scheduling
+    _ops_dashboard_cache["refreshing"] = True
+
+    try:
+        # Run task creation in a fresh (empty) Context to detach request scope.
+        ctx = contextvars.Context()
+        _ops_dashboard_refresh_task = ctx.run(
+            asyncio.create_task,
+            _refresh_ops_dashboard_cache(reason=reason),
+        )
+    except Exception as e:
+        _ops_dashboard_cache["refreshing"] = False
+        _ops_dashboard_cache["last_refresh_error"] = f"schedule_failed: {type(e).__name__}: {e}"
+        logger.warning(f"[OPS_DASHBOARD] Could not schedule cache refresh: {e!r}")
 
 
 async def _calculate_shadow_mode_summary(session) -> dict:
@@ -11602,14 +11913,45 @@ async def _load_ops_data() -> dict:
     }
 
 
-async def _get_cached_ops_data() -> dict:
+async def _get_cached_ops_data(blocking: bool = True) -> dict:
     now = time.time()
     if _ops_dashboard_cache["data"] and (now - _ops_dashboard_cache["timestamp"]) < _ops_dashboard_cache["ttl"]:
         return _ops_dashboard_cache["data"]
-    data = await _load_ops_data()
-    _ops_dashboard_cache["data"] = data
-    _ops_dashboard_cache["timestamp"] = now
-    return data
+
+    # Non-blocking mode: return stale cache and refresh in background.
+    # Used by /dashboard/ops.json to avoid heavy DB work in request path.
+    if not blocking:
+        if _ops_dashboard_cache["data"] is not None:
+            _schedule_ops_dashboard_cache_refresh(reason="stale_nonblocking")
+            return _ops_dashboard_cache["data"]
+        # Cold start: schedule refresh and return a minimal placeholder
+        _schedule_ops_dashboard_cache_refresh(reason="cold_start_nonblocking")
+        return {
+            "generated_at": datetime.utcnow().isoformat(),
+            "status": "warming_cache",
+            "note": "OPS cache warming in background (non-blocking). Retry in a few seconds.",
+        }
+
+    # Blocking mode (HTML dashboard): refresh cache, but avoid duplicate heavy work
+    # if a background refresh is already running.
+    if _ops_dashboard_cache.get("refreshing") and _ops_dashboard_cache.get("data") is not None:
+        return _ops_dashboard_cache["data"]
+
+    # Respect backoff window after failures: serve stale if we have it.
+    next_after = float(_ops_dashboard_cache.get("next_refresh_after") or 0)
+    if next_after and now < next_after and _ops_dashboard_cache.get("data") is not None:
+        return _ops_dashboard_cache["data"]
+
+    await _refresh_ops_dashboard_cache(reason="blocking_request")
+    if _ops_dashboard_cache.get("data") is not None:
+        return _ops_dashboard_cache["data"]
+
+    # Extremely rare: still no data (DB down on cold start). Fail-soft.
+    return {
+        "generated_at": datetime.utcnow().isoformat(),
+        "status": "unavailable",
+        "note": "Could not load OPS data (DB unavailable).",
+    }
 
 
 def _format_timestamp_la(ts_str: str) -> str:
@@ -13174,10 +13516,17 @@ async def ops_dashboard_html(request: Request):
 async def ops_dashboard_json(request: Request):
     if not _verify_dashboard_token(request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
-    data = await _get_cached_ops_data()
+    # Non-blocking: avoid running the heavy ops query bundle in the request path.
+    # Return stale cache (if any) and refresh in background.
+    data = await _get_cached_ops_data(blocking=False)
     return {
         "data": data,
         "cache_age_seconds": round(time.time() - _ops_dashboard_cache["timestamp"], 1) if _ops_dashboard_cache["timestamp"] else None,
+        "cache_ttl_seconds": _ops_dashboard_cache.get("ttl"),
+        "cache_refreshing": bool(_ops_dashboard_cache.get("refreshing")),
+        "cache_last_refresh_error": _ops_dashboard_cache.get("last_refresh_error"),
+        "cache_last_refresh_duration_ms": _ops_dashboard_cache.get("last_refresh_duration_ms"),
+        "cache_last_refresh_finished_at": _ops_dashboard_cache.get("last_refresh_finished_at"),
     }
 
 
