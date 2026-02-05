@@ -3700,8 +3700,11 @@ async def get_league_standings(
             season = _season_for_league(league_id, current_date)
 
         # L1: Memory cache (check truthiness - empty list means no data)
-        standings = _get_cached_standings(league_id, season)
-        if standings:
+        # IMPORTANT: deepcopy to avoid mutating cache when applying translations
+        cached_standings = _get_cached_standings(league_id, season)
+        if cached_standings:
+            import copy
+            standings = copy.deepcopy(cached_standings)
             source = "cache"
         else:
             # L2: Database
