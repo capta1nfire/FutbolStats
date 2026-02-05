@@ -256,7 +256,11 @@ function StandingsTable({
             const teamClickable = entry.teamId > 0 && onTeamSelect;
 
             return (
-              <tr key={entry.position} className="border-b border-border last:border-0 hover:bg-muted/30">
+              <tr
+                key={entry.position}
+                className={cn("border-b border-border last:border-0 hover:bg-accent/50", teamClickable && "cursor-pointer")}
+                onClick={teamClickable ? () => onTeamSelect(entry.teamId) : undefined}
+              >
                 <td className="text-center py-1.5 px-2">
                   <QualificationBadge value={entry.position} active={entry.position <= 8} />
                 </td>
@@ -267,16 +271,9 @@ function StandingsTable({
                     ) : (
                       <Globe className="h-4 w-4 text-muted-foreground" />
                     )}
-                    {teamClickable ? (
-                      <button
-                        onClick={() => onTeamSelect(entry.teamId)}
-                        className="text-primary hover:text-primary-hover transition-colors no-underline hover:no-underline text-left truncate"
-                      >
-                        {useShortNames ? entry.displayName : entry.teamName}
-                      </button>
-                    ) : (
-                      <span className="text-foreground truncate">{useShortNames ? entry.displayName : entry.teamName}</span>
-                    )}
+                    <span className="truncate text-foreground">
+                      {useShortNames ? entry.displayName : entry.teamName}
+                    </span>
                     {entry.description && entry.position > 8 && (
                       <span className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
                         {entry.description}
@@ -403,7 +400,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick }
           <div
             className={cn(
               "rounded-lg border border-border overflow-hidden w-full min-w-0",
-              selectedTeamId !== null ? "lg:w-[30%]" : "lg:max-w-[30%] lg:mr-auto"
+              selectedTeamId !== null ? "lg:w-[40%]" : "lg:max-w-[40%] lg:mr-auto"
             )}
           >
             {/* League header */}
@@ -548,7 +545,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick }
 
           {/* Club container (only when selected) */}
           {selectedTeamId !== null && (
-            <div className="flex flex-col gap-4 w-full lg:w-[48%] min-w-0">
+            <div className="flex flex-col gap-4 w-full lg:w-[40%] min-w-0">
               {/* Team Header */}
               <div className="rounded-lg border border-border px-4 py-3 flex items-center gap-3">
                 {selectedTeam.data?.team?.logo_url ? (
