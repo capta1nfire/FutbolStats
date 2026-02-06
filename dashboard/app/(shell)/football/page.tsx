@@ -263,14 +263,14 @@ function FootballPageContent() {
     router.replace(
       buildFootballUrl({
         category,
-        country,
+        country: null,
         league: null,
         group: null,
         team: teamId,
       }),
       { scroll: false }
     );
-  }, [router, category, country, teamId]);
+  }, [router, category, teamId]);
 
   const handleBackToTournaments = useCallback(() => {
     router.replace(
