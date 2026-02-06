@@ -544,6 +544,17 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
   }, [initialTeamId]);
   const { data, isLoading, error, refetch } = useFootballLeague(leagueId);
   const { data: standingsData, isLoading: isStandingsLoading } = useStandings(leagueId, { group: selectedGroup });
+
+  // Auto-select first team in standings when data loads and no team is selected
+  useEffect(() => {
+    if (!selectedTeamId && standingsData?.standings?.length) {
+      const firstTeam = standingsData.standings[0];
+      if (firstTeam.teamId > 0) {
+        setSelectedTeamId(firstTeam.teamId);
+        onTeamSelect(firstTeam.teamId);
+      }
+    }
+  }, [standingsData, selectedTeamId, onTeamSelect]);
   const selectedTeam = useFootballTeam(selectedTeamId);
 
   // MUST be called on every render (Rules of Hooks). Keep defensive for loading/error.
