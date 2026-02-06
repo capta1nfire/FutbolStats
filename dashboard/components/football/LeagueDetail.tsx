@@ -241,10 +241,12 @@ function StandingsTable({
   standings,
   onTeamSelect,
   useShortNames = false,
+  selectedTeamId,
 }: {
   standings: StandingEntry[];
   onTeamSelect?: (teamId: number) => void;
   useShortNames?: boolean;
+  selectedTeamId?: number | null;
 }) {
   if (standings.length === 0) {
     return (
@@ -273,11 +275,16 @@ function StandingsTable({
         <tbody>
           {standings.map((entry) => {
             const teamClickable = entry.teamId > 0 && onTeamSelect;
+            const isSelected = selectedTeamId != null && entry.teamId === selectedTeamId;
 
             return (
               <tr
                 key={entry.position}
-                className={cn("border-b border-border last:border-0 hover:bg-accent/50", teamClickable && "cursor-pointer")}
+                className={cn(
+                  "border-b border-border last:border-0",
+                  isSelected ? "bg-[var(--row-selected)]" : "hover:bg-accent/50",
+                  teamClickable && "cursor-pointer"
+                )}
                 onClick={teamClickable ? () => onTeamSelect(entry.teamId) : undefined}
               >
                 <td className="text-center py-1.5 px-2">
@@ -841,6 +848,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                     standings={standingsData.standings}
                     onTeamSelect={handleTeamSelect}
                     useShortNames={league.tags?.use_short_names ?? false}
+                    selectedTeamId={selectedTeamId}
                   />
                 ) : (
                   <div className="px-4 py-4 text-sm text-muted-foreground">
