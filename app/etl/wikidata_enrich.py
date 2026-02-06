@@ -31,36 +31,67 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+# ABE Fix Phase 1b: Use rdfs:label explicitly + MAX(capacity) to select main stadium
+# SERVICE wikibase:label doesn't resolve labels for nested/referenced entities reliably
+# SAMPLE() bug: picks arbitrary stadium when team has multiple P115 values
+# Solution: Use subquery to select stadium with MAX capacity (main stadium heuristic)
 SPARQL_QUERY_TEMPLATE = """
 SELECT ?team ?teamLabel ?fullName ?shortName
        ?stadium ?stadiumLabel ?capacity ?altitude ?stadiumCoords
        ?adminLocation ?adminLocationLabel
        ?website ?twitter ?instagram
 WHERE {{
-  BIND(wd:{qid} AS ?team)
+  VALUES ?team {{ wd:{qid} }}
+
+  # Team label
+  OPTIONAL {{
+    ?team rdfs:label ?teamLabel .
+    FILTER(LANG(?teamLabel) IN ("es", "en"))
+  }}
 
   # Official names
-  OPTIONAL {{ ?team wdt:P1448 ?fullName . }}
-  OPTIONAL {{ ?team wdt:P1813 ?shortName . }}
-
-  # PRIORITY: Stadium (P115) and its properties - coords from STADIUM
   OPTIONAL {{
-    ?team wdt:P115 ?stadium .
-    OPTIONAL {{ ?stadium wdt:P1083 ?capacity . }}
+    ?team wdt:P1448 ?fullName .
+    FILTER(LANG(?fullName) IN ("es", "en", ""))
+  }}
+  OPTIONAL {{
+    ?team wdt:P1813 ?shortName .
+    FILTER(LANG(?shortName) IN ("es", "en", ""))
+  }}
+
+  # Stadium: Select the one with MAX capacity using subquery
+  OPTIONAL {{
+    {{
+      SELECT ?stadium (MAX(?cap) AS ?capacity) WHERE {{
+        wd:{qid} wdt:P115 ?stadium .
+        OPTIONAL {{ ?stadium wdt:P1083 ?cap . }}
+      }}
+      GROUP BY ?stadium
+      ORDER BY DESC(?capacity)
+      LIMIT 1
+    }}
+    # Get stadium details
+    OPTIONAL {{
+      ?stadium rdfs:label ?stadiumLabel .
+      FILTER(LANG(?stadiumLabel) IN ("es", "en"))
+    }}
     OPTIONAL {{ ?stadium wdt:P2044 ?altitude . }}
     OPTIONAL {{ ?stadium wdt:P625 ?stadiumCoords . }}
   }}
 
-  # Admin location (P131) - ONLY as informational label, NOT as truth
-  # ABE: P131 is noisy, can be district/neighborhood/region
-  OPTIONAL {{ ?team wdt:P131 ?adminLocation . }}
+  # Admin location (P131)
+  OPTIONAL {{
+    ?team wdt:P131 ?adminLocation .
+    OPTIONAL {{
+      ?adminLocation rdfs:label ?adminLocationLabel .
+      FILTER(LANG(?adminLocationLabel) IN ("es", "en"))
+    }}
+  }}
 
   # Web/Social
   OPTIONAL {{ ?team wdt:P856 ?website . }}
   OPTIONAL {{ ?team wdt:P2002 ?twitter . }}
   OPTIONAL {{ ?team wdt:P2003 ?instagram . }}
-
-  SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en,es". }}
 }}
 LIMIT 1
 """

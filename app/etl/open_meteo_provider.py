@@ -480,6 +480,159 @@ class OpenMeteoProvider:
             confidence=0.85,
         )
 
+    # =========================================================================
+    # ELEVATION
+    # =========================================================================
+
+    ELEVATION_URL = "https://api.open-meteo.com/v1/elevation"
+
+    async def get_elevation(
+        self,
+        lat: float,
+        lon: float,
+    ) -> Optional[int]:
+        """
+        Get elevation for a single coordinate pair.
+
+        Args:
+            lat: Latitude (-90 to 90)
+            lon: Longitude (-180 to 180)
+
+        Returns:
+            Elevation in meters (int), or None if unavailable.
+        """
+        result = await self.get_elevations_batch([(lat, lon)])
+        return result[0] if result else None
+
+    async def get_elevations_batch(
+        self,
+        coordinates: list[tuple[float, float]],
+    ) -> list[Optional[int]]:
+        """
+        Get elevations for multiple coordinates in a single request.
+
+        Open-Meteo supports up to 100 coordinates per request.
+
+        Args:
+            coordinates: List of (lat, lon) tuples.
+
+        Returns:
+            List of elevations in meters (int), None for failed lookups.
+            Order matches input coordinates.
+        """
+        if not coordinates:
+            return []
+
+        # Validate coordinates
+        valid_coords = []
+        for lat, lon in coordinates:
+            if lat is None or lon is None:
+                valid_coords.append((None, None))
+            elif not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                logger.warning(f"Invalid coordinates: lat={lat}, lon={lon}")
+                valid_coords.append((None, None))
+            else:
+                valid_coords.append((lat, lon))
+
+        # Filter out invalid coords for the request
+        request_coords = [(lat, lon) for lat, lon in valid_coords if lat is not None]
+
+        if not request_coords:
+            return [None] * len(coordinates)
+
+        if self.use_mock:
+            return self._get_mock_elevations(coordinates)
+
+        try:
+            session = await self._get_session()
+
+            # Build comma-separated lat/lon strings
+            lats = ",".join(str(lat) for lat, _ in request_coords)
+            lons = ",".join(str(lon) for _, lon in request_coords)
+
+            params = {
+                "latitude": lats,
+                "longitude": lons,
+            }
+
+            async with session.get(self.ELEVATION_URL, params=params) as response:
+                if response.status != 200:
+                    logger.warning(f"Open-Meteo Elevation API error: {response.status}")
+                    return [None] * len(coordinates)
+
+                data = await response.json()
+                elevations_raw = data.get("elevation", [])
+
+                # Parse elevations, handling None/NaN
+                elevations_parsed = []
+                for elev in elevations_raw:
+                    if elev is None or (isinstance(elev, float) and (elev != elev)):  # NaN check
+                        elevations_parsed.append(None)
+                    else:
+                        try:
+                            elevations_parsed.append(int(round(elev)))
+                        except (ValueError, TypeError):
+                            elevations_parsed.append(None)
+
+                # Map back to original order (including invalid coords as None)
+                result = []
+                elev_idx = 0
+                for lat, lon in valid_coords:
+                    if lat is None:
+                        result.append(None)
+                    else:
+                        if elev_idx < len(elevations_parsed):
+                            result.append(elevations_parsed[elev_idx])
+                            elev_idx += 1
+                        else:
+                            result.append(None)
+
+                return result
+
+        except aiohttp.ClientError as e:
+            logger.error(f"Elevation request failed: {e}")
+            return [None] * len(coordinates)
+        except Exception as e:
+            logger.error(f"Elevation unexpected error: {e}")
+            return [None] * len(coordinates)
+
+    def _get_mock_elevations(
+        self,
+        coordinates: list[tuple[float, float]],
+    ) -> list[Optional[int]]:
+        """Return mock elevation data for testing."""
+        import random
+
+        # High altitude cities for realistic mocks
+        high_altitude = {
+            # Colombia
+            (4.6, -74.1): 2640,   # Bogotá
+            (6.2, -75.6): 1495,   # Medellín
+            (4.8, -75.7): 1411,   # Pereira
+            # Bolivia
+            (-16.5, -68.1): 3640, # La Paz
+            # Ecuador
+            (-0.2, -78.5): 2850,  # Quito
+            # Mexico
+            (19.4, -99.1): 2240,  # Mexico City
+        }
+
+        result = []
+        for lat, lon in coordinates:
+            if lat is None or lon is None:
+                result.append(None)
+                continue
+            # Check if near a known high altitude city
+            for (klat, klon), elev in high_altitude.items():
+                if abs(lat - klat) < 0.5 and abs(lon - klon) < 0.5:
+                    result.append(elev + random.randint(-50, 50))
+                    break
+            else:
+                # Random low altitude
+                result.append(random.randint(10, 500))
+
+        return result
+
     async def close(self) -> None:
         """Close the aiohttp session."""
         if self._session and not self._session.closed:
