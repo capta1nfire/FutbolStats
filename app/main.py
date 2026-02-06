@@ -535,6 +535,158 @@ async def _calculate_standings_from_results(session, league_id: int, season: int
     return standings
 
 
+async def _calculate_reclasificacion(session, league_id: int, season: int) -> dict | None:
+    """
+    Calculate reclasificación table (accumulated Apertura + Clausura).
+
+    Phase 3 of League Format Configuration system.
+    Only called when rules_json.reclasificacion.enabled = true.
+
+    ABE P0 Guardrails:
+    - Only regular phase matches (exclude Quadrangulares/Play Offs/Final)
+    - Return None if either Apertura or Clausura has 0 matches (missing_phase)
+    - Fail-closed on team_id duplicates
+    - Single query + in-memory aggregation (no N+1)
+
+    Args:
+        session: Database session
+        league_id: League ID
+        season: Season year
+
+    Returns:
+        Dict with data + metadata, or None if not available.
+    """
+    # Single query: fetch all regular-phase FT matches with team info
+    result = await session.execute(
+        text("""
+            SELECT m.home_team_id, m.away_team_id, m.home_goals, m.away_goals,
+                   ht.external_id, ht.name, ht.logo_url,
+                   awt.external_id, awt.name, awt.logo_url,
+                   m.round
+            FROM matches m
+            JOIN teams ht ON ht.id = m.home_team_id
+            JOIN teams awt ON awt.id = m.away_team_id
+            WHERE m.league_id = :league_id
+              AND m.season = :season
+              AND m.status IN ('FT', 'AET', 'PEN')
+              AND m.home_goals IS NOT NULL
+              AND m.away_goals IS NOT NULL
+              AND (m.round LIKE 'Apertura - %' OR m.round LIKE 'Clausura - %')
+              AND m.round NOT LIKE '%Quadrangular%'
+              AND m.round NOT LIKE '%Play Offs%'
+        """),
+        {"league_id": league_id, "season": season},
+    )
+    rows = result.fetchall()
+
+    # Early return: not enough matches (< 20 = less than 1 full matchday)
+    if len(rows) < 20:
+        logger.info(
+            f"[RECLASIFICACION] Skipped league {league_id}: only {len(rows)} "
+            f"regular-phase matches (need >= 20)"
+        )
+        return None
+
+    # Count matches per phase
+    apertura_count = sum(1 for r in rows if r[10].startswith("Apertura"))
+    clausura_count = sum(1 for r in rows if r[10].startswith("Clausura"))
+
+    # ABE P0: Missing phase → null + log
+    if apertura_count == 0:
+        logger.warning(
+            f"[RECLASIFICACION] missing_phase: Apertura for league {league_id} season {season}"
+        )
+        return None
+    if clausura_count == 0:
+        logger.warning(
+            f"[RECLASIFICACION] missing_phase: Clausura for league {league_id} season {season}"
+        )
+        return None
+
+    # Aggregate stats in-memory (keyed by internal team_id)
+    stats: dict[int, dict] = {}
+
+    for row in rows:
+        home_id, away_id, hg, ag = row[0], row[1], row[2], row[3]
+        # row[4..6] = home team external_id, name, logo
+        # row[7..9] = away team external_id, name, logo
+
+        # Initialize teams if not seen
+        for tid, ext_id, name, logo in [
+            (home_id, row[4], row[5], row[6]),
+            (away_id, row[7], row[8], row[9]),
+        ]:
+            if tid not in stats:
+                stats[tid] = {
+                    "team_id": ext_id,
+                    "team_name": name,
+                    "team_logo": logo,
+                    "points": 0, "played": 0, "won": 0, "drawn": 0, "lost": 0,
+                    "goals_for": 0, "goals_against": 0, "goal_diff": 0,
+                }
+
+        # Home team stats
+        stats[home_id]["played"] += 1
+        stats[home_id]["goals_for"] += hg
+        stats[home_id]["goals_against"] += ag
+
+        # Away team stats
+        stats[away_id]["played"] += 1
+        stats[away_id]["goals_for"] += ag
+        stats[away_id]["goals_against"] += hg
+
+        if hg > ag:
+            stats[home_id]["won"] += 1
+            stats[home_id]["points"] += 3
+            stats[away_id]["lost"] += 1
+        elif hg < ag:
+            stats[away_id]["won"] += 1
+            stats[away_id]["points"] += 3
+            stats[home_id]["lost"] += 1
+        else:
+            stats[home_id]["drawn"] += 1
+            stats[home_id]["points"] += 1
+            stats[away_id]["drawn"] += 1
+            stats[away_id]["points"] += 1
+
+    # Calculate goal_diff
+    for s in stats.values():
+        s["goal_diff"] = s["goals_for"] - s["goals_against"]
+
+    # ABE P0: Validate no duplicate team_id (fail-closed)
+    ext_ids = [s["team_id"] for s in stats.values()]
+    if len(ext_ids) != len(set(ext_ids)):
+        logger.error(
+            f"[RECLASIFICACION] duplicate team_id detected for league {league_id} "
+            f"season {season}. Aborting reclasificacion."
+        )
+        return None
+
+    # Sort: points DESC, goal_diff DESC, goals_for DESC, team_name ASC
+    sorted_teams = sorted(
+        stats.values(),
+        key=lambda x: (-x["points"], -x["goal_diff"], -x["goals_for"], x["team_name"]),
+    )
+
+    # Add position
+    data = []
+    for idx, team in enumerate(sorted_teams, start=1):
+        data.append({"position": idx, **team})
+
+    logger.info(
+        f"[RECLASIFICACION] Calculated for league {league_id} season {season}: "
+        f"{len(data)} teams, apertura={apertura_count} clausura={clausura_count} "
+        f"total={len(rows)}"
+    )
+
+    return {
+        "data": data,
+        "apertura_matches": apertura_count,
+        "clausura_matches": clausura_count,
+        "total_matches": len(rows),
+    }
+
+
 async def _generate_placeholder_standings(session, league_id: int, season: int) -> list:
     """
     Generate placeholder standings for a league when API data is not yet available.
@@ -3904,6 +4056,21 @@ async def get_league_standings(
         if zones_config.get("enabled", False):
             apply_zones(view_result.standings, zones_config)
 
+        # Phase 3: Reclasificación (accumulated Apertura + Clausura)
+        reclasificacion = None
+        reclasificacion_config = rules_json.get("reclasificacion", {})
+        if reclasificacion_config.get("enabled", False):
+            try:
+                reclasificacion = await _calculate_reclasificacion(
+                    session=session,
+                    league_id=league_id,
+                    season=season,
+                )
+            except Exception as e:
+                logger.error(
+                    f"[STANDINGS] Error calculating reclasificacion for league {league_id}: {e}"
+                )
+
         # ABE P0: Backwards-compatible response with added `meta` field
         return {
             "league_id": league_id,
@@ -3919,6 +4086,7 @@ async def get_league_standings(
                 "tie_warning": view_result.tie_warning,
                 "zones_source": zones_config.get("source") if zones_config.get("enabled", False) else None,
             },
+            "reclasificacion": reclasificacion,
         }
     except HTTPException:
         raise
