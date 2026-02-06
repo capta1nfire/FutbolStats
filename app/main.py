@@ -698,7 +698,10 @@ async def _get_season_team_stats_from_standings(
     Get per-team points/played for a season from stored standings.
 
     Looks for Apertura + Clausura groups and sums them.
-    Returns {external_team_id: {points, played, goals_for, goals_against, ...}} or None.
+    Returns {internal_team_id: {points, played, goals_for, goals_against, ...}} or None.
+
+    ABE P0: Translates external_id (API-Football) → internal id (teams.id)
+    before returning to avoid ID collisions across leagues.
     """
     result = await session.execute(
         text("SELECT standings FROM league_standings WHERE league_id = :lid AND season = :s"),
@@ -739,7 +742,9 @@ async def _get_season_team_stats_from_standings(
                         "goals_for": int(e.get("goals_for") or 0),
                         "goals_against": int(e.get("goals_against") or 0),
                     }
-            return team_stats if team_stats else None
+            if team_stats:
+                return await _translate_ext_to_int_ids(session, team_stats)
+            return None
         return None
 
     # Sum Apertura + Clausura per team
@@ -761,7 +766,43 @@ async def _get_season_team_stats_from_standings(
             team_stats[tid]["goals_for"] += int(e.get("goals_for") or 0)
             team_stats[tid]["goals_against"] += int(e.get("goals_against") or 0)
 
-    return team_stats if team_stats else None
+    if not team_stats:
+        return None
+    return await _translate_ext_to_int_ids(session, team_stats)
+
+
+async def _translate_ext_to_int_ids(
+    session, team_stats: dict[int, dict]
+) -> dict[int, dict] | None:
+    """
+    Translate team_stats keyed by external_id to internal_id.
+
+    ABE P0: Prevents ID collisions where a Colombian team's external_id
+    matches a European team's internal_id (e.g., Jaguares ext=1133 vs Espanyol id=1133).
+    """
+    ext_ids = list(team_stats.keys())
+    if not ext_ids:
+        return None
+
+    id_result = await session.execute(
+        text("SELECT id, external_id FROM teams WHERE external_id IN :eids").bindparams(
+            bindparam("eids", expanding=True)
+        ),
+        {"eids": ext_ids},
+    )
+    ext_to_int = {r.external_id: r.id for r in id_result.fetchall()}
+
+    translated: dict[int, dict] = {}
+    for ext_id, stats in team_stats.items():
+        internal_id = ext_to_int.get(ext_id)
+        if internal_id is not None:
+            translated[internal_id] = stats
+        else:
+            # Team not found in our DB — keep external_id as fallback
+            logger.warning(f"[DESCENSO] No internal_id for external_id {ext_id}")
+            translated[ext_id] = stats
+
+    return translated if translated else None
 
 
 async def _get_season_team_stats_from_matches(
@@ -972,47 +1013,35 @@ async def _calculate_descenso(
         )
         stats["goal_diff"] = stats["goals_for"] - stats["goals_against"]
 
-    # Resolve team names/logos (standings use external_id, matches use internal)
-    # Get all team info for IDs in accumulated
+    # Resolve team names/logos
+    # ABE P0: All IDs in accumulated are now internal (translated in standings helper)
     all_ids = list(accumulated.keys())
     team_info_result = await session.execute(
-        text("""
-            SELECT id, external_id, name, logo_url FROM teams
-            WHERE id IN :ids OR external_id IN :ids
-        """).bindparams(bindparam("ids", expanding=True)),
+        text("SELECT id, name, logo_url FROM teams WHERE id IN :ids").bindparams(
+            bindparam("ids", expanding=True)
+        ),
         {"ids": all_ids},
     )
     team_rows = team_info_result.fetchall()
 
-    # Build lookup: both internal and external id → team info
+    # Build lookup: internal id → team info
     id_lookup: dict[int, dict] = {}
     for r in team_rows:
-        info = {"internal_id": r[0], "external_id": r[1], "name": r[2], "logo": r[3]}
-        id_lookup[r[0]] = info  # internal id
-        id_lookup[r[1]] = info  # external id
+        id_lookup[r[0]] = {"name": r[1], "logo": r[2]}
 
-    # Normalize all to internal id and merge duplicates
+    # Build normalized data (all IDs already internal, no merging needed)
     normalized: dict[int, dict] = {}
     for tid, stats in accumulated.items():
         info = id_lookup.get(tid)
         if not info:
+            logger.warning(f"[DESCENSO] Team id {tid} not found in teams table. Skipping.")
             continue
-        internal_id = info["internal_id"]
-        if internal_id in normalized:
-            # Merge (same team referenced by different id across seasons)
-            for k in ["points", "played", "goals_for", "goals_against"]:
-                normalized[internal_id][k] += stats[k]
-            # Recalculate
-            n = normalized[internal_id]
-            n["average"] = round(n["points"] / n["played"], 4) if n["played"] > 0 else 0.0
-            n["goal_diff"] = n["goals_for"] - n["goals_against"]
-        else:
-            normalized[internal_id] = {
-                **stats,
-                "team_id": internal_id,
-                "team_name": info["name"],
-                "team_logo": info["logo"],
-            }
+        normalized[tid] = {
+            **stats,
+            "team_id": tid,
+            "team_name": info["name"],
+            "team_logo": info["logo"],
+        }
 
     # ABE P0: Validate no duplicate team_id
     if len(normalized) < 10:
