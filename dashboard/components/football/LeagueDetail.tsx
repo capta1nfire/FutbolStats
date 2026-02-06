@@ -447,7 +447,7 @@ function DescensoTable({
           </tr>
         </thead>
         <tbody>
-          {data.data.map((entry) => (
+          {[...data.data].reverse().map((entry) => (
             <tr
               key={entry.team_id}
               className={cn(
@@ -465,7 +465,7 @@ function DescensoTable({
                   ) : (
                     <Globe className="h-4 w-4 text-muted-foreground" />
                   )}
-                  <span className="truncate text-foreground">{entry.team_name}</span>
+                  <span className="truncate text-foreground">{entry.display_name || entry.team_name}</span>
                   {entry.zone?.type === "relegation_risk" && (
                     <span className="text-[10px] px-1 py-0.5 rounded bg-red-500/10 text-red-400 shrink-0">
                       Relegation Risk

@@ -197,6 +197,7 @@ export interface DescensoEntry {
   position: number;
   team_id: number;
   team_name: string;
+  display_name?: string;
   team_logo: string | null;
   points: number;
   played: number;

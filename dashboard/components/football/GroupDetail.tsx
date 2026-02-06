@@ -164,6 +164,8 @@ function RecentMatchesList({
     status: string;
     home_team: string;
     away_team: string;
+    home_display_name?: string;
+    away_display_name?: string;
     home_team_id?: number;
     away_team_id?: number;
     score: string | null;
@@ -201,10 +203,10 @@ function RecentMatchesList({
                     onClick={() => onTeamSelect(match.home_team_id!)}
                     className="text-primary hover:text-primary-hover transition-colors no-underline hover:no-underline"
                   >
-                    {match.home_team}
+                    {match.home_display_name ?? match.home_team}
                   </button>
                 ) : (
-                  <span>{match.home_team}</span>
+                  <span>{match.home_display_name ?? match.home_team}</span>
                 )}
                 <span className="text-muted-foreground"> vs </span>
                 {match.away_team_id && onTeamSelect ? (
@@ -212,10 +214,10 @@ function RecentMatchesList({
                     onClick={() => onTeamSelect(match.away_team_id!)}
                     className="text-primary hover:text-primary-hover transition-colors no-underline hover:no-underline"
                   >
-                    {match.away_team}
+                    {match.away_display_name ?? match.away_team}
                   </button>
                 ) : (
-                  <span>{match.away_team}</span>
+                  <span>{match.away_display_name ?? match.away_team}</span>
                 )}
               </p>
             </div>

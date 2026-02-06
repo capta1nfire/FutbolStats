@@ -1049,11 +1049,18 @@ async def _calculate_descenso(
         )
         stats["goal_diff"] = stats["goals_for"] - stats["goals_against"]
 
-    # Resolve team names/logos
+    # Resolve team names/logos with display_name (COALESCE pattern from TEAM_ENRICHMENT_SYSTEM.md)
     # ABE P0: All IDs in accumulated are now internal (translated in standings helper)
     all_ids = list(accumulated.keys())
     team_info_result = await session.execute(
-        text("SELECT id, name, logo_url FROM teams WHERE id IN :ids").bindparams(
+        text("""
+            SELECT t.id, t.name, t.logo_url,
+                   COALESCE(teo.short_name, twe.short_name, t.name) AS display_name
+            FROM teams t
+            LEFT JOIN team_enrichment_overrides teo ON t.id = teo.team_id
+            LEFT JOIN team_wikidata_enrichment twe ON t.id = twe.team_id
+            WHERE t.id IN :ids
+        """).bindparams(
             bindparam("ids", expanding=True)
         ),
         {"ids": all_ids},
@@ -1063,7 +1070,7 @@ async def _calculate_descenso(
     # Build lookup: internal id → team info
     id_lookup: dict[int, dict] = {}
     for r in team_rows:
-        id_lookup[r[0]] = {"name": r[1], "logo": r[2]}
+        id_lookup[r[0]] = {"name": r[1], "logo": r[2], "display_name": r[3]}
 
     # Build normalized data (all IDs already internal, no merging needed)
     normalized: dict[int, dict] = {}
@@ -1076,6 +1083,7 @@ async def _calculate_descenso(
             **stats,
             "team_id": tid,
             "team_name": info["name"],
+            "display_name": info["display_name"],
             "team_logo": info["logo"],
         }
 
@@ -1100,6 +1108,7 @@ async def _calculate_descenso(
             "position": idx,
             "team_id": team["team_id"],
             "team_name": team["team_name"],
+            "display_name": team["display_name"],
             "team_logo": team["team_logo"],
             "points": team["points"],
             "played": team["played"],
@@ -14418,6 +14427,8 @@ async def get_upcoming_matches_dashboard(
             Match.id,
             Match.date,
             Match.league_id,
+            Match.home_team_id,
+            Match.away_team_id,
             home_team.name.label("home_name"),
             away_team.name.label("away_name"),
             has_prediction_subq.label("has_prediction"),
@@ -14434,6 +14445,23 @@ async def get_upcoming_matches_dashboard(
     result = await session.execute(query)
     rows = result.all()
 
+    # Batch resolve display_names (COALESCE: override > wikidata > name)
+    all_team_ids = list({r.home_team_id for r in rows} | {r.away_team_id for r in rows}) if rows else []
+    display_map: dict[int, str] = {}
+    if all_team_ids:
+        dn_result = await session.execute(
+            text("""
+                SELECT t.id AS team_id,
+                       COALESCE(teo.short_name, twe.short_name, t.name) AS display_name
+                FROM teams t
+                LEFT JOIN team_enrichment_overrides teo ON t.id = teo.team_id
+                LEFT JOIN team_wikidata_enrichment twe ON t.id = twe.team_id
+                WHERE t.id = ANY(:team_ids)
+            """),
+            {"team_ids": all_team_ids}
+        )
+        display_map = {r.team_id: r.display_name for r in dn_result.fetchall()}
+
     # Build league name lookup from COMPETITIONS (single source of truth)
     from app.etl.competitions import COMPETITIONS
     league_name_by_id: dict[int, str] = {
@@ -14447,6 +14475,8 @@ async def get_upcoming_matches_dashboard(
             "id": row.id,
             "home": row.home_name,
             "away": row.away_name,
+            "home_display_name": display_map.get(row.home_team_id, row.home_name),
+            "away_display_name": display_map.get(row.away_team_id, row.away_name),
             "kickoff_iso": row.date.isoformat() + "Z" if row.date else None,
             "league_name": league_name_by_id.get(row.league_id, f"League {row.league_id}"),
             "has_prediction": bool(row.has_prediction),

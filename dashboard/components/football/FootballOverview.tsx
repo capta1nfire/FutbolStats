@@ -74,6 +74,8 @@ function UpcomingMatchRow({
     league_name: string;
     home_team: string;
     away_team: string;
+    home_display_name?: string;
+    away_display_name?: string;
     status: string;
     has_prediction: boolean;
   };
@@ -94,7 +96,7 @@ function UpcomingMatchRow({
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-foreground truncate">
-          {match.home_team} vs {match.away_team}
+          {match.home_display_name ?? match.home_team} vs {match.away_display_name ?? match.away_team}
         </p>
         <p className="text-xs text-muted-foreground truncate">{match.league_name}</p>
       </div>

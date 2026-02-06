@@ -545,7 +545,7 @@ export function MatchesTable({
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <span className="font-medium text-foreground truncate max-w-[180px]">
-                                {match.home}
+                                {match.homeDisplayName}
                               </span>
                             </TooltipTrigger>
                             <TooltipContent side="top">
@@ -562,7 +562,7 @@ export function MatchesTable({
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <span className="text-muted-foreground text-sm truncate max-w-[180px]">
-                                {match.away}
+                                {match.awayDisplayName}
                               </span>
                             </TooltipTrigger>
                             <TooltipContent side="top">
