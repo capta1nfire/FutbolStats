@@ -239,3 +239,111 @@ def detect_standings_tie(groups: dict[str, list[dict]]) -> Optional[list[str]]:
     if len(tied) > 1:
         return tied
     return None
+
+
+# --- Phase 2: Zones/Badges ---
+
+# Zone mappings: API-Football description keyword -> structured zone info
+# ABE P0: No generic "play" keyword - use specific matches to avoid
+# false positives with "display"/"player"/etc.
+_ZONE_MAPPINGS = [
+    ("champions league", {"type": "promotion", "tournament": "Champions League", "style": "blue"}),
+    ("europa league", {"type": "promotion", "tournament": "Europa League", "style": "orange"}),
+    ("conference league", {"type": "promotion", "tournament": "Conference League", "style": "green"}),
+    ("libertadores", {"type": "promotion", "tournament": "Copa Libertadores", "style": "blue"}),
+    ("sudamericana", {"type": "promotion", "tournament": "Copa Sudamericana", "style": "orange"}),
+    ("championship round", {"type": "playoff", "description": "Championship Round", "style": "cyan"}),
+    ("qualifying round", {"type": "playoff", "description": "Qualifying Round", "style": "gray"}),
+    ("group matches", {"type": "playoff", "style": "cyan"}),
+    # ABE P0: Specific playoff patterns only - no bare "play"
+    ("playoff", {"type": "playoff", "style": "cyan"}),
+    ("play-off", {"type": "playoff", "style": "cyan"}),
+    ("play offs", {"type": "playoff", "style": "cyan"}),
+    ("relegation", {"type": "relegation", "style": "red"}),
+    ("descenso", {"type": "relegation", "style": "red"}),
+]
+
+
+def parse_api_zone_description(description: str) -> Optional[dict]:
+    """
+    Parse API-Football zone description to structured zone format.
+
+    Maps known keywords to {type, tournament?, description?, style}.
+    Falls back to generic "other" zone for unrecognized descriptions.
+
+    ABE P0: Uses specific keyword matches (not bare "play") to avoid
+    false positives with words like "display"/"player".
+    """
+    if not description:
+        return None
+
+    desc_lower = description.lower()
+
+    for keyword, zone in _ZONE_MAPPINGS:
+        if keyword in desc_lower:
+            return dict(zone)  # Return copy to avoid mutating template
+
+    return {"type": "other", "description": description, "style": "gray"}
+
+
+def apply_zones(standings: list[dict], zones_config: dict) -> list[dict]:
+    """
+    Apply zone information to standings entries.
+
+    ABE P0: Early return without adding 'zone' key when zones_config
+    is empty or enabled=false (backwards compatible).
+
+    Priority for zone assignment:
+    1. Manual overrides from zones_config.overrides (by position range)
+    2. API-Football description field (parsed via parse_api_zone_description)
+    3. None if neither applies
+
+    ABE P1: Tolerates missing 'position' with fallback to 'rank'.
+    Leaves zone=None without breaking if position can't be determined.
+
+    Args:
+        standings: List of standings entries (mutated in-place)
+        zones_config: rules_json.zones config dict
+
+    Returns:
+        Same list with 'zone' field added to each entry
+    """
+    # ABE P0: Early return - don't add zone key at all
+    if not zones_config or not zones_config.get("enabled", False):
+        return standings
+
+    overrides = zones_config.get("overrides", {})
+
+    for entry in standings:
+        # ABE P1: Fallback to rank if position missing
+        # ABE nit: Cast to int defensively in case source sends string
+        raw_pos = entry.get("position") or entry.get("rank")
+        try:
+            pos = int(raw_pos) if raw_pos is not None else None
+        except (ValueError, TypeError):
+            pos = None
+
+        zone = None
+
+        # 1. Check manual overrides by position range
+        if pos is not None:
+            for range_str, zone_config in overrides.items():
+                try:
+                    if "-" in str(range_str):
+                        start, end = map(int, str(range_str).split("-"))
+                        if start <= pos <= end:
+                            zone = dict(zone_config)  # Copy to avoid mutation
+                            break
+                    elif int(range_str) == pos:
+                        zone = dict(zone_config)
+                        break
+                except (ValueError, TypeError):
+                    continue
+
+        # 2. Fallback to API-Football description
+        if zone is None and entry.get("description"):
+            zone = parse_api_zone_description(entry["description"])
+
+        entry["zone"] = zone
+
+    return standings

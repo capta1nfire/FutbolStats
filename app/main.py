@@ -32,7 +32,7 @@ from app.security import limiter, verify_api_key, verify_api_key_or_ops_session
 from app.telemetry.sentry import init_sentry, sentry_job_context, is_sentry_enabled
 from app.logos.routes import router as logos_router
 from app.dashboard.model_benchmark import router as model_benchmark_router
-from app.utils.standings import select_standings_view, StandingsGroupNotFound
+from app.utils.standings import select_standings_view, StandingsGroupNotFound, apply_zones
 
 # Configure logging
 logging.basicConfig(
@@ -3876,6 +3876,11 @@ async def get_league_standings(
             view_result.standings and view_result.standings[0].get("is_calculated", False)
         )
 
+        # Phase 2: Apply zones/badges to standings entries
+        zones_config = rules_json.get("zones", {})
+        if zones_config.get("enabled", False):
+            apply_zones(view_result.standings, zones_config)
+
         # ABE P0: Backwards-compatible response with added `meta` field
         return {
             "league_id": league_id,
@@ -3889,6 +3894,7 @@ async def get_league_standings(
                 "selected_group": view_result.selected_group,
                 "selection_reason": view_result.selection_reason,
                 "tie_warning": view_result.tie_warning,
+                "zones_source": zones_config.get("source") if zones_config.get("enabled", False) else None,
             },
         }
     except HTTPException:
