@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel, Field, model_validator
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from sqlalchemy import func, select, text, column
+from sqlalchemy import bindparam, func, select, text, column
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -32,7 +32,10 @@ from app.security import limiter, verify_api_key, verify_api_key_or_ops_session
 from app.telemetry.sentry import init_sentry, sentry_job_context, is_sentry_enabled
 from app.logos.routes import router as logos_router
 from app.dashboard.model_benchmark import router as model_benchmark_router
-from app.utils.standings import select_standings_view, StandingsGroupNotFound, apply_zones
+from app.utils.standings import (
+    select_standings_view, StandingsGroupNotFound, apply_zones,
+    group_standings_by_name, select_default_standings_group,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -685,6 +688,373 @@ async def _calculate_reclasificacion(session, league_id: int, season: int) -> di
         "apertura_matches": apertura_count,
         "clausura_matches": clausura_count,
         "total_matches": len(rows),
+    }
+
+
+async def _get_season_team_stats_from_standings(
+    session, league_id: int, season: int
+) -> dict[int, dict] | None:
+    """
+    Get per-team points/played for a season from stored standings.
+
+    Looks for Apertura + Clausura groups and sums them.
+    Returns {external_team_id: {points, played, goals_for, goals_against, ...}} or None.
+    """
+    result = await session.execute(
+        text("SELECT standings FROM league_standings WHERE league_id = :lid AND season = :s"),
+        {"lid": league_id, "s": season},
+    )
+    row = result.fetchone()
+    if not row or not row.standings:
+        return None
+
+    standings = row.standings if isinstance(row.standings, list) else []
+    if not standings:
+        return None
+
+    groups = group_standings_by_name(standings)
+
+    # Find Apertura and Clausura groups (case-insensitive)
+    apertura_entries = None
+    clausura_entries = None
+    for name, entries in groups.items():
+        name_lower = name.lower()
+        if "apertura" in name_lower and "group" not in name_lower:
+            apertura_entries = entries
+        elif "clausura" in name_lower and "group" not in name_lower:
+            clausura_entries = entries
+
+    if not apertura_entries and not clausura_entries:
+        # No Apertura/Clausura found; try selecting main group as fallback
+        selected_group, _ = select_default_standings_group(groups, {})
+        if selected_group and selected_group in groups:
+            entries = groups[selected_group]
+            team_stats = {}
+            for e in entries:
+                tid = e.get("team_id")
+                if tid is not None:
+                    team_stats[tid] = {
+                        "points": int(e.get("points") or 0),
+                        "played": int(e.get("played") or 0),
+                        "goals_for": int(e.get("goals_for") or 0),
+                        "goals_against": int(e.get("goals_against") or 0),
+                    }
+            return team_stats if team_stats else None
+        return None
+
+    # Sum Apertura + Clausura per team
+    team_stats: dict[int, dict] = {}
+    for entries in [apertura_entries, clausura_entries]:
+        if not entries:
+            continue
+        for e in entries:
+            tid = e.get("team_id")
+            if tid is None:
+                continue
+            if tid not in team_stats:
+                team_stats[tid] = {
+                    "points": 0, "played": 0,
+                    "goals_for": 0, "goals_against": 0,
+                }
+            team_stats[tid]["points"] += int(e.get("points") or 0)
+            team_stats[tid]["played"] += int(e.get("played") or 0)
+            team_stats[tid]["goals_for"] += int(e.get("goals_for") or 0)
+            team_stats[tid]["goals_against"] += int(e.get("goals_against") or 0)
+
+    return team_stats if team_stats else None
+
+
+async def _get_season_team_stats_from_matches(
+    session, league_id: int, season: int
+) -> dict[int, dict] | None:
+    """
+    Get per-team points/played for a season from matches.
+
+    Only used when rounds are properly labeled (not NULL).
+    Filters to regular phase only (excludes playoffs/quadrangulares/finals).
+    Returns {internal_team_id: {points, played, ...}} or None.
+    """
+    # First check if this season has labeled rounds
+    round_check = await session.execute(
+        text("""
+            SELECT COUNT(*) FILTER (WHERE round IS NOT NULL) as labeled,
+                   COUNT(*) as total
+            FROM matches
+            WHERE league_id = :lid AND season = :s
+              AND status IN ('FT', 'AET', 'PEN')
+        """),
+        {"lid": league_id, "s": season},
+    )
+    rc = round_check.fetchone()
+    if not rc or rc.total == 0:
+        return None
+    # ABE P0: Fail-closed if rounds are mostly NULL (can't filter playoffs)
+    if rc.labeled < rc.total * 0.5:
+        logger.warning(
+            f"[DESCENSO] Season {season} league {league_id}: {rc.labeled}/{rc.total} "
+            f"matches have labeled rounds. Fail-closed."
+        )
+        return None
+
+    # Fetch regular-phase matches only
+    result = await session.execute(
+        text("""
+            SELECT m.home_team_id, m.away_team_id, m.home_goals, m.away_goals
+            FROM matches m
+            WHERE m.league_id = :lid
+              AND m.season = :s
+              AND m.status IN ('FT', 'AET', 'PEN')
+              AND m.home_goals IS NOT NULL
+              AND m.away_goals IS NOT NULL
+              AND m.round IS NOT NULL
+              AND m.round NOT ILIKE '%Quadrangular%'
+              AND m.round NOT ILIKE '%Play Offs%'
+              AND m.round NOT ILIKE '%Final%'
+              AND m.round NOT ILIKE '%Quarter%'
+              AND m.round NOT ILIKE '%Semi%'
+              AND m.round NOT ILIKE '%8th Finals%'
+              AND m.round NOT ILIKE '%Round of 16%'
+        """),
+        {"lid": league_id, "s": season},
+    )
+    rows = result.fetchall()
+    if len(rows) < 20:
+        return None
+
+    stats: dict[int, dict] = {}
+    for home_id, away_id, hg, ag in rows:
+        for tid in [home_id, away_id]:
+            if tid not in stats:
+                stats[tid] = {"points": 0, "played": 0, "goals_for": 0, "goals_against": 0}
+
+        stats[home_id]["played"] += 1
+        stats[home_id]["goals_for"] += hg
+        stats[home_id]["goals_against"] += ag
+        stats[away_id]["played"] += 1
+        stats[away_id]["goals_for"] += ag
+        stats[away_id]["goals_against"] += hg
+
+        if hg > ag:
+            stats[home_id]["points"] += 3
+        elif hg < ag:
+            stats[away_id]["points"] += 3
+        else:
+            stats[home_id]["points"] += 1
+            stats[away_id]["points"] += 1
+
+    return stats if stats else None
+
+
+async def _calculate_descenso(
+    session,
+    league_id: int,
+    season: int,
+    relegation_config: dict,
+    all_standings: list[dict],
+) -> dict | None:
+    """
+    Calculate relegation risk table (tabla de promedios).
+
+    Phase 4 of League Format Configuration system.
+    Two paths:
+    - Path A: API-Football provides "Promedios" group → use directly
+    - Path B: Calculate from standings + matches hybrid
+
+    ABE P0 Guardrails:
+    - No matches with NULL rounds (fail-closed)
+    - Zone = "relegation_risk" (not "relegation") — informational only
+    - team_id = internal id
+    """
+    relegation_count = int(relegation_config.get("count", 2))
+    years = int(relegation_config.get("years", 3))
+
+    # --- Path A: API-Football "Promedios" group ---
+    promedios = [s for s in all_standings if "promedios" in (s.get("group") or "").lower()]
+    if promedios:
+        # Build data from API promedios group
+        data = []
+        for entry in sorted(promedios, key=lambda x: int(x.get("position") or 999)):
+            pos = int(entry.get("position") or 0)
+            points = int(entry.get("points") or 0)
+            played = int(entry.get("played") or 0)
+            avg = round(points / played, 4) if played > 0 else 0.0
+            total = len(promedios)
+            zone = None
+            if pos > total - relegation_count:
+                zone = {"type": "relegation_risk", "style": "red"}
+            data.append({
+                "position": pos,
+                "team_id": entry.get("team_id"),  # external_id — translated later
+                "team_name": entry.get("team_name"),
+                "team_logo": entry.get("team_logo"),
+                "points": points,
+                "played": played,
+                "average": avg,
+                "goals_for": int(entry.get("goals_for") or 0),
+                "goals_against": int(entry.get("goals_against") or 0),
+                "goal_diff": int(entry.get("goal_diff") or 0),
+                "zone": zone,
+            })
+
+        # Translate external_id to internal id
+        ext_ids = [d["team_id"] for d in data if d["team_id"]]
+        if ext_ids:
+            id_result = await session.execute(
+                select(Team.id, Team.external_id).where(Team.external_id.in_(ext_ids))
+            )
+            ext_to_int = {r.external_id: r.id for r in id_result.all()}
+            for d in data:
+                d["team_id"] = ext_to_int.get(d["team_id"], d["team_id"])
+
+        logger.info(
+            f"[DESCENSO] Path A (API) for league {league_id}: {len(data)} teams"
+        )
+        return {
+            "data": data,
+            "method": "average_3y",
+            "source": "api",
+            "relegation_count": relegation_count,
+        }
+
+    # --- Path B: Calculate from standings + matches hybrid ---
+    seasons = list(range(season - years + 1, season + 1))
+    accumulated: dict[int, dict] = {}  # {team_id: {points, played, ...}}
+    seasons_used = []
+
+    for s in seasons:
+        # Try standings first (has Apertura + Clausura for historical seasons)
+        season_stats = await _get_season_team_stats_from_standings(session, league_id, s)
+        source_type = "standings"
+
+        # If standings incomplete, try matches (for seasons with labeled rounds)
+        if season_stats is None:
+            season_stats = await _get_season_team_stats_from_matches(session, league_id, s)
+            source_type = "matches"
+
+        if season_stats is None:
+            logger.warning(
+                f"[DESCENSO] No data for league {league_id} season {s}. Skipping."
+            )
+            continue
+
+        seasons_used.append(s)
+        logger.info(
+            f"[DESCENSO] Season {s}: {len(season_stats)} teams from {source_type}"
+        )
+
+        for tid, stats in season_stats.items():
+            if tid not in accumulated:
+                accumulated[tid] = {
+                    "points": 0, "played": 0,
+                    "goals_for": 0, "goals_against": 0,
+                }
+            accumulated[tid]["points"] += stats["points"]
+            accumulated[tid]["played"] += stats["played"]
+            accumulated[tid]["goals_for"] += stats.get("goals_for", 0)
+            accumulated[tid]["goals_against"] += stats.get("goals_against", 0)
+
+    # Need at least 2 seasons of data
+    if len(seasons_used) < 2:
+        logger.warning(
+            f"[DESCENSO] Only {len(seasons_used)} seasons available for league "
+            f"{league_id}. Need >= 2. Returning null."
+        )
+        return None
+
+    if len(accumulated) < 10:
+        return None
+
+    # Calculate average and goal_diff
+    for stats in accumulated.values():
+        stats["average"] = (
+            round(stats["points"] / stats["played"], 4)
+            if stats["played"] > 0 else 0.0
+        )
+        stats["goal_diff"] = stats["goals_for"] - stats["goals_against"]
+
+    # Resolve team names/logos (standings use external_id, matches use internal)
+    # Get all team info for IDs in accumulated
+    all_ids = list(accumulated.keys())
+    team_info_result = await session.execute(
+        text("""
+            SELECT id, external_id, name, logo_url FROM teams
+            WHERE id IN :ids OR external_id IN :ids
+        """).bindparams(bindparam("ids", expanding=True)),
+        {"ids": all_ids},
+    )
+    team_rows = team_info_result.fetchall()
+
+    # Build lookup: both internal and external id → team info
+    id_lookup: dict[int, dict] = {}
+    for r in team_rows:
+        info = {"internal_id": r[0], "external_id": r[1], "name": r[2], "logo": r[3]}
+        id_lookup[r[0]] = info  # internal id
+        id_lookup[r[1]] = info  # external id
+
+    # Normalize all to internal id and merge duplicates
+    normalized: dict[int, dict] = {}
+    for tid, stats in accumulated.items():
+        info = id_lookup.get(tid)
+        if not info:
+            continue
+        internal_id = info["internal_id"]
+        if internal_id in normalized:
+            # Merge (same team referenced by different id across seasons)
+            for k in ["points", "played", "goals_for", "goals_against"]:
+                normalized[internal_id][k] += stats[k]
+            # Recalculate
+            n = normalized[internal_id]
+            n["average"] = round(n["points"] / n["played"], 4) if n["played"] > 0 else 0.0
+            n["goal_diff"] = n["goals_for"] - n["goals_against"]
+        else:
+            normalized[internal_id] = {
+                **stats,
+                "team_id": internal_id,
+                "team_name": info["name"],
+                "team_logo": info["logo"],
+            }
+
+    # ABE P0: Validate no duplicate team_id
+    if len(normalized) < 10:
+        return None
+
+    # Sort: average DESC (best first), goal_diff DESC, goals_for DESC
+    sorted_teams = sorted(
+        normalized.values(),
+        key=lambda x: (-x["average"], -x["goal_diff"], -x["goals_for"], x["team_name"]),
+    )
+
+    # Add position and zone marking
+    total = len(sorted_teams)
+    data = []
+    for idx, team in enumerate(sorted_teams, start=1):
+        zone = None
+        if idx > total - relegation_count:
+            zone = {"type": "relegation_risk", "style": "red"}
+        data.append({
+            "position": idx,
+            "team_id": team["team_id"],
+            "team_name": team["team_name"],
+            "team_logo": team["team_logo"],
+            "points": team["points"],
+            "played": team["played"],
+            "average": team["average"],
+            "goals_for": team["goals_for"],
+            "goals_against": team["goals_against"],
+            "goal_diff": team["goal_diff"],
+            "zone": zone,
+        })
+
+    logger.info(
+        f"[DESCENSO] Path B (calculated) for league {league_id}: {len(data)} teams, "
+        f"seasons={seasons_used}"
+    )
+    return {
+        "data": data,
+        "method": "average_3y",
+        "source": "calculated",
+        "relegation_count": relegation_count,
+        "seasons": seasons_used,
     }
 
 
@@ -4072,6 +4442,26 @@ async def get_league_standings(
                     f"[STANDINGS] Error calculating reclasificacion for league {league_id}: {e}"
                 )
 
+        # Phase 4: Descenso por promedio
+        descenso = None
+        relegation_config = rules_json.get("relegation", {})
+        if (
+            relegation_config.get("enabled", False)
+            and relegation_config.get("method") == "average_3y"
+        ):
+            try:
+                descenso = await _calculate_descenso(
+                    session=session,
+                    league_id=league_id,
+                    season=season,
+                    relegation_config=relegation_config,
+                    all_standings=standings,
+                )
+            except Exception as e:
+                logger.error(
+                    f"[STANDINGS] Error calculating descenso for league {league_id}: {e}"
+                )
+
         # ABE P0: Backwards-compatible response with added `meta` field
         return {
             "league_id": league_id,
@@ -4088,6 +4478,7 @@ async def get_league_standings(
                 "zones_source": zones_config.get("source") if zones_config.get("enabled", False) else None,
             },
             "reclasificacion": reclasificacion,
+            "descenso": descenso,
         }
     except HTTPException:
         raise
