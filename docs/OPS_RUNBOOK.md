@@ -6,12 +6,8 @@ Este documento es una guía **operativa** (5 min/día) para verificar que el bac
 
 Los dashboards están protegidos por `DASHBOARD_TOKEN`:
 
-- **HTML (recomendado)**:
-  - `/dashboard/ops`
-  - `/dashboard/pit`
-- **JSON**:
-  - `/dashboard/ops.json`
-  - `/dashboard/pit.json`
+- `/dashboard/ops.json`
+- `/dashboard/pit.json`
 
 **Auth**:
 - Header: `X-Dashboard-Token: <token>` (OBLIGATORIO en producción)
@@ -56,7 +52,7 @@ Define qué ligas se consideran en `global_sync_today` + `lineup_monitoring_*` +
 
 ### 1) Salud general (Ops Dashboard)
 
-En `/dashboard/ops` verificar:
+En `/dashboard/ops.json` verificar:
 - **PIT live (60 min)**: >0 cuando hay fútbol con lineups disponibles
 - **ΔKO** (min_to_ko) razonable: típicamente 10–90 min; ideal 45–75
 - **API Budget**: sin señales de “exhausted”
@@ -65,7 +61,7 @@ En `/dashboard/ops` verificar:
 
 ### 2) PIT (lo crítico del negocio)
 
-En `/dashboard/ops` o SQL:
+En `/dashboard/ops.json` o SQL:
 - Capturas `odds_snapshots.snapshot_type='lineup_confirmed'`
 - `odds_freshness='live'`
 - Distribución de `delta_to_kickoff_seconds`
@@ -319,7 +315,7 @@ curl -s -H "X-API-Key: $API_KEY" \
 
 ## Alerts Bell (Grafana Webhook → Dashboard)
 
-El dashboard `/dashboard/ops` incluye un icono de campana (🔔) que muestra alertas provenientes de Grafana Alerting.
+El dashboard OPS (Next.js) incluye alertas provenientes de Grafana Alerting vía webhook.
 
 ### Arquitectura
 ```

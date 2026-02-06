@@ -28,7 +28,7 @@ def _has_valid_ops_session(request: Request) -> bool:
     """
     Check if request has a valid OPS session cookie.
 
-    This enables browser UX for INTERNAL endpoints (e.g., links inside /dashboard/ops)
+    This enables browser UX for INTERNAL endpoints (e.g., /dashboard/ops.json)
     without requiring manual X-API-Key header injection.
     """
     try:

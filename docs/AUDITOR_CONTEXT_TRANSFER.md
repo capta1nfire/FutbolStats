@@ -86,7 +86,7 @@ railway logs -n 30 --filter "FASTPATH"
 ### Terminado / Operativo (✅)
 
 #### Observabilidad y Operación
-- **OPS Dashboard HTML**: `/dashboard/ops` con cards, controles, audit log, auto-refresh, Copy Debug Pack.
+- **OPS Dashboard**: `/dashboard/ops.json` (JSON API, consumed by Next.js dashboard).
 - **Jobs Health Monitoring (P0)**: stats_backfill, odds_sync, fastpath instrumentados con métricas Prometheus.
 - **Sentry backend**: `sentry-sdk[fastapi]==1.40.0`, scrubbing de tokens, jobs instrumentados.
 

@@ -127,7 +127,7 @@ class Settings(BaseSettings):
     SKIP_AUTO_TRAIN: bool = False  # Skip auto-training on startup (useful during dev)
 
     # Dashboard security
-    DASHBOARD_TOKEN: str = ""  # Token for /dashboard/pit access (empty = disabled)
+    DASHBOARD_TOKEN: str = ""  # Token for /dashboard/* access (empty = disabled)
 
     # Alerts webhook security (Grafana → ops_alerts)
     ALERTS_WEBHOOK_SECRET: str = ""  # Secret for POST /dashboard/ops/alerts/webhook

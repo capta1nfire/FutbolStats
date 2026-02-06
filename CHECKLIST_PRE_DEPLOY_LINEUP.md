@@ -201,7 +201,7 @@ python scripts/evaluate_lineup_arbitrage.py \
 ## 🐛 MONITOREO Y ALERTAS
 
 ### Alertas Críticas
-- [ ] **predictions_health = RED** en `/dashboard/ops` (scheduler no guarda predicciones)
+- [ ] **predictions_health = RED** en `/dashboard/ops.json` (scheduler no guarda predicciones)
 - [ ] Tasa de fallos de API > 10% por hora
 - [ ] Snapshots con `delta_to_kickoff < 0` (después de kickoff)
 - [ ] Duplicados en `odds_snapshots` con mismo `(match_id, snapshot_type, bookmaker)`
