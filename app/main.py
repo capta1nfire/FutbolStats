@@ -318,12 +318,16 @@ def _season_for_league(league_id: Optional[int], dt: datetime) -> int:
 
 
 def _get_cached_standings(league_id: int, season: int) -> Optional[list]:
-    """Get standings from L1 memory cache if still valid."""
+    """Get standings from L1 memory cache if still valid.
+
+    Returns shallow copies of each entry to prevent mutations
+    (e.g., external→internal ID translation) from corrupting the cache.
+    """
     key = (league_id, season)
     if key in _standings_cache:
         entry = _standings_cache[key]
         if time.time() - entry["timestamp"] < _STANDINGS_CACHE_TTL:
-            return entry["data"]
+            return [dict(e) for e in entry["data"]]
     return None
 
 
