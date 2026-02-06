@@ -8,7 +8,6 @@ import { Flag } from "lucide-react";
 import {
   FootballNav,
   FootballOverview,
-  CountryCompetitions,
   LeagueDetail,
   GroupDetail,
   TeamDrawer,
@@ -187,7 +186,7 @@ function FootballPageContent() {
     [router, category, teamId]
   );
 
-  // Navigate directly to a country's primary league (skip CountryCompetitions)
+  // Navigate directly to a country's primary league
   const handleCountryLeagueSelect = useCallback(
     (newCountry: string, primaryLeagueId: number) => {
       router.replace(
@@ -392,8 +391,7 @@ function FootballPageContent() {
     if (category === "leagues_by_country") {
       if (leagueId) return "league";
       if (groupId) return "group";
-      if (country) return "country";
-      return "overview"; // show overview when just category selected
+      return "overview"; // country without league → show overview
     }
     if (category === "tournaments_competitions") {
       if (leagueId) return "league";
@@ -427,13 +425,6 @@ function FootballPageContent() {
       {/* Col 3+4: Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
         {contentView === "overview" && <FootballOverview />}
-        {contentView === "country" && country && (
-          <CountryCompetitions
-            country={country}
-            onLeagueSelect={handleLeagueSelect}
-            onGroupSelect={handleGroupSelect}
-          />
-        )}
         {contentView === "league" && leagueId && (
           <LeagueDetail
             leagueId={leagueId}
