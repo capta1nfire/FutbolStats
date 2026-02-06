@@ -560,8 +560,8 @@ async def _calculate_reclasificacion(session, league_id: int, season: int) -> di
     result = await session.execute(
         text("""
             SELECT m.home_team_id, m.away_team_id, m.home_goals, m.away_goals,
-                   ht.external_id, ht.name, ht.logo_url,
-                   awt.external_id, awt.name, awt.logo_url,
+                   ht.name, ht.logo_url,
+                   awt.name, awt.logo_url,
                    m.round
             FROM matches m
             JOIN teams ht ON ht.id = m.home_team_id
@@ -571,9 +571,10 @@ async def _calculate_reclasificacion(session, league_id: int, season: int) -> di
               AND m.status IN ('FT', 'AET', 'PEN')
               AND m.home_goals IS NOT NULL
               AND m.away_goals IS NOT NULL
-              AND (m.round LIKE 'Apertura - %' OR m.round LIKE 'Clausura - %')
-              AND m.round NOT LIKE '%Quadrangular%'
-              AND m.round NOT LIKE '%Play Offs%'
+              AND (m.round ILIKE 'Apertura - %' OR m.round ILIKE 'Clausura - %')
+              AND m.round NOT ILIKE '%Quadrangular%'
+              AND m.round NOT ILIKE '%Play Offs%'
+              AND m.round NOT ILIKE '%Final%'
         """),
         {"league_id": league_id, "season": season},
     )
@@ -587,9 +588,9 @@ async def _calculate_reclasificacion(session, league_id: int, season: int) -> di
         )
         return None
 
-    # Count matches per phase
-    apertura_count = sum(1 for r in rows if r[10].startswith("Apertura"))
-    clausura_count = sum(1 for r in rows if r[10].startswith("Clausura"))
+    # Count matches per phase (round is column index 8)
+    apertura_count = sum(1 for r in rows if r[8].startswith("Apertura"))
+    clausura_count = sum(1 for r in rows if r[8].startswith("Clausura"))
 
     # ABE P0: Missing phase → null + log
     if apertura_count == 0:
@@ -608,17 +609,17 @@ async def _calculate_reclasificacion(session, league_id: int, season: int) -> di
 
     for row in rows:
         home_id, away_id, hg, ag = row[0], row[1], row[2], row[3]
-        # row[4..6] = home team external_id, name, logo
-        # row[7..9] = away team external_id, name, logo
+        # row[4..5] = home team name, logo
+        # row[6..7] = away team name, logo
 
-        # Initialize teams if not seen
-        for tid, ext_id, name, logo in [
-            (home_id, row[4], row[5], row[6]),
-            (away_id, row[7], row[8], row[9]),
+        # Initialize teams if not seen (ABE P0-1: team_id = internal id, not external)
+        for tid, name, logo in [
+            (home_id, row[4], row[5]),
+            (away_id, row[6], row[7]),
         ]:
             if tid not in stats:
                 stats[tid] = {
-                    "team_id": ext_id,
+                    "team_id": tid,
                     "team_name": name,
                     "team_logo": logo,
                     "points": 0, "played": 0, "won": 0, "drawn": 0, "lost": 0,
@@ -654,8 +655,8 @@ async def _calculate_reclasificacion(session, league_id: int, season: int) -> di
         s["goal_diff"] = s["goals_for"] - s["goals_against"]
 
     # ABE P0: Validate no duplicate team_id (fail-closed)
-    ext_ids = [s["team_id"] for s in stats.values()]
-    if len(ext_ids) != len(set(ext_ids)):
+    team_ids = [s["team_id"] for s in stats.values()]
+    if len(team_ids) != len(set(team_ids)):
         logger.error(
             f"[RECLASIFICACION] duplicate team_id detected for league {league_id} "
             f"season {season}. Aborting reclasificacion."
