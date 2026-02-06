@@ -1,10 +1,10 @@
-"""Security middleware: Rate limiting and API key authentication."""
+"""Security middleware: Rate limiting, API key, and dashboard token authentication."""
 
 import logging
 import os
 from typing import Optional
 
-from fastapi import HTTPException, Request, Security
+from fastapi import Header, HTTPException, Request, Security
 from fastapi.security import APIKeyHeader
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -127,3 +127,108 @@ def get_rate_limit_key(request: Request) -> str:
 
     # Default: limit by IP
     return get_remote_address(request)
+
+
+# =============================================================================
+# Dashboard Token Authentication
+# =============================================================================
+
+
+def verify_dashboard_token_bool(request: Request) -> bool:
+    """
+    Verify dashboard access via token OR session. Returns bool (no exception).
+
+    Auth methods (in order of preference):
+    1. X-Dashboard-Token header (for services/automation)
+    2. Valid session cookie (for web browser access)
+    3. Query param token (dev only, disabled in prod)
+    """
+    # Method 1: Check header token
+    token = settings.DASHBOARD_TOKEN
+    if token:
+        provided = request.headers.get("X-Dashboard-Token")
+        if provided == token:
+            return True
+
+    # Method 2: Check valid session (reuses _has_valid_ops_session, P0-2)
+    if _has_valid_ops_session(request):
+        return True
+
+    # Method 3: Query param fallback ONLY in development
+    if token and not IS_PRODUCTION:
+        provided = request.query_params.get("token")
+        if provided == token:
+            return True
+
+    return False
+
+
+async def verify_dashboard_token(
+    x_dashboard_token: str = Header(None, alias="X-Dashboard-Token"),
+) -> str:
+    """
+    FastAPI Dependency version for Depends() in routers.
+
+    Raises HTTPException on failure (suitable for router-level dependencies).
+    """
+    expected = settings.DASHBOARD_TOKEN
+
+    # If no token configured, allow all (dev mode)
+    if not expected:
+        return "dev-mode"
+
+    if not x_dashboard_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing X-Dashboard-Token header",
+        )
+
+    if x_dashboard_token != expected:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid X-Dashboard-Token",
+        )
+
+    return x_dashboard_token
+
+
+def _get_dashboard_token_from_request(request: Request) -> str | None:
+    """
+    Extract dashboard token from request headers (prod) or query (dev).
+
+    SECURITY: In production, only accepts token via X-Dashboard-Token header.
+    Query params are only allowed in development (token leaks in logs/browser history).
+    """
+    token = request.headers.get("X-Dashboard-Token")
+
+    # Query param fallback ONLY in development
+    if not token and not IS_PRODUCTION:
+        token = request.query_params.get("token")
+
+    return token
+
+
+def verify_debug_token(request: Request) -> None:
+    """
+    Verify dashboard token for debug endpoints. Raises HTTPException if invalid.
+
+    Accepts either:
+    - X-Dashboard-Token header
+    - Valid session cookie
+
+    SECURITY: Query params disabled in prod.
+    """
+    # Check session first (for browser access)
+    if _has_valid_ops_session(request):
+        return
+
+    # Then check header token
+    expected = settings.DASHBOARD_TOKEN
+    if not expected:
+        raise HTTPException(status_code=503, detail="Dashboard token not configured")
+
+    provided = _get_dashboard_token_from_request(request)
+    if provided and provided == expected:
+        return
+
+    raise HTTPException(status_code=401, detail="Invalid token")

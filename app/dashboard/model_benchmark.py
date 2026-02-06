@@ -16,7 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_session
-from app.logos.auth import verify_dashboard_token
+from app.security import verify_dashboard_token
 
 logger = logging.getLogger(__name__)
 

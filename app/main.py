@@ -23,15 +23,22 @@ from app.etl import APIFootballProvider, ETLPipeline
 from app.etl.competitions import ALL_LEAGUE_IDS, COMPETITIONS
 from app.etl.sota_constants import SOFASCORE_SUPPORTED_LEAGUES, UNDERSTAT_SUPPORTED_LEAGUES
 from app.features import FeatureEngineer
-from app.ml import XGBoostEngine
 from app.ml.persistence import load_active_model, persist_model_snapshot
 from app.models import JobRun, Match, OddsHistory, OpsAlert, PITReport, PostMatchAudit, Prediction, PredictionOutcome, SensorPrediction, ShadowPrediction, Team, TeamAdjustment, TeamOverride
 from app.teams.overrides import preload_team_overrides, resolve_team_display
 from app.scheduler import start_scheduler, stop_scheduler, get_last_sync_time, get_sync_leagues, SYNC_LEAGUES, global_sync_window
-from app.security import limiter, verify_api_key, verify_api_key_or_ops_session
+from app.security import (
+    limiter, verify_api_key, verify_api_key_or_ops_session,
+    verify_dashboard_token_bool as _verify_dashboard_token,
+    verify_debug_token as _verify_debug_token,
+    _has_valid_ops_session as _has_valid_session,
+    _get_dashboard_token_from_request,
+)
+from app.state import ml_engine, _telemetry, _incr
 from app.telemetry.sentry import init_sentry, sentry_job_context, is_sentry_enabled
 from app.logos.routes import router as logos_router
 from app.dashboard.model_benchmark import router as model_benchmark_router
+from app.routes.core import router as core_router
 from app.utils.standings import (
     select_standings_view, StandingsGroupNotFound, apply_zones,
     group_standings_by_name, select_default_standings_group,
@@ -232,35 +239,7 @@ def _get_ops_logs(
     return filtered[: max(1, int(limit))]
 
 
-# Global ML engine
-ml_engine = XGBoostEngine()
-
-# =============================================================================
-# TELEMETRY COUNTERS (aggregated, no high-cardinality labels)
-# =============================================================================
-# Thread-safe via GIL for simple increments; no locks needed for counters.
-
-_telemetry = {
-    # Predictions cache
-    "predictions_cache_hit_full": 0,
-    "predictions_cache_hit_priority": 0,
-    "predictions_cache_miss_full": 0,
-    "predictions_cache_miss_priority_upgrade": 0,
-    # Standings source
-    "standings_source_cache": 0,
-    "standings_source_db": 0,
-    "standings_source_calculated": 0,
-    "standings_source_placeholder": 0,
-    "standings_source_miss": 0,
-    # Timeline source
-    "timeline_source_db": 0,
-    "timeline_source_api_fallback": 0,
-}
-
-
-def _incr(key: str) -> None:
-    """Increment a telemetry counter."""
-    _telemetry[key] = _telemetry.get(key, 0) + 1
+# ml_engine, _telemetry, _incr imported from app.state (singleton-by-import)
 
 
 # Simple in-memory cache for predictions
@@ -1663,15 +1642,12 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Include routers
+app.include_router(core_router)
 app.include_router(logos_router)
 app.include_router(model_benchmark_router)
 
 
-# Request/Response Models
-class HealthResponse(BaseModel):
-    status: str
-    model_loaded: bool
-
+# Request/Response Models (HealthResponse moved to app/routes/core.py)
 
 class ETLSyncRequest(BaseModel):
     league_ids: list[int]
@@ -1782,121 +1758,7 @@ class PredictionsResponse(BaseModel):
     context_applied: Optional[dict] = None
 
 
-# Endpoints
-@app.get("/health", response_model=HealthResponse)
-@limiter.limit("120/minute")
-async def health_check(request: Request):
-    """Health check endpoint."""
-    return HealthResponse(
-        status="ok",
-        model_loaded=ml_engine.is_loaded,
-    )
-
-
-@app.get("/telemetry")
-async def get_telemetry(request: Request):
-    """
-    Aggregated telemetry counters for cache hit/miss monitoring.
-
-    No high-cardinality labels (no match_id, team names, URLs).
-    Safe for Prometheus/Grafana scraping.
-
-    Protected by X-Dashboard-Token (same as other dashboard endpoints).
-
-    NOTE: Counters reset on redeploy/restart. This is diagnostic telemetry,
-    not historical observability. For persistent metrics, export to Prometheus.
-    """
-    if not _verify_dashboard_token(request):
-        raise HTTPException(status_code=401, detail="Telemetry access requires valid token.")
-
-    # Calculate hit rates
-    pred_hits = _telemetry["predictions_cache_hit_full"] + _telemetry["predictions_cache_hit_priority"]
-    pred_misses = _telemetry["predictions_cache_miss_full"] + _telemetry["predictions_cache_miss_priority_upgrade"]
-    pred_total = pred_hits + pred_misses
-    pred_hit_rate = pred_hits / pred_total if pred_total > 0 else 0
-
-    standings_hits = _telemetry["standings_source_cache"] + _telemetry["standings_source_db"]
-    standings_total = standings_hits + _telemetry["standings_source_miss"]
-    standings_hit_rate = standings_hits / standings_total if standings_total > 0 else 0
-
-    timeline_total = _telemetry["timeline_source_db"] + _telemetry["timeline_source_api_fallback"]
-    timeline_db_rate = _telemetry["timeline_source_db"] / timeline_total if timeline_total > 0 else 0
-
-    return {
-        "predictions_cache": {
-            "hit_full": _telemetry["predictions_cache_hit_full"],
-            "hit_priority": _telemetry["predictions_cache_hit_priority"],
-            "miss_full": _telemetry["predictions_cache_miss_full"],
-            "miss_priority_upgrade": _telemetry["predictions_cache_miss_priority_upgrade"],
-            "hit_rate": round(pred_hit_rate, 3),
-        },
-        "standings_source": {
-            "cache": _telemetry["standings_source_cache"],
-            "db": _telemetry["standings_source_db"],
-            "miss": _telemetry["standings_source_miss"],
-            "hit_rate": round(standings_hit_rate, 3),
-        },
-        "timeline_source": {
-            "db": _telemetry["timeline_source_db"],
-            "api_fallback": _telemetry["timeline_source_api_fallback"],
-            "db_rate": round(timeline_db_rate, 3),
-        },
-    }
-
-
-@app.get("/metrics")
-async def prometheus_metrics(
-    authorization: str = Header(None, alias="Authorization"),
-):
-    """
-    Prometheus metrics endpoint for Data Quality Telemetry.
-
-    Exposes metrics for:
-    - Provider ingestion (requests, errors, latency)
-    - Anti-lookahead (event latency, tainted records)
-    - Market integrity (odds validation, overround)
-    - Entity mapping coverage
-
-    Scrape this endpoint from Grafana Cloud or Prometheus.
-    Requires Bearer token authentication via METRICS_BEARER_TOKEN env var.
-    """
-    from fastapi.responses import PlainTextResponse
-
-    # Validate Bearer token if configured
-    expected_token = getattr(settings, "METRICS_BEARER_TOKEN", None)
-    if expected_token:
-        if not authorization:
-            return PlainTextResponse(
-                content="# Unauthorized: Missing Authorization header\n",
-                status_code=401,
-                media_type="text/plain",
-            )
-        # Extract token from "Bearer <token>"
-        parts = authorization.split(" ", 1)
-        if len(parts) != 2 or parts[0].lower() != "bearer":
-            return PlainTextResponse(
-                content="# Unauthorized: Invalid Authorization format\n",
-                status_code=401,
-                media_type="text/plain",
-            )
-        if parts[1] != expected_token:
-            return PlainTextResponse(
-                content="# Unauthorized: Invalid token\n",
-                status_code=401,
-                media_type="text/plain",
-            )
-
-    try:
-        from app.telemetry import get_metrics_text
-        content, content_type = get_metrics_text()
-        return PlainTextResponse(content=content, media_type=content_type)
-    except ImportError:
-        # Fallback if prometheus_client not installed
-        return PlainTextResponse(
-            content="# Telemetry module not available\n",
-            media_type="text/plain",
-        )
-
+# /health, /telemetry, /metrics moved to app/routes/core.py
 
 @app.get("/sync/status")
 async def get_sync_status():
@@ -5424,105 +5286,8 @@ def _get_cached_pit_data() -> dict:
     return data
 
 
-def _has_valid_session(request: Request) -> bool:
-    """
-    Check if request has a valid OPS session cookie.
-
-    Returns True if session contains ops_authenticated=True and is not expired.
-    """
-    try:
-        session = request.session
-        if not session.get("ops_authenticated"):
-            return False
-
-        # Check expiration
-        issued_at = session.get("issued_at")
-        if issued_at:
-            from datetime import datetime
-            issued = datetime.fromisoformat(issued_at)
-            ttl_hours = settings.OPS_SESSION_TTL_HOURS
-            if datetime.utcnow() - issued > timedelta(hours=ttl_hours):
-                return False
-
-        return True
-    except Exception:
-        return False
-
-
-def _verify_dashboard_token(request: Request) -> bool:
-    """
-    Verify dashboard access via token OR session.
-
-    Auth methods (in order of preference):
-    1. X-Dashboard-Token header (for services/automation)
-    2. Valid session cookie (for web browser access)
-    3. Query param token (dev only, disabled in prod)
-
-    SECURITY: In production, query params are disabled.
-    """
-    # Method 1: Check header token
-    token = settings.DASHBOARD_TOKEN
-    if token:
-        provided = request.headers.get("X-Dashboard-Token")
-        if provided == token:
-            return True
-
-    # Method 2: Check valid session
-    if _has_valid_session(request):
-        return True
-
-    # Method 3: Query param fallback ONLY in development
-    if token and not os.getenv("RAILWAY_PROJECT_ID"):
-        provided = request.query_params.get("token")
-        if provided == token:
-            return True
-
-    return False
-
-
-def _get_dashboard_token_from_request(request: Request) -> str | None:
-    """
-    Extract dashboard token from request.
-
-    SECURITY: In production, only accepts token via X-Dashboard-Token header.
-    Query params are only allowed in development (token leaks in logs/browser history).
-    """
-    # Header is preferred method
-    token = request.headers.get("X-Dashboard-Token")
-
-    # Query param fallback ONLY in development
-    if not token and not os.getenv("RAILWAY_PROJECT_ID"):
-        from fastapi import Query
-        # Check if token was passed as query param
-        token = request.query_params.get("token")
-
-    return token
-
-
-def _verify_debug_token(request: Request) -> None:
-    """
-    Verify dashboard token for debug endpoints. Raises HTTPException if invalid.
-
-    Accepts either:
-    - X-Dashboard-Token header
-    - Valid session cookie
-
-    SECURITY: Query params disabled in prod.
-    """
-    # Check session first (for browser access)
-    if _has_valid_session(request):
-        return
-
-    # Then check header token
-    expected = settings.DASHBOARD_TOKEN
-    if not expected:
-        raise HTTPException(status_code=503, detail="Dashboard token not configured")
-
-    provided = _get_dashboard_token_from_request(request)
-    if provided and provided == expected:
-        return
-
-    raise HTTPException(status_code=401, detail="Invalid token")
+# _has_valid_session, _verify_dashboard_token, _get_dashboard_token_from_request,
+# _verify_debug_token — all imported from app.security (see imports at top)
 
 
 

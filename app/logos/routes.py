@@ -25,7 +25,7 @@ from app.database import get_async_session, async_session_maker
 from app.logos.config import get_logos_settings
 from app.logos.r2_client import get_logos_r2_client
 from app.logos.validator import validate_original_logo
-from app.logos.auth import verify_dashboard_token
+from app.security import verify_dashboard_token
 from app.logos.batch_worker import (
     start_batch_job,
     process_batch,
