@@ -405,7 +405,7 @@ async def _calculate_standings_from_results(session, league_id: int, season: int
             FROM matches
             WHERE league_id = :league_id
               AND EXTRACT(YEAR FROM date) = :season
-              AND status IN ('FT', 'AET', 'PEN')
+              AND status IN ('FT', 'AET', 'PEN', 'AWD')
               AND home_goals IS NOT NULL
               AND away_goals IS NOT NULL
         """),
@@ -460,7 +460,7 @@ async def _calculate_standings_from_results(session, league_id: int, season: int
             FROM matches
             WHERE league_id = :league_id
               AND EXTRACT(YEAR FROM date) = :season
-              AND status IN ('FT', 'AET', 'PEN')
+              AND status IN ('FT', 'AET', 'PEN', 'AWD')
               AND home_goals IS NOT NULL
               AND away_goals IS NOT NULL
             ORDER BY date ASC
@@ -576,7 +576,7 @@ async def _calculate_reclasificacion(session, league_id: int, season: int) -> di
             JOIN teams awt ON awt.id = m.away_team_id
             WHERE m.league_id = :league_id
               AND m.season = :season
-              AND m.status IN ('FT', 'AET', 'PEN')
+              AND m.status IN ('FT', 'AET', 'PEN', 'AWD')
               AND m.home_goals IS NOT NULL
               AND m.away_goals IS NOT NULL
               AND (m.round ILIKE 'Apertura - %' OR m.round ILIKE 'Clausura - %')
@@ -827,7 +827,7 @@ async def _get_season_team_stats_from_matches(
                    COUNT(*) as total
             FROM matches
             WHERE league_id = :lid AND season = :s
-              AND status IN ('FT', 'AET', 'PEN')
+              AND status IN ('FT', 'AET', 'PEN', 'AWD')
         """),
         {"lid": league_id, "s": season},
     )
@@ -849,7 +849,7 @@ async def _get_season_team_stats_from_matches(
             FROM matches m
             WHERE m.league_id = :lid
               AND m.season = :s
-              AND m.status IN ('FT', 'AET', 'PEN')
+              AND m.status IN ('FT', 'AET', 'PEN', 'AWD')
               AND m.home_goals IS NOT NULL
               AND m.away_goals IS NOT NULL
               AND m.round IS NOT NULL
