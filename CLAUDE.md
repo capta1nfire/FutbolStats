@@ -43,6 +43,36 @@ docs/                    # Protocolos operacionales
 scripts/                 # Scripts de evaluación y utilidades
 ```
 
+## Environment Setup
+
+Todas las variables de entorno están en `.env` (raíz del proyecto, en `.gitignore`).
+
+```bash
+# Cargar variables antes de ejecutar scripts
+source .env                              # O: set -a; source .env; set +a
+python scripts/mi_script.py             # Ahora tiene DATABASE_URL, API keys, etc.
+```
+
+Variables disponibles en `.env`:
+- `DATABASE_URL` — PostgreSQL sync (para psql, SQLAlchemy sync)
+- `DATABASE_URL_ASYNC` — PostgreSQL async (asyncpg)
+- `PGPASSWORD`, `PGHOST`, `PGPORT` — Para `psql` directo sin URL
+- `API_FOOTBALL_KEY` / `RAPIDAPI_KEY` — API-Football
+- `FUTBOLSTATS_API_KEY` — API key del backend
+- `DASHBOARD_TOKEN` — Token para endpoints `/dashboard/*`
+- `GEMINI_API_KEY` — Google Gemini
+- `RUNPOD_API_KEY` — RunPod LLM
+- `PYTHONPATH` — Apunta a raíz del proyecto
+
+**NUNCA pasar credenciales inline** en comandos. Usar `source .env` primero.
+
+## Database Access
+
+- **MCP** (`mcp__railway-postgres__query`): **READ-ONLY**. Solo SELECT. Nunca INSERT/UPDATE/DELETE.
+- **Escrituras**: Usar `psql` o scripts Python con `DATABASE_URL` del `.env`.
+- **Hostname**: Usar siempre la URL **PÚBLICA** (`maglev.proxy.rlwy.net:24997`). El hostname interno (`postgres.railway.internal`) NO es alcanzable desde local.
+- **psql directo**: Con `.env` cargado, basta `psql` (usa `PGPASSWORD`, `PGHOST`, etc.).
+
 ## Herramientas Disponibles
 
 ### MCP Servers
@@ -73,7 +103,7 @@ ORDER BY ordinal_position;
 
 No asumir nombres de columnas (ej: usar `home_goals` no `home_score`).
 
-### Commands (`.cursor/commands/`)
+### Commands (`.claude/commands/`)
 Invocables con `/nombre` en chat.
 
 | Command | Descripción |
@@ -86,7 +116,7 @@ Invocables con `/nombre` en chat.
 | `/db-report` | Reportes ad-hoc de base de datos |
 | `/deploy` | Guía de deploy (manual only) |
 
-### Skills (`.cursor/skills/`)
+### Skills (`.claude/skills/`)
 Capacidades especializadas que el agente puede invocar.
 
 | Skill | Descripción | Modo |
@@ -95,7 +125,7 @@ Capacidades especializadas que el agente puede invocar.
 | `api-contract` | Validar contrato iOS vs backend | Read-only |
 | `titan-ops-audit` | Auditoría operacional TITAN OMNISCIENCE | Read-only |
 
-### Subagents (`.cursor/skills/`)
+### Subagents (`.claude/skills/`)
 Agentes especializados para tareas delegadas.
 
 | Subagent | Descripción | Restricciones |
@@ -155,6 +185,20 @@ Consultar `docs/` antes de operaciones críticas:
 | Alertas Grafana | `docs/GRAFANA_ALERTS_CHECKLIST.md` |
 | Evaluar modelo | `docs/PIT_EVALUATION_PROTOCOL.md` |
 | **SOTA Pendientes** | `docs/SOTA_PENDIENTES.md` |
+
+## Backfill & Data Operations Protocol
+
+Todas las operaciones de backfill deben seguir este protocolo:
+1. **Pre-check**: Verificar row counts y estado actual vía MCP antes de mutar
+2. **Branch**: Crear branch dedicada (`backfill/<scope>-<date>`)
+3. **Execute**: Correr script con `source .env` cargado
+4. **Post-verify**: Verificar row counts, date ranges, y que no haya contaminación cruzada
+5. **PR**: Abrir PR con evidencia de verificación antes de merge
+
+Anti-contaminación:
+- Verificar que el backfill solo afectó la liga/región objetivo
+- Comparar counts antes/después
+- Revisar que no se sobreescribieron datos existentes
 
 ## Convenciones
 - **Timestamps**: Siempre UTC (`datetime.utcnow()`)
