@@ -35,6 +35,7 @@ from app.dashboard.model_benchmark import router as model_benchmark_router
 from app.utils.standings import (
     select_standings_view, StandingsGroupNotFound, apply_zones,
     group_standings_by_name, select_default_standings_group,
+    classify_group_type,
 )
 
 # Configure logging
@@ -4491,6 +4492,40 @@ async def get_league_standings(
                     f"[STANDINGS] Error calculating descenso for league {league_id}: {e}"
                 )
 
+        # Phase 5: Build available_tables metadata
+        # ABE P0-4: Reuse group_standings_by_name for team_count
+        all_groups = group_standings_by_name(standings)
+        available_tables = []
+        for gname in view_result.available_groups:
+            gtype = classify_group_type(gname, rules_json)
+            # ABE P0-2: If descenso exists, exclude native "descenso" groups (avoid duplication)
+            if gtype == "descenso" and descenso:
+                continue
+            available_tables.append({
+                "group": gname,
+                "team_count": len(all_groups.get(gname, [])),
+                "type": gtype,
+                "is_current": gname == view_result.selected_group,
+            })
+        # Add virtual tables (reclasificación/descenso) if they exist
+        if reclasificacion:
+            available_tables.append({
+                "group": "Reclasificación",
+                "team_count": len(reclasificacion.get("data", [])),
+                "type": "reclasificacion",
+                "is_current": False,
+            })
+        if descenso:
+            available_tables.append({
+                "group": "Descenso por Promedio",
+                "team_count": len(descenso.get("data", [])),
+                "type": "descenso",
+                "is_current": False,
+            })
+        # ABE P1: Stable ordering (regular → group_stage → playoff → virtual)
+        _TYPE_ORDER = {"regular": 0, "group_stage": 1, "playoff": 2, "reclasificacion": 3, "descenso": 4}
+        available_tables.sort(key=lambda t: _TYPE_ORDER.get(t["type"], 99))
+
         # ABE P0: Backwards-compatible response with added `meta` field
         return {
             "league_id": league_id,
@@ -4501,10 +4536,12 @@ async def get_league_standings(
             "is_calculated": is_calculated,
             "meta": {
                 "available_groups": view_result.available_groups,
+                "available_tables": available_tables,
                 "selected_group": view_result.selected_group,
                 "selection_reason": view_result.selection_reason,
                 "tie_warning": view_result.tie_warning,
                 "zones_source": zones_config.get("source") if zones_config.get("enabled", False) else None,
+                "is_group_stage": rules_json.get("standings", {}).get("is_group_stage", False),
             },
             "reclasificacion": reclasificacion,
             "descenso": descenso,

@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useFootballLeague, useFootballTeam, useStandings } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
-import type { StandingEntry } from "@/lib/types";
+import type { StandingEntry, DescensoData, ReclasificacionData } from "@/lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { IconTabs } from "@/components/ui/icon-tabs";
@@ -321,6 +321,187 @@ function StandingsTable({
 }
 
 /**
+ * ABE P0-1: Sanity check for descenso data validity
+ */
+function isDescensoValid(descenso: DescensoData | null | undefined): boolean {
+  if (!descenso?.data) return false;
+  if (descenso.data.length < 10) return false;
+  if (descenso.data.some((d) => !d.team_name)) return false;
+  return true;
+}
+
+/**
+ * Reclasificación Table — accumulated Apertura + Clausura standings
+ */
+function ReclasificacionTable({
+  data,
+  onTeamSelect,
+}: {
+  data: ReclasificacionData;
+  onTeamSelect?: (teamId: number) => void;
+}) {
+  if (!data.data || data.data.length === 0) {
+    return <div className="text-sm text-muted-foreground text-center py-4">No data</div>;
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border">
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-8">#</th>
+            <th className="text-left py-2 px-2 text-xs font-medium text-muted-foreground">Team</th>
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-8">P</th>
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-8">W</th>
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-8">D</th>
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-8">L</th>
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-10">GD</th>
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-10">Pts</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.data.map((entry) => (
+            <tr
+              key={entry.team_id}
+              className={cn(
+                "border-b border-border last:border-0 hover:bg-accent/50",
+                entry.team_id > 0 && onTeamSelect && "cursor-pointer"
+              )}
+              onClick={entry.team_id > 0 && onTeamSelect ? () => onTeamSelect(entry.team_id) : undefined}
+            >
+              <td className="text-center py-1.5 px-2">
+                <QualificationBadge value={entry.position} active={entry.position <= 8} />
+              </td>
+              <td className="py-1.5 px-2">
+                <div className="flex items-center gap-2">
+                  {entry.team_logo ? (
+                    <Image src={entry.team_logo} alt="" width={16} height={16} className="rounded-full object-cover" />
+                  ) : (
+                    <Globe className="h-4 w-4 text-muted-foreground" />
+                  )}
+                  <span className="truncate text-foreground">{entry.team_name}</span>
+                  {entry.zone && (
+                    <span
+                      className={cn(
+                        "text-[10px] px-1 py-0.5 rounded shrink-0",
+                        entry.zone.style === "blue" && "bg-blue-500/10 text-blue-400",
+                        entry.zone.style === "orange" && "bg-orange-500/10 text-orange-400",
+                        entry.zone.style === "cyan" && "bg-cyan-500/10 text-cyan-400",
+                      )}
+                    >
+                      {entry.zone.type}
+                    </span>
+                  )}
+                </div>
+              </td>
+              <td className="text-center py-1.5 px-2 text-muted-foreground">{entry.played}</td>
+              <td className="text-center py-1.5 px-2 text-muted-foreground">{entry.won}</td>
+              <td className="text-center py-1.5 px-2 text-muted-foreground">{entry.drawn}</td>
+              <td className="text-center py-1.5 px-2 text-muted-foreground">{entry.lost}</td>
+              <td
+                className={cn(
+                  "text-center py-1.5 px-2 font-medium",
+                  entry.goal_diff > 0
+                    ? "text-[var(--status-success-text)]"
+                    : entry.goal_diff < 0
+                      ? "text-[var(--status-error-text)]"
+                      : "text-muted-foreground"
+                )}
+              >
+                {entry.goal_diff > 0 ? `+${entry.goal_diff}` : entry.goal_diff}
+              </td>
+              <td className="text-center py-1.5 px-2 font-bold text-foreground">{entry.points}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * Descenso Table — relegation risk by 3-year average
+ */
+function DescensoTable({
+  data,
+  onTeamSelect,
+}: {
+  data: DescensoData;
+  onTeamSelect?: (teamId: number) => void;
+}) {
+  if (!data.data || data.data.length === 0) {
+    return <div className="text-sm text-muted-foreground text-center py-4">No data</div>;
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border">
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-8">#</th>
+            <th className="text-left py-2 px-2 text-xs font-medium text-muted-foreground">Team</th>
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-10">Pts</th>
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-8">P</th>
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-14">Avg</th>
+            <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground w-10">GD</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.data.map((entry) => (
+            <tr
+              key={entry.team_id}
+              className={cn(
+                "border-b border-border last:border-0 hover:bg-accent/50",
+                entry.zone?.type === "relegation_risk" && "bg-red-500/5",
+                entry.team_id > 0 && onTeamSelect && "cursor-pointer"
+              )}
+              onClick={entry.team_id > 0 && onTeamSelect ? () => onTeamSelect(entry.team_id) : undefined}
+            >
+              <td className="text-center py-1.5 px-2 text-muted-foreground">{entry.position}</td>
+              <td className="py-1.5 px-2">
+                <div className="flex items-center gap-2">
+                  {entry.team_logo ? (
+                    <Image src={entry.team_logo} alt="" width={16} height={16} className="rounded-full object-cover" />
+                  ) : (
+                    <Globe className="h-4 w-4 text-muted-foreground" />
+                  )}
+                  <span className="truncate text-foreground">{entry.team_name}</span>
+                  {entry.zone?.type === "relegation_risk" && (
+                    <span className="text-[10px] px-1 py-0.5 rounded bg-red-500/10 text-red-400 shrink-0">
+                      Relegation Risk
+                    </span>
+                  )}
+                </div>
+              </td>
+              <td className="text-center py-1.5 px-2 text-muted-foreground">{entry.points}</td>
+              <td className="text-center py-1.5 px-2 text-muted-foreground">{entry.played}</td>
+              <td className="text-center py-1.5 px-2 font-bold text-foreground">{entry.average.toFixed(4)}</td>
+              <td
+                className={cn(
+                  "text-center py-1.5 px-2 font-medium",
+                  entry.goal_diff > 0
+                    ? "text-[var(--status-success-text)]"
+                    : entry.goal_diff < 0
+                      ? "text-[var(--status-error-text)]"
+                      : "text-muted-foreground"
+                )}
+              >
+                {entry.goal_diff > 0 ? `+${entry.goal_diff}` : entry.goal_diff}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {data.seasons && (
+        <div className="px-2 py-1.5 text-[10px] text-muted-foreground">
+          Seasons: {data.seasons.join(", ")} &middot; Source: {data.source}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * LeagueDetail Component
  *
  * Displays detailed league information:
@@ -329,10 +510,11 @@ function StandingsTable({
  * - Stats by season table
  * - TITAN coverage
  * - Recent matches
- * - Standings
+ * - Standings (with sub-tabs for reclasificación/descenso)
  */
 export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, initialTeamId }: LeagueDetailProps) {
   const [activeTab, setActiveTab] = useState<LeagueDetailTabId>("standings");
+  const [standingsSubTab, setStandingsSubTab] = useState<string>("standings");
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(initialTeamId ?? null);
   const [teamTab, setTeamTab] = useState<TeamDetailTabId>("overview");
 
@@ -506,10 +688,64 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                     </span>
                   )}
                 </div>
+
+                {/* Phase 5: Sub-tabs for standings tables */}
+                {standingsData && (standingsData.reclasificacion || isDescensoValid(standingsData.descenso)) && (
+                  <div className="px-4 py-2 border-b border-border flex gap-1 overflow-x-auto">
+                    <button
+                      onClick={() => setStandingsSubTab("standings")}
+                      className={cn(
+                        "text-xs px-2.5 py-1 rounded-full whitespace-nowrap transition-colors",
+                        standingsSubTab === "standings"
+                          ? "bg-foreground text-background font-medium"
+                          : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                      )}
+                    >
+                      Posiciones
+                    </button>
+                    {standingsData.reclasificacion && (
+                      <button
+                        onClick={() => setStandingsSubTab("reclasificacion")}
+                        className={cn(
+                          "text-xs px-2.5 py-1 rounded-full whitespace-nowrap transition-colors",
+                          standingsSubTab === "reclasificacion"
+                            ? "bg-foreground text-background font-medium"
+                            : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                        )}
+                      >
+                        Reclasificaci&oacute;n
+                      </button>
+                    )}
+                    {isDescensoValid(standingsData.descenso) && (
+                      <button
+                        onClick={() => setStandingsSubTab("descenso")}
+                        className={cn(
+                          "text-xs px-2.5 py-1 rounded-full whitespace-nowrap transition-colors",
+                          standingsSubTab === "descenso"
+                            ? "bg-foreground text-background font-medium"
+                            : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                        )}
+                      >
+                        Descenso
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 {isStandingsLoading ? (
                   <div className="flex items-center justify-center py-6">
                     <Loader size="sm" />
                   </div>
+                ) : standingsSubTab === "reclasificacion" && standingsData?.reclasificacion ? (
+                  <ReclasificacionTable
+                    data={standingsData.reclasificacion}
+                    onTeamSelect={handleTeamSelect}
+                  />
+                ) : standingsSubTab === "descenso" && standingsData?.descenso ? (
+                  <DescensoTable
+                    data={standingsData.descenso}
+                    onTeamSelect={handleTeamSelect}
+                  />
                 ) : standingsData && standingsData.standings.length > 0 ? (
                   <StandingsTable
                     standings={standingsData.standings}
@@ -767,9 +1003,15 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                             </td>
                             <td className="py-2 px-3 text-sm text-foreground">
                               {selectedTeam.data.wikidata_enrichment.wikidata_id ? (
-                                <span className="break-words">
-                                  {selectedTeam.data.wikidata_enrichment.wikidata_id}
-                                </span>
+                                <Button variant="link" size="sm" className="px-0 h-auto" asChild>
+                                  <a
+                                    href={`https://www.wikidata.org/wiki/${selectedTeam.data.wikidata_enrichment.wikidata_id}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    {selectedTeam.data.wikidata_enrichment.wikidata_id}
+                                  </a>
+                                </Button>
                               ) : (
                                 <span className="text-muted-foreground">-</span>
                               )}
@@ -781,9 +1023,15 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                             </td>
                             <td className="py-2 px-3 text-sm text-foreground">
                               {selectedTeam.data.wikidata_enrichment.stadium_wikidata_id ? (
-                                <span className="break-words">
-                                  {selectedTeam.data.wikidata_enrichment.stadium_wikidata_id}
-                                </span>
+                                <Button variant="link" size="sm" className="px-0 h-auto" asChild>
+                                  <a
+                                    href={`https://www.wikidata.org/wiki/${selectedTeam.data.wikidata_enrichment.stadium_wikidata_id}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    {selectedTeam.data.wikidata_enrichment.stadium_wikidata_id}
+                                  </a>
+                                </Button>
                               ) : (
                                 <span className="text-muted-foreground">-</span>
                               )}

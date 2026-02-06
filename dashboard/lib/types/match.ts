@@ -141,6 +141,84 @@ export interface StandingEntry {
 }
 
 /**
+ * Available table entry in standings metadata (Phase 5)
+ */
+export interface AvailableTable {
+  group: string;
+  team_count: number;
+  type: "regular" | "playoff" | "reclasificacion" | "descenso" | "group_stage";
+  is_current: boolean;
+}
+
+/**
+ * Standings metadata (Phase 5)
+ */
+export interface StandingsMeta {
+  available_groups: string[];
+  available_tables: AvailableTable[];
+  selected_group: string;
+  selection_reason: string;
+  tie_warning: string[] | null;
+  zones_source?: string | null;
+  is_group_stage: boolean;
+}
+
+/**
+ * Reclasificación entry (Phase 3 — accumulated Apertura + Clausura)
+ */
+export interface ReclasificacionEntry {
+  position: number;
+  team_id: number;
+  team_name: string;
+  team_logo: string | null;
+  points: number;
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  goals_for: number;
+  goals_against: number;
+  goal_diff: number;
+  zone: { type: string; style: string } | null;
+}
+
+/**
+ * Reclasificación data (Phase 3)
+ */
+export interface ReclasificacionData {
+  data: ReclasificacionEntry[];
+  source: string;
+}
+
+/**
+ * Descenso entry (Phase 4 — relegation by 3-year average)
+ */
+export interface DescensoEntry {
+  position: number;
+  team_id: number;
+  team_name: string;
+  team_logo: string | null;
+  points: number;
+  played: number;
+  average: number;
+  goals_for: number;
+  goals_against: number;
+  goal_diff: number;
+  zone: { type: string; style: string } | null;
+}
+
+/**
+ * Descenso data (Phase 4)
+ */
+export interface DescensoData {
+  data: DescensoEntry[];
+  method: string;
+  source: string;
+  relegation_count: number;
+  seasons?: number[];
+}
+
+/**
  * League standings response
  */
 export interface StandingsResponse {
@@ -150,4 +228,7 @@ export interface StandingsResponse {
   source: string;
   isPlaceholder?: boolean;
   isCalculated?: boolean;
+  meta?: StandingsMeta;
+  reclasificacion?: ReclasificacionData | null;
+  descenso?: DescensoData | null;
 }

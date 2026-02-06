@@ -62,6 +62,9 @@ async function fetchStandings(leagueId: number): Promise<StandingsResponse> {
     source: data.source ?? "unknown",
     isPlaceholder: data.is_placeholder ?? false,
     isCalculated: data.is_calculated ?? false,
+    meta: data.meta ?? undefined,
+    reclasificacion: data.reclasificacion ?? null,
+    descenso: data.descenso ?? null,
   };
 }
 

@@ -347,3 +347,34 @@ def apply_zones(standings: list[dict], zones_config: dict) -> list[dict]:
         entry["zone"] = zone
 
     return standings
+
+
+# --- Phase 5: Group Classification ---
+
+
+def classify_group_type(group_name: str, rules_json: dict) -> str:
+    """
+    Classify a standings group into a semantic type.
+
+    ABE P0-4: Reuses module-level PLAYOFF_KEYWORDS constant (line 19).
+
+    Returns:
+        One of: "regular", "playoff", "reclasificacion", "descenso", "group_stage"
+    """
+    name_lower = group_name.lower()
+
+    # Check specific auxiliary types first (before generic playoff check)
+    if "promedios" in name_lower:
+        return "descenso"
+    if "reclasificacion" in name_lower:
+        return "reclasificacion"
+
+    # Reuse module-level PLAYOFF_KEYWORDS (P0-4: no duplicar)
+    if any(kw in name_lower for kw in PLAYOFF_KEYWORDS):
+        return "playoff"
+
+    # Group stage detection (is_group_stage flag from rules_json)
+    if rules_json.get("standings", {}).get("is_group_stage"):
+        return "group_stage"
+
+    return "regular"
