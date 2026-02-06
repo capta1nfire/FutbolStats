@@ -536,12 +536,12 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(initialTeamId ?? null);
   const [teamTab, setTeamTab] = useState<TeamDetailTabId>("overview");
 
-  // Sync selectedTeamId when initialTeamId changes (e.g., navigation from match detail)
+  // Reset selected team when league changes (let auto-select pick first team)
   useEffect(() => {
-    if (initialTeamId !== undefined) {
-      setSelectedTeamId(initialTeamId);
-    }
-  }, [initialTeamId]);
+    setSelectedTeamId(initialTeamId ?? null);
+    setStandingsSubTab("standings");
+    setSelectedGroup(undefined);
+  }, [leagueId, initialTeamId]);
   const { data, isLoading, error, refetch } = useFootballLeague(leagueId);
   const { data: standingsData, isLoading: isStandingsLoading } = useStandings(leagueId, { group: selectedGroup });
 
