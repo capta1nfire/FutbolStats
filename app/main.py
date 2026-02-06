@@ -597,8 +597,25 @@ async def _generate_placeholder_standings(session, league_id: int, season: int) 
 
         if prev_row and prev_row[0]:
             prev_standings = prev_row[0]
+
+            # Filter to main group first to avoid duplicates from multi-group leagues
+            # (e.g. Ecuador has Serie A + Championship Round + Qualifying Round + Relegation Round
+            # with overlapping teams). Get rules_json for heuristic selection.
+            rules_result = await session.execute(
+                text("SELECT rules_json FROM admin_leagues WHERE league_id = :lid"),
+                {"lid": league_id}
+            )
+            rules_row = rules_result.fetchone()
+            prev_rules_json = (
+                rules_row.rules_json if rules_row and isinstance(rules_row.rules_json, dict)
+                else {}
+            )
+            prev_view = select_standings_view(prev_standings, prev_rules_json)
+            filtered_prev = prev_view.standings
+
             relegated_teams = []
-            for s in prev_standings:
+            seen_team_ids = set()
+            for s in filtered_prev:
                 desc = s.get("description") or ""
                 # Only filter by "Relegation" if the league uses traditional table-based relegation.
                 # Skip filtering for leagues with averages-based or no relegation system.
@@ -606,8 +623,14 @@ async def _generate_placeholder_standings(session, league_id: int, season: int) 
                     if "relegation" in desc.lower():
                         relegated_teams.append(s.get("team_name"))
                         continue  # Skip relegated teams
+                # Deduplicate by team_id as safety net
+                tid = s.get("team_id")
+                if tid and tid in seen_team_ids:
+                    continue
+                if tid:
+                    seen_team_ids.add(tid)
                 teams_data.append({
-                    "id": s.get("team_id"),  # Note: may be external_id from old data, will be translated later
+                    "id": tid,  # Note: may be external_id from old data, will be translated later
                     "name": s.get("team_name"),
                     "logo_url": s.get("team_logo"),
                 })
