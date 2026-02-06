@@ -14055,7 +14055,7 @@ async def dashboard_settings_summary(request: Request):
             "sections": ["general", "feature_flags", "model_versions", "integrations"],
             "notes": "Read-only operational settings. No secrets returned.",
             "links": [
-                {"title": "Ops Dashboard", "url": "/dashboard/ops"},
+                {"title": "Ops Dashboard", "url": "/dashboard/ops.json"},
                 {"title": "Data Quality", "url": "/dashboard/data_quality.json"},
                 {"title": "Feature Flags", "url": "/dashboard/settings/feature_flags.json"},
                 {"title": "Model Versions", "url": "/dashboard/settings/model_versions.json"},
@@ -17365,9 +17365,9 @@ async def ops_login_page(request: Request, error: str = ""):
     """Display the OPS console login form."""
     from fastapi.responses import HTMLResponse, RedirectResponse
 
-    # If already logged in, redirect to dashboard
+    # If already logged in, redirect to dashboard JSON
     if _has_valid_session(request):
-        return RedirectResponse(url="/dashboard/ops", status_code=302)
+        return RedirectResponse(url="/dashboard/ops.json", status_code=302)
 
     # Check if login is enabled
     if not settings.OPS_ADMIN_PASSWORD:
@@ -17406,8 +17406,8 @@ async def ops_login_submit(request: Request):
     request.session["issued_at"] = datetime.utcnow().isoformat()
     logger.info(f"[OPS_LOGIN] Successful login from {request.client.host}")
 
-    # Redirect to dashboard
-    return RedirectResponse(url="/dashboard/ops", status_code=302)
+    # Redirect to dashboard JSON
+    return RedirectResponse(url="/dashboard/ops.json", status_code=302)
 
 
 @app.get("/ops/logout")
@@ -17432,7 +17432,7 @@ async def dashboard_home(request: Request):
         return RedirectResponse(url="/ops/login", status_code=302)
 
     # Preserve token query param ONLY in development (not in prod - security risk)
-    target = "/dashboard/ops"
+    target = "/dashboard/ops.json"
     if not os.getenv("RAILWAY_PROJECT_ID"):
         token = request.query_params.get("token")
         if token:
