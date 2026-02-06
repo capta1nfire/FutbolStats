@@ -352,7 +352,7 @@ function GroupStandingsSection({
 
   const { data: standingsData, isLoading: isStandingsLoading } = useStandings(
     selectedLeagueId,
-    selectedLeagueId !== null
+    { enabled: selectedLeagueId !== null },
   );
 
   if (memberLeagues.length === 0) {

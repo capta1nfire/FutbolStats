@@ -34,8 +34,11 @@ function adaptStanding(raw: unknown): StandingEntry | null {
 /**
  * Fetch standings from API
  */
-async function fetchStandings(leagueId: number): Promise<StandingsResponse> {
-  const response = await fetch(`/api/standings/${leagueId}`);
+async function fetchStandings(leagueId: number, group?: string): Promise<StandingsResponse> {
+  const url = group
+    ? `/api/standings/${leagueId}?group=${encodeURIComponent(group)}`
+    : `/api/standings/${leagueId}`;
+  const response = await fetch(url);
 
   if (!response.ok) {
     if (response.status === 404) {
@@ -72,12 +75,17 @@ async function fetchStandings(leagueId: number): Promise<StandingsResponse> {
  * Hook to fetch league standings
  *
  * @param leagueId - League ID to fetch standings for
- * @param enabled - Whether to enable the query (default: true)
+ * @param options.enabled - Whether to enable the query (default: true)
+ * @param options.group - Specific group to fetch (for multi-group leagues)
  */
-export function useStandings(leagueId: number | null, enabled = true) {
+export function useStandings(
+  leagueId: number | null,
+  options: { enabled?: boolean; group?: string } = {},
+) {
+  const { enabled = true, group } = options;
   return useQuery({
-    queryKey: ["standings", leagueId],
-    queryFn: () => fetchStandings(leagueId!),
+    queryKey: ["standings", leagueId, group ?? null],
+    queryFn: () => fetchStandings(leagueId!, group),
     enabled: enabled && leagueId !== null && leagueId > 0,
     staleTime: 5 * 60 * 1000, // 5 minutes
     gcTime: 30 * 60 * 1000, // 30 minutes

@@ -938,15 +938,9 @@ async def _calculate_descenso(
                 "zone": zone,
             })
 
-        # Translate external_id to internal id
-        ext_ids = [d["team_id"] for d in data if d["team_id"]]
-        if ext_ids:
-            id_result = await session.execute(
-                select(Team.id, Team.external_id).where(Team.external_id.in_(ext_ids))
-            )
-            ext_to_int = {r.external_id: r.id for r in id_result.all()}
-            for d in data:
-                d["team_id"] = ext_to_int.get(d["team_id"], d["team_id"])
+        # ABE P0-2 (Phase 5 audit): all_standings already has internal IDs
+        # (translated at endpoint level, line ~4394). No re-translation needed.
+        # Previous code here caused collisions (same bug as Phase 4 Espanyol fix).
 
         logger.info(
             f"[DESCENSO] Path A (API) for league {league_id}: {len(data)} teams"
@@ -960,48 +954,85 @@ async def _calculate_descenso(
 
     # --- Path B: Calculate from standings + matches hybrid ---
     seasons = list(range(season - years + 1, season + 1))
-    accumulated: dict[int, dict] = {}  # {team_id: {points, played, ...}}
     seasons_used = []
+    season_data: dict[int, dict[int, dict]] = {}  # {season: {team_id: stats}}
 
+    # Step 1: Collect per-season stats
+    # Try both standings and matches, use whichever is more complete.
+    # Handles split-season leagues (e.g. Colombia) where standings may only
+    # have one half (Clausura) while matches have both (Apertura + Clausura).
     for s in seasons:
-        # Try standings first (has Apertura + Clausura for historical seasons)
-        season_stats = await _get_season_team_stats_from_standings(session, league_id, s)
-        source_type = "standings"
+        standings_stats = await _get_season_team_stats_from_standings(session, league_id, s)
+        matches_stats = await _get_season_team_stats_from_matches(session, league_id, s)
 
-        # If standings incomplete, try matches (for seasons with labeled rounds)
-        if season_stats is None:
-            season_stats = await _get_season_team_stats_from_matches(session, league_id, s)
-            source_type = "matches"
-
-        if season_stats is None:
+        # Pick the more complete source (higher avg PJ = more complete)
+        if standings_stats and matches_stats:
+            avg_st_pj = sum(v["played"] for v in standings_stats.values()) / len(standings_stats)
+            avg_mt_pj = sum(v["played"] for v in matches_stats.values()) / len(matches_stats)
+            if avg_mt_pj > avg_st_pj * 1.3:
+                season_stats, source_type = matches_stats, "matches"
+            else:
+                season_stats, source_type = standings_stats, "standings"
+        elif standings_stats:
+            season_stats, source_type = standings_stats, "standings"
+        elif matches_stats:
+            season_stats, source_type = matches_stats, "matches"
+        else:
             logger.warning(
                 f"[DESCENSO] No data for league {league_id} season {s}. Skipping."
             )
             continue
 
         seasons_used.append(s)
+        season_data[s] = season_stats
         logger.info(
             f"[DESCENSO] Season {s}: {len(season_stats)} teams from {source_type}"
         )
 
-        for tid, stats in season_stats.items():
-            if tid not in accumulated:
-                accumulated[tid] = {
-                    "points": 0, "played": 0,
-                    "goals_for": 0, "goals_against": 0,
-                }
-            accumulated[tid]["points"] += stats["points"]
-            accumulated[tid]["played"] += stats["played"]
-            accumulated[tid]["goals_for"] += stats.get("goals_for", 0)
-            accumulated[tid]["goals_against"] += stats.get("goals_against", 0)
-
-    # Need at least 2 seasons of data
     if len(seasons_used) < 2:
         logger.warning(
             f"[DESCENSO] Only {len(seasons_used)} seasons available for league "
             f"{league_id}. Need >= 2. Returning null."
         )
         return None
+
+    # Step 2: Current primera = teams in current season's data
+    current_primera_ids = set(season_data.get(season, {}).keys())
+    if not current_primera_ids:
+        logger.warning(f"[DESCENSO] No current season ({season}) data. Cannot filter.")
+        return None
+
+    # Step 3: Continuous stint per team — only count consecutive seasons
+    # going backwards from current. A gap (team not in primera) resets the clock.
+    team_stint_start: dict[int, int] = {}
+    for tid in current_primera_ids:
+        stint_start = season
+        for s in sorted(seasons_used, reverse=True):
+            if s == season:
+                continue
+            if tid in season_data.get(s, {}):
+                stint_start = s
+            else:
+                break  # Gap breaks continuity
+        team_stint_start[tid] = stint_start
+
+    # Step 4: Accumulate only within each team's stint
+    accumulated: dict[int, dict] = {}
+    for tid in current_primera_ids:
+        stint_start = team_stint_start[tid]
+        accumulated[tid] = {"points": 0, "played": 0, "goals_for": 0, "goals_against": 0}
+        for s in seasons_used:
+            if s >= stint_start and tid in season_data.get(s, {}):
+                stats = season_data[s][tid]
+                accumulated[tid]["points"] += stats["points"]
+                accumulated[tid]["played"] += stats["played"]
+                accumulated[tid]["goals_for"] += stats.get("goals_for", 0)
+                accumulated[tid]["goals_against"] += stats.get("goals_against", 0)
+
+    logger.info(
+        f"[DESCENSO] Stint analysis: {len(current_primera_ids)} current teams, "
+        f"stints: {dict(sorted(((tid, team_stint_start[tid]) for tid in list(current_primera_ids)[:5]), key=lambda x: x[1]))}"
+    )
 
     if len(accumulated) < 10:
         return None

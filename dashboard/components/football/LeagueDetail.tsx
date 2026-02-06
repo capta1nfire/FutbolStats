@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useFootballLeague, useFootballTeam, useStandings } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
-import type { StandingEntry, DescensoData, ReclasificacionData } from "@/lib/types";
+import type { StandingEntry, DescensoData, ReclasificacionData, AvailableTable } from "@/lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { IconTabs } from "@/components/ui/icon-tabs";
@@ -515,6 +515,7 @@ function DescensoTable({
 export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, initialTeamId }: LeagueDetailProps) {
   const [activeTab, setActiveTab] = useState<LeagueDetailTabId>("standings");
   const [standingsSubTab, setStandingsSubTab] = useState<string>("standings");
+  const [selectedGroup, setSelectedGroup] = useState<string | undefined>(undefined);
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(initialTeamId ?? null);
   const [teamTab, setTeamTab] = useState<TeamDetailTabId>("overview");
 
@@ -525,7 +526,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
     }
   }, [initialTeamId]);
   const { data, isLoading, error, refetch } = useFootballLeague(leagueId);
-  const { data: standingsData, isLoading: isStandingsLoading } = useStandings(leagueId);
+  const { data: standingsData, isLoading: isStandingsLoading } = useStandings(leagueId, { group: selectedGroup });
   const selectedTeam = useFootballTeam(selectedTeamId);
 
   // MUST be called on every render (Rules of Hooks). Keep defensive for loading/error.
@@ -689,48 +690,94 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                   )}
                 </div>
 
-                {/* Phase 5: Sub-tabs for standings tables */}
-                {standingsData && (standingsData.reclasificacion || isDescensoValid(standingsData.descenso)) && (
-                  <div className="px-4 py-2 border-b border-border flex gap-1 overflow-x-auto">
-                    <button
-                      onClick={() => setStandingsSubTab("standings")}
-                      className={cn(
-                        "text-xs px-2.5 py-1 rounded-full whitespace-nowrap transition-colors",
-                        standingsSubTab === "standings"
-                          ? "bg-foreground text-background font-medium"
-                          : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                {/* Phase 5: Group selector from available_tables */}
+                {(() => {
+                  const tables = standingsData?.meta?.available_tables ?? [];
+                  const navigableGroups = tables.filter(
+                    (t: AvailableTable) => t.type === "regular" || t.type === "group_stage" || t.type === "playoff"
+                  );
+                  // Shorten long group names for pills (e.g. "CONMEBOL Libertadores 2025, Group A" → "Group A")
+                  const shortLabel = (name: string) => {
+                    const match = name.match(/Group\s+\w+$/i);
+                    return match ? match[0] : name;
+                  };
+                  const hasVirtualTabs = !!(standingsData?.reclasificacion || isDescensoValid(standingsData?.descenso ?? null));
+                  const showGroupPills = navigableGroups.length > 1;
+                  const showSubTabs = hasVirtualTabs || showGroupPills;
+
+                  if (!standingsData || !showSubTabs) return null;
+
+                  return (
+                    <div className="px-4 py-2 border-b border-border flex gap-1 overflow-x-auto">
+                      {/* Group/table pills */}
+                      {showGroupPills ? (
+                        <>
+                          {navigableGroups.map((t: AvailableTable) => {
+                            const isActive = standingsSubTab === "standings" && (
+                              selectedGroup === t.group || (!selectedGroup && t.is_current)
+                            );
+                            return (
+                              <button
+                                key={t.group}
+                                onClick={() => {
+                                  setSelectedGroup(t.is_current ? undefined : t.group);
+                                  setStandingsSubTab("standings");
+                                }}
+                                className={cn(
+                                  "text-xs px-2.5 py-1 rounded-full whitespace-nowrap transition-colors",
+                                  isActive
+                                    ? "bg-foreground text-background font-medium"
+                                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                                )}
+                              >
+                                {shortLabel(t.group)}
+                              </button>
+                            );
+                          })}
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => setStandingsSubTab("standings")}
+                          className={cn(
+                            "text-xs px-2.5 py-1 rounded-full whitespace-nowrap transition-colors",
+                            standingsSubTab === "standings"
+                              ? "bg-foreground text-background font-medium"
+                              : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                          )}
+                        >
+                          Posiciones
+                        </button>
                       )}
-                    >
-                      Posiciones
-                    </button>
-                    {standingsData.reclasificacion && (
-                      <button
-                        onClick={() => setStandingsSubTab("reclasificacion")}
-                        className={cn(
-                          "text-xs px-2.5 py-1 rounded-full whitespace-nowrap transition-colors",
-                          standingsSubTab === "reclasificacion"
-                            ? "bg-foreground text-background font-medium"
-                            : "text-muted-foreground hover:text-foreground hover:bg-accent"
-                        )}
-                      >
-                        Reclasificaci&oacute;n
-                      </button>
-                    )}
-                    {isDescensoValid(standingsData.descenso) && (
-                      <button
-                        onClick={() => setStandingsSubTab("descenso")}
-                        className={cn(
-                          "text-xs px-2.5 py-1 rounded-full whitespace-nowrap transition-colors",
-                          standingsSubTab === "descenso"
-                            ? "bg-foreground text-background font-medium"
-                            : "text-muted-foreground hover:text-foreground hover:bg-accent"
-                        )}
-                      >
-                        Descenso
-                      </button>
-                    )}
-                  </div>
-                )}
+                      {/* Virtual table sub-tabs */}
+                      {standingsData.reclasificacion && (
+                        <button
+                          onClick={() => setStandingsSubTab("reclasificacion")}
+                          className={cn(
+                            "text-xs px-2.5 py-1 rounded-full whitespace-nowrap transition-colors",
+                            standingsSubTab === "reclasificacion"
+                              ? "bg-foreground text-background font-medium"
+                              : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                          )}
+                        >
+                          Reclasificación
+                        </button>
+                      )}
+                      {isDescensoValid(standingsData.descenso) && (
+                        <button
+                          onClick={() => setStandingsSubTab("descenso")}
+                          className={cn(
+                            "text-xs px-2.5 py-1 rounded-full whitespace-nowrap transition-colors",
+                            standingsSubTab === "descenso"
+                              ? "bg-foreground text-background font-medium"
+                              : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                          )}
+                        >
+                          Descenso
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {isStandingsLoading ? (
                   <div className="flex items-center justify-center py-6">
