@@ -150,7 +150,7 @@ function FootballPageContent() {
               country: first.country,
               league: primaryLeague.league_id,
               group: null,
-              team: teamId,
+              team: null,
             }),
             { scroll: false }
           );
@@ -196,12 +196,12 @@ function FootballPageContent() {
           country: newCountry,
           league: primaryLeagueId,
           group: null,
-          team: teamId,
+          team: null,
         }),
         { scroll: false }
       );
     },
-    [router, category, teamId]
+    [router, category]
   );
 
   // Sibling leagues for current country (sorted by priority from backend)
