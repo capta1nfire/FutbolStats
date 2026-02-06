@@ -6026,13 +6026,14 @@ async def ops_alerts_ack(
 
 @router.post("/ops/migrate-weather-precip-prob", include_in_schema=False)
 async def migrate_weather_precip_prob(
+    request: Request,
     session: AsyncSession = Depends(get_async_session),
-    _: None = Depends(verify_dashboard_token_bool),
 ):
     """
     One-time migration to add precipitation probability field to match_weather.
     Also triggers a backfill for upcoming matches.
     """
+    _check_token(request)
     from sqlalchemy import text
 
     migrations = [
@@ -6068,9 +6069,9 @@ async def migrate_weather_precip_prob(
 
 @router.post("/ops/trigger-weather-sync", include_in_schema=False)
 async def trigger_weather_sync(
+    request: Request,
     hours: int = 48,
     limit: int = 100,
-    _: None = Depends(verify_dashboard_token_bool),
 ):
     """
     Manually trigger weather forecast capture for upcoming matches.
@@ -6082,6 +6083,7 @@ async def trigger_weather_sync(
     Returns:
         Stats from the weather capture job.
     """
+    _check_token(request)
     from app.etl.sota_jobs import capture_weather_prekickoff
 
     async with AsyncSessionLocal() as session:
