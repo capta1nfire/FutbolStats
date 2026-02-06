@@ -614,9 +614,6 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
           >
             {/* League header */}
             <div className="px-4 py-3 border-b border-border flex items-start gap-4">
-              <Button variant="ghost" size="icon" onClick={onBack} className="shrink-0 mt-0.5">
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <Trophy className="h-5 w-5 text-primary shrink-0" />
