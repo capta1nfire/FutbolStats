@@ -139,6 +139,24 @@ function FootballPageContent() {
   // Navigation handlers
   const handleCategoryChange = useCallback(
     (newCategory: string) => {
+      // Auto-select first country + primary league when entering leagues_by_country
+      if (newCategory === "leagues_by_country" && countriesData?.countries?.length) {
+        const first = countriesData.countries[0];
+        const primaryLeague = first.leagues[0];
+        if (primaryLeague) {
+          router.replace(
+            buildFootballUrl({
+              category: newCategory,
+              country: first.country,
+              league: primaryLeague.league_id,
+              group: null,
+              team: teamId,
+            }),
+            { scroll: false }
+          );
+          return;
+        }
+      }
       router.replace(
         buildFootballUrl({
           category: newCategory,
@@ -150,7 +168,7 @@ function FootballPageContent() {
         { scroll: false }
       );
     },
-    [router, teamId]
+    [router, teamId, countriesData]
   );
 
   const handleCountrySelect = useCallback(
