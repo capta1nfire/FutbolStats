@@ -13,6 +13,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Loader } from "@/components/ui/loader";
 import { getCountryIsoCode } from "@/lib/utils/country-flags";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   RefreshCw,
   AlertTriangle,
   ArrowLeft,
@@ -66,6 +73,12 @@ function CountryFlag({ country, size = 14 }: { country: string; size?: number })
   );
 }
 
+interface SiblingLeague {
+  league_id: number;
+  name: string;
+  kind: string;
+}
+
 interface LeagueDetailProps {
   leagueId: number;
   onBack: () => void;
@@ -73,6 +86,10 @@ interface LeagueDetailProps {
   onSettingsClick?: () => void;
   /** Initial team to show in details panel (from URL param) */
   initialTeamId?: number | null;
+  /** Other leagues from the same country (sorted by priority) */
+  siblingLeagues?: SiblingLeague[];
+  /** Called when user switches to a different league via dropdown */
+  onLeagueChange?: (leagueId: number) => void;
 }
 
 /**
@@ -512,7 +529,7 @@ function DescensoTable({
  * - Recent matches
  * - Standings (with sub-tabs for reclasificación/descenso)
  */
-export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, initialTeamId }: LeagueDetailProps) {
+export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, initialTeamId, siblingLeagues, onLeagueChange }: LeagueDetailProps) {
   const [activeTab, setActiveTab] = useState<LeagueDetailTabId>("standings");
   const [standingsSubTab, setStandingsSubTab] = useState<string>("standings");
   const [selectedGroup, setSelectedGroup] = useState<string | undefined>(undefined);
@@ -602,28 +619,46 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
               </Button>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <Trophy className="h-5 w-5 text-primary" />
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <h1 className="text-lg font-semibold text-foreground cursor-help truncate">
-                        {league.name}
-                      </h1>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" sideOffset={6}>
-                      <div className="space-y-1">
-                        <div className="text-foreground">
-                          <span className="text-muted-foreground">Match Weight:</span>{" "}
-                          <span className="font-medium text-foreground">
-                            {league.match_weight ?? 1}
-                          </span>
+                  <Trophy className="h-5 w-5 text-primary shrink-0" />
+                  {siblingLeagues && siblingLeagues.length > 1 && onLeagueChange ? (
+                    <Select
+                      value={leagueId.toString()}
+                      onValueChange={(v) => onLeagueChange(parseInt(v, 10))}
+                    >
+                      <SelectTrigger className="text-lg font-semibold text-foreground border-none shadow-none px-1 h-auto py-0 gap-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {siblingLeagues.map((sl) => (
+                          <SelectItem key={sl.league_id} value={sl.league_id.toString()}>
+                            {sl.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <h1 className="text-lg font-semibold text-foreground cursor-help truncate">
+                          {league.name}
+                        </h1>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" sideOffset={6}>
+                        <div className="space-y-1">
+                          <div className="text-foreground">
+                            <span className="text-muted-foreground">Match Weight:</span>{" "}
+                            <span className="font-medium text-foreground">
+                              {league.match_weight ?? 1}
+                            </span>
+                          </div>
+                          <div className="text-muted-foreground">
+                            1 = peso estándar. Valores mayores aumentan la influencia de esta liga
+                            en cálculos internos; menores la reducen.
+                          </div>
                         </div>
-                        <div className="text-muted-foreground">
-                          1 = peso estándar. Valores mayores aumentan la influencia de esta liga
-                          en cálculos internos; menores la reducen.
-                        </div>
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
                 </div>
                 <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground flex-wrap">
                   <span className="flex items-center gap-1">

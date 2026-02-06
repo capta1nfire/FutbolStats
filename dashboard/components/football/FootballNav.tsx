@@ -51,6 +51,7 @@ interface FootballNavProps {
   onCategoryChange: (category: string) => void;
   selectedCountry: string | null;
   onCountrySelect: (country: string) => void;
+  onCountryLeagueSelect?: (country: string, leagueId: number) => void;
   onTeamSelect?: (teamId: number, teamCountry?: string) => void;
 }
 
@@ -84,6 +85,7 @@ export function FootballNav({
   onCategoryChange,
   selectedCountry,
   onCountrySelect,
+  onCountryLeagueSelect,
   onTeamSelect,
 }: FootballNavProps) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -368,7 +370,13 @@ export function FootballNav({
                     return (
                       <button
                         key={c.country}
-                        onClick={() => onCountrySelect(c.country)}
+                        onClick={() => {
+                          if (onCountryLeagueSelect && c.leagues.length > 0) {
+                            onCountryLeagueSelect(c.country, c.leagues[0].league_id);
+                          } else {
+                            onCountrySelect(c.country);
+                          }
+                        }}
                         className={cn(
                           "w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-colors text-left",
                           isSelected

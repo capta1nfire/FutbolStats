@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useMemo, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useFootballTeam, useFootballLeague } from "@/lib/hooks";
+import { useFootballTeam, useFootballLeague, useFootballCountries } from "@/lib/hooks";
 import { Loader } from "@/components/ui/loader";
 import { Flag } from "lucide-react";
 import {
@@ -104,6 +104,9 @@ function FootballPageContent() {
   // Fetch league data for settings drawer
   const { data: leagueData } = useFootballLeague(leagueId);
 
+  // Fetch countries data (cached via react-query) for sibling leagues resolution
+  const { data: countriesData } = useFootballCountries();
+
   // Track if we've already auto-selected the league for this team
   const autoSelectedLeagueRef = useRef<number | null>(null);
 
@@ -165,6 +168,30 @@ function FootballPageContent() {
     },
     [router, category, teamId]
   );
+
+  // Navigate directly to a country's primary league (skip CountryCompetitions)
+  const handleCountryLeagueSelect = useCallback(
+    (newCountry: string, primaryLeagueId: number) => {
+      router.replace(
+        buildFootballUrl({
+          category,
+          country: newCountry,
+          league: primaryLeagueId,
+          group: null,
+          team: teamId,
+        }),
+        { scroll: false }
+      );
+    },
+    [router, category, teamId]
+  );
+
+  // Sibling leagues for current country (sorted by priority from backend)
+  const siblingLeagues = useMemo(() => {
+    if (!country || !countriesData?.countries) return [];
+    const countryData = countriesData.countries.find((c) => c.country === country);
+    return countryData?.leagues ?? [];
+  }, [country, countriesData]);
 
   const handleLeagueSelect = useCallback(
     (newLeagueId: number) => {
@@ -375,6 +402,7 @@ function FootballPageContent() {
         onCategoryChange={handleCategoryChange}
         selectedCountry={country}
         onCountrySelect={handleCountrySelect}
+        onCountryLeagueSelect={handleCountryLeagueSelect}
         onTeamSelect={handleTeamSelect}
       />
 
@@ -395,6 +423,8 @@ function FootballPageContent() {
             onTeamSelect={handleTeamSelect}
             onSettingsClick={handleSettingsOpen}
             initialTeamId={teamId}
+            siblingLeagues={siblingLeagues}
+            onLeagueChange={handleLeagueSelect}
           />
         )}
         {contentView === "group" && groupId && (
