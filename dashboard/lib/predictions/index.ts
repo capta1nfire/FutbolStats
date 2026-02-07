@@ -10,3 +10,9 @@ export {
   type ProbabilityInput,
   type PredictionPickResult,
 } from "./pick";
+
+export {
+  computeGap20,
+  type DivergenceCategory,
+  type Gap20Result,
+} from "./gap20";

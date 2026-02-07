@@ -10,7 +10,8 @@ import { toast } from "sonner";
 import { Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRegion } from "@/components/providers/RegionProvider";
-import { getPredictionPick, getProbabilityCellClasses, type Outcome } from "@/lib/predictions";
+import { getPredictionPick, getProbabilityCellClasses, computeGap20, type Outcome } from "@/lib/predictions";
+import { DivergenceBadge } from "./DivergenceBadge";
 import {
   Tooltip,
   TooltipContent,
@@ -535,41 +536,47 @@ export function MatchesTable({
                         maxWidth: MATCH_COL_WIDTH,
                       }}
                     >
-                      <div className="flex flex-col gap-0.5 leading-tight">
-                        <div className="flex items-center gap-1.5">
-                          <TeamLogo
-                            src={getLogoUrl?.(match.home) ?? null}
-                            teamName={match.home}
-                            size={16}
-                          />
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="font-medium text-foreground truncate max-w-[180px]">
-                                {match.homeDisplayName}
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent side="top">
-                              <p>{match.home}</p>
-                            </TooltipContent>
-                          </Tooltip>
+                      <div className="flex items-center justify-between gap-1">
+                        <div className="flex flex-col gap-0.5 leading-tight min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <TeamLogo
+                              src={getLogoUrl?.(match.home) ?? null}
+                              teamName={match.home}
+                              size={16}
+                            />
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="font-medium text-foreground truncate max-w-[160px]">
+                                  {match.homeDisplayName}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">
+                                <p>{match.home}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <TeamLogo
+                              src={getLogoUrl?.(match.away) ?? null}
+                              teamName={match.away}
+                              size={16}
+                            />
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="text-muted-foreground text-sm truncate max-w-[160px]">
+                                  {match.awayDisplayName}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">
+                                <p>{match.away}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          <TeamLogo
-                            src={getLogoUrl?.(match.away) ?? null}
-                            teamName={match.away}
-                            size={16}
-                          />
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="text-muted-foreground text-sm truncate max-w-[180px]">
-                                {match.awayDisplayName}
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent side="top">
-                              <p>{match.away}</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </div>
+                        {match.modelA && match.market && (() => {
+                          const gap20 = computeGap20(match.modelA, match.market);
+                          return gap20 ? <DivergenceBadge result={gap20} /> : null;
+                        })()}
                       </div>
                     </td>
 

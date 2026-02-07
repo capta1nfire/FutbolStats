@@ -14,6 +14,8 @@ import { Loader } from "@/components/ui/loader";
 import { IconTabs } from "@/components/ui/icon-tabs";
 import { Badge } from "@/components/ui/badge";
 import { StatusDot } from "./StatusDot";
+import { DivergenceBadge } from "./DivergenceBadge";
+import { computeGap20 } from "@/lib/predictions";
 import { TeamLogo } from "@/components/ui/team-logo";
 import { CountryFlag } from "@/components/ui/country-flag";
 import {
@@ -511,6 +513,10 @@ export function MatchHeader({
               <StatusDot status={match.status} showLabel showIcon={false} />
             </>
           )}
+          {match.modelA && match.market && (() => {
+            const gap20 = computeGap20(match.modelA, match.market);
+            return gap20 ? <DivergenceBadge result={gap20} className="mt-1" /> : null;
+          })()}
         </div>
 
         <div className="flex items-start gap-6">
