@@ -3002,64 +3002,90 @@ def _get_providers_health() -> dict:
     }
 
 
-async def _load_ops_data() -> dict:
-    """
-    Ops dashboard: read-only aggregated metrics from DB + in-process state.
-    Designed to be lightweight (few aggregated queries) and cached.
-    """
-    from app.main import _live_summary_cache  # lazy import (P0-11: no top-level app.main)
+# =====================================================================
+# League names fallback (module-level for _build_league_name_map)
+# =====================================================================
+_LEAGUE_NAMES_FALLBACK: dict[int, str] = {
+    1: "World Cup", 2: "Champions League", 3: "Europa League",
+    4: "Euro", 5: "Nations League", 9: "Copa Am\u00e9rica",
+    10: "Friendlies", 11: "Sudamericana", 13: "Libertadores",
+    22: "Gold Cup",
+    # Legacy: league_id=28 was previously (incorrectly) used for WCQ CONMEBOL in code.
+    # In production DB it may contain SAFF Championship fixtures.
+    28: "SAFF Championship (legacy)",
+    # WC 2026 Qualifiers (correct API-Football league IDs)
+    29: "WCQ CAF", 30: "WCQ AFC", 31: "WCQ CONCACAF",
+    32: "WCQ UEFA", 33: "WCQ OFC", 34: "WCQ CONMEBOL",
+    37: "WCQ Intercontinental Play-offs",
+    39: "Premier League", 45: "FA Cup", 61: "Ligue 1",
+    71: "Brazil Serie A", 78: "Bundesliga", 88: "Eredivisie",
+    94: "Primeira Liga", 128: "Argentina Primera", 135: "Serie A",
+    140: "La Liga", 143: "Copa del Rey", 203: "Super Lig",
+    239: "Colombia Primera A", 242: "Ecuador Liga Pro",
+    250: "Paraguay Primera - Apertura", 252: "Paraguay Primera - Clausura",
+    253: "MLS", 262: "Liga MX", 265: "Chile Primera Divisi\u00f3n",
+    268: "Uruguay Primera - Apertura", 270: "Uruguay Primera - Clausura",
+    281: "Peru Primera Divisi\u00f3n", 299: "Venezuela Primera Divisi\u00f3n",
+    344: "Bolivia Primera Divisi\u00f3n", 848: "Conference League",
+}
 
-    now = datetime.utcnow()
 
-    # Budget status - fetch real API account status from API-Football
+def _build_league_name_map() -> dict[int, str]:
+    """Build league_id -> name map from fallback + COMPETITIONS."""
+    from app.etl.competitions import COMPETITIONS
+
+    league_name_by_id = _LEAGUE_NAMES_FALLBACK.copy()
+    try:
+        for league_id, comp in (COMPETITIONS or {}).items():
+            if league_id is not None and comp is not None:
+                name = getattr(comp, "name", None)
+                if name:
+                    league_name_by_id[int(league_id)] = name
+    except Exception:
+        pass
+    return league_name_by_id
+
+
+# =====================================================================
+# Parallel helpers for _load_ops_data (each opens its own DB session)
+# =====================================================================
+
+async def _fetch_budget_status() -> dict:
+    """Fetch API-Football budget status (HTTP call + timezone enrichment)."""
     budget_status: dict = {"status": "unavailable"}
     try:
         from app.etl.api_football import get_api_account_status
-
         budget_status = await get_api_account_status()
     except Exception as e:
         logger.warning(f"Could not fetch API account status: {e}")
         budget_status = {"status": "unavailable", "error": str(e)}
 
-    # Observational metadata: API-Football daily budget refresh time (approx).
-    # User-reported: ~4:00pm America/Los_Angeles. Best-effort only (ops UX).
     try:
         from zoneinfo import ZoneInfo
-
         tz_name = "America/Los_Angeles"
-        reset_hour = 16
-        reset_minute = 0
-
+        reset_hour, reset_minute = 16, 0
         now_utc = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC"))
         now_la = now_utc.astimezone(ZoneInfo(tz_name))
         next_reset_la = now_la.replace(hour=reset_hour, minute=reset_minute, second=0, microsecond=0)
         if next_reset_la <= now_la:
-            next_reset_la = next_reset_la + timedelta(days=1)
+            next_reset_la += timedelta(days=1)
         next_reset_utc = next_reset_la.astimezone(ZoneInfo("UTC"))
-
         if not isinstance(budget_status, dict):
             budget_status = {"status": "unavailable"}
-
-        budget_status.update(
-            {
-                "tokens_reset_tz": tz_name,
-                "tokens_reset_local_time": f"{reset_hour:02d}:{reset_minute:02d}",
-                "tokens_reset_at_la": next_reset_la.isoformat(),
-                "tokens_reset_at_utc": next_reset_utc.isoformat(),
-                "tokens_reset_note": "Observed daily refresh around 4:00pm America/Los_Angeles",
-            }
-        )
+        budget_status.update({
+            "tokens_reset_tz": tz_name,
+            "tokens_reset_local_time": f"{reset_hour:02d}:{reset_minute:02d}",
+            "tokens_reset_at_la": next_reset_la.isoformat(),
+            "tokens_reset_at_utc": next_reset_utc.isoformat(),
+            "tokens_reset_note": "Observed daily refresh around 4:00pm America/Los_Angeles",
+        })
     except Exception:
         pass
+    return budget_status
 
-    # Sentry health - fetch aggregated metrics (best-effort, cached)
-    sentry_health: dict = await _fetch_sentry_health()
 
-    from app.scheduler import get_last_sync_time  # lazy import
-
-    league_mode = os.environ.get("LEAGUE_MODE", "tracked").strip().lower()
-    last_sync = get_last_sync_time()
-
+async def _run_inline_queries() -> dict:
+    """Run simple inline DB queries for ops dashboard (single session)."""
     async with AsyncSessionLocal() as session:
         # Tracked leagues (distinct league_id)
         res = await session.execute(text("SELECT COUNT(DISTINCT league_id) FROM matches WHERE league_id IS NOT NULL"))
@@ -3067,8 +3093,7 @@ async def _load_ops_data() -> dict:
 
         # Upcoming matches (next 24h)
         res = await session.execute(
-            text(
-                """
+            text("""
                 SELECT league_id, COUNT(*) AS upcoming
                 FROM matches
                 WHERE league_id IS NOT NULL
@@ -3077,42 +3102,36 @@ async def _load_ops_data() -> dict:
                 GROUP BY league_id
                 ORDER BY upcoming DESC
                 LIMIT 20
-                """
-            )
+            """)
         )
         upcoming_by_league = [{"league_id": int(r[0]), "upcoming_24h": int(r[1])} for r in res.fetchall()]
 
         # PIT snapshots (live, lineup_confirmed)
         res = await session.execute(
-            text(
-                """
+            text("""
                 SELECT COUNT(*)
                 FROM odds_snapshots
                 WHERE snapshot_type = 'lineup_confirmed'
                   AND odds_freshness = 'live'
                   AND snapshot_at > NOW() - INTERVAL '60 minutes'
-                """
-            )
+            """)
         )
         pit_live_60m = int(res.scalar() or 0)
 
         res = await session.execute(
-            text(
-                """
+            text("""
                 SELECT COUNT(*)
                 FROM odds_snapshots
                 WHERE snapshot_type = 'lineup_confirmed'
                   AND odds_freshness = 'live'
                   AND snapshot_at > NOW() - INTERVAL '24 hours'
-                """
-            )
+            """)
         )
         pit_live_24h = int(res.scalar() or 0)
 
-        # ΔKO distribution (last 60m)
+        # DKO distribution (last 60m)
         res = await session.execute(
-            text(
-                """
+            text("""
                 SELECT ROUND(delta_to_kickoff_seconds / 60.0) AS min_to_ko, COUNT(*) AS c
                 FROM odds_snapshots
                 WHERE snapshot_type = 'lineup_confirmed'
@@ -3121,15 +3140,13 @@ async def _load_ops_data() -> dict:
                   AND delta_to_kickoff_seconds IS NOT NULL
                 GROUP BY 1
                 ORDER BY 1
-                """
-            )
+            """)
         )
         pit_dko_60m = [{"min_to_ko": int(r[0]), "count": int(r[1])} for r in res.fetchall()]
 
         # Latest PIT snapshots (last 10, any freshness)
         res = await session.execute(
-            text(
-                """
+            text("""
                 SELECT os.snapshot_at, os.match_id, m.league_id, os.odds_freshness, os.delta_to_kickoff_seconds,
                        os.odds_home, os.odds_draw, os.odds_away, os.bookmaker
                 FROM odds_snapshots os
@@ -3137,72 +3154,52 @@ async def _load_ops_data() -> dict:
                 WHERE os.snapshot_type = 'lineup_confirmed'
                 ORDER BY os.snapshot_at DESC
                 LIMIT 10
-                """
-            )
+            """)
         )
         latest_pit = []
         for r in res.fetchall():
-            latest_pit.append(
-                {
-                    "snapshot_at": r[0].isoformat() if r[0] else None,
-                    "match_id": int(r[1]) if r[1] is not None else None,
-                    "league_id": int(r[2]) if r[2] is not None else None,
-                    "odds_freshness": r[3],
-                    "delta_to_kickoff_minutes": round(float(r[4]) / 60.0, 1) if r[4] is not None else None,
-                    "odds": {
-                        "home": float(r[5]) if r[5] is not None else None,
-                        "draw": float(r[6]) if r[6] is not None else None,
-                        "away": float(r[7]) if r[7] is not None else None,
-                    },
-                    "bookmaker": r[8],
-                }
-            )
+            latest_pit.append({
+                "snapshot_at": r[0].isoformat() if r[0] else None,
+                "match_id": int(r[1]) if r[1] is not None else None,
+                "league_id": int(r[2]) if r[2] is not None else None,
+                "odds_freshness": r[3],
+                "delta_to_kickoff_minutes": round(float(r[4]) / 60.0, 1) if r[4] is not None else None,
+                "odds": {
+                    "home": float(r[5]) if r[5] is not None else None,
+                    "draw": float(r[6]) if r[6] is not None else None,
+                    "away": float(r[7]) if r[7] is not None else None,
+                },
+                "bookmaker": r[8],
+            })
 
         # Movement snapshots (last 24h)
         lineup_movement_24h = None
         market_movement_24h = None
         try:
             res = await session.execute(
-                text(
-                    """
-                    SELECT COUNT(*)
-                    FROM lineup_movement_snapshots
-                    WHERE captured_at > NOW() - INTERVAL '24 hours'
-                    """
-                )
+                text("SELECT COUNT(*) FROM lineup_movement_snapshots WHERE captured_at > NOW() - INTERVAL '24 hours'")
             )
             lineup_movement_24h = int(res.scalar() or 0)
         except Exception:
             lineup_movement_24h = None
-
         try:
             res = await session.execute(
-                text(
-                    """
-                    SELECT COUNT(*)
-                    FROM market_movement_snapshots
-                    WHERE captured_at > NOW() - INTERVAL '24 hours'
-                    """
-                )
+                text("SELECT COUNT(*) FROM market_movement_snapshots WHERE captured_at > NOW() - INTERVAL '24 hours'")
             )
             market_movement_24h = int(res.scalar() or 0)
         except Exception:
             market_movement_24h = None
 
         # Stats backfill health (last 72h finished matches)
-        # Use COALESCE(finished_at, date) to get matches that FINISHED in last 72h
-        # not matches that STARTED in last 72h (date is kickoff time)
         res = await session.execute(
-            text(
-                """
+            text("""
                 SELECT
                     COUNT(*) FILTER (WHERE stats IS NOT NULL AND stats::text != '{}' AND stats::text != 'null') AS with_stats,
                     COUNT(*) FILTER (WHERE stats IS NULL OR stats::text = '{}' OR stats::text = 'null') AS missing_stats
                 FROM matches
                 WHERE status IN ('FT', 'AET', 'PEN')
                   AND COALESCE(finished_at, date) > NOW() - INTERVAL '72 hours'
-                """
-            )
+            """)
         )
         row = res.first()
         stats_with = int(row[0] or 0) if row else 0
@@ -3211,38 +3208,29 @@ async def _load_ops_data() -> dict:
         # =============================================================
         # PROGRESS METRICS (for re-test / Alpha readiness)
         # =============================================================
-        # Configurable targets via env vars
-        # Per PIT Protocol v2: Piloto=50, Preliminar=200, Formal=500
-        # Aligned with TITAN formal gate for consistency
         TARGET_PIT_SNAPSHOTS_30D = int(os.environ.get("TARGET_PIT_SNAPSHOTS_30D", "500"))
         TARGET_PIT_BETS_30D = int(os.environ.get("TARGET_PIT_BETS_30D", "500"))
         TARGET_BASELINE_COVERAGE_PCT = int(os.environ.get("TARGET_BASELINE_COVERAGE_PCT", "60"))
 
-        # 1) PIT snapshots (30 days) - lineup_confirmed with live odds
         pit_snapshots_30d = 0
         try:
             res = await session.execute(
-                text(
-                    """
+                text("""
                     SELECT COUNT(*)
                     FROM odds_snapshots
                     WHERE snapshot_type = 'lineup_confirmed'
                       AND odds_freshness = 'live'
                       AND snapshot_at > NOW() - INTERVAL '30 days'
-                    """
-                )
+                """)
             )
             pit_snapshots_30d = int(res.scalar() or 0)
         except Exception:
             pit_snapshots_30d = 0
 
-        # 2) PIT with predictions as-of (evaluable bets, 30 days)
-        # Count PIT snapshots that have a prediction created BEFORE the snapshot
         pit_bets_30d = 0
         try:
             res = await session.execute(
-                text(
-                    """
+                text("""
                     SELECT COUNT(DISTINCT os.id)
                     FROM odds_snapshots os
                     WHERE os.snapshot_type = 'lineup_confirmed'
@@ -3253,22 +3241,18 @@ async def _load_ops_data() -> dict:
                           WHERE p.match_id = os.match_id
                             AND p.created_at < os.snapshot_at
                       )
-                    """
-                )
+                """)
             )
             pit_bets_30d = int(res.scalar() or 0)
         except Exception:
             pit_bets_30d = 0
 
-        # 3) Baseline coverage (% of recent PIT matches with market_movement pre-KO)
-        # This measures how many PIT snapshots have baseline odds for CLV proxy
         baseline_coverage_pct = 0
         pit_with_baseline = 0
         pit_total_for_baseline = 0
         try:
             res = await session.execute(
-                text(
-                    """
+                text("""
                     SELECT
                         COUNT(*) FILTER (WHERE has_baseline) AS with_baseline,
                         COUNT(*) AS total
@@ -3286,8 +3270,7 @@ async def _load_ops_data() -> dict:
                           AND os.odds_freshness = 'live'
                           AND os.snapshot_at > NOW() - INTERVAL '30 days'
                     ) sub
-                    """
-                )
+                """)
             )
             row = res.first()
             if row:
@@ -3315,64 +3298,26 @@ async def _load_ops_data() -> dict:
             ),
         }
 
-        # =============================================================
-        # PREDICTIONS HEALTH (P0 observability - detect scheduler issues)
-        # =============================================================
-        predictions_health = await _calculate_predictions_health(session)
+    return {
+        "tracked_leagues_count": tracked_leagues_count,
+        "upcoming_by_league": upcoming_by_league,
+        "pit_live_60m": pit_live_60m,
+        "pit_live_24h": pit_live_24h,
+        "pit_dko_60m": pit_dko_60m,
+        "latest_pit": latest_pit,
+        "lineup_movement_24h": lineup_movement_24h,
+        "market_movement_24h": market_movement_24h,
+        "stats_with": stats_with,
+        "stats_missing": stats_missing,
+        "progress_metrics": progress_metrics,
+    }
 
-        # =============================================================
-        # FAST-PATH HEALTH (LLM narrative generation monitoring)
-        # =============================================================
-        fastpath_health = await _calculate_fastpath_health(session)
 
-        # =============================================================
-        # MODEL PERFORMANCE (7d probability metrics summary)
-        # =============================================================
-        model_performance = await _calculate_model_performance(session)
-
-        # =============================================================
-        # DATA QUALITY TELEMETRY (quarantine/taint/unmapped summary)
-        # =============================================================
-        telemetry_data = await _calculate_telemetry_summary(session)
-
-        # =============================================================
-        # SHADOW MODE (A/B model comparison monitoring)
-        # =============================================================
-        shadow_mode_data = await _calculate_shadow_mode_summary(session)
-
-        # =============================================================
-        # SENSOR B (LogReg L2 calibration diagnostics - INTERNAL ONLY)
-        # =============================================================
-        sensor_b_data = await _calculate_sensor_b_summary(session)
-
-        # =============================================================
-        # EXTC SHADOW (experimental ext-C model evaluation)
-        # =============================================================
-        extc_shadow_data = await _calculate_extc_shadow_summary(session)
-
-        # =============================================================
-        # RERUN SERVING (DB-first canary for two-stage)
-        # =============================================================
-        rerun_serving_data = await _calculate_rerun_serving_summary(session)
-
-        # =============================================================
-        # JOBS HEALTH (P0 jobs monitoring - stats_backfill, odds_sync, fastpath)
-        # =============================================================
-        jobs_health_data = await _calculate_jobs_health_summary(session)
-
-        # =============================================================
-        # SOTA ENRICHMENT (Understat xG, Weather, Venue Geo coverage)
-        # =============================================================
-        sota_enrichment_data = await _calculate_sota_enrichment_summary(session)
-
-        # =============================================================
-        # LLM COST (Gemini token usage from PostMatchAudit)
-        # =============================================================
-        llm_cost_data = {"provider": "gemini", "status": "unavailable"}
-        try:
-            # Rollback any previous failed transaction state
-            await session.rollback()
-
+async def _run_llm_cost_queries() -> dict:
+    """Calculate LLM cost metrics for ops dashboard."""
+    llm_cost_data: dict = {"provider": "gemini", "status": "unavailable"}
+    try:
+        async with AsyncSessionLocal() as session:
             # Use pricing from settings (single source of truth)
             MODEL_PRICING = settings.GEMINI_PRICING
             DEFAULT_PRICE_IN = settings.GEMINI_PRICE_INPUT
@@ -3595,117 +3540,19 @@ async def _load_ops_data() -> dict:
                 **({"model_usage_7d": model_usage_7d} if model_usage_7d else {}),
                 **({"model_usage_24h": model_usage_24h} if model_usage_24h else {}),
             }
-        except Exception as e:
-            logger.warning(f"Could not calculate LLM cost: {e}")
-            llm_cost_data = {"provider": "gemini", "status": "error", "error": str(e)}
+    except Exception as e:
+        logger.warning(f"Could not calculate LLM cost: {e}")
+        llm_cost_data = {"provider": "gemini", "status": "error", "error": str(e)}
+    return llm_cost_data
 
-    # League names - comprehensive fallback for all known leagues
-    # Includes EXTENDED_LEAGUES and other common leagues from API-Football
-    LEAGUE_NAMES_FALLBACK: dict[int, str] = {
-        1: "World Cup",
-        2: "Champions League",
-        3: "Europa League",
-        4: "Euro",
-        5: "Nations League",
-        9: "Copa América",
-        10: "Friendlies",
-        11: "Sudamericana",
-        13: "Libertadores",
-        22: "Gold Cup",
-        # Legacy: league_id=28 was previously (incorrectly) used for WCQ CONMEBOL in code.
-        # In production DB it may contain SAFF Championship fixtures. Keep explicit to avoid confusion.
-        28: "SAFF Championship (legacy)",
-        # WC 2026 Qualifiers (correct API-Football league IDs)
-        29: "WCQ CAF",
-        30: "WCQ AFC",
-        31: "WCQ CONCACAF",
-        32: "WCQ UEFA",
-        33: "WCQ OFC",
-        34: "WCQ CONMEBOL",
-        37: "WCQ Intercontinental Play-offs",
-        39: "Premier League",
-        45: "FA Cup",
-        61: "Ligue 1",
-        71: "Brazil Serie A",
-        78: "Bundesliga",
-        88: "Eredivisie",
-        94: "Primeira Liga",
-        128: "Argentina Primera",
-        135: "Serie A",
-        140: "La Liga",
-        143: "Copa del Rey",
-        203: "Super Lig",
-        239: "Colombia Primera A",
-        242: "Ecuador Liga Pro",
-        250: "Paraguay Primera - Apertura",
-        252: "Paraguay Primera - Clausura",
-        253: "MLS",
-        262: "Liga MX",
-        265: "Chile Primera División",
-        268: "Uruguay Primera - Apertura",
-        270: "Uruguay Primera - Clausura",
-        281: "Peru Primera División",
-        299: "Venezuela Primera División",
-        344: "Bolivia Primera División",
-        848: "Conference League",
-    }
 
-    # Merge with COMPETITIONS (if available)
-    from app.etl.competitions import COMPETITIONS  # lazy import
-
-    league_name_by_id: dict[int, str] = LEAGUE_NAMES_FALLBACK.copy()
-    try:
-        for league_id, comp in (COMPETITIONS or {}).items():
-            if league_id is not None and comp is not None:
-                name = getattr(comp, "name", None)
-                if name:
-                    league_name_by_id[int(league_id)] = name
-    except Exception:
-        pass  # Keep fallback names
-
-    for item in upcoming_by_league:
-        lid = item["league_id"]
-        item["league_name"] = league_name_by_id.get(lid)
-
-    for item in latest_pit:
-        lid = item.get("league_id")
-        if isinstance(lid, int):
-            item["league_name"] = league_name_by_id.get(lid)
-
-    # =============================================================
-    # LIVE SUMMARY STATS (iOS Live Score Polling)
-    # =============================================================
-    live_summary_stats = {
-        "cache_ttl_seconds": _live_summary_cache["ttl"],
-        "cache_timestamp": _live_summary_cache["timestamp"],
-        "cache_age_seconds": round(time.time() - _live_summary_cache["timestamp"], 1) if _live_summary_cache["timestamp"] else None,
-        "cached_live_matches": len(_live_summary_cache["data"]["matches"]) if _live_summary_cache["data"] else 0,
-    }
-
-    # =============================================================
-    # ML MODEL STATUS
-    # =============================================================
-    ml_model_info = {
-        "loaded": ml_engine.model is not None,
-        "version": ml_engine.model_version,
-        "source": "file",  # Currently only file-based loading
-        "model_path": str(ml_engine.model_path),
-    }
-    if ml_engine.model is not None:
-        try:
-            ml_model_info["n_features"] = ml_engine.model.n_features_in_
-        except AttributeError:
-            pass
-
-    # =============================================================
-    # COVERAGE BY LEAGUE (NS matches in next 48h with predictions/odds)
-    # =============================================================
+async def _run_coverage_queries(league_name_by_id: dict[int, str]) -> list:
+    """Coverage by league (NS matches in next 48h with predictions/odds)."""
     coverage_by_league = []
     try:
         async with AsyncSessionLocal() as session:
             res = await session.execute(
-                text(
-                    """
+                text("""
                     SELECT
                         m.league_id,
                         COUNT(*) AS total_ns,
@@ -3720,8 +3567,7 @@ async def _load_ops_data() -> dict:
                     GROUP BY m.league_id
                     ORDER BY COUNT(*) DESC
                     LIMIT 15
-                    """
-                )
+                """)
             )
             for row in res.fetchall():
                 lid = int(row[0])
@@ -3739,32 +3585,147 @@ async def _load_ops_data() -> dict:
                 })
     except Exception as e:
         logger.warning(f"Could not calculate coverage by league: {e}")
+    return coverage_by_league
+
+
+async def _load_ops_data() -> dict:
+    """
+    Ops dashboard: read-only aggregated metrics from DB + in-process state.
+    Parallelized with asyncio.gather -- ~16 independent sections run concurrently,
+    each with its own DB session. Pool: 10+20=30, uses ~14 concurrent sessions.
+    """
+    from app.main import _live_summary_cache  # lazy import (P0-11: no top-level app.main)
+    from app.scheduler import get_last_sync_time
+
+    now = datetime.utcnow()
+    league_mode = os.environ.get("LEAGUE_MODE", "tracked").strip().lower()
+    last_sync = get_last_sync_time()
+    league_name_by_id = _build_league_name_map()
+
+    # Fail-soft wrapper: degrade per-section instead of failing entire refresh
+    async def _safe(coro, default, label):
+        try:
+            return await coro
+        except Exception as e:
+            logger.warning(f"[OPS_DASHBOARD] {label} failed: {type(e).__name__}: {e}")
+            return default
+
+    # Helper: run a _calculate_* function with its own DB session (fail-soft)
+    async def _calc(fn):
+        label = fn.__name__
+        try:
+            async with AsyncSessionLocal() as s:
+                return await fn(s)
+        except Exception as e:
+            logger.warning(f"[OPS_DASHBOARD] {label} failed: {type(e).__name__}: {e}")
+            return {"status": "error", "error": f"{type(e).__name__}: {e}"}
+
+    # Fallback for inline queries (all zeros/empty — dashboard shows "Degraded" per-card)
+    _inline_fallback = {
+        "tracked_leagues_count": 0, "upcoming_by_league": [],
+        "pit_live_60m": 0, "pit_live_24h": 0, "pit_dko_60m": [], "latest_pit": [],
+        "lineup_movement_24h": None, "market_movement_24h": None,
+        "stats_with": 0, "stats_missing": 0,
+        "progress_metrics": {
+            "pit_snapshots_30d": 0, "target_pit_snapshots_30d": 500,
+            "pit_bets_30d": 0, "target_pit_bets_30d": 500,
+            "baseline_coverage_pct": 0, "pit_with_baseline": 0,
+            "pit_total_for_baseline": 0, "target_baseline_coverage_pct": 60,
+            "ready_for_retest": False,
+        },
+    }
+
+    # Run all independent sections in parallel (fail-soft per section)
+    (
+        budget_status,
+        sentry_health,
+        inline,
+        predictions_health,
+        fastpath_health,
+        model_performance,
+        telemetry_data,
+        shadow_mode_data,
+        sensor_b_data,
+        extc_shadow_data,
+        rerun_serving_data,
+        jobs_health_data,
+        sota_enrichment_data,
+        titan_data,
+        llm_cost_data,
+        coverage_by_league,
+    ) = await asyncio.gather(
+        _fetch_budget_status(),
+        _fetch_sentry_health(),
+        _safe(_run_inline_queries(), _inline_fallback, "inline_queries"),
+        _calc(_calculate_predictions_health),
+        _calc(_calculate_fastpath_health),
+        _calc(_calculate_model_performance),
+        _calc(_calculate_telemetry_summary),
+        _calc(_calculate_shadow_mode_summary),
+        _calc(_calculate_sensor_b_summary),
+        _calc(_calculate_extc_shadow_summary),
+        _calc(_calculate_rerun_serving_summary),
+        _calc(_calculate_jobs_health_summary),
+        _calc(_calculate_sota_enrichment_summary),
+        _safe(_calculate_titan_summary(), {"status": "error"}, "titan"),
+        _run_llm_cost_queries(),
+        _safe(_run_coverage_queries(league_name_by_id), [], "coverage"),
+    )
+
+    # Post-processing: enrich with league names
+    for item in inline["upcoming_by_league"]:
+        item["league_name"] = league_name_by_id.get(item["league_id"])
+    for item in inline["latest_pit"]:
+        lid = item.get("league_id")
+        if isinstance(lid, int):
+            item["league_name"] = league_name_by_id.get(lid)
+
+    # Live summary stats (from main.py cache, lazy imported)
+    live_summary_stats = {
+        "cache_ttl_seconds": _live_summary_cache["ttl"],
+        "cache_timestamp": _live_summary_cache["timestamp"],
+        "cache_age_seconds": round(time.time() - _live_summary_cache["timestamp"], 1) if _live_summary_cache["timestamp"] else None,
+        "cached_live_matches": len(_live_summary_cache["data"]["matches"]) if _live_summary_cache["data"] else 0,
+    }
+
+    # ML model status
+    ml_model_info = {
+        "loaded": ml_engine.model is not None,
+        "version": ml_engine.model_version,
+        "source": "file",
+        "model_path": str(ml_engine.model_path),
+    }
+    if ml_engine.model is not None:
+        try:
+            ml_model_info["n_features"] = ml_engine.model.n_features_in_
+        except AttributeError:
+            pass
 
     return {
         "generated_at": now.isoformat(),
         "league_mode": league_mode,
-        "tracked_leagues_count": tracked_leagues_count,
+        "tracked_leagues_count": inline["tracked_leagues_count"],
         "last_sync_at": last_sync.isoformat() if last_sync else None,
         "budget": budget_status,
         "sentry": sentry_health,
         "pit": {
-            "live_60m": pit_live_60m,
-            "live_24h": pit_live_24h,
-            "delta_to_kickoff_60m": pit_dko_60m,
-            "latest": latest_pit,
+            "live_60m": inline["pit_live_60m"],
+            "live_24h": inline["pit_live_24h"],
+            "delta_to_kickoff_60m": inline["pit_dko_60m"],
+            "latest": inline["latest_pit"],
         },
         "movement": {
-            "lineup_movement_24h": lineup_movement_24h,
-            "market_movement_24h": market_movement_24h,
+            "lineup_movement_24h": inline["lineup_movement_24h"],
+            "market_movement_24h": inline["market_movement_24h"],
         },
         "stats_backfill": {
-            "finished_72h_with_stats": stats_with,
-            "finished_72h_missing_stats": stats_missing,
+            "finished_72h_with_stats": inline["stats_with"],
+            "finished_72h_missing_stats": inline["stats_missing"],
         },
         "upcoming": {
-            "by_league_24h": upcoming_by_league,
+            "by_league_24h": inline["upcoming_by_league"],
         },
-        "progress": progress_metrics,
+        "progress": inline["progress_metrics"],
         "predictions_health": predictions_health,
         "fastpath_health": fastpath_health,
         "model_performance": model_performance,
@@ -3776,7 +3737,7 @@ async def _load_ops_data() -> dict:
         "rerun_serving": rerun_serving_data,
         "jobs_health": jobs_health_data,
         "sota_enrichment": sota_enrichment_data,
-        "titan": await _calculate_titan_summary(),
+        "titan": titan_data,
         "coverage_by_league": coverage_by_league,
         "ml_model": ml_model_info,
         "live_summary": live_summary_stats,
