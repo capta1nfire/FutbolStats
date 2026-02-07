@@ -16,6 +16,8 @@ import {
   WorldCup2026Groups,
   WorldCup2026GroupDetail,
   NationalTeamsCountryDetail,
+  PlayersView,
+  ManagersView,
 } from "@/components/football";
 import { LeagueSettingsDrawer } from "@/components/football/LeagueSettingsDrawer";
 
@@ -406,6 +408,8 @@ function FootballPageContent() {
       if (worldCupTab === "groups") return "worldcup_groups";
       return "worldcup_overview";
     }
+    if (category === "players") return "players";
+    if (category === "managers") return "managers";
     // Other categories show overview for now
     return "overview";
   }, [category, country, leagueId, groupId, worldCupTab, worldCupGroup]);
@@ -479,6 +483,12 @@ function FootballPageContent() {
             onBack={handleWorldCupBackToGroups}
             onTeamSelect={handleTeamSelect}
           />
+        )}
+        {contentView === "players" && (
+          <PlayersView onTeamSelect={handleTeamSelect} />
+        )}
+        {contentView === "managers" && (
+          <ManagersView onTeamSelect={handleTeamSelect} />
         )}
       </div>
 

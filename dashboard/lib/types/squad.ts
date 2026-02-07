@@ -1,0 +1,76 @@
+/**
+ * Types for Players & Managers (Squad) data.
+ * ABE P1-1: injury_type is string (not closed union) to handle unknown types.
+ */
+
+export interface ManagerInfo {
+  external_id?: number;
+  name: string;
+  nationality: string | null;
+  photo_url: string | null;
+  start_date: string | null;
+  end_date?: string | null;
+  tenure_days?: number | null;
+}
+
+export interface PlayerInjury {
+  player_name: string;
+  injury_type: string;
+  injury_reason: string | null;
+  fixture_date?: string | null;
+}
+
+// Match squad (Match Detail > Squad tab)
+export interface TeamSquadSide {
+  team_id: number;
+  team_name: string;
+  manager: ManagerInfo | null;
+  injuries: PlayerInjury[];
+}
+
+export interface MatchSquadData {
+  match_id: number;
+  home: TeamSquadSide;
+  away: TeamSquadSide;
+}
+
+// Team squad (TeamDrawer > overview)
+export interface TeamSquadData {
+  team_id: number;
+  team_name: string;
+  current_manager: ManagerInfo | null;
+  manager_history: ManagerInfo[];
+  current_injuries: PlayerInjury[];
+}
+
+// Players view (Football > Players category)
+export interface PlayersViewData {
+  leagues: Array<{
+    league_id: number;
+    name: string;
+    teams: Array<{
+      team_id: number;
+      name: string;
+      injuries: PlayerInjury[];
+    }>;
+    absences_count: number;
+  }>;
+  total_absences: number;
+}
+
+// Managers view (Football > Managers category)
+export interface ManagerEntry {
+  team_id: number;
+  team_name: string;
+  league_id: number;
+  league_name: string;
+  manager: ManagerInfo;
+  tenure_days: number | null;
+  is_new: boolean;
+}
+
+export interface ManagersViewData {
+  managers: ManagerEntry[];
+  total_managers: number;
+  new_managers_count: number;
+}

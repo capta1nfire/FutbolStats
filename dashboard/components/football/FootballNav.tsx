@@ -19,6 +19,8 @@ import {
   Trophy,
   Flag,
   Users,
+  UserRound,
+  Briefcase,
   ChevronRight,
   AlertCircle,
 } from "lucide-react";
@@ -68,6 +70,10 @@ function getCategoryIcon(categoryId: string) {
       return Flag;
     case "clubs":
       return Users;
+    case "players":
+      return UserRound;
+    case "managers":
+      return Briefcase;
     default:
       return Globe;
   }

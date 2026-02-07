@@ -8,3 +8,5 @@ export * from "./WorldCup2026Overview";
 export * from "./WorldCup2026Groups";
 export * from "./WorldCup2026GroupDetail";
 export * from "./NationalTeamsCountryDetail";
+export * from "./PlayersView";
+export * from "./ManagersView";

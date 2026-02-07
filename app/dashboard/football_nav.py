@@ -56,8 +56,14 @@ NAV_CATEGORIES = [
     {
         "id": "players",
         "label": "Players",
-        "enabled": False,
-        "note": "Coming soon",
+        "enabled": True,
+        "note": None,
+    },
+    {
+        "id": "managers",
+        "label": "Managers",
+        "enabled": True,
+        "note": None,
     },
 ]
 
@@ -93,6 +99,21 @@ async def build_nav(session: AsyncSession) -> dict:
     national_row = national_result.fetchone()
     national_countries = national_row.national_countries if national_row else 0
 
+    # Get players/managers counts for badges
+    squad_query = text("""
+        SELECT
+            (SELECT COUNT(DISTINCT player_external_id)
+             FROM player_injuries
+             WHERE fixture_date >= NOW()
+               AND fixture_date <= NOW() + INTERVAL '14 days') AS active_absences,
+            (SELECT COUNT(*)
+             FROM team_manager_history
+             WHERE end_date IS NULL
+               AND (CURRENT_DATE - start_date) < 60) AS new_managers
+    """)
+    squad_result = await session.execute(squad_query)
+    squad_row = squad_result.fetchone()
+
     # Get World Cup 2026 matches count
     wc_query = text("""
         SELECT COUNT(*) as cnt FROM matches
@@ -117,6 +138,10 @@ async def build_nav(session: AsyncSession) -> dict:
         elif cat["id"] == "world_cup_2026":
             # Count of World Cup 2026 matches (badge de actividad)
             cat_copy["count"] = wc_matches_count
+        elif cat["id"] == "players":
+            cat_copy["count"] = squad_row.active_absences if squad_row else 0
+        elif cat["id"] == "managers":
+            cat_copy["count"] = squad_row.new_managers if squad_row else 0
         categories.append(cat_copy)
 
     return {

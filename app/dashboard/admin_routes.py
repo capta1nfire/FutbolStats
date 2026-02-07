@@ -23,6 +23,9 @@ _admin_cache = {
     "league_detail": {},  # keyed by league_id
     "teams": {},  # keyed by filter params
     "team_detail": {},  # keyed by team_id
+    "match_squad": {},  # keyed by match_id
+    "team_squad": {},  # keyed by team_id
+    "players_managers": {},  # keyed by view:league_id:limit
 }
 
 
@@ -665,4 +668,522 @@ async def dashboard_admin_league_group_detail(request: Request, group_id: int):
         "cached": False,
         "cache_age_seconds": None,
         "data": data,
+    }
+
+
+# =============================================================================
+# Players & Managers — Squad Data (P4)
+# Consumed by Football > Players, Football > Managers, Match Detail > Squad,
+# TeamDrawer > overview. All protected by dashboard token.
+# =============================================================================
+
+
+async def _get_match_squad_side(session, team_id: int, team_name: str,
+                                fixture_ext_id, match_date) -> dict:
+    """Build squad side (injuries + manager) for one team in a match. PIT-strict."""
+    # Injuries: PIT (captured_at < match.date)
+    injuries = []
+    if fixture_ext_id:
+        inj_result = await session.execute(
+            text("""
+                SELECT player_name, injury_type, injury_reason
+                FROM player_injuries
+                WHERE team_id = :tid
+                  AND fixture_external_id = :fid
+                  AND captured_at < :match_date
+                ORDER BY injury_type, player_name
+            """),
+            {"tid": team_id, "fid": fixture_ext_id, "match_date": match_date},
+        )
+        injuries = [
+            {
+                "player_name": r.player_name,
+                "injury_type": r.injury_type,
+                "injury_reason": r.injury_reason,
+            }
+            for r in inj_result.fetchall()
+        ]
+
+    # Manager: PIT (detected_at < match.date, active at match date)
+    mgr_result = await session.execute(
+        text("""
+            SELECT tmh.manager_external_id, tmh.manager_name, tmh.start_date,
+                   mg.nationality, mg.photo_url,
+                   ((:match_date)::date - tmh.start_date) AS tenure_days
+            FROM team_manager_history tmh
+            LEFT JOIN managers mg ON mg.external_id = tmh.manager_external_id
+            WHERE tmh.team_id = :tid
+              AND tmh.start_date <= (:match_date)::date
+              AND (tmh.end_date IS NULL OR tmh.end_date > (:match_date)::date)
+              AND tmh.detected_at < :match_date
+            ORDER BY tmh.start_date DESC
+            LIMIT 1
+        """),
+        {"tid": team_id, "match_date": match_date},
+    )
+    mgr = mgr_result.fetchone()
+    manager = None
+    if mgr:
+        manager = {
+            "external_id": mgr.manager_external_id,
+            "name": mgr.manager_name,
+            "nationality": mgr.nationality,
+            "photo_url": mgr.photo_url,
+            "start_date": mgr.start_date.isoformat() if mgr.start_date else None,
+            "tenure_days": mgr.tenure_days if mgr.tenure_days is not None else None,
+        }
+
+    return {
+        "team_id": team_id,
+        "team_name": team_name,
+        "manager": manager,
+        "injuries": injuries,
+    }
+
+
+@router.get("/match/{match_id}/squad.json")
+async def dashboard_admin_match_squad(request: Request, match_id: int):
+    """Match squad: injuries + managers for both teams (PIT-strict).
+
+    ABE P0-2: captured_at < match.date for injuries, detected_at < match.date for managers.
+    """
+    _check_token(request)
+
+    now = time.time()
+    cache_key = str(match_id)
+    cache = _admin_cache["match_squad"]
+
+    if cache_key in cache and cache[cache_key]["data"] and (now - cache[cache_key]["timestamp"]) < 120:
+        cached = cache[cache_key]
+        return {
+            "generated_at": cached["data"]["generated_at"],
+            "cached": True,
+            "cache_age_seconds": round(now - cached["timestamp"], 1),
+            "data": cached["data"]["data"],
+        }
+
+    async with AsyncSessionLocal() as session:
+        match_result = await session.execute(
+            text("""
+                SELECT m.id, m.external_id, m.date, m.status,
+                       m.home_team_id, m.away_team_id,
+                       ht.name AS home_team_name, at.name AS away_team_name
+                FROM matches m
+                JOIN teams ht ON m.home_team_id = ht.id
+                JOIN teams at ON m.away_team_id = at.id
+                WHERE m.id = :mid
+            """),
+            {"mid": match_id},
+        )
+        match = match_result.fetchone()
+
+        if not match:
+            raise HTTPException(status_code=404, detail=f"Match {match_id} not found.")
+
+        home = await _get_match_squad_side(
+            session, match.home_team_id, match.home_team_name,
+            match.external_id, match.date,
+        )
+        away = await _get_match_squad_side(
+            session, match.away_team_id, match.away_team_name,
+            match.external_id, match.date,
+        )
+
+    data = {"match_id": match_id, "home": home, "away": away}
+    result_obj = {"generated_at": datetime.utcnow().isoformat() + "Z", "data": data}
+    cache[cache_key] = {"data": result_obj, "timestamp": now}
+
+    return {
+        "generated_at": result_obj["generated_at"],
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
+@router.get("/team/{team_id}/squad.json")
+async def dashboard_admin_team_squad(request: Request, team_id: int):
+    """Team squad: current manager + history + active injuries (upcoming 14d window).
+
+    ABE P0-3: active absences = fixture_date in [NOW(), NOW()+14d].
+    """
+    _check_token(request)
+
+    now = time.time()
+    cache_key = str(team_id)
+    cache = _admin_cache["team_squad"]
+
+    if cache_key in cache and cache[cache_key]["data"] and (now - cache[cache_key]["timestamp"]) < 120:
+        cached = cache[cache_key]
+        return {
+            "generated_at": cached["data"]["generated_at"],
+            "cached": True,
+            "cache_age_seconds": round(now - cached["timestamp"], 1),
+            "data": cached["data"]["data"],
+        }
+
+    async with AsyncSessionLocal() as session:
+        team_result = await session.execute(
+            text("SELECT id, name FROM teams WHERE id = :tid"),
+            {"tid": team_id},
+        )
+        team = team_result.fetchone()
+        if not team:
+            raise HTTPException(status_code=404, detail=f"Team {team_id} not found.")
+
+        # Current manager (end_date IS NULL)
+        mgr_result = await session.execute(
+            text("""
+                SELECT tmh.manager_external_id, tmh.manager_name, tmh.start_date,
+                       mg.nationality, mg.photo_url,
+                       (CURRENT_DATE - tmh.start_date) AS tenure_days
+                FROM team_manager_history tmh
+                LEFT JOIN managers mg ON mg.external_id = tmh.manager_external_id
+                WHERE tmh.team_id = :tid AND tmh.end_date IS NULL
+                ORDER BY tmh.start_date DESC
+                LIMIT 1
+            """),
+            {"tid": team_id},
+        )
+        mgr = mgr_result.fetchone()
+        current_manager = None
+        if mgr:
+            current_manager = {
+                "external_id": mgr.manager_external_id,
+                "name": mgr.manager_name,
+                "nationality": mgr.nationality,
+                "photo_url": mgr.photo_url,
+                "start_date": mgr.start_date.isoformat() if mgr.start_date else None,
+                "tenure_days": mgr.tenure_days if mgr.tenure_days is not None else None,
+            }
+
+        # Manager history (last 10 stints)
+        history_result = await session.execute(
+            text("""
+                SELECT tmh.manager_external_id, tmh.manager_name, tmh.start_date,
+                       tmh.end_date, mg.nationality, mg.photo_url
+                FROM team_manager_history tmh
+                LEFT JOIN managers mg ON mg.external_id = tmh.manager_external_id
+                WHERE tmh.team_id = :tid
+                ORDER BY tmh.start_date DESC
+                LIMIT 10
+            """),
+            {"tid": team_id},
+        )
+        manager_history = [
+            {
+                "external_id": r.manager_external_id,
+                "name": r.manager_name,
+                "nationality": r.nationality,
+                "photo_url": r.photo_url,
+                "start_date": r.start_date.isoformat() if r.start_date else None,
+                "end_date": r.end_date.isoformat() if r.end_date else None,
+            }
+            for r in history_result.fetchall()
+        ]
+
+        # Active injuries: P0-3 upcoming 14d window
+        inj_result = await session.execute(
+            text("""
+                SELECT DISTINCT ON (player_external_id)
+                       player_name, injury_type, injury_reason, fixture_date
+                FROM player_injuries
+                WHERE team_id = :tid
+                  AND fixture_date >= NOW()
+                  AND fixture_date <= NOW() + INTERVAL '14 days'
+                ORDER BY player_external_id, captured_at DESC
+            """),
+            {"tid": team_id},
+        )
+        current_injuries = [
+            {
+                "player_name": r.player_name,
+                "injury_type": r.injury_type,
+                "injury_reason": r.injury_reason,
+                "fixture_date": r.fixture_date.isoformat() if r.fixture_date else None,
+            }
+            for r in inj_result.fetchall()
+        ]
+
+    data = {
+        "team_id": team_id,
+        "team_name": team.name,
+        "current_manager": current_manager,
+        "manager_history": manager_history,
+        "current_injuries": current_injuries,
+    }
+    result_obj = {"generated_at": datetime.utcnow().isoformat() + "Z", "data": data}
+    cache[cache_key] = {"data": result_obj, "timestamp": now}
+
+    return {
+        "generated_at": result_obj["generated_at"],
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
+@router.get("/players-managers.json")
+async def dashboard_admin_players_managers(
+    request: Request,
+    view: str = "injuries",
+    league_id: int = None,
+    limit: int = 200,
+):
+    """Global view for Players and Managers categories.
+
+    Args:
+        view: 'injuries' (active absences) or 'managers' (current managers)
+        league_id: Optional filter by league (ABE P1-2)
+        limit: Max results (1-500)
+    """
+    _check_token(request)
+
+    if view not in ("injuries", "managers"):
+        raise HTTPException(status_code=400, detail="view must be 'injuries' or 'managers'")
+
+    limit = max(1, min(limit, 500))
+
+    now = time.time()
+    cache_key = f"{view}:{league_id}:{limit}"
+    cache = _admin_cache["players_managers"]
+
+    if cache_key in cache and cache[cache_key]["data"] and (now - cache[cache_key]["timestamp"]) < 120:
+        cached = cache[cache_key]
+        return {
+            "generated_at": cached["data"]["generated_at"],
+            "cached": True,
+            "cache_age_seconds": round(now - cached["timestamp"], 1),
+            "data": cached["data"]["data"],
+        }
+
+    async with AsyncSessionLocal() as session:
+        if view == "injuries":
+            data = await _build_injuries_view(session, league_id, limit)
+        else:
+            data = await _build_managers_view(session, league_id, limit)
+
+    result_obj = {"generated_at": datetime.utcnow().isoformat() + "Z", "data": data}
+    cache[cache_key] = {"data": result_obj, "timestamp": now}
+
+    return {
+        "generated_at": result_obj["generated_at"],
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
+async def _build_injuries_view(session, league_id=None, limit=200) -> dict:
+    """Active injuries grouped by league -> team. P0-3: upcoming 14d window.
+
+    ABE P1-B: filter by admin_leagues.is_active for consistency with Football nav.
+    ABE P1-A: global totals independent of LIMIT so badge/UI don't diverge.
+    """
+    params: dict = {"limit": limit}
+    league_filter = ""
+    if league_id:
+        league_filter = "AND pi.league_id = :league_id"
+        params["league_id"] = league_id
+
+    # Global total (independent of LIMIT) for accurate badge count
+    total_params: dict = {}
+    total_league_filter = ""
+    if league_id:
+        total_league_filter = "AND pi.league_id = :league_id"
+        total_params["league_id"] = league_id
+
+    total_result = await session.execute(
+        text(f"""
+            SELECT COUNT(*) AS cnt
+            FROM (
+                SELECT DISTINCT ON (player_external_id, team_id)
+                       player_external_id, team_id, league_id
+                FROM player_injuries
+                WHERE fixture_date >= NOW()
+                  AND fixture_date <= NOW() + INTERVAL '14 days'
+                ORDER BY player_external_id, team_id, captured_at DESC
+            ) pi
+            JOIN admin_leagues al ON al.league_id = pi.league_id AND al.is_active = true
+            WHERE 1=1 {total_league_filter}
+        """),
+        total_params,
+    )
+    global_total = (total_result.scalar() or 0)
+
+    result = await session.execute(
+        text(f"""
+            SELECT
+                pi.league_id,
+                al.name AS league_name,
+                pi.team_id,
+                t.name AS team_name,
+                pi.player_name,
+                pi.injury_type,
+                pi.injury_reason
+            FROM (
+                SELECT DISTINCT ON (player_external_id, team_id)
+                       player_external_id, team_id, league_id,
+                       player_name, injury_type, injury_reason
+                FROM player_injuries
+                WHERE fixture_date >= NOW()
+                  AND fixture_date <= NOW() + INTERVAL '14 days'
+                ORDER BY player_external_id, team_id, captured_at DESC
+            ) pi
+            JOIN teams t ON t.id = pi.team_id
+            JOIN admin_leagues al ON al.league_id = pi.league_id AND al.is_active = true
+            WHERE 1=1 {league_filter}
+            ORDER BY al.name, t.name, pi.player_name
+            LIMIT :limit
+        """),
+        params,
+    )
+    rows = result.fetchall()
+
+    # Group by league -> team
+    leagues_dict: dict = {}
+    for r in rows:
+        lid = r.league_id
+        if lid not in leagues_dict:
+            leagues_dict[lid] = {
+                "league_id": lid,
+                "name": r.league_name or f"League {lid}",
+                "teams": {},
+            }
+        tid = r.team_id
+        if tid not in leagues_dict[lid]["teams"]:
+            leagues_dict[lid]["teams"][tid] = {
+                "team_id": tid,
+                "name": r.team_name,
+                "injuries": [],
+            }
+        leagues_dict[lid]["teams"][tid]["injuries"].append({
+            "player_name": r.player_name,
+            "injury_type": r.injury_type,
+            "injury_reason": r.injury_reason,
+        })
+
+    leagues = []
+    for league_data in leagues_dict.values():
+        teams = sorted(league_data["teams"].values(), key=lambda t: t["name"])
+        leagues.append({
+            "league_id": league_data["league_id"],
+            "name": league_data["name"],
+            "teams": teams,
+            "absences_count": sum(len(t["injuries"]) for t in teams),
+        })
+    leagues.sort(key=lambda lg: lg["absences_count"], reverse=True)
+
+    return {
+        "leagues": leagues,
+        "total_absences": global_total,
+    }
+
+
+async def _build_managers_view(session, league_id=None, limit=200) -> dict:
+    """Active managers with tenure. Flag is_new for tenure < 60d.
+
+    ABE P1-A: global totals independent of LIMIT so badge/UI don't diverge.
+    """
+    params: dict = {"limit": limit}
+    league_filter = ""
+    if league_id:
+        league_filter = "AND tpl.league_id = :league_id"
+        params["league_id"] = league_id
+
+    # CTE used by both total and detail queries
+    tpl_cte = """
+        team_primary_league AS (
+            SELECT DISTINCT ON (x.team_id)
+                x.team_id, x.league_id
+            FROM (
+                SELECT home_team_id AS team_id, league_id, date
+                FROM matches
+                WHERE date >= NOW() - INTERVAL '365 days'
+                UNION ALL
+                SELECT away_team_id AS team_id, league_id, date
+                FROM matches
+                WHERE date >= NOW() - INTERVAL '365 days'
+            ) x
+            JOIN admin_leagues al ON al.league_id = x.league_id
+                AND al.is_active = true AND al.kind = 'league'
+            ORDER BY x.team_id, x.date DESC
+        )
+    """
+
+    # Global totals (independent of LIMIT) for accurate badge counts
+    total_params: dict = {}
+    total_league_filter = ""
+    if league_id:
+        total_league_filter = "AND tpl.league_id = :league_id"
+        total_params["league_id"] = league_id
+
+    total_result = await session.execute(
+        text(f"""
+            WITH {tpl_cte}
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE (CURRENT_DATE - tmh.start_date) < 60) AS new_count
+            FROM team_manager_history tmh
+            JOIN team_primary_league tpl ON tpl.team_id = tmh.team_id
+            WHERE tmh.end_date IS NULL
+              {total_league_filter}
+        """),
+        total_params,
+    )
+    totals_row = total_result.fetchone()
+    global_total = totals_row.total if totals_row else 0
+    global_new = totals_row.new_count if totals_row else 0
+
+    result = await session.execute(
+        text(f"""
+            WITH {tpl_cte}
+            SELECT
+                tmh.team_id,
+                t.name AS team_name,
+                tpl.league_id,
+                al.name AS league_name,
+                tmh.manager_external_id,
+                tmh.manager_name,
+                mg.nationality,
+                mg.photo_url,
+                tmh.start_date,
+                (CURRENT_DATE - tmh.start_date) AS tenure_days
+            FROM team_manager_history tmh
+            JOIN teams t ON t.id = tmh.team_id
+            LEFT JOIN managers mg ON mg.external_id = tmh.manager_external_id
+            JOIN team_primary_league tpl ON tpl.team_id = tmh.team_id
+            LEFT JOIN admin_leagues al ON al.league_id = tpl.league_id
+            WHERE tmh.end_date IS NULL
+              {league_filter}
+            ORDER BY (CURRENT_DATE - tmh.start_date) ASC
+            LIMIT :limit
+        """),
+        params,
+    )
+    rows = result.fetchall()
+
+    managers = [
+        {
+            "team_id": r.team_id,
+            "team_name": r.team_name,
+            "league_id": r.league_id,
+            "league_name": r.league_name,
+            "manager": {
+                "external_id": r.manager_external_id,
+                "name": r.manager_name,
+                "nationality": r.nationality,
+                "photo_url": r.photo_url,
+                "start_date": r.start_date.isoformat() if r.start_date else None,
+            },
+            "tenure_days": r.tenure_days if r.tenure_days is not None else None,
+            "is_new": (r.tenure_days or 999) < 60,
+        }
+        for r in rows
+    ]
+
+    return {
+        "managers": managers,
+        "total_managers": global_total,
+        "new_managers_count": global_new,
     }

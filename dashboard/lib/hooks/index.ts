@@ -66,3 +66,8 @@ export * from "./use-model-benchmark";
 export * from "./use-compact-predictions";
 // Model benchmark selection preference
 export * from "./use-model-selection";
+// Squad (Players & Managers)
+export * from "./use-match-squad";
+export * from "./use-team-squad";
+export * from "./use-players-view";
+export * from "./use-managers-view";

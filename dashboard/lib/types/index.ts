@@ -13,3 +13,4 @@ export * from "./admin";
 export * from "./feature-coverage-detail";
 export * from "./logos";
 export * from "./model-benchmark";
+export * from "./squad";

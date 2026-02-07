@@ -9,7 +9,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { MatchSummary, MatchWeather, ProbabilitySet, StandingEntry } from "@/lib/types";
-import { useStandings, useTeamLogos } from "@/lib/hooks";
+import { useStandings, useTeamLogos, useMatchSquad } from "@/lib/hooks";
 import { Loader } from "@/components/ui/loader";
 import { IconTabs } from "@/components/ui/icon-tabs";
 import { Badge } from "@/components/ui/badge";
@@ -33,7 +33,9 @@ import {
   Wind,
   Thermometer,
   Droplets,
+  Users,
 } from "lucide-react";
+import { ManagerCard, InjuryList } from "@/components/squad";
 import { useRegion } from "@/components/providers/RegionProvider";
 
 /** Get weather icon component based on conditions */
@@ -567,6 +569,7 @@ export const MATCH_TABS = [
   { id: "overview", icon: <Info />, label: "Overview" },
   { id: "predictions", icon: <TrendingUp />, label: "Predictions" },
   { id: "standings", icon: <TableProperties />, label: "Standings" },
+  { id: "squad", icon: <Users />, label: "Squad" },
 ];
 
 /**
@@ -645,6 +648,64 @@ export function MatchTabContent({
           />
         </div>
       )}
+
+      {activeTab === "squad" && (
+        <MatchSquadSection matchId={match.id} getLogoUrl={getLogoUrl} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Match Squad section — injuries + manager for both teams
+ */
+function MatchSquadSection({
+  matchId,
+  getLogoUrl,
+}: {
+  matchId: number;
+  getLogoUrl: (teamName: string) => string | null;
+}) {
+  const { data, isLoading, error } = useMatchSquad(matchId);
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center py-8">
+        <Loader />
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div className="text-center py-8">
+        <Users className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">Squad data not available</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {[data.home, data.away].map((side) => (
+        <div key={side.team_id} className="bg-surface rounded-lg p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <TeamLogo
+              teamName={side.team_name}
+              src={getLogoUrl(side.team_name)}
+              size={20}
+            />
+            <h4 className="text-sm font-medium">{side.team_name}</h4>
+          </div>
+          {side.manager && <ManagerCard manager={side.manager} compact />}
+          <div>
+            <p className="text-xs font-medium text-muted-foreground mb-1.5">
+              Absences ({side.injuries.length})
+            </p>
+            <InjuryList injuries={side.injuries} compact />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

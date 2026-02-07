@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useFootballTeam } from "@/lib/hooks";
+import { useFootballTeam, useTeamSquad } from "@/lib/hooks";
 import { DetailDrawer } from "@/components/shell";
 import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,7 @@ import type {
 import { TeamLogoSettings } from "./TeamLogoSettings";
 import { TeamEnrichmentSettings } from "./TeamEnrichmentSettings";
 import { TeamWikiSettings } from "./TeamWikiSettings";
+import { ManagerCard, InjuryList } from "@/components/squad";
 
 interface TeamDrawerProps {
   teamId: number | null;
@@ -300,6 +301,11 @@ export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDr
 
             {/* Recent Form */}
             {data.recent_form && <RecentFormSection form={data.recent_form} />}
+
+            {/* Squad: Manager + Injuries */}
+            {data.team?.team_id && (
+              <TeamSquadOverview teamId={data.team.team_id} />
+            )}
           </>
         )}
 
@@ -368,5 +374,39 @@ export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDr
     >
       {content}
     </DetailDrawer>
+  );
+}
+
+/**
+ * Squad overview for TeamDrawer: current manager + active injuries.
+ * Renders nothing if no squad data available (no placeholder).
+ */
+function TeamSquadOverview({ teamId }: { teamId: number }) {
+  const { data, isLoading } = useTeamSquad(teamId);
+
+  if (isLoading || !data) return null;
+
+  const hasManager = !!data.current_manager;
+  const hasInjuries = data.current_injuries.length > 0;
+
+  if (!hasManager && !hasInjuries) return null;
+
+  return (
+    <div className="space-y-3">
+      {hasManager && (
+        <div>
+          <h4 className="text-xs font-medium text-muted-foreground mb-1.5">Manager</h4>
+          <ManagerCard manager={data.current_manager!} />
+        </div>
+      )}
+      {hasInjuries && (
+        <div>
+          <h4 className="text-xs font-medium text-muted-foreground mb-1.5">
+            Absences ({data.current_injuries.length})
+          </h4>
+          <InjuryList injuries={data.current_injuries} compact />
+        </div>
+      )}
+    </div>
   );
 }
