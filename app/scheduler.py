@@ -6292,6 +6292,117 @@ async def sota_sofascore_xi_capture() -> dict:
         return {"status": "error", "error": str(e), "duration_ms": duration_ms}
 
 
+async def sota_sofascore_ratings_backfill() -> dict:
+    """
+    Backfill Sofascore post-match player ratings for finished matches.
+
+    Re-fetches lineups for FT matches to extract ratings (available post-match).
+    Stores in sofascore_player_rating_history for rolling average features.
+
+    Frequency: Every 6 hours
+    Guardrail: SOTA_SOFASCORE_RATINGS_ENABLED env var
+    """
+    import time as _time
+    from datetime import datetime
+
+    start_time = _time.time()
+    started_at = datetime.utcnow()
+    job_name = "sota_sofascore_ratings_backfill"
+
+    if os.environ.get("SOTA_SOFASCORE_RATINGS_ENABLED", "false").lower() in ("false", "0", "no"):
+        logger.debug(f"[{job_name}] Disabled via env var (set SOTA_SOFASCORE_RATINGS_ENABLED=true to enable)")
+        return {"status": "disabled"}
+
+    metrics = {"started_at": started_at.isoformat()}
+
+    try:
+        from app.etl.sota_jobs import backfill_sofascore_ratings_ft
+        from app.jobs.tracking import record_job_run as record_job_run_db
+
+        async with AsyncSessionLocal() as session:
+            stats = await backfill_sofascore_ratings_ft(session, days=14, limit=100)
+            metrics.update(stats)
+
+            duration_ms = (_time.time() - start_time) * 1000
+            status = "ok" if metrics.get("errors", 0) == 0 else "partial"
+            await record_job_run_db(session, job_name, status, started_at, metrics=metrics)
+
+        record_job_run(job=job_name, status=status, duration_ms=duration_ms)
+        logger.info(
+            f"[{job_name}] Complete: matches={metrics.get('matches_processed', 0)}, "
+            f"players={metrics.get('players_inserted', 0)}"
+        )
+        return {**metrics, "status": status, "duration_ms": duration_ms}
+
+    except Exception as e:
+        duration_ms = (_time.time() - start_time) * 1000
+        logger.error(f"[{job_name}] Failed: {e}", exc_info=True)
+        sentry_capture_exception(e, job_id=job_name)
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        try:
+            from app.jobs.tracking import record_job_run as record_job_run_db
+            async with AsyncSessionLocal() as session:
+                await record_job_run_db(session, job_name, "error", started_at, error=str(e))
+        except Exception:
+            pass
+        return {"status": "error", "error": str(e), "duration_ms": duration_ms}
+
+
+async def sota_sofascore_stats_backfill() -> dict:
+    """
+    Backfill Sofascore post-match statistics for finished matches.
+
+    Fetches xG, big chances, possession etc. from Sofascore statistics endpoint.
+    Stores in match_sofascore_stats.
+
+    Frequency: Every 6 hours
+    Guardrail: SOTA_SOFASCORE_STATS_ENABLED env var
+    """
+    import time as _time
+    from datetime import datetime
+
+    start_time = _time.time()
+    started_at = datetime.utcnow()
+    job_name = "sota_sofascore_stats_backfill"
+
+    if os.environ.get("SOTA_SOFASCORE_STATS_ENABLED", "false").lower() in ("false", "0", "no"):
+        logger.debug(f"[{job_name}] Disabled via env var (set SOTA_SOFASCORE_STATS_ENABLED=true to enable)")
+        return {"status": "disabled"}
+
+    metrics = {"started_at": started_at.isoformat()}
+
+    try:
+        from app.etl.sota_jobs import backfill_sofascore_stats_ft
+        from app.jobs.tracking import record_job_run as record_job_run_db
+
+        async with AsyncSessionLocal() as session:
+            stats = await backfill_sofascore_stats_ft(session, days=14, limit=100)
+            metrics.update(stats)
+
+            duration_ms = (_time.time() - start_time) * 1000
+            status = "ok" if metrics.get("errors", 0) == 0 else "partial"
+            await record_job_run_db(session, job_name, status, started_at, metrics=metrics)
+
+        record_job_run(job=job_name, status=status, duration_ms=duration_ms)
+        logger.info(
+            f"[{job_name}] Complete: inserted={metrics.get('inserted', 0)}"
+        )
+        return {**metrics, "status": status, "duration_ms": duration_ms}
+
+    except Exception as e:
+        duration_ms = (_time.time() - start_time) * 1000
+        logger.error(f"[{job_name}] Failed: {e}", exc_info=True)
+        sentry_capture_exception(e, job_id=job_name)
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        try:
+            from app.jobs.tracking import record_job_run as record_job_run_db
+            async with AsyncSessionLocal() as session:
+                await record_job_run_db(session, job_name, "error", started_at, error=str(e))
+        except Exception:
+            pass
+        return {"status": "error", "error": str(e), "duration_ms": duration_ms}
+
+
 async def titan_feature_matrix_runner() -> dict:
     """
     TITAN Feature Matrix Runner - materializes features for upcoming matches.
@@ -7079,6 +7190,34 @@ def start_scheduler(ml_engine):
         max_instances=1,
         coalesce=True,
         misfire_grace_time=1800,  # 30min grace for 30min interval
+    )
+
+    # SOTA: Sofascore post-match ratings backfill - every 6 hours
+    # Re-fetches lineups for FT matches to get player ratings (disabled by default)
+    scheduler.add_job(
+        sota_sofascore_ratings_backfill,
+        trigger=IntervalTrigger(hours=6),
+        id="sota_sofascore_ratings_backfill",
+        name="SOTA Sofascore Ratings Backfill (every 6h)",
+        replace_existing=True,
+        next_run_time=datetime.utcnow() + timedelta(seconds=55),  # Offset: +55s
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=6 * 3600,
+    )
+
+    # SOTA: Sofascore post-match stats backfill - every 6 hours
+    # Fetches xG, big chances etc. from Sofascore (disabled by default)
+    scheduler.add_job(
+        sota_sofascore_stats_backfill,
+        trigger=IntervalTrigger(hours=6),
+        id="sota_sofascore_stats_backfill",
+        name="SOTA Sofascore Stats Backfill (every 6h)",
+        replace_existing=True,
+        next_run_time=datetime.utcnow() + timedelta(seconds=65),  # Offset: +65s
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=6 * 3600,
     )
 
     # TITAN: Feature Matrix Runner - every 2 hours

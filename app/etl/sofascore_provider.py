@@ -585,6 +585,188 @@ class SofascoreProvider:
             integrity_score=1.0,
         )
 
+    # =================================================================
+    # POST-MATCH STATISTICS
+    # =================================================================
+
+    async def get_match_statistics(
+        self,
+        sofascore_event_id: str,
+    ) -> tuple[Optional[dict], Optional[str]]:
+        """
+        Get post-match statistics for a finished match.
+
+        Endpoint: /api/v1/event/{event_id}/statistics
+
+        Returns:
+            Tuple of (parsed_stats_dict, error_message).
+            parsed_stats_dict keys: possession_home, xg_home, big_chances_home, etc.
+            Plus raw_stats with the full response for future-proofing.
+        """
+        if self.use_mock:
+            return self._get_mock_statistics(), None
+
+        url = f"{SOFASCORE_API_BASE}/event/{sofascore_event_id}/statistics"
+        data, error = await self._fetch_json(url, sofascore_event_id)
+
+        if error:
+            return None, error
+
+        try:
+            return self._parse_statistics_response(data), None
+        except Exception as e:
+            logger.error(f"[SOFASCORE] Schema break parsing stats for {sofascore_event_id}: {e}")
+            return None, f"schema_break: {str(e)[:100]}"
+
+    def _parse_statistics_response(self, data: dict) -> dict:
+        """
+        Parse Sofascore /event/{id}/statistics response.
+
+        Response structure:
+        {
+          "statistics": [
+            {
+              "period": "ALL",
+              "groups": [
+                {
+                  "groupName": "Possession",
+                  "statisticsItems": [
+                    {"name": "Ball possession", "home": "55%", "away": "45%", ...}
+                  ]
+                },
+                {
+                  "groupName": "Shots",
+                  "statisticsItems": [
+                    {"name": "Total shots", "home": "12", "away": "8", ...},
+                    {"name": "Shots on target", "home": "5", "away": "3", ...}
+                  ]
+                },
+                ...
+              ]
+            }
+          ]
+        }
+
+        Mapping by stat name (robust: not positional).
+        """
+        result = {
+            "raw_stats": data,
+        }
+
+        # Find the "ALL" period (full match stats)
+        all_period = None
+        for period_block in data.get("statistics", []):
+            if period_block.get("period") == "ALL":
+                all_period = period_block
+                break
+
+        if not all_period:
+            # Fallback: use first period if "ALL" not found
+            periods = data.get("statistics", [])
+            if periods:
+                all_period = periods[0]
+
+        if not all_period:
+            return result
+
+        # Build flat lookup: stat_name_lower -> (home_val, away_val)
+        stat_lookup: dict[str, tuple[str, str]] = {}
+        for group in all_period.get("groups", []):
+            for item in group.get("statisticsItems", []):
+                name = (item.get("name") or "").strip().lower()
+                home_val = str(item.get("home", ""))
+                away_val = str(item.get("away", ""))
+                stat_lookup[name] = (home_val, away_val)
+
+        # Normalize known synonyms to canonical names
+        _SYNONYMS = {
+            "expected goals (xg)": "expected goals",
+            "xg": "expected goals",
+            "corners": "corner kicks",
+            "big chances created": "big chances",
+        }
+        for alias, canonical in _SYNONYMS.items():
+            if alias in stat_lookup and canonical not in stat_lookup:
+                stat_lookup[canonical] = stat_lookup[alias]
+
+        # Map stat names to our columns
+        STAT_MAP = {
+            "ball possession": ("possession_home", "possession_away", "pct"),
+            "total shots": ("total_shots_home", "total_shots_away", "int"),
+            "shots on target": ("shots_on_target_home", "shots_on_target_away", "int"),
+            "expected goals": ("xg_home", "xg_away", "float"),
+            "corner kicks": ("corners_home", "corners_away", "int"),
+            "fouls": ("fouls_home", "fouls_away", "int"),
+            "big chances": ("big_chances_home", "big_chances_away", "int"),
+            "big chances missed": ("big_chances_missed_home", "big_chances_missed_away", "int"),
+            "accurate passes": ("accurate_passes_home", "accurate_passes_away", "int"),
+        }
+
+        for stat_name, (col_home, col_away, dtype) in STAT_MAP.items():
+            if stat_name not in stat_lookup:
+                continue
+            home_raw, away_raw = stat_lookup[stat_name]
+            result[col_home] = self._parse_stat_value(home_raw, dtype)
+            result[col_away] = self._parse_stat_value(away_raw, dtype)
+
+        # Pass accuracy (special: sometimes "80%" or "354/443 (80%)")
+        if "passes accurate" in stat_lookup:
+            # Some responses use "Passes accurate" with value like "354/443 (80%)"
+            home_raw, away_raw = stat_lookup["passes accurate"]
+            result["accurate_passes_home"] = self._parse_stat_value(home_raw.split("/")[0].strip(), "int")
+            result["accurate_passes_away"] = self._parse_stat_value(away_raw.split("/")[0].strip(), "int")
+
+        # Pass accuracy percentage
+        if "pass accuracy" in stat_lookup:
+            home_raw, away_raw = stat_lookup["pass accuracy"]
+            result["pass_accuracy_home"] = self._parse_stat_value(home_raw, "pct")
+            result["pass_accuracy_away"] = self._parse_stat_value(away_raw, "pct")
+
+        return result
+
+    @staticmethod
+    def _parse_stat_value(raw: str, dtype: str) -> Optional[int | float]:
+        """Parse a stat value string to typed value."""
+        if not raw or raw == "-":
+            return None
+        # Strip percentage sign
+        cleaned = raw.replace("%", "").strip()
+        try:
+            if dtype == "float":
+                return float(cleaned)
+            elif dtype == "pct":
+                return int(float(cleaned))
+            else:  # "int"
+                return int(float(cleaned))
+        except (ValueError, TypeError):
+            return None
+
+    def _get_mock_statistics(self) -> dict:
+        """Return mock statistics for testing."""
+        return {
+            "possession_home": 55,
+            "possession_away": 45,
+            "total_shots_home": 12,
+            "total_shots_away": 8,
+            "shots_on_target_home": 5,
+            "shots_on_target_away": 3,
+            "xg_home": 1.85,
+            "xg_away": 0.92,
+            "corners_home": 6,
+            "corners_away": 3,
+            "fouls_home": 14,
+            "fouls_away": 11,
+            "big_chances_home": 3,
+            "big_chances_away": 1,
+            "big_chances_missed_home": 1,
+            "big_chances_missed_away": 0,
+            "accurate_passes_home": 354,
+            "accurate_passes_away": 280,
+            "pass_accuracy_home": 80,
+            "pass_accuracy_away": 72,
+            "raw_stats": {},
+        }
+
     async def close(self) -> None:
         """Close any open connections."""
         if self._client:

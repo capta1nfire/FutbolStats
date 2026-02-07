@@ -329,7 +329,88 @@ async def load_match_sofascore_xi(
     if not has_home and not has_away:
         return None
 
+    # Enrich players with rolling average ratings from history
+    all_player_ids = [
+        p["player_id_ext"]
+        for side in ("home", "away")
+        for p in data[side]["players"]
+        if p.get("is_starter")
+    ]
+
+    if all_player_ids:
+        rolling_ratings = await load_batch_rolling_ratings(
+            session, all_player_ids, before_date=t0, match_id=match_id
+        )
+        for side in ("home", "away"):
+            for player in data[side]["players"]:
+                pid = player["player_id_ext"]
+                if pid in rolling_ratings:
+                    # Use rolling average as rating_pre_match (overrides NULL)
+                    if player.get("rating_pre_match") is None:
+                        player["rating_pre_match"] = rolling_ratings[pid]
+
     return data
+
+
+async def load_batch_rolling_ratings(
+    session: AsyncSession,
+    player_ids_ext: list[str],
+    before_date: datetime,
+    match_id: int,
+    limit: int = 10,
+) -> dict[str, float]:
+    """
+    Load rolling average ratings for a batch of players (ABE P0-2: single query).
+
+    PIT-safe: only uses ratings from matches before `before_date` and
+    excludes the current match (Kimi P1: leakage guard).
+
+    Args:
+        session: Database session.
+        player_ids_ext: List of Sofascore player IDs.
+        before_date: Only use ratings before this date (PIT).
+        match_id: Current match ID to exclude (leakage guard).
+        limit: Max recent matches to average per player.
+
+    Returns:
+        Dict mapping player_id_ext -> rolling average rating.
+    """
+    if not player_ids_ext:
+        return {}
+
+    result = await session.execute(
+        text("""
+            WITH ranked AS (
+                SELECT
+                    player_id_ext,
+                    rating,
+                    match_date,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY player_id_ext
+                        ORDER BY match_date DESC
+                    ) AS rn
+                FROM sofascore_player_rating_history
+                WHERE player_id_ext = ANY(:player_ids)
+                  AND match_date < :before_date
+                  AND match_id != :current_match_id
+            )
+            SELECT
+                player_id_ext,
+                AVG(rating) AS rolling_avg,
+                COUNT(*) AS n_ratings
+            FROM ranked
+            WHERE rn <= :limit
+            GROUP BY player_id_ext
+        """),
+        {
+            "player_ids": player_ids_ext,
+            "before_date": before_date,
+            "current_match_id": match_id,
+            "limit": limit,
+        }
+    )
+
+    return {row.player_id_ext: round(row.rolling_avg, 3) for row in result.fetchall()}
 
 
 def calculate_xi_features(

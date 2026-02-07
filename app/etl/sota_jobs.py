@@ -1297,3 +1297,339 @@ async def expand_venue_geo(
         await provider.close()
 
     return metrics
+
+
+# =============================================================================
+# SOFASCORE POST-MATCH RATINGS BACKFILL
+# =============================================================================
+
+async def backfill_sofascore_ratings_ft(
+    session: AsyncSession,
+    days: int = 14,
+    limit: int = 100,
+) -> dict:
+    """
+    Backfill Sofascore player ratings for finished matches.
+
+    Re-fetches /event/{id}/lineups for FT matches (ratings now available post-match)
+    and inserts into sofascore_player_rating_history.
+
+    Args:
+        session: Database session.
+        days: Days back to scan.
+        limit: Max matches to process per run.
+
+    Returns:
+        Dict with metrics: scanned, inserted, skipped_*, errors.
+    """
+    from app.etl.sofascore_provider import SofascoreProvider
+
+    metrics = {
+        "scanned": 0,
+        "matches_processed": 0,
+        "players_inserted": 0,
+        "skipped_no_ref": 0,
+        "skipped_no_data": 0,
+        "skipped_no_ratings": 0,
+        "errors": 0,
+    }
+
+    provider = SofascoreProvider(use_mock=False)
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    try:
+        league_ids_str = ",".join(str(lid) for lid in SOFASCORE_SUPPORTED_LEAGUES)
+
+        # FT matches with sofascore ref, without entries in rating history
+        result = await session.execute(text(f"""
+            SELECT
+                m.id AS match_id,
+                m.date AS match_date,
+                mer.source_match_id AS sofascore_id
+            FROM matches m
+            JOIN match_external_refs mer
+                ON m.id = mer.match_id AND mer.source = 'sofascore'
+            WHERE m.status IN ('FT', 'AET', 'PEN')
+              AND m.date >= :cutoff
+              AND m.league_id IN ({league_ids_str})
+              AND NOT EXISTS (
+                  SELECT 1 FROM sofascore_player_rating_history sprh
+                  WHERE sprh.match_id = m.id
+              )
+            ORDER BY m.date DESC
+            LIMIT :limit
+        """), {"cutoff": cutoff, "limit": limit})
+
+        matches = result.fetchall()
+        metrics["scanned"] = len(matches)
+
+        if not matches:
+            logger.debug(f"[SOFASCORE_RATINGS] No matches need ratings (last {days}d)")
+            return metrics
+
+        logger.info(f"[SOFASCORE_RATINGS] Found {len(matches)} matches to backfill ratings")
+
+        for match in matches:
+            match_id = match.match_id
+            sofascore_id = match.sofascore_id
+            match_date = match.match_date
+
+            try:
+                # Re-fetch lineups (post-match: ratings now available)
+                lineup_data = await provider.get_match_lineup(sofascore_id)
+
+                if lineup_data.error:
+                    metrics["skipped_no_data"] += 1
+                    continue
+
+                # Extract ratings from both sides
+                players_inserted = 0
+                for side_data in [lineup_data.home, lineup_data.away]:
+                    if not side_data:
+                        continue
+                    for player in side_data.players:
+                        # rating_recent_form contains the post-match rating
+                        rating = player.rating_recent_form
+                        if rating is None:
+                            continue
+
+                        await session.execute(text("""
+                            INSERT INTO sofascore_player_rating_history (
+                                player_id_ext, match_id, team_side, position,
+                                rating, minutes_played, is_starter, match_date,
+                                captured_at
+                            ) VALUES (
+                                :player_id_ext, :match_id, :team_side, :position,
+                                :rating, :minutes_played, :is_starter, :match_date,
+                                NOW()
+                            )
+                            ON CONFLICT (player_id_ext, match_id) DO UPDATE SET
+                                rating = EXCLUDED.rating,
+                                captured_at = NOW()
+                        """), {
+                            "player_id_ext": player.player_id_ext,
+                            "match_id": match_id,
+                            "team_side": side_data.team_side,
+                            "position": player.position,
+                            "rating": rating,
+                            "minutes_played": None,  # Not available from lineups endpoint
+                            "is_starter": player.is_starter,
+                            "match_date": match_date,
+                        })
+                        players_inserted += 1
+
+                if players_inserted == 0:
+                    metrics["skipped_no_ratings"] += 1
+                else:
+                    metrics["matches_processed"] += 1
+                    metrics["players_inserted"] += players_inserted
+
+            except Exception as e:
+                metrics["errors"] += 1
+                logger.error(f"[SOFASCORE_RATINGS] Error processing match {match_id}: {e}")
+                continue
+
+        await session.commit()
+        logger.info(
+            f"[SOFASCORE_RATINGS] Complete: matches={metrics['matches_processed']}, "
+            f"players={metrics['players_inserted']}, errors={metrics['errors']}"
+        )
+
+    except Exception as e:
+        metrics["errors"] += 1
+        logger.error(f"[SOFASCORE_RATINGS] Job failed: {e}")
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+
+    finally:
+        await provider.close()
+
+    return metrics
+
+
+# =============================================================================
+# SOFASCORE POST-MATCH STATS BACKFILL
+# =============================================================================
+
+async def backfill_sofascore_stats_ft(
+    session: AsyncSession,
+    days: int = 14,
+    limit: int = 100,
+) -> dict:
+    """
+    Backfill Sofascore post-match statistics for finished matches.
+
+    Fetches /event/{id}/statistics and stores xG, big chances, etc.
+
+    Args:
+        session: Database session.
+        days: Days back to scan.
+        limit: Max matches to process per run.
+
+    Returns:
+        Dict with metrics: scanned, inserted, skipped_*, errors.
+    """
+    from app.etl.sofascore_provider import SofascoreProvider
+
+    metrics = {
+        "scanned": 0,
+        "inserted": 0,
+        "skipped_no_data": 0,
+        "skipped_empty_stats": 0,
+        "errors": 0,
+    }
+
+    provider = SofascoreProvider(use_mock=False)
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    try:
+        league_ids_str = ",".join(str(lid) for lid in SOFASCORE_SUPPORTED_LEAGUES)
+
+        # FT matches with sofascore ref, without stats entry
+        result = await session.execute(text(f"""
+            SELECT
+                m.id AS match_id,
+                mer.source_match_id AS sofascore_id
+            FROM matches m
+            JOIN match_external_refs mer
+                ON m.id = mer.match_id AND mer.source = 'sofascore'
+            WHERE m.status IN ('FT', 'AET', 'PEN')
+              AND m.date >= :cutoff
+              AND m.league_id IN ({league_ids_str})
+              AND NOT EXISTS (
+                  SELECT 1 FROM match_sofascore_stats mss
+                  WHERE mss.match_id = m.id
+              )
+            ORDER BY m.date DESC
+            LIMIT :limit
+        """), {"cutoff": cutoff, "limit": limit})
+
+        matches = result.fetchall()
+        metrics["scanned"] = len(matches)
+
+        if not matches:
+            logger.debug(f"[SOFASCORE_STATS] No matches need stats (last {days}d)")
+            return metrics
+
+        logger.info(f"[SOFASCORE_STATS] Found {len(matches)} matches to backfill stats")
+
+        for match in matches:
+            match_id = match.match_id
+            sofascore_id = match.sofascore_id
+
+            try:
+                stats_data, error = await provider.get_match_statistics(sofascore_id)
+
+                if error:
+                    metrics["skipped_no_data"] += 1
+                    continue
+
+                if not stats_data or len(stats_data) <= 1:  # Only raw_stats key
+                    metrics["skipped_empty_stats"] += 1
+                    continue
+
+                # Build INSERT params from parsed stats
+                import json
+                raw_json = json.dumps(stats_data.get("raw_stats")) if stats_data.get("raw_stats") else None
+
+                await session.execute(text("""
+                    INSERT INTO match_sofascore_stats (
+                        match_id, possession_home, possession_away,
+                        total_shots_home, total_shots_away,
+                        shots_on_target_home, shots_on_target_away,
+                        xg_home, xg_away,
+                        corners_home, corners_away,
+                        fouls_home, fouls_away,
+                        big_chances_home, big_chances_away,
+                        big_chances_missed_home, big_chances_missed_away,
+                        accurate_passes_home, accurate_passes_away,
+                        pass_accuracy_home, pass_accuracy_away,
+                        raw_stats, captured_at
+                    ) VALUES (
+                        :match_id, :possession_home, :possession_away,
+                        :total_shots_home, :total_shots_away,
+                        :shots_on_target_home, :shots_on_target_away,
+                        :xg_home, :xg_away,
+                        :corners_home, :corners_away,
+                        :fouls_home, :fouls_away,
+                        :big_chances_home, :big_chances_away,
+                        :big_chances_missed_home, :big_chances_missed_away,
+                        :accurate_passes_home, :accurate_passes_away,
+                        :pass_accuracy_home, :pass_accuracy_away,
+                        CAST(:raw_stats AS jsonb), NOW()
+                    )
+                    ON CONFLICT (match_id) DO UPDATE SET
+                        possession_home = EXCLUDED.possession_home,
+                        possession_away = EXCLUDED.possession_away,
+                        total_shots_home = EXCLUDED.total_shots_home,
+                        total_shots_away = EXCLUDED.total_shots_away,
+                        shots_on_target_home = EXCLUDED.shots_on_target_home,
+                        shots_on_target_away = EXCLUDED.shots_on_target_away,
+                        xg_home = EXCLUDED.xg_home,
+                        xg_away = EXCLUDED.xg_away,
+                        corners_home = EXCLUDED.corners_home,
+                        corners_away = EXCLUDED.corners_away,
+                        fouls_home = EXCLUDED.fouls_home,
+                        fouls_away = EXCLUDED.fouls_away,
+                        big_chances_home = EXCLUDED.big_chances_home,
+                        big_chances_away = EXCLUDED.big_chances_away,
+                        big_chances_missed_home = EXCLUDED.big_chances_missed_home,
+                        big_chances_missed_away = EXCLUDED.big_chances_missed_away,
+                        accurate_passes_home = EXCLUDED.accurate_passes_home,
+                        accurate_passes_away = EXCLUDED.accurate_passes_away,
+                        pass_accuracy_home = EXCLUDED.pass_accuracy_home,
+                        pass_accuracy_away = EXCLUDED.pass_accuracy_away,
+                        raw_stats = EXCLUDED.raw_stats,
+                        captured_at = NOW()
+                """), {
+                    "match_id": match_id,
+                    "possession_home": stats_data.get("possession_home"),
+                    "possession_away": stats_data.get("possession_away"),
+                    "total_shots_home": stats_data.get("total_shots_home"),
+                    "total_shots_away": stats_data.get("total_shots_away"),
+                    "shots_on_target_home": stats_data.get("shots_on_target_home"),
+                    "shots_on_target_away": stats_data.get("shots_on_target_away"),
+                    "xg_home": stats_data.get("xg_home"),
+                    "xg_away": stats_data.get("xg_away"),
+                    "corners_home": stats_data.get("corners_home"),
+                    "corners_away": stats_data.get("corners_away"),
+                    "fouls_home": stats_data.get("fouls_home"),
+                    "fouls_away": stats_data.get("fouls_away"),
+                    "big_chances_home": stats_data.get("big_chances_home"),
+                    "big_chances_away": stats_data.get("big_chances_away"),
+                    "big_chances_missed_home": stats_data.get("big_chances_missed_home"),
+                    "big_chances_missed_away": stats_data.get("big_chances_missed_away"),
+                    "accurate_passes_home": stats_data.get("accurate_passes_home"),
+                    "accurate_passes_away": stats_data.get("accurate_passes_away"),
+                    "pass_accuracy_home": stats_data.get("pass_accuracy_home"),
+                    "pass_accuracy_away": stats_data.get("pass_accuracy_away"),
+                    "raw_stats": raw_json,
+                })
+
+                metrics["inserted"] += 1
+
+            except Exception as e:
+                metrics["errors"] += 1
+                logger.error(f"[SOFASCORE_STATS] Error processing match {match_id}: {e}")
+                continue
+
+        await session.commit()
+        logger.info(
+            f"[SOFASCORE_STATS] Complete: inserted={metrics['inserted']}, "
+            f"skipped_no_data={metrics['skipped_no_data']}, errors={metrics['errors']}"
+        )
+
+    except Exception as e:
+        metrics["errors"] += 1
+        logger.error(f"[SOFASCORE_STATS] Job failed: {e}")
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+
+    finally:
+        await provider.close()
+
+    return metrics
