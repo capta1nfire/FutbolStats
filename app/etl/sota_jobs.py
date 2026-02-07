@@ -25,7 +25,7 @@ from app.etl.sofascore_aliases import build_alias_index, names_are_aliases
 
 logger = logging.getLogger(__name__)
 
-from app.etl.sota_constants import SOFASCORE_SUPPORTED_LEAGUES, UNDERSTAT_SUPPORTED_LEAGUES  # noqa: E402
+from app.etl.sota_constants import LEAGUE_PROXY_COUNTRY, SOFASCORE_SUPPORTED_LEAGUES, UNDERSTAT_SUPPORTED_LEAGUES  # noqa: E402
 
 # Mapping from API-Football league IDs to Understat league names
 LEAGUE_ID_TO_UNDERSTAT = {
@@ -976,6 +976,7 @@ async def capture_sofascore_xi_prekickoff(
             SELECT
                 m.id AS match_id,
                 m.date AS kickoff_utc,
+                m.league_id,
                 t_home.name AS home_team,
                 t_away.name AS away_team,
                 mer.source_match_id AS sofascore_id
@@ -1008,6 +1009,7 @@ async def capture_sofascore_xi_prekickoff(
             match_id = match.match_id
             sofascore_id = match.sofascore_id
             kickoff_utc = match.kickoff_utc
+            cc = LEAGUE_PROXY_COUNTRY.get(match.league_id)
 
             try:
                 if not sofascore_id:
@@ -1016,8 +1018,8 @@ async def capture_sofascore_xi_prekickoff(
 
                 metrics["with_ref"] += 1
 
-                # Fetch lineup from Sofascore
-                lineup_data = await provider.get_match_lineup(sofascore_id)
+                # Fetch lineup from Sofascore (geo-proxy by league country)
+                lineup_data = await provider.get_match_lineup(sofascore_id, country_code=cc)
 
                 if lineup_data.error:
                     if lineup_data.error == "not_found":
@@ -1345,6 +1347,7 @@ async def backfill_sofascore_ratings_ft(
             SELECT
                 m.id AS match_id,
                 m.date AS match_date,
+                m.league_id,
                 mer.source_match_id AS sofascore_id
             FROM matches m
             JOIN match_external_refs mer
@@ -1373,10 +1376,11 @@ async def backfill_sofascore_ratings_ft(
             match_id = match.match_id
             sofascore_id = match.sofascore_id
             match_date = match.match_date
+            cc = LEAGUE_PROXY_COUNTRY.get(match.league_id)
 
             try:
-                # Re-fetch lineups (post-match: ratings now available)
-                lineup_data = await provider.get_match_lineup(sofascore_id)
+                # Re-fetch lineups (post-match: ratings now available, geo-proxy)
+                lineup_data = await provider.get_match_lineup(sofascore_id, country_code=cc)
 
                 if lineup_data.error:
                     metrics["skipped_no_data"] += 1
@@ -1491,6 +1495,7 @@ async def backfill_sofascore_stats_ft(
         result = await session.execute(text(f"""
             SELECT
                 m.id AS match_id,
+                m.league_id,
                 mer.source_match_id AS sofascore_id
             FROM matches m
             JOIN match_external_refs mer
@@ -1518,9 +1523,10 @@ async def backfill_sofascore_stats_ft(
         for match in matches:
             match_id = match.match_id
             sofascore_id = match.sofascore_id
+            cc = LEAGUE_PROXY_COUNTRY.get(match.league_id)
 
             try:
-                stats_data, error = await provider.get_match_statistics(sofascore_id)
+                stats_data, error = await provider.get_match_statistics(sofascore_id, country_code=cc)
 
                 if error:
                     metrics["skipped_no_data"] += 1

@@ -27,6 +27,7 @@ import random
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 
@@ -169,7 +170,7 @@ class SofascoreProvider:
             use_mock: If True, return mock data for testing.
         """
         self.use_mock = use_mock
-        self._client: Optional[httpx.AsyncClient] = None
+        self._clients: dict[str, httpx.AsyncClient] = {}  # keyed by country code ("_base" for no geo)
         self._last_request_time: float = 0
         self._proxy_url: Optional[str] = os.environ.get("SOFASCORE_PROXY_URL")
         if self._proxy_url:
@@ -177,18 +178,39 @@ class SofascoreProvider:
         else:
             logger.info("SofascoreProvider initialized without proxy (mock=%s)", use_mock)
 
-    async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create HTTP client."""
-        if self._client is None:
+    def _build_geo_proxy_url(self, country_code: str) -> str:
+        """Build proxy URL with IPRoyal geo-targeting suffix on the password.
+
+        Format: http://USER:PASS_country-CC@HOST:PORT
+        """
+        parsed = urlparse(self._proxy_url)
+        password = parsed.password or ""
+        # Strip any existing _country-XX suffix to avoid duplication
+        if "_country-" in password:
+            password = password[: password.index("_country-")]
+        geo_password = f"{password}_country-{country_code}"
+        netloc = f"{parsed.username}:{geo_password}@{parsed.hostname}"
+        if parsed.port:
+            netloc += f":{parsed.port}"
+        return urlunparse((parsed.scheme, netloc, parsed.path, "", "", ""))
+
+    async def _get_client(self, country_code: Optional[str] = None) -> httpx.AsyncClient:
+        """Get or create HTTP client, optionally geo-targeted by country."""
+        cache_key = country_code or "_base"
+        if cache_key not in self._clients:
             kwargs: dict[str, Any] = {
                 "timeout": 30.0,
                 "headers": DEFAULT_HEADERS,
                 "follow_redirects": True,
             }
             if self._proxy_url:
-                kwargs["proxy"] = self._proxy_url
-            self._client = httpx.AsyncClient(**kwargs)
-        return self._client
+                if country_code:
+                    kwargs["proxy"] = self._build_geo_proxy_url(country_code)
+                    logger.info("[SOFASCORE] Creating geo-proxy client for country=%s", country_code)
+                else:
+                    kwargs["proxy"] = self._proxy_url
+            self._clients[cache_key] = httpx.AsyncClient(**kwargs)
+        return self._clients[cache_key]
 
     async def _rate_limit(self) -> None:
         """Enforce rate limiting between requests."""
@@ -203,9 +225,13 @@ class SofascoreProvider:
         self,
         url: str,
         event_id: str,
+        country_code: Optional[str] = None,
     ) -> tuple[Optional[dict], Optional[str]]:
         """
         Fetch JSON with retry logic.
+
+        Args:
+            country_code: ISO 2-letter code for geo-proxy routing (e.g. "es", "gb").
 
         Returns:
             Tuple of (data, error_message).
@@ -215,7 +241,7 @@ class SofascoreProvider:
         for attempt in range(MAX_RETRIES):
             try:
                 await self._rate_limit()
-                client = await self._get_client()
+                client = await self._get_client(country_code)
 
                 response = await client.get(url)
 
@@ -274,12 +300,14 @@ class SofascoreProvider:
     async def get_match_lineup(
         self,
         sofascore_event_id: str,
+        country_code: Optional[str] = None,
     ) -> SofascoreMatchLineup:
         """
         Get lineup/formation/ratings for a match.
 
         Args:
             sofascore_event_id: Sofascore event ID.
+            country_code: ISO 2-letter code for geo-proxy routing.
 
         Returns:
             SofascoreMatchLineup with home/away lineup data.
@@ -290,7 +318,7 @@ class SofascoreProvider:
 
         url = f"{SOFASCORE_API_BASE}/event/{sofascore_event_id}/lineups"
 
-        data, error = await self._fetch_json(url, sofascore_event_id)
+        data, error = await self._fetch_json(url, sofascore_event_id, country_code)
 
         if error:
             return SofascoreMatchLineup(
@@ -600,11 +628,15 @@ class SofascoreProvider:
     async def get_match_statistics(
         self,
         sofascore_event_id: str,
+        country_code: Optional[str] = None,
     ) -> tuple[Optional[dict], Optional[str]]:
         """
         Get post-match statistics for a finished match.
 
         Endpoint: /api/v1/event/{event_id}/statistics
+
+        Args:
+            country_code: ISO 2-letter code for geo-proxy routing.
 
         Returns:
             Tuple of (parsed_stats_dict, error_message).
@@ -615,7 +647,7 @@ class SofascoreProvider:
             return self._get_mock_statistics(), None
 
         url = f"{SOFASCORE_API_BASE}/event/{sofascore_event_id}/statistics"
-        data, error = await self._fetch_json(url, sofascore_event_id)
+        data, error = await self._fetch_json(url, sofascore_event_id, country_code)
 
         if error:
             return None, error
@@ -776,11 +808,12 @@ class SofascoreProvider:
         }
 
     async def close(self) -> None:
-        """Close any open connections."""
-        if self._client:
-            await self._client.aclose()
-            self._client = None
-        logger.debug("SofascoreProvider closed")
+        """Close all open connections (including geo-proxy clients)."""
+        for key, client in self._clients.items():
+            await client.aclose()
+        n = len(self._clients)
+        self._clients.clear()
+        logger.debug("SofascoreProvider closed (%d clients)", n)
 
 
 # =============================================================================

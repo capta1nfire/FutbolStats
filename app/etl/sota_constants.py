@@ -54,3 +54,42 @@ SOFASCORE_SUPPORTED_LEAGUES = {
     144,  # Belgian Pro League
     40,   # EFL Championship (England)
 }
+
+# League → ISO 3166-1 alpha-2 country code for geo-proxy routing.
+# IPRoyal appends "_country-{cc}" to the password for geo-targeting.
+# UEFA competitions default to "de" (neutral central European IP).
+LEAGUE_PROXY_COUNTRY: dict[int, str] = {
+    # Europe Top 5
+    39: "gb",   # Premier League
+    40: "gb",   # EFL Championship
+    140: "es",  # La Liga
+    135: "it",  # Serie A
+    78: "de",   # Bundesliga
+    61: "fr",   # Ligue 1
+    # Europe Secondary
+    94: "pt",   # Primeira Liga
+    88: "nl",   # Eredivisie
+    144: "be",  # Belgian Pro League
+    203: "tr",  # Süper Lig
+    # Americas
+    128: "ar",  # Argentina Primera División
+    71: "br",   # Brazil Serie A
+    239: "co",  # Colombia Primera A
+    250: "py",  # Paraguay Apertura
+    252: "py",  # Paraguay Clausura
+    268: "uy",  # Uruguay Apertura
+    270: "uy",  # Uruguay Clausura
+    265: "cl",  # Chile Primera División
+    242: "ec",  # Ecuador Liga Pro
+    281: "pe",  # Perú Liga 1
+    299: "ve",  # Venezuela Primera División
+    344: "bo",  # Bolivia Primera División
+    253: "us",  # MLS
+    262: "mx",  # Liga MX
+    # Middle East
+    307: "sa",  # Saudi Pro League
+    # UEFA (neutral European IP)
+    2: "de",    # Champions League
+    3: "de",    # Europa League
+    848: "de",  # Conference League
+}
