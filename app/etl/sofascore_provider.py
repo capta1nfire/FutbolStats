@@ -22,6 +22,7 @@ Reference:
 
 import asyncio
 import logging
+import os
 import random
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -170,16 +171,23 @@ class SofascoreProvider:
         self.use_mock = use_mock
         self._client: Optional[httpx.AsyncClient] = None
         self._last_request_time: float = 0
-        logger.info(f"SofascoreProvider initialized (mock={use_mock})")
+        self._proxy_url: Optional[str] = os.environ.get("SOFASCORE_PROXY_URL")
+        if self._proxy_url:
+            logger.info("SofascoreProvider initialized with proxy (mock=%s)", use_mock)
+        else:
+            logger.info("SofascoreProvider initialized without proxy (mock=%s)", use_mock)
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""
         if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=30.0,
-                headers=DEFAULT_HEADERS,
-                follow_redirects=True,
-            )
+            kwargs: dict[str, Any] = {
+                "timeout": 30.0,
+                "headers": DEFAULT_HEADERS,
+                "follow_redirects": True,
+            }
+            if self._proxy_url:
+                kwargs["proxy"] = self._proxy_url
+            self._client = httpx.AsyncClient(**kwargs)
         return self._client
 
     async def _rate_limit(self) -> None:
