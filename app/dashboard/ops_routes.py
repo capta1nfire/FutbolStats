@@ -32,7 +32,7 @@ from app.security import (
     verify_debug_token,
     _has_valid_ops_session,
 )
-from app.state import ml_engine
+from app.state import ml_engine, _live_summary_cache
 
 router = APIRouter(tags=["ops"])
 
@@ -3594,7 +3594,6 @@ async def _load_ops_data() -> dict:
     Parallelized with asyncio.gather -- ~16 independent sections run concurrently,
     each with its own DB session. Pool: 10+20=30, uses ~14 concurrent sessions.
     """
-    from app.main import _live_summary_cache  # lazy import (P0-11: no top-level app.main)
     from app.scheduler import get_last_sync_time
 
     now = datetime.utcnow()

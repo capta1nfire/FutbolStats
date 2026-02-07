@@ -35,3 +35,15 @@ _telemetry = {
 def _incr(key: str) -> None:
     """Increment a telemetry counter."""
     _telemetry[key] = _telemetry.get(key, 0) + 1
+
+
+# =============================================================================
+# LIVE SUMMARY CACHE (shared between main.py and ops_routes.py)
+# =============================================================================
+# Moved here to eliminate circular lazy import `from app.main import _live_summary_cache`.
+
+_live_summary_cache: dict = {
+    "data": None,
+    "timestamp": 0.0,
+    "ttl": 5.0,  # 5 second TTL
+}

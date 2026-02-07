@@ -4953,7 +4953,7 @@ async def daily_alpha_progress_snapshot() -> dict:
 
     try:
         # Import here to avoid circular imports
-        from app.main import _get_cached_ops_data
+        from app.dashboard.ops_routes import get_cached_ops_data as _get_cached_ops_data
 
         # Get current ops data
         data = await _get_cached_ops_data()
