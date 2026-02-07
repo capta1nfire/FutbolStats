@@ -6668,6 +6668,117 @@ async def logo_resize_pending() -> dict:
         return {"status": "error", "error": str(e), "duration_ms": duration_ms}
 
 
+async def player_injuries_sync() -> dict:
+    """
+    Sync player injuries from API-Football for all tracked leagues.
+
+    Fetches injuries per league/season, resolves internal team_id and match_id,
+    upserts into player_injuries table.
+
+    Frequency: Every 6 hours (staggered: 06:00, 12:00, 18:00, 00:00 UTC)
+    Guardrail: INJURIES_SYNC_ENABLED env var
+    """
+    import time as _time
+
+    start_time = _time.time()
+    started_at = datetime.utcnow()
+    job_name = "player_injuries_sync"
+
+    if os.environ.get("INJURIES_SYNC_ENABLED", "false").lower() in ("false", "0", "no"):
+        logger.debug(f"[{job_name}] Disabled via env var")
+        return {"status": "disabled"}
+
+    metrics = {"started_at": started_at.isoformat()}
+
+    try:
+        from app.etl.player_jobs import sync_injuries
+        from app.jobs.tracking import record_job_run as record_job_run_db
+
+        async with AsyncSessionLocal() as session:
+            stats = await sync_injuries(session)
+            metrics.update(stats)
+
+            duration_ms = (_time.time() - start_time) * 1000
+            status = "ok" if metrics.get("errors", 0) == 0 else "partial"
+            await record_job_run_db(session, job_name, status, started_at, metrics=metrics)
+
+        record_job_run(job=job_name, status=status, duration_ms=duration_ms)
+        logger.info(
+            f"[{job_name}] Complete: leagues={metrics.get('leagues_ok', 0)}, "
+            f"inserted={metrics.get('injuries_inserted', 0)}, "
+            f"updated={metrics.get('injuries_updated', 0)}"
+        )
+        return {**metrics, "status": status, "duration_ms": duration_ms}
+
+    except Exception as e:
+        duration_ms = (_time.time() - start_time) * 1000
+        logger.error(f"[{job_name}] Failed: {e}", exc_info=True)
+        sentry_capture_exception(e, job_id=job_name)
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        try:
+            from app.jobs.tracking import record_job_run as record_job_run_db
+            async with AsyncSessionLocal() as session:
+                await record_job_run_db(session, job_name, "error", started_at, error=str(e))
+        except Exception:
+            pass
+        return {"status": "error", "error": str(e), "duration_ms": duration_ms}
+
+
+async def player_manager_sync() -> dict:
+    """
+    Sync managers from API-Football, detect coaching changes.
+
+    Fetches current coach per team, upserts catalog, detects changes
+    and records stints in team_manager_history.
+
+    Frequency: Daily at 02:00 UTC
+    Guardrail: MANAGER_SYNC_ENABLED env var
+    """
+    import time as _time
+
+    start_time = _time.time()
+    started_at = datetime.utcnow()
+    job_name = "player_manager_sync"
+
+    if os.environ.get("MANAGER_SYNC_ENABLED", "false").lower() in ("false", "0", "no"):
+        logger.debug(f"[{job_name}] Disabled via env var")
+        return {"status": "disabled"}
+
+    metrics = {"started_at": started_at.isoformat()}
+
+    try:
+        from app.etl.player_jobs import sync_managers
+        from app.jobs.tracking import record_job_run as record_job_run_db
+
+        async with AsyncSessionLocal() as session:
+            stats = await sync_managers(session)
+            metrics.update(stats)
+
+            duration_ms = (_time.time() - start_time) * 1000
+            status = "ok" if metrics.get("errors", 0) == 0 else "partial"
+            await record_job_run_db(session, job_name, status, started_at, metrics=metrics)
+
+        record_job_run(job=job_name, status=status, duration_ms=duration_ms)
+        logger.info(
+            f"[{job_name}] Complete: teams={metrics.get('teams_ok', 0)}, "
+            f"changes={metrics.get('changes_detected', 0)}"
+        )
+        return {**metrics, "status": status, "duration_ms": duration_ms}
+
+    except Exception as e:
+        duration_ms = (_time.time() - start_time) * 1000
+        logger.error(f"[{job_name}] Failed: {e}", exc_info=True)
+        sentry_capture_exception(e, job_id=job_name)
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        try:
+            from app.jobs.tracking import record_job_run as record_job_run_db
+            async with AsyncSessionLocal() as session:
+                await record_job_run_db(session, job_name, "error", started_at, error=str(e))
+        except Exception:
+            pass
+        return {"status": "error", "error": str(e), "duration_ms": duration_ms}
+
+
 def start_scheduler(ml_engine):
     """
     Start the background scheduler.
@@ -7275,6 +7386,32 @@ def start_scheduler(ml_engine):
         max_instances=1,
         coalesce=True,
         misfire_grace_time=300,  # 5min grace
+    )
+
+    # Players & Managers: Injuries sync - every 6 hours (staggered)
+    # Fetches injuries from API-Football for all tracked leagues
+    scheduler.add_job(
+        player_injuries_sync,
+        trigger=CronTrigger(hour="0,6,12,18", minute=0),
+        id="player_injuries_sync",
+        name="Player Injuries Sync (every 6h)",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=6 * 3600,
+    )
+
+    # Players & Managers: Manager sync - daily at 02:00 UTC
+    # Fetches coaches, detects changes, updates history
+    scheduler.add_job(
+        player_manager_sync,
+        trigger=CronTrigger(hour=2, minute=0),
+        id="player_manager_sync",
+        name="Player Manager Sync (daily 02:00 UTC)",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=24 * 3600,
     )
 
     scheduler.start()

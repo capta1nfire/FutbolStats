@@ -191,6 +191,10 @@ class Settings(BaseSettings):
     ODDS_SYNC_FRESHNESS_HOURS: int = 6  # Skip if odds updated within N hours
     ODDS_SYNC_INTERVAL_HOURS: int = 6  # How often to run the job
 
+    # Players & Managers (Phase 1 MVP)
+    INJURIES_SYNC_ENABLED: bool = False  # Kill-switch for injuries sync job
+    MANAGER_SYNC_ENABLED: bool = False   # Kill-switch for manager sync job
+
     # Sofascore Refs Matching
     SOFASCORE_REFS_THRESHOLD: float = 0.75  # Default threshold for match score
     SOFASCORE_REFS_THRESHOLD_OVERRIDES: str = ""  # Per-league: "128:0.70,307:0.70"
@@ -228,6 +232,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 @lru_cache

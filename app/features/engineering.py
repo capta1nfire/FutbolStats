@@ -1356,6 +1356,26 @@ class FeatureEngineer:
             # Set defaults with missing flag
             features.update(self._get_xi_defaults())
 
+        # === Player & Manager Features (Phase 1 MVP) ===
+        try:
+            from app.features.player_features import (
+                get_player_manager_features,
+                get_player_manager_defaults,
+            )
+            pm_features = await get_player_manager_features(
+                self.session,
+                match.id,
+                match.external_id,
+                match.home_team_id,
+                match.away_team_id,
+                match.date,
+            )
+            features.update(pm_features)
+        except Exception as e:
+            logger.warning(f"Player/manager features failed for match {match.id}: {e}")
+            from app.features.player_features import get_player_manager_defaults
+            features.update(get_player_manager_defaults())
+
         return features
 
     async def get_match_features_asof(
