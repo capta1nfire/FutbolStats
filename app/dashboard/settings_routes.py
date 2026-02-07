@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import AsyncSessionLocal, get_async_session
 from app.models import Match, OddsHistory, PostMatchAudit, Prediction, PredictionOutcome, Team
 from app.security import verify_dashboard_token_bool
+from app.utils.cache import SimpleCache
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -28,9 +29,9 @@ settings = get_settings()
 router = APIRouter(prefix="/dashboard/settings", tags=["settings"])
 
 # Cache for settings endpoints
-_settings_summary_cache: dict = {"data": None, "timestamp": 0, "ttl": 300}
-_settings_flags_cache: dict = {"data": None, "timestamp": 0, "ttl": 60}
-_settings_models_cache: dict = {"data": None, "timestamp": 0, "ttl": 300}
+_settings_summary_cache = SimpleCache(ttl=300)
+_settings_flags_cache = SimpleCache(ttl=60)
+_settings_models_cache = SimpleCache(ttl=300)
 
 # SECURITY: Secrets that MUST NEVER appear in settings responses
 _SETTINGS_SECRET_KEYS = frozenset({
@@ -130,16 +131,14 @@ async def dashboard_settings_summary(request: Request):
     """
     _check_token(request)
 
-    now = time.time()
-    cache = _settings_summary_cache
-
     # Check cache
-    if cache["data"] and (now - cache["timestamp"]) < cache["ttl"]:
+    hit, cached = _settings_summary_cache.get()
+    if hit:
         return {
-            "generated_at": cache["data"]["generated_at"],
+            "generated_at": cached["generated_at"],
             "cached": True,
-            "cache_age_seconds": round(now - cache["timestamp"], 1),
-            "data": cache["data"]["payload"],
+            "cache_age_seconds": round(_settings_summary_cache.age, 1),
+            "data": cached["payload"],
         }
 
     # Build fresh data
@@ -187,8 +186,7 @@ async def dashboard_settings_summary(request: Request):
         }
 
         # Update cache
-        cache["data"] = {"generated_at": generated_at, "payload": payload}
-        cache["timestamp"] = now
+        _settings_summary_cache.set({"generated_at": generated_at, "payload": payload})
 
         return {
             "generated_at": generated_at,
@@ -243,8 +241,6 @@ async def dashboard_settings_feature_flags(
     limit = min(max(1, limit), 100)
     page = max(1, page)
 
-    now = time.time()
-    cache = _settings_flags_cache
     generated_at = datetime.utcnow().isoformat() + "Z"
 
     try:
@@ -317,17 +313,16 @@ async def dashboard_settings_model_versions(request: Request):
     """
     _check_token(request)
 
-    now = time.time()
-    cache = _settings_models_cache
     generated_at = datetime.utcnow().isoformat() + "Z"
 
     # Check cache
-    if cache["data"] and (now - cache["timestamp"]) < cache["ttl"]:
+    hit, cached = _settings_models_cache.get()
+    if hit:
         return {
-            "generated_at": cache["data"]["generated_at"],
+            "generated_at": cached["generated_at"],
             "cached": True,
-            "cache_age_seconds": round(now - cache["timestamp"], 1),
-            "data": cache["data"]["payload"],
+            "cache_age_seconds": round(_settings_models_cache.age, 1),
+            "data": cached["payload"],
         }
 
     try:
@@ -381,8 +376,7 @@ async def dashboard_settings_model_versions(request: Request):
         payload = {"models": models}
 
         # Update cache
-        cache["data"] = {"generated_at": generated_at, "payload": payload}
-        cache["timestamp"] = now
+        _settings_models_cache.set({"generated_at": generated_at, "payload": payload})
 
         return {
             "generated_at": generated_at,
@@ -409,7 +403,7 @@ async def dashboard_settings_model_versions(request: Request):
 # IA FEATURES SETTINGS (dynamic LLM configuration)
 # =============================================================================
 
-_ia_features_cache: dict = {"data": None, "timestamp": 0, "ttl": 30}
+_ia_features_cache = SimpleCache(ttl=30)
 
 
 @router.get("/ia-features.json")
@@ -430,17 +424,16 @@ async def dashboard_settings_ia_features_get(request: Request):
     """
     _check_token(request)
 
-    now = time.time()
-    cache = _ia_features_cache
     generated_at = datetime.utcnow().isoformat() + "Z"
 
     # Check cache
-    if cache["data"] and (now - cache["timestamp"]) < cache["ttl"]:
+    hit, cached = _ia_features_cache.get()
+    if hit:
         return {
-            "generated_at": cache["data"]["generated_at"],
+            "generated_at": cached["generated_at"],
             "cached": True,
-            "cache_age_seconds": round(now - cache["timestamp"], 1),
-            "data": cache["data"]["payload"],
+            "cache_age_seconds": round(_ia_features_cache.age, 1),
+            "data": cached["payload"],
         }
 
     try:
@@ -475,8 +468,7 @@ async def dashboard_settings_ia_features_get(request: Request):
         }
 
         # Update cache
-        cache["data"] = {"generated_at": generated_at, "payload": payload}
-        cache["timestamp"] = now
+        _ia_features_cache.set({"generated_at": generated_at, "payload": payload})
 
         return {
             "generated_at": generated_at,
@@ -571,7 +563,7 @@ async def dashboard_settings_ia_features_patch(request: Request):
             await session.commit()
 
             # Invalidate cache
-            _ia_features_cache["data"] = None
+            _ia_features_cache.invalidate()
 
             logger.info(f"[SETTINGS] IA Features updated: {updates}")
 
