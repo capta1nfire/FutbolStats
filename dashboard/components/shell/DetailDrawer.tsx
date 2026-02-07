@@ -160,7 +160,7 @@ export function DetailDrawer({
 
       {/* Scrollable content */}
       <ScrollArea className="flex-1 min-h-0">
-        <div className="px-3 pb-3">
+        <div className="px-3 pt-3 pb-3">
           {children}
         </div>
       </ScrollArea>

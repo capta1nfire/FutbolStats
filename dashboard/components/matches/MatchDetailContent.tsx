@@ -10,6 +10,7 @@ import { useState, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { MatchSummary, MatchWeather, ProbabilitySet, StandingEntry } from "@/lib/types";
 import { useStandings, useTeamLogos, useMatchSquad } from "@/lib/hooks";
+import { cn } from "@/lib/utils";
 import { Loader } from "@/components/ui/loader";
 import { IconTabs } from "@/components/ui/icon-tabs";
 import { Badge } from "@/components/ui/badge";
@@ -355,18 +356,21 @@ function PredictionSection({
   probs,
   home,
   away,
+  accentClass,
 }: {
   label: string;
   probs: ProbabilitySet;
   home: string;
   away: string;
+  /** Optional left-border accent class for divergence highlighting */
+  accentClass?: string;
 }) {
   const maxProb = Math.max(probs.home, probs.draw, probs.away);
   const pick =
     probs.home === maxProb ? home : probs.draw === maxProb ? "Draw" : away;
 
   return (
-    <div className="space-y-2 pb-3 border-b border-border last:border-b-0">
+    <div className={cn("space-y-2 pb-3 border-b border-border last:border-b-0", accentClass && "rounded-md px-2.5 py-2 -mx-0.5", accentClass)}>
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-foreground">{label}</span>
         <Badge variant="secondary" className="text-xs">
@@ -513,10 +517,6 @@ export function MatchHeader({
               <StatusDot status={match.status} showLabel showIcon={false} />
             </>
           )}
-          {match.modelA && match.market && (() => {
-            const gap20 = computeGap20(match.modelA, match.market);
-            return gap20 ? <DivergenceBadge result={gap20} className="mt-1" /> : null;
-          })()}
         </div>
 
         <div className="flex items-start gap-6">
@@ -598,7 +598,18 @@ export function MatchTabContent({
         <RecentFormSection match={match} getLogoUrl={getLogoUrl} />
       )}
 
-      {activeTab === "predictions" && (
+      {activeTab === "predictions" && (() => {
+        const gap20 = match.modelA && match.market
+          ? computeGap20(match.modelA, match.market)
+          : null;
+        const hasDiv = gap20 && gap20.category !== "AGREE";
+        const divAccent = hasDiv
+          ? gap20.category === "STRONG_FAV_DISAGREE"
+            ? "bg-destructive/8"
+            : "bg-warning/8"
+          : undefined;
+
+        return (
         <div className="bg-surface rounded-lg p-4 space-y-4">
           {match.modelA || match.shadow || match.sensorB || match.market ? (
             <>
@@ -608,6 +619,7 @@ export function MatchTabContent({
                   probs={match.market}
                   home={match.homeDisplayName}
                   away={match.awayDisplayName}
+                  accentClass={divAccent}
                 />
               )}
               {match.modelA && (
@@ -616,6 +628,7 @@ export function MatchTabContent({
                   probs={match.modelA}
                   home={match.homeDisplayName}
                   away={match.awayDisplayName}
+                  accentClass={divAccent}
                 />
               )}
               {match.shadow && (
@@ -634,6 +647,20 @@ export function MatchTabContent({
                   away={match.awayDisplayName}
                 />
               )}
+              {/* Divergence badge legend */}
+              {hasDiv && gap20 && (
+                <div className="border-t border-border pt-3 mt-1 space-y-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <DivergenceBadge result={gap20} score={match.score} />
+                    <span className="text-xs text-muted-foreground">Model-Market divergence</span>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground/70 leading-relaxed">
+                    <span className="font-semibold text-warning">Yellow</span> = Model and Market pick different favorites.{" "}
+                    <span className="font-semibold text-destructive">Red</span> = Strong disagreement (gap {"\u2265"}20pp, market confidence {"\u2265"}45%).{" "}
+                    No badge = both agree on the favorite.
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <div className="text-center py-8">
@@ -642,7 +669,8 @@ export function MatchTabContent({
             </div>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {activeTab === "standings" && (
         <div className="bg-surface rounded-lg py-2 px-1">

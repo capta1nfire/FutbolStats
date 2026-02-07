@@ -1,11 +1,12 @@
 "use client";
 
 import { useMemo } from "react";
-import { Trophy, Calendar, Activity } from "lucide-react";
+import { Trophy, Calendar, Activity, GitCompareArrows } from "lucide-react";
 import { FilterPanel, FilterGroup } from "@/components/shell";
 import { MatchesViewTabs, MatchesView } from "./MatchesViewTabs";
 import { DateRangePicker, type LocalDate } from "./DateRangePicker";
 import { MatchSummary, MatchStatus } from "@/lib/types";
+import { type DivergenceCategory } from "@/lib/predictions";
 
 /** Time range options for filtering */
 export type TimeRange = "today" | "24h" | "48h" | "7d";
@@ -42,8 +43,11 @@ interface MatchesFilterPanelProps {
   /** Callback when status filter changes */
   onStatusChange?: (status: MatchStatus, checked: boolean) => void;
   selectedLeagues: string[];
+  /** Selected divergence categories */
+  selectedDivergences: DivergenceCategory[];
   searchValue: string;
   onLeagueChange: (league: string, checked: boolean) => void;
+  onDivergenceChange: (category: DivergenceCategory, checked: boolean) => void;
   onSearchChange: (value: string) => void;
   /** Callback for "Customize Columns" link click */
   onCustomizeColumnsClick?: () => void;
@@ -66,8 +70,10 @@ export function MatchesFilterPanel({
   selectedStatuses = [],
   onStatusChange,
   selectedLeagues,
+  selectedDivergences,
   searchValue,
   onLeagueChange,
+  onDivergenceChange,
   onSearchChange,
   onCustomizeColumnsClick,
   showCustomizeColumns = false,
@@ -183,11 +189,24 @@ export function MatchesFilterPanel({
       });
     }
 
+    // Divergence filter (GAP20 model-vs-market)
+    groups.push({
+      id: "divergence",
+      label: "Divergence",
+      icon: <GitCompareArrows className="h-4 w-4" strokeWidth={1.5} />,
+      options: [
+        { id: "AGREE", label: "Agree", checked: selectedDivergences.includes("AGREE") },
+        { id: "DISAGREE", label: "Disagree", checked: selectedDivergences.includes("DISAGREE") },
+        { id: "STRONG_FAV_DISAGREE", label: "SFAV", checked: selectedDivergences.includes("STRONG_FAV_DISAGREE") },
+      ],
+    });
+
     return groups;
   }, [
     activeView,
     availableLeagues,
     availableStatuses,
+    selectedDivergences,
     selectedLeagues,
     selectedStatuses,
     selectedTimeRange,
@@ -206,6 +225,8 @@ export function MatchesFilterPanel({
       onStatusChange?.(optionId as MatchStatus, checked);
     } else if (groupId === "league") {
       onLeagueChange(optionId, checked);
+    } else if (groupId === "divergence") {
+      onDivergenceChange(optionId as DivergenceCategory, checked);
     }
   };
 

@@ -4,6 +4,7 @@ import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMatchesApi, useMatchApi, useMatch, useColumnVisibility, usePageSize, useTeamLogos, useCompactPredictions } from "@/lib/hooks";
 import { MatchSummary, MatchFilters, MatchStatus, MATCH_STATUSES } from "@/lib/types";
+import { computeGap20, type DivergenceCategory } from "@/lib/predictions";
 import { getMatchesMockSync } from "@/lib/mocks";
 import {
   MatchesTable,
@@ -33,6 +34,9 @@ const VALID_VIEWS: MatchesView[] = ["upcoming", "finished", "calendar"];
 
 /** Valid time range values */
 const VALID_TIME_RANGES: TimeRange[] = ["today", "24h", "48h", "7d"];
+
+/** Valid divergence filter values */
+const VALID_DIVERGENCES: DivergenceCategory[] = ["AGREE", "DISAGREE", "STRONG_FAV_DISAGREE"];
 
 /** Convert time range to hours for API */
 function timeRangeToHours(range: TimeRange, view: MatchesView): number {
@@ -105,6 +109,12 @@ function MatchesPageContent() {
   }, [searchParams]);
   const searchValue = useMemo(
     () => searchParams.get("q") ?? "",
+    [searchParams]
+  );
+
+  // Parse selected divergences from URL
+  const selectedDivergences = useMemo(
+    () => parseArrayParam<DivergenceCategory>(searchParams, "div", VALID_DIVERGENCES),
     [searchParams]
   );
 
@@ -215,8 +225,8 @@ function MatchesPageContent() {
   const mockMatches = useMemo(() => getMatchesMockSync(filters), [filters]);
   const rawMatches = apiMatches ?? mockMatches;
 
-  // Apply client-side filters (league name and search)
-  // Backend filters by date/status, client filters by league name and search text
+  // Apply client-side filters (league name, search, divergence)
+  // Backend filters by date/status, client filters the rest
   const matches = useMemo(() => {
     let filtered = rawMatches;
 
@@ -236,8 +246,21 @@ function MatchesPageContent() {
       );
     }
 
+    // Filter by divergence category (client-side, uses computeGap20)
+    if (selectedDivergences.length > 0) {
+      filtered = filtered.filter((m) => {
+        if (!m.modelA || !m.market) {
+          // No prediction data: only include if AGREE is selected (treat as neutral)
+          return selectedDivergences.includes("AGREE");
+        }
+        const gap20 = computeGap20(m.modelA, m.market);
+        if (!gap20) return selectedDivergences.includes("AGREE");
+        return selectedDivergences.includes(gap20.category);
+      });
+    }
+
     return filtered;
-  }, [rawMatches, filters.leagues, filters.search]);
+  }, [rawMatches, filters.leagues, filters.search, selectedDivergences]);
 
   // Find selected match from current list first (no extra fetch needed for basic info)
   // Falls back to backend match lookup, then mock data if needed
@@ -269,6 +292,7 @@ function MatchesPageContent() {
       range?: TimeRange;
       league?: string[];
       status?: MatchStatus[];
+      div?: DivergenceCategory[];
       q?: string;
       date?: LocalDate;
     }) => {
@@ -283,12 +307,13 @@ function MatchesPageContent() {
         // Include status for all views (intelligent filtering)
         status: overrides.status ?? selectedStatuses,
         league: overrides.league ?? selectedLeagues,
+        div: overrides.div ?? selectedDivergences,
         q: overrides.q ?? searchValue,
       });
       const search = params.toString();
       return `${BASE_PATH}${search ? `?${search}` : ""}`;
     },
-    [selectedMatchId, activeView, selectedTimeRange, selectedDate, selectedStatuses, selectedLeagues, searchValue]
+    [selectedMatchId, activeView, selectedTimeRange, selectedDate, selectedStatuses, selectedLeagues, selectedDivergences, searchValue]
   );
 
   // Handle row click - update URL with router.replace (no history entry)
@@ -351,6 +376,15 @@ function MatchesPageContent() {
     [selectedLeagues, router, buildUrl]
   );
 
+  const handleDivergenceChange = useCallback(
+    (category: DivergenceCategory, checked: boolean) => {
+      const newDivergences = toggleArrayValue(selectedDivergences, category, checked);
+      setCurrentPage(1);
+      router.replace(buildUrl({ div: newDivergences }), { scroll: false });
+    },
+    [selectedDivergences, router, buildUrl]
+  );
+
   const handleSearchChange = useCallback(
     (value: string) => {
       setCurrentPage(1); // Reset pagination on search change
@@ -394,8 +428,10 @@ function MatchesPageContent() {
         selectedStatuses={selectedStatuses}
         onStatusChange={handleStatusChange}
         selectedLeagues={selectedLeagues}
+        selectedDivergences={selectedDivergences}
         searchValue={searchValue}
         onLeagueChange={handleLeagueChange}
+        onDivergenceChange={handleDivergenceChange}
         onSearchChange={handleSearchChange}
         showCustomizeColumns={true}
         onCustomizeColumnsClick={handleCustomizeColumnsClick}

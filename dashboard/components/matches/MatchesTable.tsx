@@ -11,7 +11,6 @@ import { Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRegion } from "@/components/providers/RegionProvider";
 import { getPredictionPick, getProbabilityCellClasses, computeGap20, type Outcome } from "@/lib/predictions";
-import { DivergenceBadge } from "./DivergenceBadge";
 import {
   Tooltip,
   TooltipContent,
@@ -536,47 +535,41 @@ export function MatchesTable({
                         maxWidth: MATCH_COL_WIDTH,
                       }}
                     >
-                      <div className="flex items-center justify-between gap-1">
-                        <div className="flex flex-col gap-0.5 leading-tight min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <TeamLogo
-                              src={getLogoUrl?.(match.home) ?? null}
-                              teamName={match.home}
-                              size={16}
-                            />
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <span className="font-medium text-foreground truncate max-w-[160px]">
-                                  {match.homeDisplayName}
-                                </span>
-                              </TooltipTrigger>
-                              <TooltipContent side="top">
-                                <p>{match.home}</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <TeamLogo
-                              src={getLogoUrl?.(match.away) ?? null}
-                              teamName={match.away}
-                              size={16}
-                            />
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <span className="text-muted-foreground text-sm truncate max-w-[160px]">
-                                  {match.awayDisplayName}
-                                </span>
-                              </TooltipTrigger>
-                              <TooltipContent side="top">
-                                <p>{match.away}</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </div>
+                      <div className="flex flex-col gap-0.5 leading-tight">
+                        <div className="flex items-center gap-1.5">
+                          <TeamLogo
+                            src={getLogoUrl?.(match.home) ?? null}
+                            teamName={match.home}
+                            size={16}
+                          />
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="font-medium text-foreground truncate max-w-[180px]">
+                                {match.homeDisplayName}
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top">
+                              <p>{match.home}</p>
+                            </TooltipContent>
+                          </Tooltip>
                         </div>
-                        {match.modelA && match.market && (() => {
-                          const gap20 = computeGap20(match.modelA, match.market);
-                          return gap20 ? <DivergenceBadge result={gap20} /> : null;
-                        })()}
+                        <div className="flex items-center gap-1.5">
+                          <TeamLogo
+                            src={getLogoUrl?.(match.away) ?? null}
+                            teamName={match.away}
+                            size={16}
+                          />
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="text-muted-foreground text-sm truncate max-w-[180px]">
+                                {match.awayDisplayName}
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top">
+                              <p>{match.away}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </div>
                       </div>
                     </td>
 
@@ -603,18 +596,69 @@ export function MatchesTable({
                       </td>
                     )}
 
-                    {/* Score cell */}
-                    {isVisible("score") && (
-                      <td className="px-3 py-2.5 text-center" style={{ minWidth: SCORE_COL_WIDTH }}>
-                        {match.score ? (
-                          <span className="font-mono font-medium">
-                            {match.score.home} - {match.score.away}
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">-</span>
-                        )}
-                      </td>
-                    )}
+                    {/* Score cell — colored by divergence when applicable */}
+                    {isVisible("score") && (() => {
+                      const gap20 = match.modelA && match.market
+                        ? computeGap20(match.modelA, match.market)
+                        : null;
+                      const divCategory = gap20?.category;
+                      const isDiverge = divCategory === "DISAGREE";
+                      const isSFAV = divCategory === "STRONG_FAV_DISAGREE";
+                      const hasDiv = isDiverge || isSFAV;
+
+                      return (
+                        <td className="px-3 py-2.5 text-center" style={{ minWidth: SCORE_COL_WIDTH }}>
+                          {match.score ? (
+                            hasDiv && gap20 ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span
+                                    className={cn(
+                                      "inline-flex items-center justify-center font-mono font-bold rounded px-1.5 py-0.5 text-[10px]",
+                                      isSFAV
+                                        ? "bg-destructive/15 text-destructive border border-destructive/25"
+                                        : "bg-warning/10 text-warning border border-warning/20",
+                                    )}
+                                  >
+                                    {match.score.home} - {match.score.away}
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" sideOffset={8}>
+                                  <p className="text-xs">
+                                    Model {["1","X","2"][gap20.modelFav]} vs Market {["1","X","2"][gap20.marketFav]}
+                                    {isSFAV && ` (gap ${(Math.abs(gap20.gapOnModelFav)*100).toFixed(0)}pp, mkt fav ${(gap20.marketFavProb*100).toFixed(0)}%)`}
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : (
+                              <span className="font-mono font-medium">
+                                {match.score.home} - {match.score.away}
+                              </span>
+                            )
+                          ) : (
+                            isSFAV && gap20 ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span
+                                    className="inline-flex items-center justify-center font-mono font-bold rounded px-1.5 py-0.5 text-[10px] bg-destructive/15 text-destructive border border-destructive/25"
+                                  >
+                                    SFAV
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" sideOffset={8}>
+                                  <p className="text-xs">
+                                    Model {["1","X","2"][gap20.modelFav]} vs Market {["1","X","2"][gap20.marketFav]}
+                                    {` (gap ${(Math.abs(gap20.gapOnModelFav)*100).toFixed(0)}pp, mkt fav ${(gap20.marketFavProb*100).toFixed(0)}%)`}
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )
+                          )}
+                        </td>
+                      );
+                    })()}
 
                     {/* Elapsed cell */}
                     {isVisible("elapsed") && (
