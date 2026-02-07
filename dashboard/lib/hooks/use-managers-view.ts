@@ -11,7 +11,7 @@ interface ManagersViewResponse {
 }
 
 async function fetchManagersView(leagueId?: number): Promise<ManagersViewData> {
-  const params = new URLSearchParams({ view: "managers" });
+  const params = new URLSearchParams({ view: "managers", limit: "1000" });
   if (leagueId) params.set("league_id", String(leagueId));
   const res = await fetch(`/api/football/players-managers?${params.toString()}`);
   if (!res.ok) throw new Error(`Failed to fetch managers view: ${res.status}`);
