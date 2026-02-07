@@ -4,10 +4,11 @@
 
 | Metadata | Valor |
 |----------|-------|
-| Version | 2.1 |
-| Fecha | 2026-01-26 |
+| Version | 2.2 |
+| Fecha | 2026-02-06 |
 | Autor | Claude Code (para revision ABE) |
 | Estado | **PAUSADO** - Esperando N≥500 partidos para evaluación formal (ver Sección 13) |
+| Nota | Secciones 1-8 describen la **vision completa** (300+ fuentes, 615 vars). Ver Seccion 13 para el **inventario de lo implementado** (5 fuentes, 61 cols, 3 tablas titan). |
 
 ---
 
@@ -25,12 +26,18 @@ TITAN OMNISCIENCE es un **robot de scraping masivo** disenado para recolectar da
 4. **Flexibilidad total**: Agregar fuentes sin cambiar codigo core
 5. **Auto-descubrimiento**: Detectar nuevas ligas/equipos/jugadores automaticamente
 
-### Numeros Clave
+### Numeros Clave (Vision Completa)
 - **300+ fuentes** de datos (escalable a N)
 - **41 tablas** normalizadas (3NF)
 - **615 variables** con prioridad XGBoost (1-615)
 - **8 tiers** de poder predictivo
 - **6 categorias**: Core, Match Data, In-Game Events, Performance, Auxiliary, Psychology
+
+> **Estado actual (2026-02-06)**: De la vision completa, el MVP implementado tiene
+> **5 fuentes** activas (API-Football, Understat, Sofascore, OpenMeteo, odds),
+> **3 tablas** en schema titan (`feature_matrix`, `raw_extractions`, `job_dlq`),
+> **61 columnas** en feature_matrix, y **6 tiers** operativos (1, 1b, 1c, 1d, 2, 3).
+> Ver Seccion 13 para el inventario detallado de lo implementado vs roadmap.
 
 ---
 
@@ -671,7 +678,12 @@ class LLMExtractor:
 
 ## 4. Data Contracts
 
-### 4.1 Schema de Tablas Principales
+### 4.1 Schema de Tablas Principales (Vision Completa)
+
+> **Estado actual**: De las 41 tablas descritas abajo, solo 3 existen en schema `titan`
+> (`feature_matrix`, `raw_extractions`, `job_dlq`). Las entidades maestras (matches, teams, etc.)
+> viven en schema `public` y son gestionadas por el backend existente, no por TITAN.
+> El resto son roadmap para fases futuras.
 
 Las 41 tablas se organizan en 6 categorias:
 
@@ -748,16 +760,22 @@ cross_correlation_features   -- FK: match_id (variables derivadas)
 
 ### 4.2 Tiers de Prioridad XGBoost
 
-| Tier | Rango | Descripcion | NULL Esperado |
-|------|-------|-------------|---------------|
-| **TIER 1** | 1-50 | Cuotas cierre, prob. implicitas, xG, forma | RARE |
-| **TIER 2** | 51-100 | Forma ultimos 5, rachas, xG reciente | RARE |
-| **TIER 3** | 101-150 | H2H historico, contexto competitivo | SOMETIMES |
-| **TIER 4** | 151-250 | Alineacion, clima, estadio, altitud | SOMETIMES |
-| **TIER 5** | 251-350 | Arbitro, fatiga, viajes, descanso | SOMETIMES |
-| **TIER 6** | 351-450 | Stats individuales, entrenador | SOMETIMES |
-| **TIER 7** | 451-550 | Asistencia, ambiente, emocionales | OFTEN |
-| **TIER 8** | 551-615 | Psicologia avanzada, geopolitica | OFTEN |
+> **Estado actual**: Solo los tiers marcados con ✅ tienen columnas en `titan.feature_matrix`.
+> Los tiers 4-8 son roadmap y no tienen implementacion.
+
+| Tier | Rango | Descripcion | NULL Esperado | Implementado |
+|------|-------|-------------|---------------|:------------:|
+| **TIER 1** | 1-50 | Cuotas cierre, prob. implicitas | RARE | ✅ (7 cols) |
+| **TIER 1b** | — | xG rolling (Understat, 5 ligas) | SOMETIMES | ✅ (8 cols) |
+| **TIER 1c** | — | Lineup Sofascore (formacion, starters) | SOMETIMES | ✅ (7 cols) |
+| **TIER 1d** | — | XI Depth (DEF/MID/FWD, mismatch) | SOMETIMES | ✅ (9 cols) |
+| **TIER 2** | 51-100 | Forma ultimos 5, rachas, xG reciente | RARE | ✅ (9 cols) |
+| **TIER 3** | 101-150 | H2H historico, contexto competitivo | SOMETIMES | ✅ (7 cols) |
+| **TIER 4** | 151-250 | Alineacion, clima, estadio, altitud | SOMETIMES | Roadmap |
+| **TIER 5** | 251-350 | Arbitro, fatiga, viajes, descanso | SOMETIMES | Roadmap |
+| **TIER 6** | 351-450 | Stats individuales, entrenador | SOMETIMES | Roadmap |
+| **TIER 7** | 451-550 | Asistencia, ambiente, emocionales | OFTEN | Roadmap |
+| **TIER 8** | 551-615 | Psicologia avanzada, geopolitica | OFTEN | Roadmap |
 
 ### 4.3 Ejemplo: Feature Row para XGBoost
 
@@ -3053,6 +3071,45 @@ Este framework define:
 | FASE 3A | SofaScore lineups (Tier 1c), integrity score | ✅ Producción |
 | FASE 3B-1 | XI Depth Features (Tier 1d), formation mismatch | ✅ Producción |
 | FASE 3C | Calibration (isotonic/temperature), De-vig (proportional/power) | ✅ Producción |
+
+### Inventario: Implementado vs Vision
+
+#### Schema `titan` (implementado: 3 tablas de 41 planeadas)
+
+| Tabla | Columnas | Estado |
+|-------|----------|--------|
+| `feature_matrix` | 61 | ✅ En producción (414 filas, 0 PIT violations) |
+| `raw_extractions` | — | ✅ En producción (almacena payloads crudos) |
+| `job_dlq` | — | ✅ En producción (Dead Letter Queue) |
+| Las 38 tablas restantes (Sec. 4.1) | — | Roadmap (no implementadas) |
+
+#### Features en `feature_matrix` (implementado: 61 de 615 planeadas)
+
+| Tier | Features | Columnas | Coverage actual |
+|------|----------|----------|-----------------|
+| Tier 1 (odds) | odds_close, implied_prob | 7 | 100% (414/414) |
+| Tier 1b (xG Understat) | xg/xga/npxg rolling last5 | 8 | 23% (96/414, solo 5 ligas) |
+| Tier 1c (lineup) | formation, starters, integrity | 7 | 44% (184/414) |
+| Tier 1d (XI depth) | DEF/MID/FWD counts, mismatch | 9 | 44% (183/414) |
+| Tier 2 (form) | form_last5, goals, points | 9 | 97% (401/414) |
+| Tier 3 (H2H) | h2h matches/wins/goals | 7 | 87% (361/414) |
+| Tiers 4-8 | No implementados | 0 | Roadmap |
+| **Total** | | **61** | |
+
+#### Fuentes de datos activas (implementado: 5 de 300+ planeadas)
+
+| Fuente | Tablas `public.*` que alimenta | Consumida por TITAN | Consumida por Model A |
+|--------|-------------------------------|:-------------------:|:---------------------:|
+| API-Football | `matches`, `teams`, `odds_history` | ✅ Tier 1, 2, 3 | ✅ Stage 1/2 |
+| Understat | `match_understat_team` | ✅ Tier 1b | ❌ |
+| Sofascore (lineups) | `match_sofascore_lineup`, `match_sofascore_player` | ✅ Tier 1c, 1d | ✅ (xi features calculadas, no en modelo) |
+| Sofascore (ratings) | `sofascore_player_rating_history` | ❌ | ✅ (rolling avg calculada, no en modelo) |
+| Sofascore (stats) | `match_sofascore_stats` | ❌ | ❌ (datos capturados, sin consumidor ML) |
+| OpenMeteo | `match_weather` | ❌ | ❌ (datos capturados, sin consumidor ML) |
+
+> **Nota**: "Consumida por Model A" con "(no en modelo)" significa que el feature engineering
+> calcula las features pero `TwoStageEngine.STAGE1_FEATURES` no las incluye. El plumbing está
+> listo pero el modelo no fue re-entrenado con esas features.
 
 ### Siguiente Paso
 
