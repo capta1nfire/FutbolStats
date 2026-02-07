@@ -974,7 +974,7 @@ async def dashboard_admin_players_managers(
     }
 
 
-async def _build_injuries_view(session, league_id=None, limit=200) -> dict:
+async def _build_injuries_view(session, league_id=None, limit=1000) -> dict:
     """Active injuries grouped by league -> team. P0-3: upcoming 14d window.
 
     ABE P1-B: filter by admin_leagues.is_active for consistency with Football nav.
@@ -1080,7 +1080,7 @@ async def _build_injuries_view(session, league_id=None, limit=200) -> dict:
     }
 
 
-async def _build_managers_view(session, league_id=None, limit=200) -> dict:
+async def _build_managers_view(session, league_id=None, limit=1000) -> dict:
     """Active managers with tenure. Flag is_new for tenure < 60d.
 
     ABE P1-A: global totals independent of LIMIT so badge/UI don't diverge.
