@@ -3194,24 +3194,31 @@ async def daily_refresh_aggregates():
     This data enriches narratives with relative context (team vs league).
     """
     logger.info("Starting daily aggregates refresh job...")
+    start_time = time.time()
 
     try:
         from app.aggregates.refresh_job import refresh_all_aggregates
 
-        async with AsyncSessionLocal() as session:
+        # Use get_session_with_retry to handle Railway connection drops (InterfaceError fix)
+        async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
             result = await refresh_all_aggregates(session)
 
+            duration_ms = (time.time() - start_time) * 1000
             logger.info(
                 f"Aggregates refresh complete: {result['leagues_processed']} leagues, "
                 f"{result['baselines_created']} baselines, {result['profiles_created']} profiles"
             )
+            record_job_run(job="daily_refresh_aggregates", status="ok", duration_ms=duration_ms)
 
             if result.get("errors"):
                 for err in result["errors"][:5]:  # Log first 5 errors
                     logger.warning(f"  - {err}")
 
     except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
         logger.error(f"Aggregates refresh failed: {e}")
+        sentry_capture_exception(e, job_id="daily_refresh_aggregates")
+        record_job_run(job="daily_refresh_aggregates", status="error", duration_ms=duration_ms)
 
 
 async def daily_sync_results():
@@ -3225,9 +3232,11 @@ async def daily_sync_results():
     """
     sync_leagues = get_sync_leagues()
     logger.info(f"Starting daily results sync job for {len(sync_leagues)} leagues...")
+    start_time = time.time()
 
     try:
-        async with AsyncSessionLocal() as session:
+        # Use get_session_with_retry to handle Railway connection drops (InterfaceError fix)
+        async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
             pipeline = await create_etl_pipeline(session)
             result = await pipeline.sync_multiple_leagues(
                 league_ids=sync_leagues,
@@ -3235,13 +3244,18 @@ async def daily_sync_results():
                 fetch_odds=False,  # Only sync results, not odds
             )
 
+            duration_ms = (time.time() - start_time) * 1000
             logger.info(
                 f"Daily sync complete: {result['total_matches_synced']} matches synced "
                 f"from {len(sync_leagues)} leagues"
             )
+            record_job_run(job="daily_sync_results", status="ok", duration_ms=duration_ms)
 
     except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
         logger.error(f"Daily sync failed: {e}")
+        sentry_capture_exception(e, job_id="daily_sync_results")
+        record_job_run(job="daily_sync_results", status="error", duration_ms=duration_ms)
 
 
 async def daily_audit():
