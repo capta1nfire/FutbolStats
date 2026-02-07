@@ -905,12 +905,12 @@ async def _calculate_jobs_health_summary(session) -> dict:
     top_alert = None
     alerts_count = 0
 
-    # Helper: compute stable incident_id for a job (same hash as _aggregate_incidents)
-    # Uses "jobs:" prefix — canonical: id = md5("jobs:<job_key>")
+    # Helper: compute stable incident_id for a job (same hash as _make_incident_id)
+    # Uses "jobs:" prefix — canonical: id = md5("jobs:<job_key>") first 15 hex
     def _job_incident_id(job_key: str) -> int:
         import hashlib
         h = hashlib.md5(f"jobs:{job_key}".encode()).hexdigest()
-        return int(h[:8], 16)
+        return int(h[:15], 16)
 
     # Add incident_id to each job for deep-linking from dashboard
     for _jk, _jd in [("stats_backfill", stats_health), ("odds_sync", odds_health), ("fastpath", fastpath_health)]:
@@ -6174,10 +6174,16 @@ _RESOLVE_GRACE_MINUTES = 30  # Auto-resolve after 30 min not seen (per ABE guard
 
 
 def _make_incident_id(source: str, key: str) -> int:
-    """Generate stable incident ID from source + key (MD5 first 8 hex → int)."""
+    """Generate stable incident ID from source + key (MD5 first 15 hex → int).
+
+    Uses 15 hex digits (60 bits) to fit safely within PostgreSQL BIGINT
+    (max 2^63-1) while making hash collisions practically impossible.
+    Previous 8-hex (32-bit) version caused UniqueViolationError on PK
+    when two different (source, source_key) pairs collided.
+    """
     import hashlib
     h = hashlib.md5(f"{source}:{key}".encode()).hexdigest()
-    return int(h[:8], 16)
+    return int(h[:15], 16)
 
 
 async def _detect_active_incidents(session) -> list[dict]:
