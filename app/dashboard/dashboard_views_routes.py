@@ -2381,7 +2381,7 @@ async def get_matches_dashboard(
         .join(away_team, Match.away_team_id == away_team.id)
         .outerjoin(home_display, home_display.c.team_id == Match.home_team_id)
         .outerjoin(away_display, away_display.c.team_id == Match.away_team_id)
-        .outerjoin(Prediction, Prediction.match_id == Match.id)
+        .outerjoin(Prediction, (Prediction.match_id == Match.id) & (Prediction.model_version == settings.MODEL_VERSION))
         .outerjoin(ShadowPrediction, ShadowPrediction.match_id == Match.id)
         .outerjoin(SensorPrediction, SensorPrediction.match_id == Match.id)
         .outerjoin(weather_subq, weather_subq.c.match_id == Match.id)

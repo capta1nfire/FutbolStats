@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.database import get_async_session
 from app.security import verify_dashboard_token
 
@@ -236,15 +237,15 @@ async def get_model_benchmark(
                         ELSE NULL
                     END as market_away_prob,
 
-                    -- Model A (v1.0.0) raw probabilities
+                    -- Model A raw probabilities (active model version from config)
                     (SELECT p.home_prob FROM predictions p
-                     WHERE p.match_id = m.id AND p.model_version = 'v1.0.0'
+                     WHERE p.match_id = m.id AND p.model_version = :model_a_version
                      ORDER BY p.created_at DESC LIMIT 1) as model_a_home,
                     (SELECT p.draw_prob FROM predictions p
-                     WHERE p.match_id = m.id AND p.model_version = 'v1.0.0'
+                     WHERE p.match_id = m.id AND p.model_version = :model_a_version
                      ORDER BY p.created_at DESC LIMIT 1) as model_a_draw,
                     (SELECT p.away_prob FROM predictions p
-                     WHERE p.match_id = m.id AND p.model_version = 'v1.0.0'
+                     WHERE p.match_id = m.id AND p.model_version = :model_a_version
                      ORDER BY p.created_at DESC LIMIT 1) as model_a_away,
 
                     -- Shadow raw probabilities
@@ -285,10 +286,12 @@ async def get_model_benchmark(
             ORDER BY match_date
         """)
 
+        settings = get_settings()
         result = await db.execute(
             query,
             {
                 "start_date": start_date,
+                "model_a_version": settings.MODEL_VERSION,
                 "include_market": include_market,
                 "include_model_a": include_model_a,
                 "include_shadow": include_shadow,
