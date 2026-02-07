@@ -30,8 +30,7 @@ import {
   Users,
   TrendingUp,
   MapPin,
-  Building2,
-  User,
+  ShieldUser,
   Settings,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -52,6 +51,18 @@ const TEAM_DETAIL_TABS = [
 ] as const;
 
 type TeamDetailTabId = (typeof TEAM_DETAIL_TABS)[number]["id"];
+
+function StadiumIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <rect x="1" y="4" width="22" height="16" rx="3" />
+      <line x1="12" y1="4" x2="12" y2="20" />
+      <circle cx="12" cy="12" r="3" />
+      <rect x="1" y="8" width="4" height="8" rx="1" />
+      <rect x="19" y="8" width="4" height="8" rx="1" />
+    </svg>
+  );
+}
 
 /**
  * Country Flag Component
@@ -281,6 +292,7 @@ function StandingsTable({
             return (
               <tr
                 key={entry.position}
+                data-team-id={entry.teamId}
                 className={cn(
                   "border-b border-border last:border-0",
                   isSelected ? "bg-[var(--row-selected)]" : "hover:bg-accent/50",
@@ -580,6 +592,39 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
     },
     [onTeamSelect]
   );
+
+  // Keyboard navigation: arrow up/down moves selection in standings
+  useEffect(() => {
+    if (activeTab !== "standings" || standingsSubTab !== "standings") return;
+    const teams = standingsData?.standings;
+    if (!teams?.length) return;
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      // Don't hijack if user is typing in an input/textarea/select
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      e.preventDefault();
+      const currentIdx = teams!.findIndex((t) => t.teamId === selectedTeamId);
+      let nextIdx: number;
+      if (e.key === "ArrowDown") {
+        nextIdx = currentIdx < teams!.length - 1 ? currentIdx + 1 : 0;
+      } else {
+        nextIdx = currentIdx > 0 ? currentIdx - 1 : teams!.length - 1;
+      }
+      const next = teams![nextIdx];
+      if (next.teamId > 0) {
+        handleTeamSelect(next.teamId);
+        // Scroll the row into view
+        const row = document.querySelector(`tr[data-team-id="${next.teamId}"]`);
+        row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activeTab, standingsSubTab, standingsData?.standings, selectedTeamId, handleTeamSelect]);
 
   // Loading state
   if (isLoading) {
@@ -919,7 +964,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                   )}
                   {selectedTeam.data?.wikidata_enrichment?.stadium_name && (
                     <div className="flex items-center gap-1.5 text-sm text-muted-foreground mt-0.5">
-                      <Building2 className="h-3.5 w-3.5" />
+                      <StadiumIcon className="h-3.5 w-3.5" />
                       <span>
                         {selectedTeam.data.wikidata_enrichment.stadium_name}
                         {selectedTeam.data.wikidata_enrichment.stadium_capacity && (
@@ -932,7 +977,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                   )}
                   {selectedTeamSquad.data?.current_manager && (
                     <div className="flex items-center gap-1.5 text-sm text-muted-foreground mt-0.5">
-                      <User className="h-3.5 w-3.5" />
+                      <ShieldUser className="h-3.5 w-3.5" />
                       <span>{selectedTeamSquad.data.current_manager.name}</span>
                     </div>
                   )}
