@@ -338,17 +338,32 @@ async def sync_managers(
 
 
 def _find_current_coach(coaches: list[dict], team_ext_id: int) -> Optional[dict]:
-    """Find the coach currently managing the given team."""
+    """Find the coach currently managing the given team.
+
+    API-Football often returns multiple coaches with end=null for the same team
+    (stale stints never closed).  We pick the one with the most recent start date.
+    """
+    best_coach = None
+    best_start = ""
+
     for coach in coaches:
-        # Check if coach's current team matches
-        coach_team = coach.get("team", {})
-        if coach_team.get("id") == team_ext_id:
-            return coach
-        # Also check career for active stint
         for stint in coach.get("career", []):
             if stint.get("team", {}).get("id") == team_ext_id and stint.get("end") is None:
-                return coach
-    # Fallback: first coach in response (API usually returns current first)
+                start = stint.get("start", "")
+                if start > best_start:
+                    best_start = start
+                    best_coach = coach
+                break  # one active stint per coach is enough
+
+    if best_coach:
+        return best_coach
+
+    # Fallback: check coach.team.id (top-level current team field)
+    for coach in coaches:
+        if coach.get("team", {}).get("id") == team_ext_id:
+            return coach
+
+    # Last resort: first coach in response
     return coaches[0] if coaches else None
 
 
