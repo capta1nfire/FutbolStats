@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useFootballLeague, useFootballTeam, useStandings } from "@/lib/hooks";
+import { useFootballLeague, useFootballTeam, useStandings, useTeamSquad } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
 import type { StandingEntry, DescensoData, ReclasificacionData, AvailableTable } from "@/lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -31,6 +31,7 @@ import {
   TrendingUp,
   MapPin,
   Building2,
+  User,
   Settings,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -563,6 +564,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
     }
   }, [standingsData, selectedTeamId, onTeamSelect]);
   const selectedTeam = useFootballTeam(selectedTeamId);
+  const selectedTeamSquad = useTeamSquad(selectedTeamId ?? 0, !!selectedTeamId);
 
   // MUST be called on every render (Rules of Hooks). Keep defensive for loading/error.
   const nextMatches = useMemo(() => {
@@ -926,6 +928,12 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                           </span>
                         )}
                       </span>
+                    </div>
+                  )}
+                  {selectedTeamSquad.data?.current_manager && (
+                    <div className="flex items-center gap-1.5 text-sm text-muted-foreground mt-0.5">
+                      <User className="h-3.5 w-3.5" />
+                      <span>{selectedTeamSquad.data.current_manager.name}</span>
                     </div>
                   )}
                 </div>

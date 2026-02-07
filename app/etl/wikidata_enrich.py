@@ -73,19 +73,29 @@ WHERE {{
     # Get stadium details
     OPTIONAL {{
       ?stadium rdfs:label ?stadiumLabel .
-      FILTER(LANG(?stadiumLabel) IN ("es", "en"))
+      FILTER(LANG(?stadiumLabel) IN ("en", "es", "it", "de", "fr", "pt", "nl", "tr"))
     }}
     OPTIONAL {{ ?stadium wdt:P2044 ?altitude . }}
     OPTIONAL {{ ?stadium wdt:P625 ?stadiumCoords . }}
   }}
 
-  # Admin location (P131)
+  # Admin location: P131 (located in) or P159 (headquarters) as fallback
+  # Language priority: en > es > local languages
   OPTIONAL {{
-    ?team wdt:P131 ?adminLocation .
-    OPTIONAL {{
-      ?adminLocation rdfs:label ?adminLocationLabel .
-      FILTER(LANG(?adminLocationLabel) IN ("es", "en"))
+    {{
+      SELECT ?adminLocation WHERE {{
+        {{ wd:{qid} wdt:P131 ?adminLocation . }}
+        UNION
+        {{ wd:{qid} wdt:P159 ?adminLocation . }}
+      }}
+      LIMIT 1
     }}
+    OPTIONAL {{ ?adminLocation rdfs:label ?adminLabel_en . FILTER(LANG(?adminLabel_en) = "en") }}
+    OPTIONAL {{ ?adminLocation rdfs:label ?adminLabel_es . FILTER(LANG(?adminLabel_es) = "es") }}
+    OPTIONAL {{ ?adminLocation rdfs:label ?adminLabel_local .
+      FILTER(LANG(?adminLabel_local) IN ("it", "de", "fr", "pt", "nl", "tr"))
+    }}
+    BIND(COALESCE(?adminLabel_en, ?adminLabel_es, ?adminLabel_local) AS ?adminLocationLabel)
   }}
 
   # Web/Social
