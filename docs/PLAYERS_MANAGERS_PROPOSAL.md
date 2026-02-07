@@ -260,7 +260,7 @@ El criterio PIT es `captured_at < kickoff`, NO `fixture_date`. Esto porque:
 - **Frecuencia**: Diaria
 - **Endpoint**: `GET /coachs?team={id}`
 - **Lógica**:
-  1. Para cada equipo activo (384 equipos en 28 ligas):
+  1. Para cada equipo activo (~560 equipos en 28 ligas, derivados de matches últimos 180d):
      - GET coach actual
      - UPSERT en `managers` (catálogo)
      - Comparar `manager_external_id` con último registro en `team_manager_history` para este `team_id`
@@ -269,9 +269,9 @@ El criterio PIT es `captured_at < kickoff`, NO `fixture_date`. Esto porque:
        b. Insertar nuevo: `INSERT INTO team_manager_history (team_id, manager_external_id, manager_name, start_date, ...)`
        c. Log: `[MANAGER_CHANGE] {team_name}: {old_manager} → {new_manager}`
   2. Métricas: managers_synced, changes_detected, errors
-- **Costo**: 384 req/día
+- **Costo**: ~560 req/día (equipos activos con partidos en últimos 180d)
 - **Config**: `MANAGER_SYNC_ENABLED=true`, `MANAGER_SYNC_INTERVAL_HOURS=24`
-- **Batching**: Procesar en batches de 50 equipos con 1s delay entre requests
+- **Rate limit**: Reutiliza `APIFootballProvider._rate_limited_request()` (respeta 1 req/s + backoff)
 
 ### 7.3 Schedule Stagger (Kimi P1)
 
@@ -352,7 +352,7 @@ LIMIT 1;
 
 ## 9. Capa 3: Features ML — Directo a Model A
 
-### Phase 1 Features (MVP) — 8 features (4 injuries × home/away + 4 managers × home/away)
+### Phase 1 Features (MVP) — 9 features (4 injuries × home/away + 4 managers × home/away + 1 flag)
 
 | Feature | Tipo | Función fuente | Imputación si falta |
 |---------|------|---------------|-------------------|
@@ -364,6 +364,9 @@ LIMIT 1;
 | `away_manager_tenure_days` | int | `get_manager_context()` | 365 |
 | `home_is_new_manager` | bool→int(0/1) | `get_manager_context()` | 0 |
 | `away_is_new_manager` | bool→int(0/1) | `get_manager_context()` | 0 |
+| `player_manager_missing` | int(0/1) | `get_player_manager_features()` | 1 (sin datos = missing) |
+
+**Nota**: `n_doubtful` cuenta tanto `'Questionable'` como `'Doubtful'` de la API. `player_manager_missing` = 1 cuando no hay **ninguna** fila de injuries ni manager para el partido (derivado de presencia de filas en DB, no de valores imputados).
 
 **Diferido a Phase 2**: `key_player_missing` (requiere cross-ref AF↔Sofascore o `player_season_stats` para definir "titular habitual" sin sesgo).
 
@@ -409,13 +412,13 @@ Estas tablas y features se implementan SOLO si Phase 1 demuestra uplift.
 |------|-----|----------|-------|
 | **1** | Migración SQL: 3 tablas | `scripts/migrate_players_managers.sql` | 0 req |
 | **2** | `sync_injuries` job | `app/etl/player_jobs.py` (nuevo) | 28 req/run |
-| **3** | `sync_managers` job + change detection | `app/etl/player_jobs.py` | 384 req/run |
+| **3** | `sync_managers` job + change detection | `app/etl/player_jobs.py` | ~560 req/run |
 | **4** | Registrar 2 jobs en scheduler | `app/scheduler.py` | 0 req |
 | **5** | Config vars en `app/config.py` | `app/config.py` | 0 req |
 | **6** | `get_team_absences()` + `get_manager_context()` | `app/features/player_features.py` (nuevo) | 0 req |
 | **7** | Integrar features a Model A pipeline | `app/features/engineering.py` | 0 req |
 | **8** | Backfill injuries (temporada actual, 28 ligas) | Manual o script | 28 req |
-| **9** | Backfill managers (384 equipos) | Manual o script | 384 req |
+| **9** | Backfill managers (~560 equipos activos) | Manual o script | ~560 req |
 
 **Timeline estimado**: 3-5 días de desarrollo.
 

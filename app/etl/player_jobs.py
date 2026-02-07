@@ -106,9 +106,12 @@ async def sync_injuries(
                     metrics["leagues_ok"] += 1
                     continue
 
-                inserted, updated = await _upsert_injuries(
-                    session, injuries, league_id, season, team_map, match_map
-                )
+                # Savepoint per league: isolate DB errors so one bad league
+                # doesn't poison the transaction for subsequent leagues
+                async with session.begin_nested():
+                    inserted, updated = await _upsert_injuries(
+                        session, injuries, league_id, season, team_map, match_map
+                    )
                 metrics["injuries_inserted"] += inserted
                 metrics["injuries_updated"] += updated
                 metrics["leagues_ok"] += 1
@@ -293,16 +296,19 @@ async def sync_managers(
                     metrics["teams_ok"] += 1
                     continue
 
-                # Upsert manager catalog
-                await _upsert_manager(session, current_coach)
-                metrics["managers_upserted"] += 1
+                # Savepoint per team: isolate DB errors so one bad team
+                # doesn't poison the transaction for subsequent teams
+                async with session.begin_nested():
+                    # Upsert manager catalog
+                    await _upsert_manager(session, current_coach)
+                    metrics["managers_upserted"] += 1
 
-                # Check for change
-                changed = await _detect_and_record_change(
-                    session, team_id, team_ext_id, team_name, current_coach
-                )
-                if changed:
-                    metrics["changes_detected"] += 1
+                    # Check for change
+                    changed = await _detect_and_record_change(
+                        session, team_id, team_ext_id, team_name, current_coach
+                    )
+                    if changed:
+                        metrics["changes_detected"] += 1
 
                 metrics["teams_ok"] += 1
 
