@@ -1309,6 +1309,10 @@ class FeatureEngineer:
             features.update(understat_features)
         except Exception as e:
             logger.warning(f"Understat features failed for match {match.id}: {e}")
+            try:
+                await self.session.rollback()
+            except Exception:
+                pass
             # Set defaults with missing flag
             features.update({
                 "home_xg_for_avg": 0.0,
@@ -1331,6 +1335,10 @@ class FeatureEngineer:
             features.update(weather_bio_features)
         except Exception as e:
             logger.warning(f"Weather/Bio features failed for match {match.id}: {e}")
+            try:
+                await self.session.rollback()
+            except Exception:
+                pass
             # Set defaults with missing flag
             features.update({
                 "weather_temp_c": 15.0,
@@ -1353,6 +1361,10 @@ class FeatureEngineer:
             features.update(xi_features)
         except Exception as e:
             logger.warning(f"Sofascore XI features failed for match {match.id}: {e}")
+            try:
+                await self.session.rollback()
+            except Exception:
+                pass
             # Set defaults with missing flag
             features.update(self._get_xi_defaults())
 
@@ -1373,6 +1385,10 @@ class FeatureEngineer:
             features.update(pm_features)
         except Exception as e:
             logger.warning(f"Player/manager features failed for match {match.id}: {e}")
+            try:
+                await self.session.rollback()
+            except Exception:
+                pass
             from app.features.player_features import get_player_manager_defaults
             features.update(get_player_manager_defaults())
 
@@ -1506,7 +1522,10 @@ class FeatureEngineer:
 
             except Exception as e:
                 logger.error(f"Error processing match {match.id}: {e}")
-                continue
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    pass
                 continue
 
         # Clear cache to free memory
@@ -1588,6 +1607,10 @@ class FeatureEngineer:
 
             except Exception as e:
                 logger.error(f"Error processing match {match.id}: {e}")
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    pass
                 continue
 
         # Clear cache to free memory
@@ -1738,6 +1761,10 @@ class FeatureEngineer:
                 rows.append(features)
             except Exception as e:
                 logger.error(f"Error processing match {match.id}: {e}")
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    pass
                 continue
 
         # Clear cache to free memory

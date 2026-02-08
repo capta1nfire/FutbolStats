@@ -1303,6 +1303,7 @@ async def _predictions_catchup_on_startup():
 
                 probs = pred["probabilities"]
                 try:
+                    await session.execute(text("SAVEPOINT sp_pred"))
                     await upsert(
                         session,
                         Prediction,
@@ -1316,8 +1317,13 @@ async def _predictions_catchup_on_startup():
                         conflict_columns=["match_id", "model_version"],
                         update_columns=["home_prob", "draw_prob", "away_prob"],
                     )
+                    await session.execute(text("RELEASE SAVEPOINT sp_pred"))
                     saved += 1
                 except Exception as e:
+                    try:
+                        await session.execute(text("ROLLBACK TO SAVEPOINT sp_pred"))
+                    except Exception:
+                        pass
                     logger.warning(f"[STARTUP] Predictions catch-up: match {match_id} failed: {e}")
 
             await session.commit()
