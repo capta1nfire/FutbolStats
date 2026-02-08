@@ -100,6 +100,93 @@ Regla: si los value bets de outcome=draw superan `POLICY_MAX_DRAW_SHARE`, se man
 
 ---
 
+## Betting policy - Market Anchor (low-signal leagues)
+
+### Motivación
+
+El diagnóstico ABE de Argentina (league_id=128, Feb 2026) demostró que el modelo XGBoost v1.0.1 no tiene señal predictiva para esa liga:
+
+| Métrica | Modelo | Mercado | Naive |
+|---------|--------|---------|-------|
+| Brier   | 0.6625 | 0.6348  | 0.6545|
+
+El modelo es **peor que naive** en Argentina (skill negativo). El backtest confirmó que en 14/19 ligas evaluadas, el mercado domina al modelo (α* ≥ 0.60).
+
+### Mecanismo
+
+Para ligas explícitamente listadas en `LEAGUE_OVERRIDES`, las probabilidades servidas se blendean con probabilidades de mercado de-viggeadas:
+
+```
+p_served = (1 - α) × p_model + α × p_market
+```
+
+Donde `p_market` se obtiene aplicando de-vig proporcional (normalizar 1/odds) a las cuotas Bet365.
+
+Con α=1.0 (Argentina), se sirven **probabilidades de mercado puras** en lugar del modelo.
+
+### Ligas afectadas
+
+| Liga | league_id | α | Efecto | Evidencia |
+|------|-----------|---|--------|-----------|
+| Argentina Primera División | 128 | 1.0 | Mercado puro | Brier 0.6348 vs 0.6625 (modelo) |
+
+**Ninguna otra liga se ve afectada.** El `ALPHA_DEFAULT=0.0` garantiza que sin override explícito, el modelo se sirve sin modificar.
+
+### Configuración (env vars)
+
+```
+MARKET_ANCHOR_ENABLED=false          # Feature flag (activar con true)
+MARKET_ANCHOR_ALPHA_DEFAULT=0.0      # Solo overrides aplican (no global)
+MARKET_ANCHOR_LEAGUE_OVERRIDES=128:1.0  # "league_id:alpha" separado por comas
+MARKET_ANCHOR_MIN_SAMPLES=200        # Min FT con odds antes de aceptar α por liga
+```
+
+Para agregar otra liga: `MARKET_ANCHOR_LEAGUE_OVERRIDES=128:1.0,239:0.8`
+
+### Guardrails (ABE P0)
+
+1. **Scope (P0-1)**: Solo ligas en `LEAGUE_OVERRIDES` se anclan. α_default=0.0 previene anclaje global accidental.
+2. **NS-only (P0-2)**: Solo predicciones `status=NS` no-frozen. LIVE/FT/frozen nunca se tocan.
+3. **Odds validation (P0-3)**: Todas las cuotas (home/draw/away) deben ser > 1.0 antes del de-vig.
+4. **Value bets (P0-4)**: Cuando α ≥ 0.80, se limpian value_bets (probs ≈ mercado → sin edge) y se agrega warning `MARKET_ANCHORED`.
+
+### Pipeline (orden de ejecución)
+
+1. `engine.predict()` → probabilidades crudas del modelo
+2. `_overlay_frozen_predictions()` → partidos FT
+3. `_overlay_rerun_predictions()` → rerun serving
+4. `_apply_team_overrides()` → rebranding
+5. `apply_draw_cap()` → filtro de value bets
+6. **`apply_market_anchor()`** → blend para ligas low-signal
+7. `_save_predictions_to_db()` → guardar
+
+### Campos preservados
+
+- `probabilities`: contiene las probs blended (o mercado puro si α=1.0)
+- `model_probabilities`: preserva las probs originales del modelo XGBoost
+- `raw_probabilities`: preserva probs pre-anchor si no existían previamente
+- `fair_odds`: recalculadas desde probs blended
+- `policy_metadata.market_anchor`: `{applied, alpha, market_source, league_id}`
+
+### Criterio para agregar/quitar ligas
+
+**Para agregar** una liga al override:
+1. Backtest con `scripts/experiment_market_anchor.py` (o script equivalente)
+2. Si `brier_market < brier_model` con significancia estadística (bootstrap CI no cruza cero), la liga es candidata
+3. Usar α* del grid search como valor del override
+4. Requiere aprobación ABE
+
+**Para quitar** una liga:
+- Si el modelo mejora (v1.0.2+) y `brier_model <= brier_market`, reducir α gradualmente o eliminar override
+
+### Limitaciones actuales
+
+- **Odds históricas**: API-Football NO almacena odds después de FT (purge). Solo datos forward desde odds_sync (activo desde 27-Ene-2026).
+- **Coverage Argentina**: ~12 días de odds acumuladas al momento de la implementación. Partidos sin odds se sirven con modelo puro (graceful skip).
+- **Es una medida interina**: v1.0.2 debería entrenar el modelo como "ajuste sobre mercado" (incluir market probs como feature) + agregar Elo/xG, reduciendo la necesidad de anclaje externo.
+
+---
+
 ## Shadow Mode (Two-Stage Architecture)
 
 ### Propósito
@@ -454,3 +541,10 @@ Esto evita “mejoras falsas” por entrenar con resultados incluidos luego en e
 - Arquitectura two-stage descrita arriba
 - En pausa mientras se prioriza evaluación OOS de `ext-C`
 - Reanudar cuando haya ventana de evaluación dedicada (>=200 evaluaciones)
+
+### Market Anchor Argentina (2026-02-08) - ACTIVO
+- **Diagnóstico**: modelo sin señal en Argentina (Brier 0.6625 > naive 0.6545)
+- **Backtest**: `scripts/experiment_market_anchor.py` — α*=1.0 para ARG, mercado Brier 0.6348
+- **Implementación**: `apply_market_anchor()` en `app/ml/policy.py`, feature-flagged
+- **Resultados**: `scripts/output/experiment_market_anchor.json`
+- **Próximo paso**: v1.0.2 con market probs como feature (modelo aprende "ajuste sobre mercado")
