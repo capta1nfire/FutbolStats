@@ -237,16 +237,31 @@ async def get_model_benchmark(
                         ELSE NULL
                     END as market_away_prob,
 
-                    -- Model A raw probabilities (active model version from config)
-                    (SELECT p.home_prob FROM predictions p
-                     WHERE p.match_id = m.id AND p.model_version = :model_a_version
-                     ORDER BY p.created_at DESC LIMIT 1) as model_a_home,
-                    (SELECT p.draw_prob FROM predictions p
-                     WHERE p.match_id = m.id AND p.model_version = :model_a_version
-                     ORDER BY p.created_at DESC LIMIT 1) as model_a_draw,
-                    (SELECT p.away_prob FROM predictions p
-                     WHERE p.match_id = m.id AND p.model_version = :model_a_version
-                     ORDER BY p.created_at DESC LIMIT 1) as model_a_away,
+                    -- Model A raw probabilities (hybrid: prefer active version, fallback to predecessor)
+                    COALESCE(
+                      (SELECT p.home_prob FROM predictions p
+                       WHERE p.match_id = m.id AND p.model_version = :model_a_version
+                       ORDER BY p.created_at DESC LIMIT 1),
+                      (SELECT p.home_prob FROM predictions p
+                       WHERE p.match_id = m.id AND p.model_version = :model_a_fallback
+                       ORDER BY p.created_at DESC LIMIT 1)
+                    ) as model_a_home,
+                    COALESCE(
+                      (SELECT p.draw_prob FROM predictions p
+                       WHERE p.match_id = m.id AND p.model_version = :model_a_version
+                       ORDER BY p.created_at DESC LIMIT 1),
+                      (SELECT p.draw_prob FROM predictions p
+                       WHERE p.match_id = m.id AND p.model_version = :model_a_fallback
+                       ORDER BY p.created_at DESC LIMIT 1)
+                    ) as model_a_draw,
+                    COALESCE(
+                      (SELECT p.away_prob FROM predictions p
+                       WHERE p.match_id = m.id AND p.model_version = :model_a_version
+                       ORDER BY p.created_at DESC LIMIT 1),
+                      (SELECT p.away_prob FROM predictions p
+                       WHERE p.match_id = m.id AND p.model_version = :model_a_fallback
+                       ORDER BY p.created_at DESC LIMIT 1)
+                    ) as model_a_away,
 
                     -- Shadow raw probabilities
                     (SELECT shp.shadow_home_prob FROM shadow_predictions shp
@@ -292,6 +307,7 @@ async def get_model_benchmark(
             {
                 "start_date": start_date,
                 "model_a_version": settings.MODEL_VERSION,
+                "model_a_fallback": "v1.0.0",
                 "include_market": include_market,
                 "include_model_a": include_model_a,
                 "include_shadow": include_shadow,
