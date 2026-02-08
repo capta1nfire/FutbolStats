@@ -206,6 +206,14 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
   const extD = parseProbabilitySet(raw.extD ?? raw.ext_d);
   if (extD) result.extD = extD;
 
+  // Optional: Consensus market (median of de-vigged bookmakers)
+  const consensus = parseProbabilitySet(raw.consensus);
+  if (consensus) result.consensus = consensus;
+
+  // Optional: Pinnacle sharp benchmark
+  const pinnacle = parseProbabilitySet(raw.pinnacle);
+  if (pinnacle) result.pinnacle = pinnacle;
+
   return result;
 }
 

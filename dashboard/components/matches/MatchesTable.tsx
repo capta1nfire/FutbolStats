@@ -22,7 +22,7 @@ import {
 // Model Accuracy Calculation
 // =============================================================================
 
-type ModelKey = "market" | "modelA" | "shadow" | "sensorB" | "extA" | "extB" | "extC" | "extD";
+type ModelKey = "market" | "consensus" | "pinnacle" | "modelA" | "shadow" | "sensorB" | "extA" | "extB" | "extC" | "extD";
 
 interface ModelAccuracyStats {
   correct: number;
@@ -35,6 +35,8 @@ function calculateModelAccuracies(
 ): Record<ModelKey, ModelAccuracyStats> {
   const stats: Record<ModelKey, ModelAccuracyStats> = {
     market: { correct: 0, total: 0, accuracy: null },
+    consensus: { correct: 0, total: 0, accuracy: null },
+    pinnacle: { correct: 0, total: 0, accuracy: null },
     modelA: { correct: 0, total: 0, accuracy: null },
     shadow: { correct: 0, total: 0, accuracy: null },
     sensorB: { correct: 0, total: 0, accuracy: null },
@@ -52,6 +54,8 @@ function calculateModelAccuracies(
 
     const models: { key: ModelKey; probs: ProbabilitySet | undefined }[] = [
       { key: "market", probs: match.market },
+      { key: "consensus", probs: match.consensus },
+      { key: "pinnacle", probs: match.pinnacle },
       { key: "modelA", probs: match.modelA },
       { key: "shadow", probs: match.shadow },
       { key: "sensorB", probs: match.sensorB },
@@ -227,6 +231,8 @@ export const MATCHES_COLUMN_OPTIONS: ColumnOption[] = [
   { id: "score", label: "Score", enableHiding: true },
   { id: "elapsed", label: "Elapsed", enableHiding: true },
   { id: "market", label: "Market", enableHiding: true },
+  { id: "consensus", label: "Consensus", enableHiding: true },
+  { id: "pinnacle", label: "Pinnacle", enableHiding: true },
   { id: "modelA", label: "Model A", enableHiding: true },
   { id: "shadow", label: "Shadow", enableHiding: true },
   { id: "sensorB", label: "Sensor B", enableHiding: true },
@@ -290,6 +296,8 @@ export function MatchesTable({
     if (isVisible("score")) w += SCORE_COL_WIDTH;
     if (isVisible("elapsed")) w += ELAPSED_COL_WIDTH;
     if (isVisible("market")) w += MODEL_COL_WIDTH;
+    if (isVisible("consensus")) w += MODEL_COL_WIDTH;
+    if (isVisible("pinnacle")) w += MODEL_COL_WIDTH;
     if (isVisible("modelA")) w += MODEL_COL_WIDTH;
     if (isVisible("shadow")) w += MODEL_COL_WIDTH;
     if (isVisible("sensorB")) w += MODEL_COL_WIDTH;
@@ -353,6 +361,8 @@ export function MatchesTable({
               {isVisible("score") && <col style={{ width: SCORE_COL_WIDTH }} />}
               {isVisible("elapsed") && <col style={{ width: ELAPSED_COL_WIDTH }} />}
               {isVisible("market") && <col style={{ width: MODEL_COL_WIDTH }} />}
+              {isVisible("consensus") && <col style={{ width: MODEL_COL_WIDTH }} />}
+              {isVisible("pinnacle") && <col style={{ width: MODEL_COL_WIDTH }} />}
               {isVisible("modelA") && <col style={{ width: MODEL_COL_WIDTH }} />}
               {isVisible("shadow") && <col style={{ width: MODEL_COL_WIDTH }} />}
               {isVisible("sensorB") && <col style={{ width: MODEL_COL_WIDTH }} />}
@@ -429,6 +439,22 @@ export function MatchesTable({
                     style={{ minWidth: MODEL_COL_WIDTH }}
                   >
                     <ModelHeader label="Market" stats={modelAccuracies.market} />
+                  </th>
+                )}
+                {isVisible("consensus") && (
+                  <th
+                    className="px-3 py-3 text-center font-semibold text-sm whitespace-nowrap"
+                    style={{ minWidth: MODEL_COL_WIDTH }}
+                  >
+                    <ModelHeader label="Consensus" stats={modelAccuracies.consensus} />
+                  </th>
+                )}
+                {isVisible("pinnacle") && (
+                  <th
+                    className="px-3 py-3 text-center font-semibold text-sm whitespace-nowrap"
+                    style={{ minWidth: MODEL_COL_WIDTH }}
+                  >
+                    <ModelHeader label="Pinnacle" stats={modelAccuracies.pinnacle} />
                   </th>
                 )}
                 {isVisible("modelA") && (
@@ -677,6 +703,20 @@ export function MatchesTable({
                     {isVisible("market") && (
                       <td className="px-3 py-2.5 text-center" style={{ minWidth: MODEL_COL_WIDTH }}>
                         <ProbabilityCell probs={match.market} outcome={outcome} compact={compactPredictions} />
+                      </td>
+                    )}
+
+                    {/* Consensus cell */}
+                    {isVisible("consensus") && (
+                      <td className="px-3 py-2.5 text-center" style={{ minWidth: MODEL_COL_WIDTH }}>
+                        <ProbabilityCell probs={match.consensus} outcome={outcome} compact={compactPredictions} />
+                      </td>
+                    )}
+
+                    {/* Pinnacle cell */}
+                    {isVisible("pinnacle") && (
+                      <td className="px-3 py-2.5 text-center" style={{ minWidth: MODEL_COL_WIDTH }}>
+                        <ProbabilityCell probs={match.pinnacle} outcome={outcome} compact={compactPredictions} />
                       </td>
                     )}
 

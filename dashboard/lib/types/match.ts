@@ -106,6 +106,10 @@ export interface MatchSummary {
   extC?: ProbabilitySet;
   /** Experimental ext-D prediction (league-only retrained) */
   extD?: ProbabilitySet;
+  /** Consensus market (median of de-vigged bookmakers, fair probs) */
+  consensus?: ProbabilitySet;
+  /** Pinnacle sharp benchmark (implied probs) */
+  pinnacle?: ProbabilitySet;
 }
 
 /**

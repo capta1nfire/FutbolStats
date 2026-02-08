@@ -37,9 +37,11 @@ import {
   Thermometer,
   Droplets,
   Users,
+  BarChart3,
 } from "lucide-react";
 import { ManagerCard, InjuryList } from "@/components/squad";
 import { useRegion } from "@/components/providers/RegionProvider";
+import { useMarketSnapshot, type BookOdds } from "@/lib/hooks/use-market-snapshot";
 
 /** Get weather icon component based on conditions */
 function getWeatherIcon(weather: MatchWeather): React.ComponentType<{ className?: string }> {
@@ -574,6 +576,7 @@ export function MatchHeader({
 export const MATCH_TABS = [
   { id: "overview", icon: <Info />, label: "Overview" },
   { id: "predictions", icon: <TrendingUp />, label: "Predictions" },
+  { id: "market", icon: <BarChart3 />, label: "Market" },
   { id: "standings", icon: <TableProperties />, label: "Standings" },
   { id: "squad", icon: <Users />, label: "Squad" },
 ];
@@ -608,10 +611,14 @@ export function MatchTabContent({
             ? "bg-destructive/8"
             : "bg-warning/8"
           : undefined;
+        const gap20Consensus = match.modelA && match.consensus
+          ? computeGap20(match.modelA, match.consensus)
+          : null;
+        const hasDivConsensus = gap20Consensus && gap20Consensus.category !== "AGREE";
 
         return (
         <div className="bg-surface rounded-lg p-4 space-y-4">
-          {match.modelA || match.shadow || match.sensorB || match.market ? (
+          {match.modelA || match.shadow || match.sensorB || match.market || match.consensus || match.pinnacle ? (
             <>
               {match.market && (
                 <PredictionSection
@@ -620,6 +627,22 @@ export function MatchTabContent({
                   home={match.homeDisplayName}
                   away={match.awayDisplayName}
                   accentClass={divAccent}
+                />
+              )}
+              {match.consensus && (
+                <PredictionSection
+                  label="Consensus"
+                  probs={match.consensus}
+                  home={match.homeDisplayName}
+                  away={match.awayDisplayName}
+                />
+              )}
+              {match.pinnacle && (
+                <PredictionSection
+                  label="Pinnacle"
+                  probs={match.pinnacle}
+                  home={match.homeDisplayName}
+                  away={match.awayDisplayName}
                 />
               )}
               {match.modelA && (
@@ -648,12 +671,20 @@ export function MatchTabContent({
                 />
               )}
               {/* Divergence badge legend */}
-              {hasDiv && gap20 && (
+              {(hasDiv || hasDivConsensus) && (
                 <div className="border-t border-border pt-3 mt-1 space-y-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <DivergenceBadge result={gap20} score={match.score} />
-                    <span className="text-xs text-muted-foreground">Model-Market divergence</span>
-                  </div>
+                  {hasDiv && gap20 && (
+                    <div className="flex items-center gap-1.5">
+                      <DivergenceBadge result={gap20} score={match.score} />
+                      <span className="text-xs text-muted-foreground">vs Market (Bet365)</span>
+                    </div>
+                  )}
+                  {hasDivConsensus && gap20Consensus && (
+                    <div className="flex items-center gap-1.5">
+                      <DivergenceBadge result={gap20Consensus} score={match.score} />
+                      <span className="text-xs text-muted-foreground">vs Consensus</span>
+                    </div>
+                  )}
                   <div className="text-[11px] text-muted-foreground/70 leading-relaxed">
                     <span className="font-semibold text-warning">Yellow</span> = Model and Market pick different favorites.{" "}
                     <span className="font-semibold text-destructive">Red</span> = Strong disagreement (gap {"\u2265"}20pp, market confidence {"\u2265"}45%).{" "}
@@ -672,6 +703,10 @@ export function MatchTabContent({
         );
       })()}
 
+      {activeTab === "market" && (
+        <MarketSnapshotPanel matchId={match.id} />
+      )}
+
       {activeTab === "standings" && (
         <div className="bg-surface rounded-lg py-2 px-1">
           <StandingsTable
@@ -685,6 +720,129 @@ export function MatchTabContent({
 
       {activeTab === "squad" && (
         <MatchSquadSection matchId={match.id} getLogoUrl={getLogoUrl} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Market Snapshot panel — all bookmakers for a match (lazy-loaded)
+ */
+function MarketSnapshotPanel({ matchId }: { matchId: number }) {
+  const { data, isLoading, error } = useMarketSnapshot(matchId);
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center py-8">
+        <Loader />
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div className="text-center py-8">
+        <BarChart3 className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">Market data not available</p>
+      </div>
+    );
+  }
+
+  if (data.n_books === 0) {
+    return (
+      <div className="text-center py-8">
+        <BarChart3 className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">No bookmaker odds available</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-surface rounded-lg p-3 space-y-3">
+      {/* Consensus summary */}
+      {data.consensus && (
+        <div className="bg-muted/40 rounded-md p-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Consensus ({data.n_books} books)
+            </span>
+            <span className="text-[10px] text-muted-foreground">Fair probs</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div>
+              <div className="text-xs text-muted-foreground">1</div>
+              <div className="text-sm font-mono font-medium">
+                {data.consensus.prob_home != null ? `${(data.consensus.prob_home * 100).toFixed(1)}%` : "-"}
+              </div>
+              <div className="text-[10px] text-muted-foreground font-mono">{data.consensus.odds_home.toFixed(2)}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">X</div>
+              <div className="text-sm font-mono font-medium">
+                {data.consensus.prob_draw != null ? `${(data.consensus.prob_draw * 100).toFixed(1)}%` : "-"}
+              </div>
+              <div className="text-[10px] text-muted-foreground font-mono">{data.consensus.odds_draw.toFixed(2)}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">2</div>
+              <div className="text-sm font-mono font-medium">
+                {data.consensus.prob_away != null ? `${(data.consensus.prob_away * 100).toFixed(1)}%` : "-"}
+              </div>
+              <div className="text-[10px] text-muted-foreground font-mono">{data.consensus.odds_away.toFixed(2)}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bookmakers table */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-border text-muted-foreground">
+              <th className="text-left py-1.5 pr-2 font-medium">Book</th>
+              <th className="text-center py-1.5 px-1 font-medium">1</th>
+              <th className="text-center py-1.5 px-1 font-medium">X</th>
+              <th className="text-center py-1.5 px-1 font-medium">2</th>
+              <th className="text-right py-1.5 pl-1 font-medium">Margin</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.books.map((book) => (
+              <tr
+                key={book.bookmaker}
+                className={cn(
+                  "border-b border-border/50",
+                  book.is_sharp && "bg-primary/5"
+                )}
+              >
+                <td className="py-1.5 pr-2 whitespace-nowrap">
+                  {book.is_sharp && <span className="text-primary mr-0.5">★</span>}
+                  <span className={cn(book.is_sharp && "font-medium")}>{book.bookmaker}</span>
+                </td>
+                <td className="text-center py-1.5 px-1 font-mono">{book.odds_home.toFixed(2)}</td>
+                <td className="text-center py-1.5 px-1 font-mono">{book.odds_draw.toFixed(2)}</td>
+                <td className="text-center py-1.5 px-1 font-mono">{book.odds_away.toFixed(2)}</td>
+                <td className="text-right py-1.5 pl-1 font-mono text-muted-foreground">
+                  {book.margin_pct != null ? `${book.margin_pct.toFixed(1)}%` : "-"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Dispersion footer */}
+      {data.dispersion && (
+        <div className="border-t border-border pt-2">
+          <div className="text-[10px] text-muted-foreground mb-1 font-medium uppercase tracking-wide">
+            Dispersion
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-mono text-muted-foreground">
+            <div>1: {data.dispersion.home.min.toFixed(2)}–{data.dispersion.home.max.toFixed(2)}</div>
+            <div>X: {data.dispersion.draw.min.toFixed(2)}–{data.dispersion.draw.max.toFixed(2)}</div>
+            <div>2: {data.dispersion.away.min.toFixed(2)}–{data.dispersion.away.max.toFixed(2)}</div>
+          </div>
+        </div>
       )}
     </div>
   );

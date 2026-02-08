@@ -2321,6 +2321,38 @@ async def get_matches_dashboard(
         column("ext_d_away"),
     ).subquery("ext")
 
+    # Consensus + Pinnacle odds from odds_history (PIT-safe: recorded_at < kickoff)
+    odds_market_subq = text("""
+        WITH latest_market_odds AS (
+            SELECT DISTINCT ON (oh.match_id, oh.source)
+                oh.match_id,
+                oh.source,
+                oh.odds_home,
+                oh.odds_draw,
+                oh.odds_away
+            FROM odds_history oh
+            JOIN matches m ON m.id = oh.match_id
+            WHERE oh.source IN ('consensus', 'Pinnacle')
+              AND oh.recorded_at < m.date
+              AND oh.odds_home IS NOT NULL
+            ORDER BY oh.match_id, oh.source, oh.recorded_at DESC
+        )
+        SELECT
+            match_id,
+            MAX(CASE WHEN source = 'consensus' THEN odds_home END) AS consensus_home,
+            MAX(CASE WHEN source = 'consensus' THEN odds_draw END) AS consensus_draw,
+            MAX(CASE WHEN source = 'consensus' THEN odds_away END) AS consensus_away,
+            MAX(CASE WHEN source = 'Pinnacle' THEN odds_home END) AS pinnacle_home,
+            MAX(CASE WHEN source = 'Pinnacle' THEN odds_draw END) AS pinnacle_draw,
+            MAX(CASE WHEN source = 'Pinnacle' THEN odds_away END) AS pinnacle_away
+        FROM latest_market_odds
+        GROUP BY match_id
+    """).columns(
+        column("match_id"),
+        column("consensus_home"), column("consensus_draw"), column("consensus_away"),
+        column("pinnacle_home"), column("pinnacle_draw"), column("pinnacle_away"),
+    ).subquery("market_odds")
+
     base_query = (
         select(
             Match.id,
@@ -2378,6 +2410,13 @@ async def get_matches_dashboard(
             func.max(ext_subq.c.ext_d_home).label("ext_d_home"),
             func.max(ext_subq.c.ext_d_draw).label("ext_d_draw"),
             func.max(ext_subq.c.ext_d_away).label("ext_d_away"),
+            # Consensus + Pinnacle odds (from odds_history, PIT-safe)
+            func.max(odds_market_subq.c.consensus_home).label("consensus_home"),
+            func.max(odds_market_subq.c.consensus_draw).label("consensus_draw"),
+            func.max(odds_market_subq.c.consensus_away).label("consensus_away"),
+            func.max(odds_market_subq.c.pinnacle_home).label("pinnacle_home"),
+            func.max(odds_market_subq.c.pinnacle_draw).label("pinnacle_draw"),
+            func.max(odds_market_subq.c.pinnacle_away).label("pinnacle_away"),
         )
         .join(home_team, Match.home_team_id == home_team.id)
         .join(away_team, Match.away_team_id == away_team.id)
@@ -2388,6 +2427,7 @@ async def get_matches_dashboard(
         .outerjoin(SensorPrediction, SensorPrediction.match_id == Match.id)
         .outerjoin(weather_subq, weather_subq.c.match_id == Match.id)
         .outerjoin(ext_subq, ext_subq.c.match_id == Match.id)
+        .outerjoin(odds_market_subq, odds_market_subq.c.match_id == Match.id)
         .group_by(
             Match.id,
             Match.date,
@@ -2639,6 +2679,22 @@ async def get_matches_dashboard(
                 "away": round(float(row.ext_d_away), 3),
             }
 
+        # Consensus odds (fair probs from median of de-vigged books)
+        if row.consensus_home is not None:
+            match_data["consensus"] = {
+                "home": round(1 / row.consensus_home, 3) if row.consensus_home > 0 else None,
+                "draw": round(1 / row.consensus_draw, 3) if row.consensus_draw and row.consensus_draw > 0 else None,
+                "away": round(1 / row.consensus_away, 3) if row.consensus_away and row.consensus_away > 0 else None,
+            }
+
+        # Pinnacle odds (sharp benchmark, implied probs)
+        if row.pinnacle_home is not None:
+            match_data["pinnacle"] = {
+                "home": round(1 / row.pinnacle_home, 3) if row.pinnacle_home > 0 else None,
+                "draw": round(1 / row.pinnacle_draw, 3) if row.pinnacle_draw and row.pinnacle_draw > 0 else None,
+                "away": round(1 / row.pinnacle_away, 3) if row.pinnacle_away and row.pinnacle_away > 0 else None,
+            }
+
         matches.append(match_data)
 
     generated_at = datetime.utcnow().isoformat() + "Z"
@@ -2669,6 +2725,153 @@ async def get_matches_dashboard(
         "cached": False,
         "cache_age_seconds": 0,
         "data": response_data,
+    }
+
+
+# -----------------------------------------------------------------------------
+# Market Snapshot Endpoint (cross-sectional view of all bookmakers)
+# -----------------------------------------------------------------------------
+
+@router.get("/dashboard/matches/{match_id}/market-snapshot.json")
+async def get_market_snapshot(
+    request: Request,
+    match_id: int,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Cross-sectional market snapshot: latest pre-kickoff odds from all bookmakers.
+
+    Returns all bookmaker odds for a match with de-vigged probabilities and margins.
+    PIT-safe: only returns odds recorded before kickoff (recorded_at < match.date).
+    Consensus is fetched from DB (P0-2: no runtime recalculation).
+
+    Auth: X-Dashboard-Token header (read-only).
+    """
+    if not verify_dashboard_token_bool(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    # Get match kickoff
+    match_result = await session.execute(
+        select(Match.id, Match.date).where(Match.id == match_id)
+    )
+    match_row = match_result.first()
+    if not match_row:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    kickoff = match_row.date
+
+    # Latest pre-kickoff odds per bookmaker (PIT-safe)
+    result = await session.execute(
+        text("""
+            SELECT DISTINCT ON (source)
+                source, odds_home, odds_draw, odds_away,
+                implied_home, implied_draw, implied_away,
+                overround, recorded_at
+            FROM odds_history
+            WHERE match_id = :match_id
+              AND recorded_at < :kickoff
+              AND odds_home IS NOT NULL
+              AND odds_draw IS NOT NULL
+              AND odds_away IS NOT NULL
+            ORDER BY source, recorded_at DESC
+        """),
+        {"match_id": match_id, "kickoff": kickoff},
+    )
+    rows = result.fetchall()
+
+    if not rows:
+        return {
+            "match_id": match_id,
+            "kickoff": kickoff.isoformat() + "Z",
+            "n_books": 0,
+            "consensus": None,
+            "books": [],
+            "dispersion": None,
+        }
+
+    # De-vig function for computing fair probs
+    from app.ml.devig import devig_proportional
+
+    books = []
+    consensus_entry = None
+    odds_home_list = []
+    odds_draw_list = []
+    odds_away_list = []
+
+    for row in rows:
+        source = row.source
+        h, d, a = row.odds_home, row.odds_draw, row.odds_away
+
+        if source == "consensus":
+            # P0-2: consensus from DB, not recalculated
+            consensus_entry = {
+                "odds_home": round(h, 3),
+                "odds_draw": round(d, 3),
+                "odds_away": round(a, 3),
+                "prob_home": round(1 / h, 4) if h > 0 else None,
+                "prob_draw": round(1 / d, 4) if d > 0 else None,
+                "prob_away": round(1 / a, 4) if a > 0 else None,
+                "recorded_at": row.recorded_at.isoformat() + "Z",
+            }
+            continue
+
+        # De-vig to get fair probs
+        if h is not None and d is not None and a is not None and h > 1 and d > 1 and a > 1:
+            ph, pd, pa = devig_proportional(h, d, a)
+        else:
+            ph, pd, pa = None, None, None
+
+        margin = round((row.overround - 1) * 100, 1) if row.overround else None
+
+        books.append({
+            "bookmaker": source,
+            "odds_home": round(h, 2),
+            "odds_draw": round(d, 2),
+            "odds_away": round(a, 2),
+            "prob_home": round(ph, 4) if ph else None,
+            "prob_draw": round(pd, 4) if pd else None,
+            "prob_away": round(pa, 4) if pa else None,
+            "margin_pct": margin,
+            "is_sharp": source == "Pinnacle",
+            "recorded_at": row.recorded_at.isoformat() + "Z",
+        })
+
+        odds_home_list.append(h)
+        odds_draw_list.append(d)
+        odds_away_list.append(a)
+
+    # Sort: Pinnacle first, then alphabetical
+    books.sort(key=lambda b: (0 if b["is_sharp"] else 1, b["bookmaker"]))
+
+    # Dispersion stats
+    dispersion = None
+    if len(odds_home_list) >= 2:
+        import statistics
+        dispersion = {
+            "home": {
+                "min": round(min(odds_home_list), 2),
+                "max": round(max(odds_home_list), 2),
+                "std": round(statistics.stdev(odds_home_list), 3),
+            },
+            "draw": {
+                "min": round(min(odds_draw_list), 2),
+                "max": round(max(odds_draw_list), 2),
+                "std": round(statistics.stdev(odds_draw_list), 3),
+            },
+            "away": {
+                "min": round(min(odds_away_list), 2),
+                "max": round(max(odds_away_list), 2),
+                "std": round(statistics.stdev(odds_away_list), 3),
+            },
+        }
+
+    return {
+        "match_id": match_id,
+        "kickoff": kickoff.isoformat() + "Z",
+        "n_books": len(books),
+        "consensus": consensus_entry,
+        "books": books,
+        "dispersion": dispersion,
     }
 
 
