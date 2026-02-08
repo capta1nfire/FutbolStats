@@ -1483,8 +1483,7 @@ class FeatureEngineer:
                 logger.info(f"Processing match {i + 1}/{len(matches)}")
 
             try:
-                async with self.session.begin_nested():
-                    features = await self.get_match_features(match, league_only=league_only)
+                features = await self.get_match_features(match, league_only=league_only)
 
                 # Add target variable
                 if match.home_goals > match.away_goals:
@@ -1507,11 +1506,7 @@ class FeatureEngineer:
 
             except Exception as e:
                 logger.error(f"Error processing match {match.id}: {e}")
-                # Reset transaction state so next iteration can proceed
-                try:
-                    await self.session.rollback()
-                except Exception:
-                    pass
+                continue
                 continue
 
         # Clear cache to free memory
@@ -1578,8 +1573,7 @@ class FeatureEngineer:
         rows = []
         for match in matches:
             try:
-                async with self.session.begin_nested():
-                    features = await self.get_match_features(match, league_only=league_only)
+                features = await self.get_match_features(match, league_only=league_only)
 
                 # Add scores for label computation
                 features["home_goals"] = match.home_goals
@@ -1594,10 +1588,6 @@ class FeatureEngineer:
 
             except Exception as e:
                 logger.error(f"Error processing match {match.id}: {e}")
-                try:
-                    await self.session.rollback()
-                except Exception:
-                    pass
                 continue
 
         # Clear cache to free memory
@@ -1722,8 +1712,7 @@ class FeatureEngineer:
         rows = []
         for match in matches:
             try:
-                async with self.session.begin_nested():
-                    features = await self.get_match_features(match, league_only=league_only)
+                features = await self.get_match_features(match, league_only=league_only)
 
                 features["home_team_name"] = match.home_team.name if match.home_team else "Unknown"
                 features["away_team_name"] = match.away_team.name if match.away_team else "Unknown"
@@ -1749,10 +1738,6 @@ class FeatureEngineer:
                 rows.append(features)
             except Exception as e:
                 logger.error(f"Error processing match {match.id}: {e}")
-                try:
-                    await self.session.rollback()
-                except Exception:
-                    pass
                 continue
 
         # Clear cache to free memory
