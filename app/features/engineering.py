@@ -1507,6 +1507,11 @@ class FeatureEngineer:
 
             except Exception as e:
                 logger.error(f"Error processing match {match.id}: {e}")
+                # Reset transaction state so next iteration can proceed
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    pass
                 continue
 
         # Clear cache to free memory
@@ -1589,6 +1594,10 @@ class FeatureEngineer:
 
             except Exception as e:
                 logger.error(f"Error processing match {match.id}: {e}")
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    pass
                 continue
 
         # Clear cache to free memory
@@ -1740,6 +1749,10 @@ class FeatureEngineer:
                 rows.append(features)
             except Exception as e:
                 logger.error(f"Error processing match {match.id}: {e}")
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    pass
                 continue
 
         # Clear cache to free memory
