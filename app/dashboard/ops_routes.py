@@ -1001,6 +1001,8 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
     - Venue geo coordinates (venue_geo)
     - Team home city profiles (team_home_city_profile)
     - Sofascore XI lineups (match_sofascore_lineup)
+    - Wikidata enrichment: stadium + city (team_wikidata_enrichment)
+    - Managers: current DT coverage (team_manager_history)
 
     All metrics are best-effort: query failures return "unavailable" status.
 
@@ -1252,9 +1254,91 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
         logger.debug(f"[SOTA] Sofascore XI metrics unavailable: {e}")
         result["sofascore_xi"] = _unavailable(f"Query failed: {str(e)[:50]}")
 
+    # 6) Wikidata enrichment: stadium + city coverage for active league teams
+    try:
+        res = await session.execute(
+            text("""
+                SELECT
+                    COUNT(DISTINCT t.id) AS total_active,
+                    COUNT(DISTINCT CASE WHEN t.wikidata_id IS NOT NULL THEN t.id END) AS with_qid,
+                    COUNT(DISTINCT CASE WHEN twe.stadium_name IS NOT NULL THEN t.id END) AS with_stadium,
+                    COUNT(DISTINCT CASE WHEN twe.admin_location_label IS NOT NULL THEN t.id END) AS with_city,
+                    MAX(twe.fetched_at) AS latest_fetch,
+                    MIN(twe.fetched_at) AS oldest_fetch
+                FROM teams t
+                JOIN matches m ON (m.home_team_id = t.id OR m.away_team_id = t.id)
+                JOIN admin_leagues al ON al.league_id = m.league_id
+                LEFT JOIN team_wikidata_enrichment twe ON twe.team_id = t.id
+                WHERE m.date >= NOW() - INTERVAL '30 days'
+                  AND al.kind = 'league' AND al.is_active = true
+            """)
+        )
+        row = res.first()
+        total = int(row.total_active or 0) if row else 0
+        with_qid = int(row.with_qid or 0) if row else 0
+        with_stadium = int(row.with_stadium or 0) if row else 0
+        with_city = int(row.with_city or 0) if row else 0
+        stadium_pct = round(with_stadium / total * 100, 1) if total > 0 else 0.0
+        city_pct = round(with_city / total * 100, 1) if total > 0 else 0.0
+        qid_pct = round(with_qid / total * 100, 1) if total > 0 else 0.0
+
+        staleness_hours = None
+        if row and row.oldest_fetch:
+            staleness_hours = round((now - row.oldest_fetch).total_seconds() / 3600, 1)
+
+        worst_pct = min(stadium_pct, city_pct)
+        result["wikidata_enrichment"] = {
+            "status": "ok" if worst_pct >= 95 else ("warn" if worst_pct >= 80 else "red"),
+            "coverage_pct": worst_pct,
+            "total": total,
+            "with_data": min(with_stadium, with_city),
+            "staleness_hours": staleness_hours,
+            "note": f"Active league teams (30d). Stadium: {with_stadium}/{total} ({stadium_pct}%), City: {with_city}/{total} ({city_pct}%), QID: {with_qid}/{total} ({qid_pct}%)",
+        }
+    except Exception as e:
+        logger.debug(f"[SOTA] Wikidata enrichment metrics unavailable: {e}")
+        result["wikidata_enrichment"] = _unavailable(f"Query failed: {str(e)[:50]}")
+
+    # 7) Managers: coverage for active league teams with current manager
+    try:
+        res = await session.execute(
+            text("""
+                SELECT
+                    COUNT(DISTINCT t.id) AS total_active,
+                    COUNT(DISTINCT CASE WHEN tmh.team_id IS NOT NULL THEN t.id END) AS with_manager,
+                    MAX(tmh.detected_at) AS latest_detection
+                FROM teams t
+                JOIN matches m ON (m.home_team_id = t.id OR m.away_team_id = t.id)
+                JOIN admin_leagues al ON al.league_id = m.league_id
+                LEFT JOIN team_manager_history tmh ON tmh.team_id = t.id AND tmh.end_date IS NULL
+                WHERE m.date >= NOW() - INTERVAL '30 days'
+                  AND al.kind = 'league' AND al.is_active = true
+            """)
+        )
+        row = res.first()
+        total = int(row.total_active or 0) if row else 0
+        with_manager = int(row.with_manager or 0) if row else 0
+        manager_pct = round(with_manager / total * 100, 1) if total > 0 else 0.0
+
+        staleness_hours = None
+        if row and row.latest_detection:
+            staleness_hours = round((now - row.latest_detection).total_seconds() / 3600, 1)
+
+        result["managers"] = {
+            "status": "ok" if manager_pct >= 90 else ("warn" if manager_pct >= 70 else "red"),
+            "coverage_pct": manager_pct,
+            "total": total,
+            "with_data": with_manager,
+            "staleness_hours": staleness_hours,
+            "note": f"Active league teams with current manager (end_date IS NULL)",
+        }
+    except Exception as e:
+        logger.debug(f"[SOTA] Manager metrics unavailable: {e}")
+        result["managers"] = _unavailable(f"Query failed: {str(e)[:50]}")
+
     # Overall status: worst of components (excluding unavailable)
     component_statuses = []
-    for key in ["understat", "weather", "venue_geo", "team_profiles", "sofascore_xi"]:
+    for key in ["understat", "weather", "venue_geo", "team_profiles", "sofascore_xi", "wikidata_enrichment", "managers"]:
         if result.get(key, {}).get("status") in ("ok", "warn", "red"):
             component_statuses.append(result[key]["status"])
 
