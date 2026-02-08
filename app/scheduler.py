@@ -4253,13 +4253,16 @@ async def sync_odds_for_upcoming_matches() -> dict:
                                 f"violations={primary_validation.violations}"
                             )
 
-                        # P1-2: Batch is_opening check — one query to get existing sources
+                        # P1: Common snapshot timestamp for all books in this match
+                        snapshot_ts = datetime.utcnow()
+
+                        # Batch is_opening check — one query per match
                         existing_sources_result = await session.execute(text(
                             "SELECT DISTINCT source FROM odds_history WHERE match_id = :mid"
                         ), {"mid": match_id})
                         existing_sources = {row[0] for row in existing_sources_result.fetchall()}
 
-                        # Loop ALL bookmakers: validate + insert into odds_history
+                        # Loop ALL bookmakers: validate + insert with ON CONFLICT (P0-2 idempotency)
                         books_saved = 0
                         for book_odds in all_odds_data:
                             bk_name = book_odds.get("bookmaker", "unknown")
@@ -4275,13 +4278,24 @@ async def sync_odds_for_upcoming_matches() -> dict:
                                 continue
 
                             is_opening = bk_name not in existing_sources
-                            history_entry = OddsHistory.from_odds(
-                                match_id=match_id,
-                                odds_home=bk_home, odds_draw=bk_draw, odds_away=bk_away,
-                                source=bk_name,
-                                is_opening=is_opening,
-                            )
-                            session.add(history_entry)
+                            implied_h = 1 / bk_home if bk_home and bk_home > 0 else None
+                            implied_d = 1 / bk_draw if bk_draw and bk_draw > 0 else None
+                            implied_a = 1 / bk_away if bk_away and bk_away > 0 else None
+                            overround = (implied_h + implied_d + implied_a) if (implied_h and implied_d and implied_a) else None
+
+                            await session.execute(text("""
+                                INSERT INTO odds_history
+                                    (match_id, recorded_at, odds_home, odds_draw, odds_away,
+                                     source, is_opening, implied_home, implied_draw, implied_away, overround)
+                                VALUES
+                                    (:mid, :ts, :oh, :od, :oa, :src, :opening, :ih, :id, :ia, :ov)
+                                ON CONFLICT (match_id, recorded_at, source) DO NOTHING
+                            """), {
+                                "mid": match_id, "ts": snapshot_ts,
+                                "oh": bk_home, "od": bk_draw, "oa": bk_away,
+                                "src": bk_name, "opening": is_opening,
+                                "ih": implied_h, "id": implied_d, "ia": implied_a, "ov": overround,
+                            })
                             books_saved += 1
                             if is_opening:
                                 existing_sources.add(bk_name)
@@ -4289,20 +4303,29 @@ async def sync_odds_for_upcoming_matches() -> dict:
                         metrics["odds_history_saved"] += books_saved
                         metrics["bookmakers_captured"] = metrics.get("bookmakers_captured", 0) + books_saved
 
-                        # Calculate and persist consensus
+                        # Calculate and persist consensus (same snapshot timestamp)
                         from app.ml.consensus import calculate_consensus
                         consensus = calculate_consensus(all_odds_data)
                         if consensus:
                             is_opening_c = "consensus" not in existing_sources
-                            consensus_entry = OddsHistory.from_odds(
-                                match_id=match_id,
-                                odds_home=consensus["odds_home"],
-                                odds_draw=consensus["odds_draw"],
-                                odds_away=consensus["odds_away"],
-                                source="consensus",
-                                is_opening=is_opening_c,
-                            )
-                            session.add(consensus_entry)
+                            c_h = 1 / consensus["odds_home"] if consensus["odds_home"] else None
+                            c_d = 1 / consensus["odds_draw"] if consensus["odds_draw"] else None
+                            c_a = 1 / consensus["odds_away"] if consensus["odds_away"] else None
+                            c_ov = (c_h + c_d + c_a) if (c_h and c_d and c_a) else None
+
+                            await session.execute(text("""
+                                INSERT INTO odds_history
+                                    (match_id, recorded_at, odds_home, odds_draw, odds_away,
+                                     source, is_opening, implied_home, implied_draw, implied_away, overround)
+                                VALUES
+                                    (:mid, :ts, :oh, :od, :oa, 'consensus', :opening, :ih, :id, :ia, :ov)
+                                ON CONFLICT (match_id, recorded_at, source) DO NOTHING
+                            """), {
+                                "mid": match_id, "ts": snapshot_ts,
+                                "oh": consensus["odds_home"], "od": consensus["odds_draw"], "oa": consensus["odds_away"],
+                                "opening": is_opening_c,
+                                "ih": c_h, "id": c_d, "ia": c_a, "ov": c_ov,
+                            })
                             metrics["odds_history_saved"] += 1
                             metrics["consensus_calculated"] = metrics.get("consensus_calculated", 0) + 1
 

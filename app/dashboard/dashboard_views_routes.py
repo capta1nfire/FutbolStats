@@ -1464,7 +1464,7 @@ async def dashboard_movement_recent(
                 JOIN teams at ON at.id = m.away_team_id
                 WHERE oh.recorded_at > :cutoff
                   AND NOT COALESCE(oh.quarantined, false)
-                  AND oh.source NOT IN ('consensus')
+                  AND oh.source = 'Bet365'
                 ORDER BY m.id, oh.recorded_at DESC
                 LIMIT :limit
             """
