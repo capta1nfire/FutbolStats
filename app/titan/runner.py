@@ -324,6 +324,10 @@ class TitanRunner:
             )
         except Exception as e:
             logger.warning(f"Form computation failed for match {external_id}: {e}")
+            try:
+                await self.session.rollback()
+            except Exception:
+                pass
 
         # 8. Compute H2H (Tier 3) - optional, fail-open
         h2h = None
@@ -335,6 +339,10 @@ class TitanRunner:
             )
         except Exception as e:
             logger.warning(f"H2H computation failed for match {external_id}: {e}")
+            try:
+                await self.session.rollback()
+            except Exception:
+                pass
 
         # 8b. Compute xG (Tier 1b) - optional enrichment, fail-open
         xg = None
@@ -346,6 +354,10 @@ class TitanRunner:
             )
         except Exception as e:
             logger.warning(f"xG computation failed for match {external_id}: {e}")
+            try:
+                await self.session.rollback()
+            except Exception:
+                pass
 
         # 8c. Compute SofaScore Lineup (Tier 1c) - optional enrichment, fail-open
         lineup = None
@@ -356,6 +368,10 @@ class TitanRunner:
             )
         except Exception as e:
             logger.warning(f"Lineup computation failed for match {external_id}: {e}")
+            try:
+                await self.session.rollback()
+            except Exception:
+                pass
 
         # 8d. Compute XI Depth (Tier 1d) - optional enrichment, fail-open
         xi_depth = None
@@ -368,6 +384,10 @@ class TitanRunner:
             )
         except Exception as e:
             logger.warning(f"XI Depth computation failed for match {external_id}: {e}")
+            try:
+                await self.session.rollback()
+            except Exception:
+                pass
 
         # 9. Materialize to feature_matrix
         if not dry_run:
@@ -551,6 +571,10 @@ class TitanRunner:
             )
         except Exception as e:
             logger.warning(f"Remat form failed for match {external_id}: {e}")
+            try:
+                await self.session.rollback()
+            except Exception:
+                pass
 
         h2h = None
         try:
@@ -561,6 +585,10 @@ class TitanRunner:
             )
         except Exception as e:
             logger.warning(f"Remat H2H failed for match {external_id}: {e}")
+            try:
+                await self.session.rollback()
+            except Exception:
+                pass
 
         xg = None
         try:
@@ -571,6 +599,10 @@ class TitanRunner:
             )
         except Exception as e:
             logger.warning(f"Remat xG failed for match {external_id}: {e}")
+            try:
+                await self.session.rollback()
+            except Exception:
+                pass
 
         lineup = None
         try:
@@ -580,6 +612,10 @@ class TitanRunner:
             )
         except Exception as e:
             logger.warning(f"Remat lineup failed for match {external_id}: {e}")
+            try:
+                await self.session.rollback()
+            except Exception:
+                pass
 
         xi_depth = None
         try:
@@ -591,6 +627,10 @@ class TitanRunner:
             )
         except Exception as e:
             logger.warning(f"Remat XI depth failed for match {external_id}: {e}")
+            try:
+                await self.session.rollback()
+            except Exception:
+                pass
 
         # 3. Materialize (upsert)
         try:
