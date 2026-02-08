@@ -87,11 +87,11 @@ async def get_manager_context(
     result = await session.execute(
         text("""
             SELECT manager_external_id, manager_name, start_date,
-                   (:match_kickoff::date - start_date) AS tenure_days
+                   (CAST(:match_kickoff AS date) - start_date) AS tenure_days
             FROM team_manager_history
             WHERE team_id = :team_id
-              AND start_date <= :match_kickoff::date
-              AND (end_date IS NULL OR end_date > :match_kickoff::date)
+              AND start_date <= CAST(:match_kickoff AS date)
+              AND (end_date IS NULL OR end_date > CAST(:match_kickoff AS date))
               AND detected_at < :match_kickoff
             ORDER BY start_date DESC
             LIMIT 1
@@ -166,7 +166,15 @@ async def get_player_manager_features(
         }
 
     except Exception as e:
-        logger.warning(f"Player/manager features failed for match {match_id}: {e}")
+        logger.warning(
+            f"Player/manager features failed for match {match_id}: {e}",
+            exc_info=True,
+        )
+        # Avoid transaction poisoning → prevents InFailedSQLTransactionError cascade
+        try:
+            await session.rollback()
+        except Exception:
+            pass
         return get_player_manager_defaults()
 
 
