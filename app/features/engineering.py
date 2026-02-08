@@ -1483,7 +1483,8 @@ class FeatureEngineer:
                 logger.info(f"Processing match {i + 1}/{len(matches)}")
 
             try:
-                features = await self.get_match_features(match, league_only=league_only)
+                async with self.session.begin_nested():
+                    features = await self.get_match_features(match, league_only=league_only)
 
                 # Add target variable
                 if match.home_goals > match.away_goals:
@@ -1572,7 +1573,8 @@ class FeatureEngineer:
         rows = []
         for match in matches:
             try:
-                features = await self.get_match_features(match, league_only=league_only)
+                async with self.session.begin_nested():
+                    features = await self.get_match_features(match, league_only=league_only)
 
                 # Add scores for label computation
                 features["home_goals"] = match.home_goals
@@ -1711,7 +1713,9 @@ class FeatureEngineer:
         rows = []
         for match in matches:
             try:
-                features = await self.get_match_features(match, league_only=league_only)
+                async with self.session.begin_nested():
+                    features = await self.get_match_features(match, league_only=league_only)
+
                 features["home_team_name"] = match.home_team.name if match.home_team else "Unknown"
                 features["away_team_name"] = match.away_team.name if match.away_team else "Unknown"
                 features["home_team_logo"] = match.home_team.logo_url if match.home_team else None
