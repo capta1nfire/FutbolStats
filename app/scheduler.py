@@ -2104,6 +2104,16 @@ async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
         # =================================================================
         predictions = engine.predict(df)
 
+        # PHASE 2b: Market anchor — blend with market for low-signal leagues
+        from app.ml.policy import apply_market_anchor, get_policy_config
+        _policy_cfg = get_policy_config()
+        predictions, _anchor_meta = apply_market_anchor(
+            predictions,
+            alpha_default=_policy_cfg["market_anchor_alpha_default"],
+            league_overrides=_policy_cfg["market_anchor_league_overrides"],
+            enabled=_policy_cfg["market_anchor_enabled"],
+        )
+
         # =================================================================
         # PHASE 3: Save predictions (new session, fresh connection)
         # =================================================================

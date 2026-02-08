@@ -2152,6 +2152,20 @@ async def get_predictions(
         )
     # ═══════════════════════════════════════════════════════════════
 
+    # ═══════════════════════════════════════════════════════════════
+    # FASE 2: Market anchor — blend model probs with market for low-signal leagues
+    # ═══════════════════════════════════════════════════════════════
+    _t5b = time.time()
+    from app.ml.policy import apply_market_anchor
+    predictions, anchor_metadata = apply_market_anchor(
+        predictions,
+        alpha_default=policy_config["market_anchor_alpha_default"],
+        league_overrides=policy_config["market_anchor_league_overrides"],
+        enabled=policy_config["market_anchor_enabled"],
+    )
+    _stage_times["market_anchor_ms"] = (time.time() - _t5b) * 1000
+    # ═══════════════════════════════════════════════════════════════
+
     # Save predictions to database if requested
     if save:
         saved_count = await _save_predictions_to_db(session, predictions, ml_engine.model_version)

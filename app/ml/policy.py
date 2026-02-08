@@ -1,13 +1,19 @@
 """
-Betting policy utilities for value bet selection.
+Betting policy utilities for prediction serving.
 
 FASE 1: Draw cap to prevent over-concentration in draw bets.
+FASE 2: Market anchor for low-signal leagues (ABE P0 2026-02-08).
 
 Feature flags (from config):
 - POLICY_DRAW_CAP_ENABLED: Enable/disable draw cap
 - POLICY_MAX_DRAW_SHARE: Maximum fraction of value bets that can be draws (0.35)
 - POLICY_EDGE_THRESHOLD: Minimum edge for value bet (0.05)
+- MARKET_ANCHOR_ENABLED: Enable/disable market anchor blend
+- MARKET_ANCHOR_ALPHA_DEFAULT: Default blend weight (0.0 = model pure)
+- MARKET_ANCHOR_LEAGUE_OVERRIDES: Per-league alpha overrides ("128:1.0")
 """
+
+from __future__ import annotations
 
 from typing import Optional
 import logging
@@ -160,13 +166,192 @@ def apply_draw_cap(
     return modified_predictions, metadata
 
 
+def apply_market_anchor(
+    predictions: list[dict],
+    alpha_default: float = 0.0,
+    league_overrides: dict[int, float] | None = None,
+    enabled: bool = False,
+) -> tuple[list[dict], dict]:
+    """
+    Blend model probabilities with de-vigged market odds for low-signal leagues.
+
+    ABE P0 2026-02-08: Only applies to leagues explicitly in league_overrides.
+    Only NS (not-started) predictions are eligible. Frozen/LIVE/FT are skipped.
+
+    Args:
+        predictions: List of prediction dicts from engine.predict()
+        alpha_default: Default blend weight (0.0 = model pure, 1.0 = market pure)
+        league_overrides: Per-league alpha overrides {128: 1.0, ...}
+        enabled: Feature flag
+
+    Returns:
+        Tuple of (modified predictions, metadata dict)
+    """
+    if not enabled:
+        return predictions, {"anchor_applied": False, "reason": "disabled"}
+
+    if not predictions:
+        return predictions, {"anchor_applied": False, "reason": "no_predictions"}
+
+    from app.ml.devig import devig_proportional
+
+    if league_overrides is None:
+        league_overrides = {}
+
+    modified_predictions = []
+    n_anchored = 0
+    n_skipped_not_ns = 0
+    n_skipped_no_override = 0
+    n_skipped_no_market = 0
+    n_skipped_invalid_odds = 0
+    leagues_affected: dict[int, int] = {}
+
+    for pred in predictions:
+        # P0-2: Only anchor NS predictions that are not frozen
+        status = pred.get("status")
+        if status != "NS" or pred.get("is_frozen"):
+            modified_predictions.append(pred)
+            n_skipped_not_ns += 1
+            continue
+
+        # Determine alpha for this league
+        league_id = pred.get("league_id")
+        alpha = league_overrides.get(league_id, alpha_default) if league_id else alpha_default
+
+        # P0-1: Skip if alpha is 0 (not in overrides and default is 0)
+        if alpha == 0.0:
+            modified_predictions.append(pred)
+            n_skipped_no_override += 1
+            continue
+
+        # Check market odds availability
+        market_odds = pred.get("market_odds")
+        if not market_odds:
+            modified_predictions.append(pred)
+            n_skipped_no_market += 1
+            continue
+
+        h_odds = market_odds.get("home")
+        d_odds = market_odds.get("draw")
+        a_odds = market_odds.get("away")
+
+        # P0-3: Strict validation — all odds must be > 1.0
+        if not (h_odds and d_odds and a_odds and h_odds > 1.0 and d_odds > 1.0 and a_odds > 1.0):
+            modified_predictions.append(pred)
+            n_skipped_invalid_odds += 1
+            continue
+
+        # De-vig market odds to fair probabilities
+        p_mkt_h, p_mkt_d, p_mkt_a = devig_proportional(h_odds, d_odds, a_odds)
+
+        # Get current model probabilities
+        probs = pred.get("probabilities", {})
+        p_mod_h = probs.get("home", 1 / 3)
+        p_mod_d = probs.get("draw", 1 / 3)
+        p_mod_a = probs.get("away", 1 / 3)
+
+        # Create modified copy
+        modified_pred = dict(pred)
+
+        # P1-1: Preserve model probabilities in dedicated field
+        modified_pred["model_probabilities"] = dict(probs)
+        if not pred.get("raw_probabilities"):
+            modified_pred["raw_probabilities"] = dict(probs)
+
+        # Blend: p_served = (1 - alpha) * p_model + alpha * p_market
+        h_blend = (1 - alpha) * p_mod_h + alpha * p_mkt_h
+        d_blend = (1 - alpha) * p_mod_d + alpha * p_mkt_d
+        a_blend = (1 - alpha) * p_mod_a + alpha * p_mkt_a
+
+        # Renormalize (safety net)
+        total = h_blend + d_blend + a_blend
+        if total > 0.001:
+            h_blend /= total
+            d_blend /= total
+            a_blend /= total
+
+        modified_pred["probabilities"] = {
+            "home": round(h_blend, 4),
+            "draw": round(d_blend, 4),
+            "away": round(a_blend, 4),
+        }
+
+        # Recalculate fair_odds from blended probs
+        modified_pred["fair_odds"] = {
+            "home": round(1 / h_blend, 2) if h_blend > 0 else None,
+            "draw": round(1 / d_blend, 2) if d_blend > 0 else None,
+            "away": round(1 / a_blend, 2) if a_blend > 0 else None,
+        }
+
+        # P0-4: When alpha >= 0.80, clear value bets (probs ≈ market, no edge)
+        if alpha >= 0.80:
+            modified_pred["value_bets"] = None
+            modified_pred["has_value_bet"] = False
+            modified_pred["best_value_bet"] = None
+            warnings = modified_pred.get("warnings") or []
+            warnings.append("MARKET_ANCHORED")
+            modified_pred["warnings"] = warnings
+
+        # Metadata per prediction
+        if "policy_metadata" not in modified_pred:
+            modified_pred["policy_metadata"] = {}
+        modified_pred["policy_metadata"]["market_anchor"] = {
+            "applied": True,
+            "alpha": alpha,
+            "market_source": "match_odds_bet365",  # P1-2
+            "league_id": league_id,
+        }
+
+        modified_predictions.append(modified_pred)
+        n_anchored += 1
+        leagues_affected[league_id] = leagues_affected.get(league_id, 0) + 1
+
+    metadata = {
+        "anchor_applied": n_anchored > 0,
+        "n_anchored": n_anchored,
+        "n_skipped_not_ns": n_skipped_not_ns,
+        "n_skipped_no_override": n_skipped_no_override,
+        "n_skipped_no_market": n_skipped_no_market,
+        "n_skipped_invalid_odds": n_skipped_invalid_odds,
+        "n_total": len(predictions),
+        "leagues_affected": leagues_affected,
+    }
+
+    if n_anchored > 0:
+        logger.info(
+            f"[MARKET-ANCHOR] Blended {n_anchored} predictions | "
+            f"not_ns={n_skipped_not_ns} no_override={n_skipped_no_override} "
+            f"no_market={n_skipped_no_market} invalid_odds={n_skipped_invalid_odds} | "
+            f"leagues={leagues_affected}"
+        )
+
+    return modified_predictions, metadata
+
+
 def get_policy_config() -> dict:
     """Get policy configuration from settings."""
     from app.config import get_settings
 
     settings = get_settings()
+
+    # Parse league overrides: "128:1.0,239:0.8" → {128: 1.0, 239: 0.8}
+    league_overrides = {}
+    if settings.MARKET_ANCHOR_LEAGUE_OVERRIDES:
+        for pair in settings.MARKET_ANCHOR_LEAGUE_OVERRIDES.split(","):
+            pair = pair.strip()
+            if ":" in pair:
+                try:
+                    lid, alpha = pair.split(":", 1)
+                    league_overrides[int(lid.strip())] = float(alpha.strip())
+                except (ValueError, TypeError):
+                    pass
+
     return {
         "draw_cap_enabled": settings.POLICY_DRAW_CAP_ENABLED,
         "max_draw_share": settings.POLICY_MAX_DRAW_SHARE,
         "edge_threshold": settings.POLICY_EDGE_THRESHOLD,
+        # Market anchor
+        "market_anchor_enabled": settings.MARKET_ANCHOR_ENABLED,
+        "market_anchor_alpha_default": settings.MARKET_ANCHOR_ALPHA_DEFAULT,
+        "market_anchor_league_overrides": league_overrides,
     }

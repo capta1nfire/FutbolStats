@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     POLICY_MAX_DRAW_SHARE: float = 0.35
     POLICY_EDGE_THRESHOLD: float = 0.05
 
+    # Policy: Market anchor for low-signal leagues (ABE P0 2026-02-08)
+    MARKET_ANCHOR_ENABLED: bool = False  # Feature flag (default OFF until validated)
+    MARKET_ANCHOR_ALPHA_DEFAULT: float = 0.0  # 0.0 = only overrides apply (no global blend)
+    MARKET_ANCHOR_LEAGUE_OVERRIDES: str = "128:1.0"  # "league_id:alpha" — explicit low-signal leagues
+    MARKET_ANCHOR_MIN_SAMPLES: int = 200  # Min FT with odds before accepting per-league α
+
     # ═══════════════════════════════════════════════════════════════
 
     # Model architecture (baseline | two_stage)
