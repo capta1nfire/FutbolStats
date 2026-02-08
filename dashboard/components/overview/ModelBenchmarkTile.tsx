@@ -368,10 +368,10 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
               ? ((dailyCorrect / dayData.matches) * 100).toFixed(1)
               : "0.0";
 
-            // For Model A, append version suffix from daily data
-            let displayName = seriesName;
+            // For Model A, shorten name and append version suffix from daily data
+            let displayName = seriesName === "Model A" ? "Mod A" : seriesName;
             if (seriesName === "Model A" && dayData?.model_a_version) {
-              displayName = `Model A (${dayData.model_a_version})`;
+              displayName = `Mod A (${dayData.model_a_version})`;
             }
 
             html += `
