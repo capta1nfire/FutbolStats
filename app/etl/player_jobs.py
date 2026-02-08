@@ -108,10 +108,16 @@ async def sync_injuries(
 
                 # Savepoint per league: isolate DB errors so one bad league
                 # doesn't poison the transaction for subsequent leagues
-                async with session.begin_nested():
+                # (raw SQL savepoint avoids greenlet issues with begin_nested)
+                await session.execute(text("SAVEPOINT sp_league"))
+                try:
                     inserted, updated = await _upsert_injuries(
                         session, injuries, league_id, season, team_map, match_map
                     )
+                    await session.execute(text("RELEASE SAVEPOINT sp_league"))
+                except Exception:
+                    await session.execute(text("ROLLBACK TO SAVEPOINT sp_league"))
+                    raise
                 metrics["injuries_inserted"] += inserted
                 metrics["injuries_updated"] += updated
                 metrics["leagues_ok"] += 1
@@ -298,7 +304,9 @@ async def sync_managers(
 
                 # Savepoint per team: isolate DB errors so one bad team
                 # doesn't poison the transaction for subsequent teams
-                async with session.begin_nested():
+                # (raw SQL savepoint avoids greenlet issues with begin_nested)
+                await session.execute(text("SAVEPOINT sp_team"))
+                try:
                     # Upsert manager catalog
                     await _upsert_manager(session, current_coach)
                     metrics["managers_upserted"] += 1
@@ -309,6 +317,10 @@ async def sync_managers(
                     )
                     if changed:
                         metrics["changes_detected"] += 1
+                    await session.execute(text("RELEASE SAVEPOINT sp_team"))
+                except Exception:
+                    await session.execute(text("ROLLBACK TO SAVEPOINT sp_team"))
+                    raise
 
                 metrics["teams_ok"] += 1
 
