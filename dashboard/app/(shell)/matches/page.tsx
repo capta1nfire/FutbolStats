@@ -12,8 +12,6 @@ import {
   MatchDetailDrawer,
   MATCHES_COLUMN_OPTIONS,
   MATCHES_DEFAULT_VISIBILITY,
-  type MatchesView,
-  type TimeRange,
   type LocalDate,
 } from "@/components/matches";
 import { CustomizeColumnsPanel, Pagination } from "@/components/tables";
@@ -29,38 +27,8 @@ import { isValidLocalDate } from "@/lib/region";
 
 const BASE_PATH = "/matches";
 
-/** Valid view values */
-const VALID_VIEWS: MatchesView[] = ["upcoming", "finished", "calendar"];
-
-/** Valid time range values */
-const VALID_TIME_RANGES: TimeRange[] = ["today", "24h", "48h", "7d"];
-
 /** Valid divergence filter values */
 const VALID_DIVERGENCES: DivergenceCategory[] = ["AGREE", "DISAGREE", "STRONG_FAV_DISAGREE"];
-
-/** Convert time range to hours for API */
-function timeRangeToHours(range: TimeRange, view: MatchesView): number {
-  if (range === "today") {
-    const now = new Date();
-    if (view === "upcoming") {
-      // Hours remaining until end of today
-      const endOfDay = new Date(now);
-      endOfDay.setHours(23, 59, 59, 999);
-      return Math.ceil((endOfDay.getTime() - now.getTime()) / (1000 * 60 * 60)) || 1;
-    } else {
-      // Hours since start of today (for finished view)
-      const startOfDay = new Date(now);
-      startOfDay.setHours(0, 0, 0, 0);
-      return Math.ceil((now.getTime() - startOfDay.getTime()) / (1000 * 60 * 60)) || 1;
-    }
-  }
-  switch (range) {
-    case "24h": return 24;
-    case "48h": return 48;
-    case "7d": return 168;
-    default: return 168;
-  }
-}
 
 /**
  * Matches Page Content
@@ -78,25 +46,7 @@ function MatchesPageContent() {
     [searchParams]
   );
 
-  // Parse view from URL (default: calendar)
-  const activeView = useMemo((): MatchesView => {
-    const viewParam = searchParams.get("view");
-    if (viewParam && VALID_VIEWS.includes(viewParam as MatchesView)) {
-      return viewParam as MatchesView;
-    }
-    return "calendar";
-  }, [searchParams]);
-
-  // Parse time range from URL (default: today)
-  const selectedTimeRange = useMemo((): TimeRange => {
-    const rangeParam = searchParams.get("range");
-    if (rangeParam && VALID_TIME_RANGES.includes(rangeParam as TimeRange)) {
-      return rangeParam as TimeRange;
-    }
-    return "today";
-  }, [searchParams]);
-
-  // Parse selected statuses from URL (for calendar view)
+  // Parse selected statuses from URL
   const selectedStatuses = useMemo(
     () => parseArrayParam<MatchStatus>(searchParams, "status", MATCH_STATUSES as unknown as MatchStatus[]),
     [searchParams]
@@ -118,7 +68,7 @@ function MatchesPageContent() {
     [searchParams]
   );
 
-  // Parse selected date from URL (for calendar view) as LocalDate string
+  // Parse selected date from URL as LocalDate string
   const selectedDate = useMemo((): LocalDate => {
     const dateParam = searchParams.get("date");
     if (dateParam && isValidLocalDate(dateParam)) {
@@ -163,48 +113,22 @@ function MatchesPageContent() {
 
   // Construct filters for query (used for both API and mock fallback)
   const filters: MatchFilters = useMemo(() => {
-    // Map view to status filter
-    // Each view has a default status, but user can further filter if multiple statuses exist
-    let status: MatchFilters["status"];
-    if (activeView === "upcoming") {
-      // Default: scheduled, but allow user to filter within upcoming statuses
-      status = selectedStatuses.length > 0 ? selectedStatuses : ["scheduled"];
-    } else if (activeView === "finished") {
-      // Default: ft, but allow user to filter within finished statuses
-      status = selectedStatuses.length > 0 ? selectedStatuses : ["ft"];
-    } else {
-      // Calendar view: use selected statuses or show all
-      status = selectedStatuses.length > 0 ? selectedStatuses : undefined;
-    }
-
     return {
-      status,
+      status: selectedStatuses.length > 0 ? selectedStatuses : undefined,
       leagues: selectedLeagues.length > 0 ? selectedLeagues : undefined,
       search: searchValue || undefined,
     };
-  }, [activeView, selectedLeagues, selectedStatuses, searchValue]);
+  }, [selectedLeagues, selectedStatuses, searchValue]);
 
-  // Calculate hours for API based on view (for non-calendar views)
-  const hoursForApi = useMemo(() => {
-    if (activeView === "calendar") {
-      return undefined; // Use fromTime/toTime instead
-    }
-    return timeRangeToHours(selectedTimeRange, activeView);
-  }, [activeView, selectedTimeRange]);
-
-  // Calculate UTC time range for calendar view
+  // Calculate UTC time range for selected date
   const { fromTime, toTime } = useMemo(() => {
-    if (activeView !== "calendar") {
-      return { fromTime: undefined, toTime: undefined };
-    }
-    // Convert selected LocalDate to UTC range for the whole day
     return {
       fromTime: localDateToUtcStartIso(selectedDate),
       toTime: localDateToUtcEndIso(selectedDate),
     };
-  }, [activeView, selectedDate, localDateToUtcStartIso, localDateToUtcEndIso]);
+  }, [selectedDate, localDateToUtcStartIso, localDateToUtcEndIso]);
 
-  // Fetch data from API with view-specific status
+  // Fetch data from API
   const {
     matches: apiMatches,
     pagination,
@@ -214,7 +138,6 @@ function MatchesPageContent() {
     refetch,
   } = useMatchesApi({
     status: filters.status,
-    hours: hoursForApi,
     fromTime,
     toTime,
     page: currentPage,
@@ -288,23 +211,15 @@ function MatchesPageContent() {
   const buildUrl = useCallback(
     (overrides: {
       id?: number | null;
-      view?: MatchesView;
-      range?: TimeRange;
       league?: string[];
       status?: MatchStatus[];
       div?: DivergenceCategory[];
       q?: string;
       date?: LocalDate;
     }) => {
-      const view = overrides.view ?? activeView;
       const params = buildSearchParams({
         id: overrides.id === undefined ? selectedMatchId : overrides.id,
-        view,
-        // Only include range for upcoming/finished views
-        range: view !== "calendar" ? (overrides.range ?? selectedTimeRange) : undefined,
-        // Only include date for calendar view (as YYYY-MM-DD string)
-        date: view === "calendar" ? (overrides.date ?? selectedDate) : undefined,
-        // Include status for all views (intelligent filtering)
+        date: overrides.date ?? selectedDate,
         status: overrides.status ?? selectedStatuses,
         league: overrides.league ?? selectedLeagues,
         div: overrides.div ?? selectedDivergences,
@@ -313,7 +228,7 @@ function MatchesPageContent() {
       const search = params.toString();
       return `${BASE_PATH}${search ? `?${search}` : ""}`;
     },
-    [selectedMatchId, activeView, selectedTimeRange, selectedDate, selectedStatuses, selectedLeagues, selectedDivergences, searchValue]
+    [selectedMatchId, selectedDate, selectedStatuses, selectedLeagues, selectedDivergences, searchValue]
   );
 
   // Handle row click - update URL with router.replace (no history entry)
@@ -329,26 +244,7 @@ function MatchesPageContent() {
     router.replace(buildUrl({ id: null }), { scroll: false });
   }, [router, buildUrl]);
 
-  // Handle view change - reset page to 1 and clear status filter
-  const handleViewChange = useCallback(
-    (view: MatchesView) => {
-      setCurrentPage(1);
-      // Clear status filter when changing views (each view has different available statuses)
-      router.replace(buildUrl({ view, id: null, status: [] }), { scroll: false });
-    },
-    [router, buildUrl]
-  );
-
-  // Handle time range change - reset page to 1
-  const handleTimeRangeChange = useCallback(
-    (range: TimeRange) => {
-      setCurrentPage(1);
-      router.replace(buildUrl({ range }), { scroll: false });
-    },
-    [router, buildUrl]
-  );
-
-  // Handle date change (calendar view) - reset page to 1
+  // Handle date change - reset page to 1
   const handleDateChange = useCallback(
     (date: LocalDate) => {
       setCurrentPage(1);
@@ -357,7 +253,7 @@ function MatchesPageContent() {
     [router, buildUrl]
   );
 
-  // Handle status filter change (calendar view)
+  // Handle status filter change
   const handleStatusChange = useCallback(
     (status: MatchStatus, checked: boolean) => {
       const newStatuses = toggleArrayValue(selectedStatuses, status, checked);
@@ -418,10 +314,6 @@ function MatchesPageContent() {
       <MatchesFilterPanel
         collapsed={leftRailCollapsed}
         onToggleCollapse={handleLeftRailToggle}
-        activeView={activeView}
-        onViewChange={handleViewChange}
-        selectedTimeRange={selectedTimeRange}
-        onTimeRangeChange={handleTimeRangeChange}
         selectedDate={selectedDate}
         onDateChange={handleDateChange}
         matches={matches}
@@ -504,12 +396,12 @@ function MatchesLoading() {
  * Matches Page
  *
  * Master-detail pattern with:
- * - FilterPanel (collapsible, left) with Upcoming/Finished tabs
+ * - FilterPanel (collapsible, left) with date picker and filters
  * - DataTable (center)
  * - DetailDrawer (overlay, right, no reflow)
  *
  * URL sync (full state):
- * - Canonical: /matches?view=calendar&date=2026-01-23&id=123&league=Premier%20League&q=arsenal
+ * - Canonical: /matches?date=2026-01-23&id=123&league=Premier%20League&q=arsenal
  * - Uses router.replace with scroll:false
  */
 export default function MatchesPage() {

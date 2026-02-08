@@ -1,15 +1,11 @@
 "use client";
 
 import { useMemo } from "react";
-import { Trophy, Calendar, Activity, GitCompareArrows } from "lucide-react";
+import { Trophy, Activity, GitCompareArrows } from "lucide-react";
 import { FilterPanel, FilterGroup } from "@/components/shell";
-import { MatchesViewTabs, MatchesView } from "./MatchesViewTabs";
 import { DateRangePicker, type LocalDate } from "./DateRangePicker";
 import { MatchSummary, MatchStatus } from "@/lib/types";
 import { type DivergenceCategory } from "@/lib/predictions";
-
-/** Time range options for filtering */
-export type TimeRange = "today" | "24h" | "48h" | "7d";
 
 /** Status display labels */
 const STATUS_LABELS: Record<MatchStatus, string> = {
@@ -24,21 +20,13 @@ const STATUS_LABELS: Record<MatchStatus, string> = {
 interface MatchesFilterPanelProps {
   collapsed: boolean;
   onToggleCollapse: () => void;
-  /** Current view: upcoming, finished, or calendar */
-  activeView: MatchesView;
-  /** Callback when view changes */
-  onViewChange: (view: MatchesView) => void;
-  /** Selected time range (for upcoming/finished views) */
-  selectedTimeRange: TimeRange;
-  /** Callback when time range changes */
-  onTimeRangeChange: (range: TimeRange) => void;
-  /** Selected date (for calendar view) as LocalDate string YYYY-MM-DD */
+  /** Selected date as LocalDate string YYYY-MM-DD */
   selectedDate?: LocalDate;
   /** Callback when selected date changes */
   onDateChange?: (date: LocalDate) => void;
   /** Current matches data (for intelligent filtering) */
   matches?: MatchSummary[];
-  /** Selected statuses (for calendar view) */
+  /** Selected statuses */
   selectedStatuses?: MatchStatus[];
   /** Callback when status filter changes */
   onStatusChange?: (status: MatchStatus, checked: boolean) => void;
@@ -60,10 +48,6 @@ interface MatchesFilterPanelProps {
 export function MatchesFilterPanel({
   collapsed,
   onToggleCollapse,
-  activeView,
-  onViewChange,
-  selectedTimeRange,
-  onTimeRangeChange,
   selectedDate,
   onDateChange,
   matches = [],
@@ -80,7 +64,6 @@ export function MatchesFilterPanel({
   customizeColumnsOpen = false,
 }: MatchesFilterPanelProps) {
   // Get unique leagues from current page matches
-  // Note: These are from the current page only, not the full dataset
   const availableLeagues = useMemo(() => {
     const leagues = new Set<string>();
     for (const match of matches) {
@@ -89,79 +72,22 @@ export function MatchesFilterPanel({
     return Array.from(leagues).sort();
   }, [matches]);
 
-  // Time range labels depend on active view
-  const timeRangeLabels = useMemo(() => {
-    if (activeView === "upcoming") {
-      return {
-        "today": "Today",
-        "24h": "Next 24 hours",
-        "48h": "Next 48 hours",
-        "7d": "Next 7 days",
-      };
-    } else {
-      return {
-        "today": "Today",
-        "24h": "Last 24 hours",
-        "48h": "Last 48 hours",
-        "7d": "Last 7 days",
-      };
-    }
-  }, [activeView]);
-
   // Get available statuses from current matches (intelligent filtering)
   const availableStatuses = useMemo(() => {
     const statuses = new Set<MatchStatus>();
     for (const match of matches) {
       statuses.add(match.status);
     }
-    // Order statuses logically
     const statusOrder: MatchStatus[] = ["scheduled", "live", "ht", "ft", "postponed", "cancelled"];
     return statusOrder.filter((s) => statuses.has(s));
   }, [matches]);
 
-  // Build filter groups based on active view
+  // Build filter groups
   const filterGroups: FilterGroup[] = useMemo(() => {
     const groups: FilterGroup[] = [];
 
-    // Only show time range filter for upcoming/finished views (not calendar)
-    if (activeView !== "calendar") {
-      groups.push({
-        id: "timeRange",
-        label: "Time Range",
-        icon: <Calendar className="h-4 w-4" strokeWidth={1.5} />,
-        options: [
-          {
-            id: "today",
-            label: timeRangeLabels["today"],
-            checked: selectedTimeRange === "today",
-          },
-          {
-            id: "24h",
-            label: timeRangeLabels["24h"],
-            checked: selectedTimeRange === "24h",
-          },
-          {
-            id: "48h",
-            label: timeRangeLabels["48h"],
-            checked: selectedTimeRange === "48h",
-          },
-          {
-            id: "7d",
-            label: timeRangeLabels["7d"],
-            checked: selectedTimeRange === "7d",
-          },
-        ],
-      });
-    }
-
-    // Status filter (intelligent filtering for all views)
-    // Shows only statuses present in current matches
-    // For upcoming/finished views, only show if there are multiple statuses
-    const showStatusFilter = activeView === "calendar"
-      ? availableStatuses.length > 0
-      : availableStatuses.length > 1; // Only show if there's variety in upcoming/finished
-
-    if (showStatusFilter) {
+    // Status filter
+    if (availableStatuses.length > 0) {
       groups.push({
         id: "status",
         label: "Status",
@@ -175,7 +101,6 @@ export function MatchesFilterPanel({
     }
 
     // League filter
-    // Shows leagues from current page without counts to avoid confusion
     if (availableLeagues.length > 0) {
       groups.push({
         id: "league",
@@ -203,14 +128,11 @@ export function MatchesFilterPanel({
 
     return groups;
   }, [
-    activeView,
     availableLeagues,
     availableStatuses,
     selectedDivergences,
     selectedLeagues,
     selectedStatuses,
-    selectedTimeRange,
-    timeRangeLabels,
   ]);
 
   const handleFilterChange = (
@@ -218,10 +140,7 @@ export function MatchesFilterPanel({
     optionId: string,
     checked: boolean
   ) => {
-    if (groupId === "timeRange" && checked) {
-      // Time range is single-select (radio behavior)
-      onTimeRangeChange(optionId as TimeRange);
-    } else if (groupId === "status") {
+    if (groupId === "status") {
       onStatusChange?.(optionId as MatchStatus, checked);
     } else if (groupId === "league") {
       onLeagueChange(optionId, checked);
@@ -230,13 +149,8 @@ export function MatchesFilterPanel({
     }
   };
 
-  // Render tabs in header content slot
-  const headerContent = (
-    <MatchesViewTabs activeView={activeView} onViewChange={onViewChange} />
-  );
-
-  // Render date picker for calendar view
-  const quickFilterContent = activeView === "calendar" && onDateChange ? (
+  // Date picker as quick filter
+  const quickFilterContent = onDateChange ? (
     <DateRangePicker
       value={selectedDate}
       onChange={onDateChange}
@@ -248,7 +162,6 @@ export function MatchesFilterPanel({
       title="Matches"
       collapsed={collapsed}
       onToggleCollapse={onToggleCollapse}
-      headerContent={headerContent}
       quickFilterContent={quickFilterContent}
       groups={filterGroups}
       onFilterChange={handleFilterChange}
