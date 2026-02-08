@@ -21,6 +21,8 @@ export interface DailyModelStats {
   shadow_correct: number;
   /** Correct predictions by Sensor B (from sensor_predictions) */
   sensor_b_correct: number;
+  /** Model A version used that day: "1.0", "1.0.1", or "1.0/1.0.1" (mixed/transition) */
+  model_a_version?: string | null;
 }
 
 /**

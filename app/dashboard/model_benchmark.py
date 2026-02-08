@@ -57,6 +57,7 @@ class DailyModelStats(BaseModel):
     model_a_correct: int
     shadow_correct: int
     sensor_b_correct: int
+    model_a_version: Optional[str] = None  # "1.0" or "1.0.1" (predominant version that day)
 
 
 class ModelSummary(BaseModel):
@@ -237,6 +238,11 @@ async def get_model_benchmark(
                         ELSE NULL
                     END as market_away_prob,
 
+                    -- Model A: detect which version was used (true = active, false = fallback)
+                    (EXISTS (SELECT 1 FROM predictions p
+                       WHERE p.match_id = m.id AND p.model_version = :model_a_version)
+                    ) as model_a_is_active,
+
                     -- Model A raw probabilities (hybrid: prefer active version, fallback to predecessor)
                     COALESCE(
                       (SELECT p.home_prob FROM predictions p
@@ -333,6 +339,7 @@ async def get_model_benchmark(
             'model_a_correct': 0,
             'shadow_correct': 0,
             'sensor_b_correct': 0,
+            'model_a_active_count': 0,  # How many used active version (vs fallback)
         })
 
         for row in rows:
@@ -346,6 +353,10 @@ async def get_model_benchmark(
                     row.market_home_prob, row.market_draw_prob, row.market_away_prob, actual
                 ):
                     daily_stats[day]['market_correct'] += 1
+
+            # Track which Model A version was used for this match
+            if include_model_a and row.model_a_home is not None and row.model_a_is_active:
+                daily_stats[day]['model_a_active_count'] += 1
 
             # Model A (co-pick logic)
             if include_model_a and row.model_a_home is not None:
@@ -369,6 +380,19 @@ async def get_model_benchmark(
                     daily_stats[day]['sensor_b_correct'] += 1
 
         # Convert to list sorted by date
+        # Determine predominant Model A version per day:
+        #   majority active → "1.0.1", majority fallback → "1.0", mixed → "1.0/1.0.1"
+        def _resolve_model_a_version(stats: dict) -> Optional[str]:
+            total = stats['matches']
+            active = stats['model_a_active_count']
+            if total == 0:
+                return None
+            if active == total:
+                return "1.0.1"
+            if active == 0:
+                return "1.0"
+            return "1.0/1.0.1"  # mixed day (transition)
+
         daily_data = [
             DailyModelStats(
                 date=day,
@@ -377,6 +401,7 @@ async def get_model_benchmark(
                 model_a_correct=stats['model_a_correct'],
                 shadow_correct=stats['shadow_correct'],
                 sensor_b_correct=stats['sensor_b_correct'],
+                model_a_version=_resolve_model_a_version(stats) if include_model_a else None,
             )
             for day, stats in sorted(daily_stats.items())
         ]

@@ -368,11 +368,17 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
               ? ((dailyCorrect / dayData.matches) * 100).toFixed(1)
               : "0.0";
 
+            // For Model A, append version suffix from daily data
+            let displayName = seriesName;
+            if (seriesName === "Model A" && dayData?.model_a_version) {
+              displayName = `Model A (${dayData.model_a_version})`;
+            }
+
             html += `
               <div style="display: flex; align-items: center; gap: 8px; padding: 2px 0;">
                 <span style="color: ${color}; font-size: 14px; width: 16px; text-align: center;">${arrow}</span>
                 <span style="color: #6b7280; font-size: 10px; width: 50px; font-family: monospace;">${deltaStr}</span>
-                <span style="color: #e5e7eb; font-size: 11px; flex: 1;">${seriesName}</span>
+                <span style="color: #e5e7eb; font-size: 11px; flex: 1;">${displayName}</span>
                 <span style="color: #9ca3af; font-size: 10px; font-family: monospace; margin-right: 4px;">${dailyStr}</span>
                 <span style="color: ${color}; font-weight: 600; font-size: 11px; font-family: monospace;">${dailyPercent}%</span>
               </div>
