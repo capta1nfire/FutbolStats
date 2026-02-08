@@ -3805,6 +3805,7 @@ def _calculate_segment_status(home_score: int, away_score: int, predicted: str) 
 @router.get("/matches/{match_id}/odds-history")
 async def get_match_odds_history(
     match_id: int,
+    source: Optional[str] = Query(None, description="Filter by bookmaker source (e.g. Bet365, consensus, Pinnacle)"),
     session: AsyncSession = Depends(get_async_session),
     _: bool = Depends(verify_api_key),
 ):
@@ -3812,10 +3813,7 @@ async def get_match_odds_history(
     Get odds history for a match showing how odds changed over time.
 
     Returns all recorded odds snapshots for the match, ordered by time.
-    Useful for:
-    - Analyzing line movements before the match
-    - Seeing opening vs closing odds
-    - Detecting sharp money movements
+    Optional ?source= filter to view a single bookmaker's history.
     """
     # Get match
     match = await session.get(Match, match_id)
@@ -3826,21 +3824,48 @@ async def get_match_odds_history(
     home_team = await session.get(Team, match.home_team_id)
     away_team = await session.get(Team, match.away_team_id)
 
-    # Get odds history
-    result = await session.execute(
-        select(OddsHistory)
-        .where(OddsHistory.match_id == match_id)
-        .order_by(OddsHistory.recorded_at.asc())
-    )
+    # Get odds history (optionally filtered by source)
+    query = select(OddsHistory).where(OddsHistory.match_id == match_id)
+    if source:
+        query = query.where(OddsHistory.source == source)
+    query = query.order_by(OddsHistory.recorded_at.asc())
+    result = await session.execute(query)
     history = result.scalars().all()
 
-    # Calculate line movement if we have opening and current odds
+    # Available sources for client discovery
+    if source:
+        # Need a separate query for all sources
+        all_sources_result = await session.execute(
+            select(OddsHistory.source)
+            .where(OddsHistory.match_id == match_id)
+            .distinct()
+        )
+        available_sources = sorted([row[0] for row in all_sources_result.fetchall()])
+    else:
+        available_sources = sorted(set(h.source for h in history))
+
+    # P0-1: For movement, use best available source by priority (not hardcoded Bet365)
+    priority_order = ["Bet365", "Pinnacle", "1xBet", "Unibet", "William Hill",
+                      "Betfair", "Bwin", "888sport"]
+    movement_source = source  # If client specified, use that
+    if not movement_source:
+        # Pick best available by priority
+        for pb in priority_order:
+            if pb in available_sources:
+                movement_source = pb
+                break
+        if not movement_source and available_sources:
+            movement_source = available_sources[0]
+
+    # Filter history to single source for movement calculation
+    movement_entries = [h for h in history if h.source == movement_source] if movement_source else []
     movement = None
-    if len(history) >= 2:
-        opening = history[0]
-        current = history[-1]
+    if len(movement_entries) >= 2:
+        opening = movement_entries[0]
+        current = movement_entries[-1]
         if opening.odds_home and current.odds_home:
             movement = {
+                "source": movement_source,
                 "home_change": round(current.odds_home - opening.odds_home, 2),
                 "draw_change": round((current.odds_draw or 0) - (opening.odds_draw or 0), 2),
                 "away_change": round((current.odds_away or 0) - (opening.odds_away or 0), 2),
@@ -3855,6 +3880,7 @@ async def get_match_odds_history(
         "away_team": away_team.name if away_team else "Unknown",
         "match_date": match.date.isoformat() if match.date else None,
         "status": match.status,
+        "available_sources": available_sources,
         "current_odds": {
             "home": match.odds_home,
             "draw": match.odds_draw,

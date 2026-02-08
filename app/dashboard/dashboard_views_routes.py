@@ -1457,13 +1457,14 @@ async def dashboard_movement_recent(
             market_query = """
                 SELECT DISTINCT ON (m.id) m.id, m.date, m.league_id,
                        ht.name as home, at.name as away,
-                       oh.recorded_at
+                       oh.recorded_at, oh.source
                 FROM odds_history oh
                 JOIN matches m ON m.id = oh.match_id
                 JOIN teams ht ON ht.id = m.home_team_id
                 JOIN teams at ON at.id = m.away_team_id
                 WHERE oh.recorded_at > :cutoff
                   AND NOT COALESCE(oh.quarantined, false)
+                  AND oh.source NOT IN ('consensus')
                 ORDER BY m.id, oh.recorded_at DESC
                 LIMIT :limit
             """
@@ -1480,7 +1481,7 @@ async def dashboard_movement_recent(
                     "away": row[4],
                     "type": "market",
                     "captured_at": row[5].isoformat() + "Z" if row[5] else None,
-                    "source": "api-football",
+                    "source": row[6] if row[6] else "unknown",
                 })
 
         # Sort by captured_at (most recent first) and limit
@@ -1588,6 +1589,7 @@ async def dashboard_movement_top(
                     WHERE recorded_at > :cutoff
                       AND NOT COALESCE(quarantined, false)
                       AND implied_home IS NOT NULL
+                      AND source = 'Bet365'
                     WINDOW w AS (PARTITION BY match_id ORDER BY recorded_at
                                  ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
                 ),

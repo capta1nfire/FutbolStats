@@ -634,43 +634,16 @@ class APIFootballProvider(DataProvider):
             logo_url=team_info.get("logo"),
         )
 
-    # Priority bookmakers for reliable odds (best to worst)
-    PRIORITY_BOOKMAKERS = [
-        "Bet365",
-        "Pinnacle",
-        "1xBet",
-        "Unibet",
-        "William Hill",
-        "Betfair",
-        "Bwin",
-        "888sport",
-    ]
-
-    async def get_odds(self, fixture_id: int) -> Optional[dict]:
-        """
-        Fetch betting odds for a fixture.
-
-        Prioritizes major bookmakers (Bet365, Pinnacle) for reliable odds.
-        Returns odds with bookmaker source for transparency.
-        """
-        data = await self._rate_limited_request("odds", {"fixture": fixture_id}, entity="odds")
-        odds_data = data.get("response", [])
-
-        if not odds_data:
-            return None
-
-        # Collect all available odds by bookmaker
+    def _parse_all_odds(self, odds_data: list) -> list[dict]:
+        """Parse API-Football odds response into list of bookmaker odds dicts."""
         all_odds = []
-
         for bookmaker_data in odds_data:
             for bookmaker in bookmaker_data.get("bookmakers", []):
                 bookmaker_name = bookmaker.get("name", "Unknown")
-
                 for bet in bookmaker.get("bets", []):
                     if bet.get("name") in ["Match Winner", "3Way Result", "1X2"]:
                         values = bet.get("values", [])
                         odds = {"bookmaker": bookmaker_name}
-
                         for v in values:
                             if v.get("value") == "Home":
                                 odds["odds_home"] = float(v.get("odd", 0))
@@ -678,23 +651,23 @@ class APIFootballProvider(DataProvider):
                                 odds["odds_draw"] = float(v.get("odd", 0))
                             elif v.get("value") == "Away":
                                 odds["odds_away"] = float(v.get("odd", 0))
-
                         if len(odds) == 4:  # bookmaker + 3 odds
                             all_odds.append(odds)
+        return all_odds
 
-        if not all_odds:
+    async def get_odds_all(self, fixture_id: int) -> Optional[list[dict]]:
+        """
+        Fetch ALL bookmaker odds for a fixture (single API call).
+
+        Returns list of dicts with bookmaker/odds_home/odds_draw/odds_away,
+        or None if no odds available.
+        """
+        data = await self._rate_limited_request("odds", {"fixture": fixture_id}, entity="odds")
+        odds_data = data.get("response", [])
+        if not odds_data:
             return None
-
-        # Find best bookmaker by priority
-        for priority_book in self.PRIORITY_BOOKMAKERS:
-            for odds in all_odds:
-                if odds["bookmaker"].lower() == priority_book.lower():
-                    logger.info(f"Using odds from {priority_book} for fixture {fixture_id}")
-                    return odds
-
-        # Fallback to first available
-        logger.info(f"Using odds from {all_odds[0]['bookmaker']} for fixture {fixture_id}")
-        return all_odds[0]
+        all_odds = self._parse_all_odds(odds_data)
+        return all_odds if all_odds else None
 
     async def get_fixture_statistics(self, fixture_id: int) -> Optional[dict]:
         """Fetch detailed statistics for a fixture."""

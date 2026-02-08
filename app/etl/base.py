@@ -96,17 +96,37 @@ class DataProvider(ABC):
         pass
 
     @abstractmethod
-    async def get_odds(self, fixture_id: int) -> Optional[dict]:
+    async def get_odds_all(self, fixture_id: int) -> Optional[list[dict]]:
         """
-        Fetch betting odds for a fixture.
-
-        Args:
-            fixture_id: The fixture external ID.
+        Fetch all bookmaker odds for a fixture.
 
         Returns:
-            Dictionary with odds_home, odds_draw, odds_away or None.
+            List of dicts with bookmaker/odds_home/odds_draw/odds_away, or None.
         """
         pass
+
+    # Priority bookmakers for selecting "primary" odds (best to worst)
+    PRIORITY_BOOKMAKERS = [
+        "Bet365", "Pinnacle", "1xBet", "Unibet",
+        "William Hill", "Betfair", "Bwin", "888sport",
+    ]
+
+    async def get_odds(self, fixture_id: int) -> Optional[dict]:
+        """
+        Fetch best-priority bookmaker odds for a fixture.
+        Calls get_odds_all() internally (single API call).
+
+        Returns:
+            Dictionary with bookmaker/odds_home/odds_draw/odds_away or None.
+        """
+        all_odds = await self.get_odds_all(fixture_id)
+        if not all_odds:
+            return None
+        for priority_book in self.PRIORITY_BOOKMAKERS:
+            for odds in all_odds:
+                if odds["bookmaker"].lower() == priority_book.lower():
+                    return odds
+        return all_odds[0]
 
     @abstractmethod
     async def close(self) -> None:

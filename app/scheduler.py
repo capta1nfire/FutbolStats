@@ -4127,6 +4127,8 @@ async def sync_odds_for_upcoming_matches() -> dict:
         "scanned": 0,
         "updated": 0,
         "odds_history_saved": 0,
+        "bookmakers_captured": 0,
+        "consensus_calculated": 0,
         "skipped_fresh": 0,
         "skipped_no_external_id": 0,
         "api_calls": 0,
@@ -4198,79 +4200,116 @@ async def sync_odds_for_upcoming_matches() -> dict:
                         break
 
                     try:
-                        # Fetch odds from API
-                        odds_data = await provider.get_odds(external_id)
+                        # Fetch ALL bookmaker odds (single API call)
+                        all_odds_data = await provider.get_odds_all(external_id)
                         metrics["api_calls"] += 1
 
-                        if not odds_data:
-                            # API returned no odds (not available for this fixture)
+                        if not all_odds_data:
                             metrics["api_empty"] += 1
                             record_odds_sync_request("empty", 0)
                             logger.debug(f"No odds available for match {match_id} (external: {external_id})")
                             continue
 
-                        # Validate odds before writing
-                        odds_home = odds_data.get("odds_home")
-                        odds_draw = odds_data.get("odds_draw")
-                        odds_away = odds_data.get("odds_away")
+                        # Pick primary bookmaker by priority for matches.odds_*
+                        primary_odds = None
+                        for priority_book in provider.PRIORITY_BOOKMAKERS:
+                            for odds in all_odds_data:
+                                if odds["bookmaker"].lower() == priority_book.lower():
+                                    primary_odds = odds
+                                    break
+                            if primary_odds:
+                                break
+                        if not primary_odds:
+                            primary_odds = all_odds_data[0]
 
-                        validation = validate_odds_1x2(
-                            odds_home=odds_home,
-                            odds_draw=odds_draw,
-                            odds_away=odds_away,
-                            book=odds_data.get("bookmaker", "unknown"),
+                        # Validate primary before writing to matches
+                        p_home = primary_odds.get("odds_home")
+                        p_draw = primary_odds.get("odds_draw")
+                        p_away = primary_odds.get("odds_away")
+                        primary_validation = validate_odds_1x2(
+                            odds_home=p_home, odds_draw=p_draw, odds_away=p_away,
+                            book=primary_odds.get("bookmaker", "unknown"),
                         )
 
-                        if not validation.is_usable:
+                        if primary_validation.is_usable:
+                            await session.execute(text("""
+                                UPDATE matches
+                                SET odds_home = :odds_home,
+                                    odds_draw = :odds_draw,
+                                    odds_away = :odds_away,
+                                    odds_recorded_at = NOW()
+                                WHERE id = :match_id
+                            """), {
+                                "match_id": match_id,
+                                "odds_home": p_home,
+                                "odds_draw": p_draw,
+                                "odds_away": p_away,
+                            })
+                            metrics["updated"] += 1
+                            record_odds_sync_request("ok", 0)
+                        else:
                             logger.warning(
-                                f"Odds sync: Rejecting invalid odds for match {match_id}: "
-                                f"H={odds_home}, D={odds_draw}, A={odds_away}, "
-                                f"violations={validation.violations}"
+                                f"Odds sync: Primary odds invalid for match {match_id}: "
+                                f"violations={primary_validation.violations}"
                             )
-                            record_odds_sync_request("error", 0)
-                            metrics["api_errors"] += 1
-                            continue
 
-                        # Update match with validated odds
-                        await session.execute(text("""
-                            UPDATE matches
-                            SET odds_home = :odds_home,
-                                odds_draw = :odds_draw,
-                                odds_away = :odds_away,
-                                odds_recorded_at = NOW()
-                            WHERE id = :match_id
-                        """), {
-                            "match_id": match_id,
-                            "odds_home": odds_home,
-                            "odds_draw": odds_draw,
-                            "odds_away": odds_away,
-                        })
-                        metrics["updated"] += 1
-                        record_odds_sync_request("ok", 0)
-
-                        # Fix A: Persist snapshot to odds_history
-                        bookmaker = odds_data.get("bookmaker", "api_football")
-                        # Check if this is the first snapshot for this match (opening odds)
-                        existing = await session.execute(text(
-                            "SELECT COUNT(*) FROM odds_history WHERE match_id = :mid"
+                        # P1-2: Batch is_opening check — one query to get existing sources
+                        existing_sources_result = await session.execute(text(
+                            "SELECT DISTINCT source FROM odds_history WHERE match_id = :mid"
                         ), {"mid": match_id})
-                        is_opening = existing.scalar() == 0
+                        existing_sources = {row[0] for row in existing_sources_result.fetchall()}
 
-                        history_entry = OddsHistory.from_odds(
-                            match_id=match_id,
-                            odds_home=odds_home,
-                            odds_draw=odds_draw,
-                            odds_away=odds_away,
-                            source=bookmaker,
-                            is_opening=is_opening,
-                        )
-                        session.add(history_entry)
-                        metrics["odds_history_saved"] += 1
+                        # Loop ALL bookmakers: validate + insert into odds_history
+                        books_saved = 0
+                        for book_odds in all_odds_data:
+                            bk_name = book_odds.get("bookmaker", "unknown")
+                            bk_home = book_odds.get("odds_home")
+                            bk_draw = book_odds.get("odds_draw")
+                            bk_away = book_odds.get("odds_away")
+
+                            bk_validation = validate_odds_1x2(
+                                odds_home=bk_home, odds_draw=bk_draw, odds_away=bk_away,
+                                book=bk_name,
+                            )
+                            if not bk_validation.is_usable:
+                                continue
+
+                            is_opening = bk_name not in existing_sources
+                            history_entry = OddsHistory.from_odds(
+                                match_id=match_id,
+                                odds_home=bk_home, odds_draw=bk_draw, odds_away=bk_away,
+                                source=bk_name,
+                                is_opening=is_opening,
+                            )
+                            session.add(history_entry)
+                            books_saved += 1
+                            if is_opening:
+                                existing_sources.add(bk_name)
+
+                        metrics["odds_history_saved"] += books_saved
+                        metrics["bookmakers_captured"] = metrics.get("bookmakers_captured", 0) + books_saved
+
+                        # Calculate and persist consensus
+                        from app.ml.consensus import calculate_consensus
+                        consensus = calculate_consensus(all_odds_data)
+                        if consensus:
+                            is_opening_c = "consensus" not in existing_sources
+                            consensus_entry = OddsHistory.from_odds(
+                                match_id=match_id,
+                                odds_home=consensus["odds_home"],
+                                odds_draw=consensus["odds_draw"],
+                                odds_away=consensus["odds_away"],
+                                source="consensus",
+                                is_opening=is_opening_c,
+                            )
+                            session.add(consensus_entry)
+                            metrics["odds_history_saved"] += 1
+                            metrics["consensus_calculated"] = metrics.get("consensus_calculated", 0) + 1
 
                         logger.debug(
-                            f"Odds sync: Updated match {match_id}: "
-                            f"H={odds_home:.2f}, D={odds_draw:.2f}, A={odds_away:.2f} "
-                            f"(source: {bookmaker}, opening={is_opening})"
+                            f"Odds sync: match {match_id}: "
+                            f"primary={primary_odds.get('bookmaker')}, "
+                            f"books={books_saved}, consensus={'yes' if consensus else 'no'}"
                         )
 
                     except APIBudgetExceeded as e:
@@ -4307,7 +4346,8 @@ async def sync_odds_for_upcoming_matches() -> dict:
         logger.info(
             f"Odds sync complete: "
             f"scanned={metrics['scanned']}, updated={metrics['updated']}, "
-            f"odds_history_saved={metrics['odds_history_saved']}, "
+            f"odds_history={metrics['odds_history_saved']} "
+            f"(books={metrics['bookmakers_captured']}, consensus={metrics['consensus_calculated']}), "
             f"api_calls={metrics['api_calls']}, empty={metrics['api_empty']}, "
             f"errors_429={metrics['errors_429']}, duration={duration_ms:.0f}ms"
         )
