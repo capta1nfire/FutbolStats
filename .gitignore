@@ -51,5 +51,8 @@ ios/**/Secrets.xcconfig
 # Claude / AI tooling scratch (should never be committed)
 .claude/
 
+# Script output (generated data, diagnostics)
+scripts/output/
+
 # Local screenshots / scratch assets
 ios/FutbolStats/FutbolStats/capta.PNG
