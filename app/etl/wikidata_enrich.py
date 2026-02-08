@@ -434,11 +434,13 @@ def merge_enrichment_data(
     wikidata: Optional[dict],
     wikipedia: Optional[dict],
     override: Optional[dict],
+    venue: Optional[dict] = None,
 ) -> dict[str, Any]:
     """
-    Merge enrichment data with cascade priority: override > wikidata > wikipedia.
+    Merge enrichment data with cascade priority: override > wikidata > wikipedia > venue.
 
     Only fills missing fields from lower priority sources.
+    Venue data comes from matches.venue_name/venue_city (lowest priority fallback).
 
     ABE fix: raw_jsonb now preserves ALL source payloads for full provenance.
     When fallback is used, structure is: {"wikidata": <raw>, "wikipedia": <raw>}
@@ -472,6 +474,7 @@ def merge_enrichment_data(
 
     # Apply in reverse priority order (lowest first, highest last wins)
     for source_name, source_data in [
+        ("venue", venue),
         ("wikipedia", wikipedia),
         ("wikidata", wikidata),
         ("override", override),
@@ -509,8 +512,45 @@ def merge_enrichment_data(
             merged["enrichment_source"] = "wikidata+wikipedia"
     elif wikipedia:
         merged["enrichment_source"] = "wikipedia"
+    elif venue:
+        merged["enrichment_source"] = "venue_harvest"
 
     return merged
+
+
+async def _get_venue_fallback(session: AsyncSession, team_id: int) -> Optional[dict]:
+    """
+    Fallback: get stadium_name and admin_location_label from matches.venue_name/city.
+
+    Uses the most frequent venue from home league matches (filters neutral venues from cups).
+    Returns dict with stadium_name/admin_location_label keys, or None.
+    """
+    result = await session.execute(
+        text("""
+            SELECT venue_name, venue_city, COUNT(*) AS freq
+            FROM matches m
+            JOIN admin_leagues al ON al.league_id = m.league_id
+            WHERE m.home_team_id = :team_id
+              AND m.venue_name IS NOT NULL
+              AND al.kind = 'league'
+              AND m.status IN ('FT','AET','PEN')
+              AND m.date >= NOW() - INTERVAL '365 days'
+            GROUP BY venue_name, venue_city
+            ORDER BY freq DESC
+            LIMIT 1
+        """),
+        {"team_id": team_id},
+    )
+    row = result.fetchone()
+    if not row or not row.venue_name:
+        return None
+
+    data: dict[str, Any] = {}
+    if row.venue_name:
+        data["stadium_name"] = row.venue_name
+    if row.venue_city:
+        data["admin_location_label"] = row.venue_city
+    return data if data else None
 
 
 async def run_wikidata_enrichment_batch(
@@ -605,15 +645,26 @@ async def run_wikidata_enrichment_batch(
                     if wikipedia_data:
                         wikipedia_fallbacks += 1
 
+            # Step 3.5: Venue fallback if still missing stadium/city
+            venue_data = None
+            needs_venue = (
+                (not wikidata_data or not wikidata_data.get("stadium_name"))
+                and (not wikipedia_data or not wikipedia_data.get("stadium_name"))
+                and (not override_data or not override_data.get("stadium_name"))
+            )
+            if needs_venue:
+                venue_data = await _get_venue_fallback(session, team_id)
+
             # Step 4: Merge with cascade priority
             merged_data = merge_enrichment_data(
                 wikidata=wikidata_data,
                 wikipedia=wikipedia_data,
                 override=override_data,
+                venue=venue_data,
             )
 
             # Only upsert if we have any data
-            if wikidata_data or wikipedia_data or override_data:
+            if wikidata_data or wikipedia_data or override_data or venue_data:
                 await _upsert_enrichment(session, team_id, wikidata_id, merged_data)
                 enriched += 1
             else:
