@@ -94,31 +94,6 @@ function MatrixCell({
     );
   }
 
-  // Guardrail: don't render numeric values for insufficient N (<20)
-  if (cell.confidence_tier === "insufficient") {
-    const tooltipLines = [
-      `${sourceName} vs Pinnacle`,
-      `League: ${leagueName}`,
-      `Insufficient data (N=${cell.n})`,
-    ];
-    return (
-      <td className="px-2 py-1.5 text-center text-[11px] text-muted-foreground/40 whitespace-nowrap">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="cursor-default">--</span>
-          </TooltipTrigger>
-          <TooltipContent side="top" className="max-w-xs">
-            <div className="text-xs space-y-0.5">
-              {tooltipLines.map((line, i) => (
-                <div key={i}>{line}</div>
-              ))}
-            </div>
-          </TooltipContent>
-        </Tooltip>
-      </td>
-    );
-  }
-
   const value = getCellValue(cell, metric);
   const displayValue = formatCellValue(value, metric);
   const color = getCellColor(value, metric);
@@ -427,7 +402,7 @@ function GlobalCell({
   metric: BenchmarkMetric;
   sourceName: string;
 }) {
-  if (!cell || cell.n === 0 || cell.confidence_tier === "insufficient") {
+  if (!cell || cell.n === 0) {
     return <span className="text-[11px] text-muted-foreground/40">--</span>;
   }
 
