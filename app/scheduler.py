@@ -6490,6 +6490,129 @@ async def sota_sofascore_stats_backfill() -> dict:
         return {"status": "error", "error": str(e), "duration_ms": duration_ms}
 
 
+async def sota_fotmob_refs_sync() -> dict:
+    """
+    Sync FotMob refs (match_external_refs) for FT matches in eligible leagues.
+
+    Links internal matches to FotMob match IDs for xG capture.
+    ABE P0-8: Only confirmed leagues execute.
+
+    Frequency: Every 12 hours
+    Guardrail: FOTMOB_REFS_ENABLED setting
+    """
+    import time as _time
+    from datetime import datetime
+
+    start_time = _time.time()
+    started_at = datetime.utcnow()
+    job_name = "sota_fotmob_refs_sync"
+
+    try:
+        from app.config import get_settings
+        settings = get_settings()
+        if not settings.FOTMOB_REFS_ENABLED:
+            logger.debug(f"[{job_name}] Disabled (set FOTMOB_REFS_ENABLED=true to enable)")
+            return {"status": "disabled"}
+    except Exception:
+        return {"status": "disabled"}
+
+    metrics = {"started_at": started_at.isoformat()}
+
+    try:
+        from app.etl.sota_jobs import sync_fotmob_refs
+        from app.jobs.tracking import record_job_run as record_job_run_db
+
+        async with AsyncSessionLocal() as session:
+            stats = await sync_fotmob_refs(session, days=7, limit=200)
+            metrics.update(stats)
+
+            duration_ms = (_time.time() - start_time) * 1000
+            status = "ok" if metrics.get("errors", 0) == 0 else "partial"
+            await record_job_run_db(session, job_name, status, started_at, metrics=metrics)
+
+        record_job_run(job=job_name, status=status, duration_ms=duration_ms)
+        logger.info(
+            f"[{job_name}] Complete: linked_auto={metrics.get('linked_auto', 0)} "
+            f"linked_review={metrics.get('linked_review', 0)}"
+        )
+        return {**metrics, "status": status, "duration_ms": duration_ms}
+
+    except Exception as e:
+        duration_ms = (_time.time() - start_time) * 1000
+        logger.error(f"[{job_name}] Failed: {e}", exc_info=True)
+        sentry_capture_exception(e, job_id=job_name)
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        try:
+            from app.jobs.tracking import record_job_run as record_job_run_db
+            async with AsyncSessionLocal() as session:
+                await record_job_run_db(session, job_name, "error", started_at, error=str(e))
+        except Exception:
+            pass
+        return {"status": "error", "error": str(e), "duration_ms": duration_ms}
+
+
+async def sota_fotmob_xg_backfill() -> dict:
+    """
+    Backfill FotMob xG for linked FT matches.
+
+    Fetches team-level xG/xGOT from FotMob matchDetails endpoint.
+    ABE P0-4: captured_at = match_date + 6h.
+    ABE P0-8: Only confirmed leagues execute.
+
+    Frequency: Every 6 hours
+    Guardrail: FOTMOB_XG_ENABLED setting
+    """
+    import time as _time
+    from datetime import datetime
+
+    start_time = _time.time()
+    started_at = datetime.utcnow()
+    job_name = "sota_fotmob_xg_backfill"
+
+    try:
+        from app.config import get_settings
+        settings = get_settings()
+        if not settings.FOTMOB_XG_ENABLED:
+            logger.debug(f"[{job_name}] Disabled (set FOTMOB_XG_ENABLED=true to enable)")
+            return {"status": "disabled"}
+    except Exception:
+        return {"status": "disabled"}
+
+    metrics = {"started_at": started_at.isoformat()}
+
+    try:
+        from app.etl.sota_jobs import backfill_fotmob_xg_ft
+        from app.jobs.tracking import record_job_run as record_job_run_db
+
+        async with AsyncSessionLocal() as session:
+            stats = await backfill_fotmob_xg_ft(session, days=7, limit=100)
+            metrics.update(stats)
+
+            duration_ms = (_time.time() - start_time) * 1000
+            status = "ok" if metrics.get("errors", 0) == 0 else "partial"
+            await record_job_run_db(session, job_name, status, started_at, metrics=metrics)
+
+        record_job_run(job=job_name, status=status, duration_ms=duration_ms)
+        logger.info(
+            f"[{job_name}] Complete: captured={metrics.get('captured', 0)} "
+            f"skipped_no_xg={metrics.get('skipped_no_xg', 0)}"
+        )
+        return {**metrics, "status": status, "duration_ms": duration_ms}
+
+    except Exception as e:
+        duration_ms = (_time.time() - start_time) * 1000
+        logger.error(f"[{job_name}] Failed: {e}", exc_info=True)
+        sentry_capture_exception(e, job_id=job_name)
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        try:
+            from app.jobs.tracking import record_job_run as record_job_run_db
+            async with AsyncSessionLocal() as session:
+                await record_job_run_db(session, job_name, "error", started_at, error=str(e))
+        except Exception:
+            pass
+        return {"status": "error", "error": str(e), "duration_ms": duration_ms}
+
+
 async def titan_feature_matrix_runner() -> dict:
     """
     TITAN Feature Matrix Runner - materializes features for upcoming matches.
@@ -7413,6 +7536,32 @@ def start_scheduler(ml_engine):
         name="SOTA Sofascore Stats Backfill (every 6h)",
         replace_existing=True,
         next_run_time=datetime.utcnow() + timedelta(seconds=65),  # Offset: +65s
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=6 * 3600,
+    )
+
+    # SOTA: FotMob refs sync - every 12h (ABE P0-1: scheduler-only, P0-8: confirmed leagues)
+    scheduler.add_job(
+        sota_fotmob_refs_sync,
+        trigger=IntervalTrigger(hours=12),
+        id="sota_fotmob_refs_sync",
+        name="SOTA FotMob Refs Sync (every 12h)",
+        replace_existing=True,
+        next_run_time=datetime.utcnow() + timedelta(seconds=75),  # Offset: +75s
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=12 * 3600,
+    )
+
+    # SOTA: FotMob xG backfill - every 6h (requires refs to exist first)
+    scheduler.add_job(
+        sota_fotmob_xg_backfill,
+        trigger=IntervalTrigger(hours=6),
+        id="sota_fotmob_xg_backfill",
+        name="SOTA FotMob xG Backfill (every 6h)",
+        replace_existing=True,
+        next_run_time=datetime.utcnow() + timedelta(seconds=85),  # Offset: +85s
         max_instances=1,
         coalesce=True,
         misfire_grace_time=6 * 3600,

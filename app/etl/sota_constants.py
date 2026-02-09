@@ -93,3 +93,37 @@ LEAGUE_PROXY_COUNTRY: dict[int, str] = {
     3: "de",    # Europa League
     848: "de",  # Conference League
 }
+
+# FotMob league ID mapping (API-Football ID → FotMob league ID)
+# Only CONFIRMED entries are processed by jobs (see FOTMOB_CONFIRMED_XG_LEAGUES).
+LEAGUE_ID_TO_FOTMOB: dict[int, int] = {
+    128: 112,   # Argentina Primera División (CONFIRMED)
+    71: 268,    # Brazil Serie A (TBD: verify)
+    239: 11535, # Colombia Primera A (TBD: verify)
+    250: 14056, # Paraguay Apertura (TBD: verify)
+    252: 14056, # Paraguay Clausura (TBD: verify)
+    265: 11653, # Chile Primera División (TBD: verify)
+    242: 14064, # Ecuador Liga Pro (TBD: verify)
+    268: 13475, # Uruguay Apertura (TBD: verify)
+    270: 13475, # Uruguay Clausura (TBD: verify)
+    281: 14070, # Perú Liga 1 (TBD: verify)
+    299: 17015, # Venezuela Primera División (TBD: verify)
+    344: 15736, # Bolivia Primera División (TBD: verify)
+    253: 130,   # MLS (TBD: verify)
+    262: 230,   # Mexico Liga MX (TBD: verify)
+    307: 955,   # Saudi Pro League (TBD: verify)
+    88: 57,     # Eredivisie (TBD: verify)
+    94: 61,     # Primeira Liga (TBD: verify)
+    144: 54,    # Belgian Pro League (TBD: verify)
+    203: 71,    # Süper Lig (TBD: verify)
+    40: 47,     # EFL Championship (TBD: verify)
+    2: 42,      # Champions League (TBD: verify)
+    3: 73,      # Europa League (TBD: verify)
+    848: 10216, # Conference League (TBD: verify)
+}
+
+# P0-8: Only confirmed leagues are eligible for FotMob jobs.
+# Jobs enforce: eligible = parsed_config ∩ FOTMOB_CONFIRMED_XG_LEAGUES
+FOTMOB_CONFIRMED_XG_LEAGUES: set[int] = {
+    128,  # Argentina Primera División (CONFIRMED 2026-02-08)
+}

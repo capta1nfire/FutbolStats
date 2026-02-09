@@ -1639,3 +1639,366 @@ async def backfill_sofascore_stats_ft(
         await provider.close()
 
     return metrics
+
+
+# =============================================================================
+# FOTMOB xG JOBS (ABE P0 2026-02-08)
+# =============================================================================
+
+
+async def sync_fotmob_refs(
+    session: AsyncSession,
+    days: int = 7,
+    limit: int = 200,
+) -> dict:
+    """
+    Link finished matches to FotMob match IDs for xG-eligible leagues.
+
+    P0-2: Auto-link at score >= 0.90, needs_review at 0.75-0.90.
+    P0-8: Only confirmed leagues (eligible = config ∩ FOTMOB_CONFIRMED_XG_LEAGUES).
+
+    Args:
+        session: Database session.
+        days: Days back to scan for unlinked FT matches.
+        limit: Max matches to process per run.
+
+    Returns:
+        Dict with metrics.
+    """
+    from app.config import get_settings
+    from app.etl.fotmob_provider import FotmobProvider
+    from app.etl.sofascore_provider import calculate_match_score
+    from app.etl.sofascore_aliases import build_alias_index
+    from app.etl.sota_constants import (
+        FOTMOB_CONFIRMED_XG_LEAGUES,
+        LEAGUE_ID_TO_FOTMOB,
+    )
+
+    settings = get_settings()
+    metrics = {
+        "scanned": 0,
+        "already_linked": 0,
+        "linked_auto": 0,
+        "linked_review": 0,
+        "skipped_no_candidates": 0,
+        "skipped_low_score": 0,
+        "skipped_no_mapping": 0,
+        "errors": 0,
+    }
+
+    # P0-8: Only process confirmed leagues
+    parsed_leagues = {int(x) for x in settings.FOTMOB_XG_LEAGUES.split(",") if x.strip()}
+    eligible_leagues = parsed_leagues & FOTMOB_CONFIRMED_XG_LEAGUES
+
+    if not eligible_leagues:
+        logger.info("[FOTMOB-REFS] No eligible leagues (config ∩ confirmed = ∅)")
+        return metrics
+
+    alias_index = build_alias_index()
+    provider = FotmobProvider()
+
+    try:
+        league_ids_str = ",".join(str(lid) for lid in eligible_leagues)
+        cutoff = datetime.utcnow() - timedelta(days=days)
+
+        # FT matches in eligible leagues without fotmob ref
+        result = await session.execute(text(f"""
+            SELECT
+                m.id AS match_id,
+                m.date AS kickoff_utc,
+                m.league_id,
+                t_home.name AS home_team,
+                t_away.name AS away_team
+            FROM matches m
+            JOIN teams t_home ON m.home_team_id = t_home.id
+            JOIN teams t_away ON m.away_team_id = t_away.id
+            LEFT JOIN match_external_refs mer
+                ON m.id = mer.match_id AND mer.source = 'fotmob'
+            WHERE m.status IN ('FT', 'AET', 'PEN')
+              AND m.date >= :cutoff
+              AND m.league_id IN ({league_ids_str})
+              AND mer.id IS NULL
+            ORDER BY m.date DESC
+            LIMIT :limit
+        """), {"cutoff": cutoff, "limit": limit})
+
+        matches = result.fetchall()
+        metrics["scanned"] = len(matches)
+
+        if not matches:
+            logger.debug("[FOTMOB-REFS] No unlinked FT matches found")
+            return metrics
+
+        # Group by league for efficient fixture fetching
+        matches_by_league: dict[int, list] = {}
+        for match in matches:
+            lid = match.league_id
+            if lid not in matches_by_league:
+                matches_by_league[lid] = []
+            matches_by_league[lid].append(match)
+
+        # Process each league
+        for league_id, league_matches in matches_by_league.items():
+            fotmob_league_id = LEAGUE_ID_TO_FOTMOB.get(league_id)
+            if not fotmob_league_id:
+                metrics["skipped_no_mapping"] += len(league_matches)
+                logger.warning("[FOTMOB-REFS] No FotMob mapping for league %d", league_id)
+                continue
+
+            cc = LEAGUE_PROXY_COUNTRY.get(league_id)
+            fm_fixtures, error = await provider.get_league_fixtures(fotmob_league_id, cc)
+
+            if error or not fm_fixtures:
+                metrics["errors"] += 1
+                logger.warning("[FOTMOB-REFS] Failed to fetch fixtures for league %d: %s",
+                               league_id, error)
+                continue
+
+            # Only finished FotMob fixtures
+            fm_finished = [f for f in fm_fixtures if f.status == "finished"]
+
+            for match in league_matches:
+                try:
+                    best_score = 0.0
+                    best_fixture = None
+                    best_matched_by = ""
+
+                    for fm in fm_finished:
+                        score, matched_by = calculate_match_score(
+                            our_home=match.home_team,
+                            our_away=match.away_team,
+                            our_kickoff=match.kickoff_utc,
+                            sf_home=fm.home_team,
+                            sf_away=fm.away_team,
+                            sf_kickoff=fm.kickoff_utc,
+                            alias_index=alias_index,
+                        )
+                        if score > best_score:
+                            best_score = score
+                            best_fixture = fm
+                            best_matched_by = matched_by
+
+                    if best_score >= 0.90 and best_fixture:
+                        # Auto-link (P0-2)
+                        await session.execute(text("""
+                            INSERT INTO match_external_refs
+                                (match_id, source, source_match_id, confidence, matched_by)
+                            VALUES (:match_id, 'fotmob', :source_match_id, :confidence, :matched_by)
+                            ON CONFLICT (match_id, source) DO UPDATE SET
+                                source_match_id = EXCLUDED.source_match_id,
+                                confidence = EXCLUDED.confidence,
+                                matched_by = EXCLUDED.matched_by
+                        """), {
+                            "match_id": match.match_id,
+                            "source_match_id": str(best_fixture.fotmob_id),
+                            "confidence": best_score,
+                            "matched_by": best_matched_by,
+                        })
+                        metrics["linked_auto"] += 1
+
+                    elif best_score >= 0.75 and best_fixture:
+                        # Needs review
+                        await session.execute(text("""
+                            INSERT INTO match_external_refs
+                                (match_id, source, source_match_id, confidence, matched_by)
+                            VALUES (:match_id, 'fotmob', :source_match_id, :confidence, :matched_by)
+                            ON CONFLICT (match_id, source) DO UPDATE SET
+                                source_match_id = EXCLUDED.source_match_id,
+                                confidence = EXCLUDED.confidence,
+                                matched_by = EXCLUDED.matched_by
+                        """), {
+                            "match_id": match.match_id,
+                            "source_match_id": str(best_fixture.fotmob_id),
+                            "confidence": best_score,
+                            "matched_by": f"{best_matched_by};needs_review",
+                        })
+                        metrics["linked_review"] += 1
+
+                    elif best_score > 0:
+                        metrics["skipped_low_score"] += 1
+                    else:
+                        metrics["skipped_no_candidates"] += 1
+
+                except Exception as e:
+                    metrics["errors"] += 1
+                    logger.error("[FOTMOB-REFS] Error linking match %d: %s", match.match_id, e)
+                    continue
+
+        await session.commit()
+        logger.info(
+            "[FOTMOB-REFS] Complete: scanned=%d linked_auto=%d linked_review=%d "
+            "skipped_no_mapping=%d errors=%d",
+            metrics["scanned"], metrics["linked_auto"], metrics["linked_review"],
+            metrics["skipped_no_mapping"], metrics["errors"],
+        )
+
+    except Exception as e:
+        metrics["errors"] += 1
+        logger.error("[FOTMOB-REFS] Job failed: %s", e)
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+
+    finally:
+        await provider.close()
+
+    return metrics
+
+
+async def backfill_fotmob_xg_ft(
+    session: AsyncSession,
+    days: int = 7,
+    limit: int = 100,
+) -> dict:
+    """
+    Fetch xG from FotMob for linked FT matches.
+
+    P0-4: captured_at = match.date + 6h for backfill.
+    P0-6: Only team-level xG/xGOT.
+    P0-8: Only confirmed leagues.
+
+    Args:
+        session: Database session.
+        days: Days back to scan.
+        limit: Max matches to process per run.
+
+    Returns:
+        Dict with metrics.
+    """
+    import json as _json
+
+    from app.config import get_settings
+    from app.etl.fotmob_provider import FotmobProvider
+    from app.etl.sota_constants import FOTMOB_CONFIRMED_XG_LEAGUES
+
+    settings = get_settings()
+    metrics = {
+        "scanned": 0,
+        "captured": 0,
+        "skipped_no_xg": 0,
+        "errors": 0,
+    }
+
+    # P0-8: Only process confirmed leagues
+    parsed_leagues = {int(x) for x in settings.FOTMOB_XG_LEAGUES.split(",") if x.strip()}
+    eligible_leagues = parsed_leagues & FOTMOB_CONFIRMED_XG_LEAGUES
+
+    if not eligible_leagues:
+        logger.info("[FOTMOB-XG] No eligible leagues (config ∩ confirmed = ∅)")
+        return metrics
+
+    provider = FotmobProvider()
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    try:
+        league_ids_str = ",".join(str(lid) for lid in eligible_leagues)
+
+        # FT matches with fotmob ref, without stats entry
+        result = await session.execute(text(f"""
+            SELECT
+                m.id AS match_id,
+                m.date AS kickoff_utc,
+                m.league_id,
+                mer.source_match_id AS fotmob_id
+            FROM matches m
+            JOIN match_external_refs mer
+                ON m.id = mer.match_id AND mer.source = 'fotmob'
+            WHERE m.status IN ('FT', 'AET', 'PEN')
+              AND m.date >= :cutoff
+              AND m.league_id IN ({league_ids_str})
+              AND NOT EXISTS (
+                  SELECT 1 FROM match_fotmob_stats mfs
+                  WHERE mfs.match_id = m.id
+              )
+            ORDER BY m.date DESC
+            LIMIT :limit
+        """), {"cutoff": cutoff, "limit": limit})
+
+        matches = result.fetchall()
+        metrics["scanned"] = len(matches)
+
+        if not matches:
+            logger.debug("[FOTMOB-XG] No matches need xG (last %dd)", days)
+            return metrics
+
+        logger.info("[FOTMOB-XG] Found %d matches to backfill xG", len(matches))
+
+        for match in matches:
+            match_id = match.match_id
+            fotmob_id = int(match.fotmob_id)
+            cc = LEAGUE_PROXY_COUNTRY.get(match.league_id)
+
+            try:
+                xg_data, error = await provider.get_match_xg(fotmob_id, cc)
+
+                if error or not xg_data:
+                    metrics["skipped_no_xg"] += 1
+                    continue
+
+                # P0-4: captured_at = match_date + 6h for backfill
+                captured_at = match.kickoff_utc + timedelta(hours=6)
+
+                raw_json = _json.dumps(xg_data.raw_stats) if xg_data.raw_stats else None
+
+                await session.execute(text("""
+                    INSERT INTO match_fotmob_stats (
+                        match_id, xg_home, xg_away, xgot_home, xgot_away,
+                        xg_open_play_home, xg_open_play_away,
+                        xg_set_play_home, xg_set_play_away,
+                        raw_stats, captured_at, source_version
+                    ) VALUES (
+                        :match_id, :xg_home, :xg_away, :xgot_home, :xgot_away,
+                        :xg_open_play_home, :xg_open_play_away,
+                        :xg_set_play_home, :xg_set_play_away,
+                        CAST(:raw_stats AS jsonb), :captured_at, :source_version
+                    )
+                    ON CONFLICT (match_id) DO UPDATE SET
+                        xg_home = EXCLUDED.xg_home, xg_away = EXCLUDED.xg_away,
+                        xgot_home = EXCLUDED.xgot_home, xgot_away = EXCLUDED.xgot_away,
+                        xg_open_play_home = EXCLUDED.xg_open_play_home,
+                        xg_open_play_away = EXCLUDED.xg_open_play_away,
+                        xg_set_play_home = EXCLUDED.xg_set_play_home,
+                        xg_set_play_away = EXCLUDED.xg_set_play_away,
+                        raw_stats = EXCLUDED.raw_stats,
+                        captured_at = EXCLUDED.captured_at
+                """), {
+                    "match_id": match_id,
+                    "xg_home": xg_data.xg_home,
+                    "xg_away": xg_data.xg_away,
+                    "xgot_home": xg_data.xgot_home,
+                    "xgot_away": xg_data.xgot_away,
+                    "xg_open_play_home": xg_data.xg_open_play_home,
+                    "xg_open_play_away": xg_data.xg_open_play_away,
+                    "xg_set_play_home": xg_data.xg_set_play_home,
+                    "xg_set_play_away": xg_data.xg_set_play_away,
+                    "raw_stats": raw_json,
+                    "captured_at": captured_at,
+                    "source_version": provider.SCHEMA_VERSION,
+                })
+
+                metrics["captured"] += 1
+
+            except Exception as e:
+                metrics["errors"] += 1
+                logger.error("[FOTMOB-XG] Error processing match %d: %s", match_id, e)
+                continue
+
+        await session.commit()
+        logger.info(
+            "[FOTMOB-XG] Complete: captured=%d skipped_no_xg=%d errors=%d",
+            metrics["captured"], metrics["skipped_no_xg"], metrics["errors"],
+        )
+
+    except Exception as e:
+        metrics["errors"] += 1
+        logger.error("[FOTMOB-XG] Job failed: %s", e)
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+
+    finally:
+        await provider.close()
+
+    return metrics

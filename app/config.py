@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     MARKET_ANCHOR_LEAGUE_OVERRIDES: str = "128:1.0"  # "league_id:alpha" — explicit low-signal leagues
     MARKET_ANCHOR_MIN_SAMPLES: int = 200  # Min FT with odds before accepting per-league α
 
+    # SOTA: FotMob xG provider (ABE P0 2026-02-08)
+    FOTMOB_REFS_ENABLED: bool = False         # Flag refs sync (Phase A)
+    FOTMOB_XG_ENABLED: bool = False           # Flag xG backfill (Phase B) — requires refs
+    FOTMOB_XG_LEAGUES: str = "128"            # P0-8: default SOLO Argentina
+    FOTMOB_PROXY_URL: str = ""                # IPRoyal proxy (shared or separate from SofaScore)
+    FOTMOB_RATE_LIMIT_SECONDS: float = 1.5    # Slightly more conservative than SofaScore
+    FOTMOB_CIRCUIT_BREAKER_THRESHOLD: int = 5 # Consecutive errors before skip
+
     # ═══════════════════════════════════════════════════════════════
 
     # Model architecture (baseline | two_stage)
