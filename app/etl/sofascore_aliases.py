@@ -47,8 +47,8 @@ SOFASCORE_OVERRIDES: dict[int, list[str]] = {
     3573: ["Gazişehir Gaziantep", "Gaziantep", "Gaziantep FK"],
     994: ["Göztepe", "Goztepe"],
     1004: ["Kasımpaşa", "Kasimpasa"],
-    # Argentina — abbreviation variants
-    450: ["Estudiantes L.P.", "Estudiantes LP", "Estudiantes de La Plata"],
+    # Argentina — abbreviation variants (API-Football + SofaScore + FotMob)
+    450: ["Estudiantes L.P.", "Estudiantes LP", "Estudiantes de La Plata", "Estudiantes"],
     434: ["Gimnasia L.P.", "Gimnasia LP", "Gimnasia y Esgrima"],
     478: ["Instituto Cordoba", "Instituto"],
     473: ["Independ. Rivadavia", "Independiente Rivadavia"],
@@ -56,11 +56,15 @@ SOFASCORE_OVERRIDES: dict[int, list[str]] = {
     474: ["Sarmiento Junin", "Sarmiento"],
     476: ["Deportivo Riestra", "Riestra"],
     1065: ["Central Cordoba de Santiago", "Central Cordoba"],
-    441: ["Union Santa Fe", "Union de Santa Fe"],
+    441: ["Union Santa Fe", "Union de Santa Fe", "Union"],
     440: ["Belgrano Cordoba", "Belgrano", "Club Atlético Belgrano"],
-    461: ["San Martin S.J.", "San Martin de San Juan", "San Martin SJ"],
+    461: ["San Martin S.J.", "San Martin de San Juan", "San Martin SJ", "San Martin San Juan"],
     438: ["Velez Sarsfield", "Vélez Sarsfield"],
     1066: ["Gimnasia M.", "Gimnasia y Esgrima Mendoza", "Gimnasia Mendoza"],
+    435: ["Argentinos JRS", "Argentinos Juniors"],
+    436: ["Newells Old Boys", "Newell's Old Boys", "Newell's"],
+    444: ["Defensa Y Justicia", "Defensa y Justicia"],
+    445: ["Platense", "Club Atletico Platense"],
     1133: ["Jaguares", "Jaguares de Córdoba", "Jaguares de Cordoba"],
     1134: ["La Equidad", "Internacional de Bogotá", "Internacional de Bogota"],
     # Brazil — special characters

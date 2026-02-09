@@ -421,6 +421,7 @@ class FotmobProvider:
         self,
         fotmob_league_id: int,
         country_code: Optional[str] = None,
+        season: Optional[int] = None,
     ) -> tuple[list[FotmobFixture], Optional[str]]:
         """
         Fetch fixtures from FotMob league endpoint for match linking.
@@ -431,12 +432,16 @@ class FotmobProvider:
         Args:
             fotmob_league_id: FotMob league ID (e.g. 112 for Argentina).
             country_code: ISO 2-letter code for geo-proxy routing.
+            season: Optional season year (e.g. 2025) for historical fixtures.
 
         Returns:
             Tuple of (list of FotmobFixture, error_message).
         """
         url = f"{FOTMOB_API_BASE}/leagues?id={fotmob_league_id}"
-        data, error = await self._fetch_json(url, f"league_{fotmob_league_id}", country_code)
+        if season is not None:
+            url += f"&season={season}"
+        identifier = f"league_{fotmob_league_id}" + (f"_s{season}" if season else "")
+        data, error = await self._fetch_json(url, identifier, country_code)
 
         if error:
             return [], error
