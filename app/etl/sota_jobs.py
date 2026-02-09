@@ -1717,7 +1717,7 @@ async def sync_fotmob_refs(
             WHERE m.status IN ('FT', 'AET', 'PEN')
               AND m.date >= :cutoff
               AND m.league_id IN ({league_ids_str})
-              AND mer.id IS NULL
+              AND mer.match_id IS NULL
             ORDER BY m.date DESC
             LIMIT :limit
         """), {"cutoff": cutoff, "limit": limit})
