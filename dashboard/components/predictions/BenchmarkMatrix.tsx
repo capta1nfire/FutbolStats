@@ -63,8 +63,8 @@ function getCellColor(value: number | null, metric: BenchmarkMetric): string {
 }
 
 function getConfidenceOpacity(tier: string): string {
-  if (tier === "insufficient") return "opacity-30";
-  if (tier === "low") return "opacity-60";
+  if (tier === "insufficient") return "opacity-60";
+  if (tier === "low") return "opacity-80";
   return "";
 }
 
