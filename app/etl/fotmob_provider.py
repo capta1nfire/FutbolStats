@@ -458,17 +458,34 @@ class FotmobProvider:
             return [], f"schema_break: {str(e)[:100]}"
 
     def _parse_league_fixtures(self, data: dict) -> list[FotmobFixture]:
-        """Parse fixtures from FotMob league response."""
+        """Parse fixtures from FotMob league response.
+
+        Real FotMob structure (verified 2026-02-09):
+        {
+          "fixtures": {
+            "allMatches": [
+              {
+                "id": "5101879",          # string, not int
+                "home": {"name": "...", "id": "..."},
+                "away": {"name": "...", "id": "..."},
+                "status": {
+                  "utcTime": "2026-01-22T20:00:00Z",  # kickoff is INSIDE status
+                  "finished": true, "started": true,
+                  "scoreStr": "0 - 0"                   # score is INSIDE status
+                }
+              }
+            ]
+          }
+        }
+        """
         fixtures = []
 
-        # FotMob league response: matches in "matches" or "overview" section
-        matches_section = data.get("matches", {})
-        all_matches = matches_section.get("allMatches", [])
+        # Primary path: fixtures.allMatches (verified 2026-02-09)
+        all_matches = data.get("fixtures", {}).get("allMatches", [])
 
         if not all_matches:
-            # Try alternative structure
-            overview = data.get("overview", {})
-            all_matches = overview.get("matches", [])
+            # Fallback: overview.matches (older or alternative responses)
+            all_matches = data.get("overview", {}).get("matches", [])
 
         for match in all_matches:
             try:
@@ -478,13 +495,15 @@ class FotmobProvider:
 
                 home_data = match.get("home", {})
                 away_data = match.get("away", {})
+                status_data = match.get("status", {})
+                if not isinstance(status_data, dict):
+                    status_data = {}
 
-                # Parse kickoff
+                # Parse kickoff — utcTime is INSIDE status, not top-level
                 kickoff_utc = None
-                utc_time = match.get("utcTime")
+                utc_time = status_data.get("utcTime") or match.get("utcTime")
                 if utc_time:
                     try:
-                        # FotMob uses ISO 8601 format
                         kickoff_utc = datetime.fromisoformat(
                             utc_time.replace("Z", "+00:00")
                         ).replace(tzinfo=None)
@@ -492,20 +511,23 @@ class FotmobProvider:
                         pass
 
                 # Parse status
-                status_data = match.get("status", {})
-                status_code = None
-                if isinstance(status_data, dict):
-                    # finished, notstarted, ongoing, etc.
-                    finished = status_data.get("finished", False)
-                    started = status_data.get("started", False)
-                    if finished:
-                        status_code = "finished"
-                    elif started:
-                        status_code = "ongoing"
-                    else:
-                        status_code = "notstarted"
-                elif isinstance(status_data, str):
-                    status_code = status_data.lower()
+                finished = status_data.get("finished", False)
+                started = status_data.get("started", False)
+                if finished:
+                    status_code = "finished"
+                elif started:
+                    status_code = "ongoing"
+                else:
+                    status_code = "notstarted"
+
+                # Parse score from status.scoreStr ("0 - 0" format)
+                home_score = None
+                away_score = None
+                score_str = status_data.get("scoreStr", "")
+                if score_str and " - " in score_str:
+                    parts = score_str.split(" - ", 1)
+                    home_score = _safe_int(parts[0].strip())
+                    away_score = _safe_int(parts[1].strip())
 
                 fixtures.append(FotmobFixture(
                     fotmob_id=int(match_id),
@@ -513,8 +535,8 @@ class FotmobProvider:
                     away_team=away_data.get("name", ""),
                     kickoff_utc=kickoff_utc,
                     status=status_code,
-                    home_score=_safe_int(home_data.get("score")),
-                    away_score=_safe_int(away_data.get("score")),
+                    home_score=home_score,
+                    away_score=away_score,
                 ))
             except Exception as e:
                 logger.debug("[FOTMOB] Skipping fixture parse error: %s", e)
