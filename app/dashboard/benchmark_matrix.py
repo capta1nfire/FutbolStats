@@ -17,7 +17,7 @@ import logging
 import math
 import random
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -51,7 +51,7 @@ MODEL_VERSIONS = ["v1.0.0", "v1.0.1-league-only"]
 
 SHADOW_VERSION = "v1.1.0-twostage"
 
-ALL_CUTOFF = "2026-01-15"  # period=all starts here
+ALL_CUTOFF = date(2026, 1, 15)  # period=all starts here
 
 VALID_PERIODS = {"30d", "60d", "90d", "all"}
 
@@ -111,12 +111,12 @@ _cache = SimpleCache(ttl=300)  # 5 minutes, param-aware
 # =============================================================================
 
 
-def _get_cutoff(period: str) -> str:
+def _get_cutoff(period: str) -> date:
+    """Return cutoff as datetime.date (asyncpg requires native types, not strings)."""
     if period == "all":
         return ALL_CUTOFF
     days = int(period.replace("d", ""))
-    cutoff = datetime.utcnow() - timedelta(days=days)
-    return cutoff.strftime("%Y-%m-%d")
+    return (datetime.utcnow() - timedelta(days=days)).date()
 
 
 def _get_label(status: str, home_goals: int, away_goals: int) -> int:
