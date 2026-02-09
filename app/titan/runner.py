@@ -345,12 +345,14 @@ class TitanRunner:
                 pass
 
         # 8b. Compute xG (Tier 1b) - optional enrichment, fail-open
+        # competition_id = m.league_id (API-Football league_id; see _get_matches_for_date() SELECT line 202)
         xg = None
         try:
             xg = await self.materializer.compute_xg_last5_features(
                 home_team_id=match["home_team_id"],
                 away_team_id=match["away_team_id"],
                 kickoff_utc=kickoff_utc,
+                league_id=match.get("competition_id"),  # m.league_id aliased as competition_id
             )
         except Exception as e:
             logger.warning(f"xG computation failed for match {external_id}: {e}")
@@ -596,6 +598,7 @@ class TitanRunner:
                 home_team_id=match["home_team_id"],
                 away_team_id=match["away_team_id"],
                 kickoff_utc=kickoff_utc,
+                league_id=match.get("competition_id"),  # m.league_id aliased as competition_id
             )
         except Exception as e:
             logger.warning(f"Remat xG failed for match {external_id}: {e}")
