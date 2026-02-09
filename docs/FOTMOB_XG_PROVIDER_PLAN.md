@@ -530,3 +530,48 @@ ORDER BY m.date DESC LIMIT 10;
 - `FOTMOB_REFS_ENABLED=false` + `FOTMOB_XG_ENABLED=false` → jobs no corren
 - Feature matrix ignora tabla vacía (fallback a None, como hoy)
 - No requiere delete de datos — tabla queda para reactivación
+
+---
+
+## Resultados Post-Deploy (2026-02-09)
+
+### PR1 Deploy & Activación
+
+| Commit | Descripción |
+|--------|-------------|
+| `42a49a2` | feat: FotMob xG provider (7 archivos, 1,786 líneas) |
+| `f94ba15` | fix: `mer.match_id IS NULL` (ABE P0 blocker — PK compuesto) |
+| `bd8d419` | fix: fixtures parser (`data["fixtures"]["allMatches"]`, no `data["matches"]`) |
+| `1e5bb65` | fix: xG parser (`content.stats.Periods.All.stats`, no `content.stats.Ede`) |
+| `b2fe102` | feat: aliases FotMob + backfill histórico 2023-2025 |
+
+**Bugs de schema corregidos (3)**: Los JSON paths del provider se escribieron basándose en documentación de soccerdata, no contra la API real. Los 3 errores son del mismo tipo: estructura asumida ≠ estructura real de FotMob. Metodología de fix: curl directo → inspeccionar keys reales → corregir parser → verificar con datos reales antes de push.
+
+### Cobertura xG Argentina (league_id=128)
+
+| Season | xG capturados | Total FT | Cobertura |
+|--------|--------------|----------|-----------|
+| 2023 | 371 | 378 | 98.1% |
+| 2024 | 377 | 378 | 99.7% |
+| 2025 | 510 | 510 | 100.0% |
+| 2026 | 56 | 56 | 100.0% |
+| **Total** | **1,314** | **1,322** | **99.4%** |
+
+- **Backfill histórico**: 2 pasadas (~35 min total, rate limit 1.5s/req, 0 bloqueos)
+- **Pasada 1**: Sin alias → 1,050 capturados (79.4%)
+- **Pasada 2**: Con alias → +264 capturados → 1,314 (99.4%)
+- **7 faltantes**: Jornada 1 de 2023 (desfase timezone) — no vale la pena perseguir
+- **Alias agregados**: Argentinos JRS↔Argentinos Juniors, Newell's, Defensa Y/y, Platense↔Club Atletico Platense, Estudiantes (sin LP), Union (sin Santa Fe), San Martin San Juan
+
+### Jobs Automáticos (en producción)
+
+| Job | Frecuencia | Flag | Estado |
+|-----|------------|------|--------|
+| `sota_fotmob_refs_sync` | 12h (+75s offset) | `FOTMOB_REFS_ENABLED=true` | Activo |
+| `sota_fotmob_xg_backfill` | 6h (+85s offset) | `FOTMOB_XG_ENABLED=true` | Activo |
+
+### Pendiente
+
+- **PR2 (Fase 6)**: Integración xG en `titan.feature_matrix` (dual source Understat/FotMob)
+- **Verificar IDs TBD**: 22 league mappings en `LEAGUE_ID_TO_FOTMOB` marcados como TBD
+- **Alias para sync_fotmob_refs en scheduler**: El job de producción no pasa `alias_index` a `calculate_match_score` — solo el script de backfill lo hace. P1: agregar en próximo PR.
