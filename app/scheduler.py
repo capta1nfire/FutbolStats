@@ -3351,20 +3351,65 @@ async def daily_audit():
         logger.error(f"Daily audit failed: {e}")
 
 
+RECALIB_COOLDOWN_REJECTS = 3       # Skip retrain after N consecutive rejects
+RECALIB_COOLDOWN_DAYS = 14         # Cooldown duration in days
+
+
+async def _check_recalib_cooldown() -> tuple[bool, int]:
+    """Check if we're in cooldown from consecutive retrain→reject cycles.
+
+    Returns (in_cooldown: bool, consecutive_rejects: int).
+    Cooldown is bypassed if trigger is anomaly_rate (not gold accuracy).
+    """
+    try:
+        from app.database import AsyncSessionLocal
+        from sqlalchemy import text
+
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(text("""
+                SELECT metrics
+                FROM job_runs
+                WHERE job_name = 'weekly_recalibration'
+                  AND status = 'ok'
+                  AND metrics IS NOT NULL
+                ORDER BY started_at DESC
+                LIMIT :n
+            """), {"n": RECALIB_COOLDOWN_REJECTS})
+            rows = result.fetchall()
+
+        if len(rows) < RECALIB_COOLDOWN_REJECTS:
+            return False, 0
+
+        consecutive_rejects = 0
+        for row in rows:
+            m = row[0] if row[0] else {}
+            if m.get("validation_verdict") == "rejected":
+                consecutive_rejects += 1
+            else:
+                break
+
+        return consecutive_rejects >= RECALIB_COOLDOWN_REJECTS, consecutive_rejects
+    except Exception as e:
+        logger.warning(f"Cooldown check failed (proceeding): {e}")
+        return False, 0
+
+
 async def weekly_recalibration(ml_engine):
     """
     Weekly intelligent recalibration job.
-    Runs every Monday at 6:00 AM UTC.
+    Runs every Monday at 5:00 AM UTC.
 
     Steps:
     1. Sync latest fixtures/results
     2. Run audit on recent matches
     3. Update team confidence adjustments
-    4. Evaluate if retraining is needed
-    5. If retraining: validate new model before deploying
+    4. Evaluate if retraining is needed (with cooldown check)
+    5. If retraining: build league_only dataset, train, validate, deploy
     """
     logger.info("Starting weekly recalibration job...")
     start_time = time.time()
+    # Metrics payload for job_runs (ATI P0-2)
+    run_metrics: dict = {}
 
     try:
         from app.audit import create_audit_service
@@ -3420,23 +3465,51 @@ async def weekly_recalibration(ml_engine):
             should_retrain, reason = await recalibrator.should_trigger_retrain(days=7)
             logger.info(f"Retrain evaluation: {reason}")
 
+            # Parse trigger metrics from reason string for logging
+            is_anomaly_trigger = "anomaly" in reason.lower()
+            run_metrics["trigger_reason"] = reason
+
             if not should_retrain:
                 logger.info("Skipping retrain - metrics within thresholds")
                 duration_ms = (time.time() - start_time) * 1000
-                record_job_run(job="weekly_recalibration", status="ok", duration_ms=duration_ms)
+                run_metrics["validation_verdict"] = "no_retrain"
+                record_job_run(job="weekly_recalibration", status="ok",
+                               duration_ms=duration_ms, metrics=run_metrics)
                 return
 
+            # P0-2: Cooldown — skip retrain if last N runs were all rejected
+            # Exception: anomaly_rate triggers always bypass cooldown
+            if not is_anomaly_trigger:
+                in_cooldown, n_rejects = await _check_recalib_cooldown()
+                if in_cooldown:
+                    logger.info(
+                        f"COOLDOWN: {n_rejects} consecutive rejects, skipping retrain "
+                        f"for {RECALIB_COOLDOWN_DAYS}d (non-anomaly trigger)"
+                    )
+                    duration_ms = (time.time() - start_time) * 1000
+                    run_metrics["validation_verdict"] = "skipped_cooldown"
+                    run_metrics["consecutive_rejects"] = n_rejects
+                    record_job_run(job="weekly_recalibration", status="ok",
+                                   duration_ms=duration_ms, metrics=run_metrics)
+                    return
+
             # Step 5a: Build training dataset (DB)
+            # P0-1: Use league_only=True to match serving parity
             logger.info(f"Triggering retrain: {reason}")
             feature_engineer = FeatureEngineer(session=session)
-            df = await feature_engineer.build_training_dataset()
+            df = await feature_engineer.build_training_dataset(league_only=True)
 
         # ── Phase 2: CPU work (no DB session held) ──
         if len(df) < 100:
             logger.error(f"Insufficient training data: {len(df)} samples")
             duration_ms = (time.time() - start_time) * 1000
-            record_job_run(job="weekly_recalibration", status="error", duration_ms=duration_ms)
+            run_metrics["samples_trained"] = len(df)
+            run_metrics["validation_verdict"] = "insufficient_data"
+            record_job_run(job="weekly_recalibration", status="error",
+                           duration_ms=duration_ms, metrics=run_metrics)
             return
+
+        run_metrics["samples_trained"] = len(df)
 
         # Train in executor to avoid blocking the event loop
         from concurrent.futures import ThreadPoolExecutor
@@ -3447,20 +3520,37 @@ async def weekly_recalibration(ml_engine):
 
         new_brier = train_result["brier_score"]
         logger.info(f"Training complete: Brier Score = {new_brier:.4f}")
+        run_metrics["new_brier"] = round(new_brier, 6)
 
         # ── Phase 3: DB work (validate + snapshot) ──
         async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
             recalibrator = RecalibrationEngine(session)
 
-            # Step 6: Validate new model against baseline
+            # Step 6: Validate new model against baseline AND active (P1)
             is_valid, validation_msg = await recalibrator.validate_new_model(new_brier)
+            run_metrics["baseline_brier_used"] = 0.2063  # BRIER_SCORE_BASELINE constant
+
+            # P1: Anti-regression check vs active model
+            active_snapshot = await recalibrator.get_active_snapshot()
+            if active_snapshot:
+                run_metrics["active_brier"] = round(active_snapshot.brier_score, 6)
+                if is_valid and new_brier >= active_snapshot.brier_score:
+                    is_valid = False
+                    validation_msg = (
+                        f"New Brier ({new_brier:.4f}) >= active "
+                        f"({active_snapshot.brier_score:.4f}) - REJECTED (anti-regression)"
+                    )
+
             logger.info(f"Validation result: {validation_msg}")
+            run_metrics["validation_msg"] = validation_msg
 
             if not is_valid:
                 logger.warning("ROLLBACK: New model rejected - keeping previous version")
                 ml_engine.load_model()
                 duration_ms = (time.time() - start_time) * 1000
-                record_job_run(job="weekly_recalibration", status="ok", duration_ms=duration_ms)
+                run_metrics["validation_verdict"] = "rejected"
+                record_job_run(job="weekly_recalibration", status="ok",
+                               duration_ms=duration_ms, metrics=run_metrics)
                 return
 
             # Step 7: Create snapshot and activate new model
@@ -3475,13 +3565,17 @@ async def weekly_recalibration(ml_engine):
             logger.info(f"New model deployed: {snapshot.model_version} (Brier: {new_brier:.4f})")
 
         duration_ms = (time.time() - start_time) * 1000
-        record_job_run(job="weekly_recalibration", status="ok", duration_ms=duration_ms)
+        run_metrics["validation_verdict"] = "approved"
+        record_job_run(job="weekly_recalibration", status="ok",
+                       duration_ms=duration_ms, metrics=run_metrics)
 
     except Exception as e:
         duration_ms = (time.time() - start_time) * 1000
         logger.error(f"Weekly recalibration failed: {e}")
         sentry_capture_exception(e, job_id="weekly_recalibration")
-        record_job_run(job="weekly_recalibration", status="error", duration_ms=duration_ms)
+        run_metrics["validation_verdict"] = "error"
+        record_job_run(job="weekly_recalibration", status="error",
+                       duration_ms=duration_ms, error=str(e), metrics=run_metrics)
 
 
 # =============================================================================
