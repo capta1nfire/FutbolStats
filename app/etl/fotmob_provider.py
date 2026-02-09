@@ -334,23 +334,24 @@ class FotmobProvider:
 
         P0-3: NEVER parse by index, always find by title/key name.
 
-        FotMob response structure (simplified):
+        Real FotMob structure (verified 2026-02-09):
         {
           "content": {
             "stats": {
-              "Ede": {
-                "stats": [
-                  {
-                    "title": "...",
-                    "stats": [
-                      {
-                        "title": "Expected goals (xG)",
-                        "stats": ["1.35", "0.87"]  // [home, away]
-                      },
-                      ...
-                    ]
-                  }
-                ]
+              "Periods": {
+                "All": {
+                  "stats": [
+                    {
+                      "title": "Expected goals (xG)",
+                      "stats": [
+                        {"title": "Expected goals (xG)", "stats": ["2.10", "0.74"]},
+                        {"title": "xG open play", "stats": ["2.06", "0.73"]},
+                        {"title": "xG set play", "stats": ["0.05", "0.02"]},
+                        {"title": "xG on target (xGOT)", "stats": ["1.03", "0.35"]}
+                      ]
+                    }
+                  ]
+                }
               }
             }
           }
@@ -359,22 +360,11 @@ class FotmobProvider:
         content = data.get("content", {})
         stats_section = content.get("stats", {})
 
-        # Try multiple possible keys for the stats container
-        stats_container = None
-        for key in ("Ede", "stats"):
-            if key in stats_section:
-                stats_container = stats_section[key]
-                break
+        # Primary path: Periods.All.stats (verified 2026-02-09)
+        periods = stats_section.get("Periods", {})
+        all_period = periods.get("All", {})
+        all_groups = all_period.get("stats", [])
 
-        if not stats_container:
-            # Some responses nest differently
-            if isinstance(stats_section, dict) and "stats" not in stats_section:
-                # Try treating stats_section itself as the container
-                stats_container = stats_section
-            else:
-                return None
-
-        all_groups = stats_container.get("stats", [])
         if not all_groups:
             return None
 
@@ -386,7 +376,7 @@ class FotmobProvider:
             for stat in stats_items:
                 title = (stat.get("title") or stat.get("key") or "").strip().lower()
                 values = stat.get("stats", [])
-                if len(values) >= 2:
+                if len(values) >= 2 and values[0] is not None and values[1] is not None:
                     xg_map[title] = (str(values[0]), str(values[1]))
 
         # Normalize synonyms
@@ -394,6 +384,7 @@ class FotmobProvider:
             "expected goals (xg)": "expected goals",
             "xg": "expected goals",
             "expected goals on target (xgot)": "expected goals on target",
+            "xg on target (xgot)": "expected goals on target",
             "xgot": "expected goals on target",
         }
         for alias, canonical in _SYNONYMS.items():
