@@ -3394,6 +3394,31 @@ async def _check_recalib_cooldown() -> tuple[bool, int]:
         return False, 0
 
 
+async def _record_recalib_run(
+    status: str, run_metrics: dict, start_time: float, error: str = None,
+) -> None:
+    """Persist weekly_recalibration run to DB (session-based) + Prometheus.
+
+    Uses app.jobs.tracking.record_job_run (proven to persist metrics correctly)
+    instead of telemetry fire-and-forget which stores JSONB null.
+    """
+    from datetime import datetime, timedelta
+    duration_ms = (time.time() - start_time) * 1000
+    job_started_at = datetime.utcnow() - timedelta(milliseconds=duration_ms)
+    # DB persist (reliable, session-based)
+    try:
+        async with get_session_with_retry(max_retries=2, retry_delay=0.5) as s:
+            from app.jobs.tracking import record_job_run as record_job_run_db
+            await record_job_run_db(
+                s, "weekly_recalibration", status, job_started_at,
+                error=error, metrics=run_metrics,
+            )
+    except Exception as db_err:
+        logger.warning(f"Failed to persist recalib run to DB: {db_err}")
+    # Prometheus (no metrics needed, just counters)
+    record_job_run(job="weekly_recalibration", status=status, duration_ms=duration_ms)
+
+
 async def weekly_recalibration(ml_engine):
     """
     Weekly intelligent recalibration job.
@@ -3471,10 +3496,8 @@ async def weekly_recalibration(ml_engine):
 
             if not should_retrain:
                 logger.info("Skipping retrain - metrics within thresholds")
-                duration_ms = (time.time() - start_time) * 1000
                 run_metrics["validation_verdict"] = "no_retrain"
-                record_job_run(job="weekly_recalibration", status="ok",
-                               duration_ms=duration_ms, metrics=run_metrics)
+                await _record_recalib_run("ok", run_metrics, start_time)
                 return
 
             # P0-2: Cooldown — skip retrain if last N runs were all rejected
@@ -3486,11 +3509,9 @@ async def weekly_recalibration(ml_engine):
                         f"COOLDOWN: {n_rejects} consecutive rejects, skipping retrain "
                         f"for {RECALIB_COOLDOWN_DAYS}d (non-anomaly trigger)"
                     )
-                    duration_ms = (time.time() - start_time) * 1000
                     run_metrics["validation_verdict"] = "skipped_cooldown"
                     run_metrics["consecutive_rejects"] = n_rejects
-                    record_job_run(job="weekly_recalibration", status="ok",
-                                   duration_ms=duration_ms, metrics=run_metrics)
+                    await _record_recalib_run("ok", run_metrics, start_time)
                     return
 
             # Step 5a: Build training dataset (DB)
@@ -3502,11 +3523,9 @@ async def weekly_recalibration(ml_engine):
         # ── Phase 2: CPU work (no DB session held) ──
         if len(df) < 100:
             logger.error(f"Insufficient training data: {len(df)} samples")
-            duration_ms = (time.time() - start_time) * 1000
             run_metrics["samples_trained"] = len(df)
             run_metrics["validation_verdict"] = "insufficient_data"
-            record_job_run(job="weekly_recalibration", status="error",
-                           duration_ms=duration_ms, metrics=run_metrics)
+            await _record_recalib_run("error", run_metrics, start_time)
             return
 
         run_metrics["samples_trained"] = len(df)
@@ -3547,10 +3566,8 @@ async def weekly_recalibration(ml_engine):
             if not is_valid:
                 logger.warning("ROLLBACK: New model rejected - keeping previous version")
                 ml_engine.load_model()
-                duration_ms = (time.time() - start_time) * 1000
                 run_metrics["validation_verdict"] = "rejected"
-                record_job_run(job="weekly_recalibration", status="ok",
-                               duration_ms=duration_ms, metrics=run_metrics)
+                await _record_recalib_run("ok", run_metrics, start_time)
                 return
 
             # Step 7: Create snapshot and activate new model
@@ -3564,18 +3581,14 @@ async def weekly_recalibration(ml_engine):
             )
             logger.info(f"New model deployed: {snapshot.model_version} (Brier: {new_brier:.4f})")
 
-        duration_ms = (time.time() - start_time) * 1000
         run_metrics["validation_verdict"] = "approved"
-        record_job_run(job="weekly_recalibration", status="ok",
-                       duration_ms=duration_ms, metrics=run_metrics)
+        await _record_recalib_run("ok", run_metrics, start_time)
 
     except Exception as e:
-        duration_ms = (time.time() - start_time) * 1000
         logger.error(f"Weekly recalibration failed: {e}")
         sentry_capture_exception(e, job_id="weekly_recalibration")
         run_metrics["validation_verdict"] = "error"
-        record_job_run(job="weekly_recalibration", status="error",
-                       duration_ms=duration_ms, error=str(e), metrics=run_metrics)
+        await _record_recalib_run("error", run_metrics, start_time, error=str(e))
 
 
 # =============================================================================
