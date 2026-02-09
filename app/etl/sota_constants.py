@@ -99,7 +99,7 @@ LEAGUE_PROXY_COUNTRY: dict[int, str] = {
 LEAGUE_ID_TO_FOTMOB: dict[int, int] = {
     128: 112,   # Argentina Primera División (CONFIRMED)
     71: 268,    # Brazil Serie A (TBD: verify)
-    239: 11535, # Colombia Primera A (TBD: verify)
+    239: 274,   # Colombia Primera A (CONFIRMED 2026-02-09)
     250: 14056, # Paraguay Apertura (TBD: verify)
     252: 14056, # Paraguay Clausura (TBD: verify)
     265: 11653, # Chile Primera División (TBD: verify)
@@ -126,4 +126,11 @@ LEAGUE_ID_TO_FOTMOB: dict[int, int] = {
 # Jobs enforce: eligible = parsed_config ∩ FOTMOB_CONFIRMED_XG_LEAGUES
 FOTMOB_CONFIRMED_XG_LEAGUES: set[int] = {
     128,  # Argentina Primera División (CONFIRMED 2026-02-08)
+    239,  # Colombia Primera A (CONFIRMED 2026-02-09)
+}
+
+# FotMob split-season leagues: season param requires string like "2024 - Clausura"
+# (vs simple int for Argentina). Backfill scripts must handle this.
+FOTMOB_SPLIT_SEASON_LEAGUES: dict[int, list[str]] = {
+    239: ["Apertura", "Clausura"],  # Colombia
 }

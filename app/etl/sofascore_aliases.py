@@ -102,11 +102,22 @@ SOFASCORE_OVERRIDES: dict[int, list[str]] = {
     59: ["Preston", "Preston North End"],
     74: ["Sheffield Wednesday", "Sheffield Wed"],
     1838: ["Wrexham"],
-    # Colombia — name changes and Sofascore variants
+    # Colombia — name changes, Sofascore + FotMob variants
     1141: ["Alianza Petrolera", "Alianza FC", "Alianza Valledupar", "Alianza Valledupar FC"],
-    1132: ["Chico", "Boyacá Chicó", "Boyacá Chicó FC", "Chicó FC"],
+    1132: ["Chico", "Boyacá Chicó", "Boyacá Chicó FC", "Chicó FC", "Chico FC"],
     1470: ["Cucuta", "Cúcuta Deportivo", "Cucuta Deportivo"],
     1131: ["Bucaramanga", "Atlético Bucaramanga", "Atletico Bucaramanga"],
+    1128: ["Deportes Tolima", "Tolima"],
+    1127: ["Junior", "Junior FC", "Junior de Barranquilla"],
+    1140: ["Rionegro Aguilas", "Aguilas Doradas", "Águilas Doradas"],
+    1467: ["Llaneros", "Llaneros FC"],
+    1130: ["Independiente Medellin", "Independiente Medellín"],
+    1129: ["Deportivo Pasto", "Pasto"],
+    1126: ["Independiente Santa Fe", "Santa Fe"],
+    1125: ["Atletico Nacional", "Atlético Nacional"],
+    1135: ["Patriotas", "Patriotas Boyaca", "Patriotas Boyacá"],
+    1136: ["Envigado", "Envigado FC"],
+    1137: ["Union Magdalena", "Unión Magdalena"],
     # Peru — abbreviation variants
     2539: ["UTC", "Universidad Técnica de Cajamarca"],
 }
