@@ -3364,16 +3364,28 @@ async def weekly_recalibration(ml_engine):
     5. If retraining: validate new model before deploying
     """
     logger.info("Starting weekly recalibration job...")
+    start_time = time.time()
 
     try:
         from app.audit import create_audit_service
         from app.ml.recalibration import RecalibrationEngine
 
-        async with AsyncSessionLocal() as session:
+        # IMPORTANT (P0): Avoid holding a DB connection while running long CPU work
+        # (ml_engine.train). Railway/Postgres may drop idle checked-out connections,
+        # which can surface later as "rollback() underlying connection is closed".
+        #
+        # We split the job into phases with short-lived sessions:
+        # - Phase 1: sync + audit + adjustments + dataset build (DB)
+        # - Phase 2: training (CPU, no DB session)
+        # - Phase 3: validation + snapshot (DB)
+
+        sync_leagues = get_sync_leagues()
+
+        # ── Phase 1: DB work up to dataset ──
+        async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
             recalibrator = RecalibrationEngine(session)
 
             # Step 1: Sync latest fixtures/results
-            sync_leagues = get_sync_leagues()
             logger.info(f"Syncing {len(sync_leagues)} leagues...")
             pipeline = await create_etl_pipeline(session)
             sync_result = await pipeline.sync_multiple_leagues(
@@ -3385,7 +3397,7 @@ async def weekly_recalibration(ml_engine):
             )
             logger.info(f"Sync complete: {sync_result['total_matches_synced']} matches")
 
-            # Step 2: Run audit on all unaudited matches
+            # Step 2: Run audit on recent matches
             logger.info("Running post-sync audit...")
             audit_service = await create_audit_service(session)
             audit_result = await audit_service.audit_recent_matches(days=7)
@@ -3410,36 +3422,45 @@ async def weekly_recalibration(ml_engine):
 
             if not should_retrain:
                 logger.info("Skipping retrain - metrics within thresholds")
+                duration_ms = (time.time() - start_time) * 1000
+                record_job_run(job="weekly_recalibration", status="ok", duration_ms=duration_ms)
                 return
 
-            # Step 5: Retrain the model
+            # Step 5a: Build training dataset (DB)
             logger.info(f"Triggering retrain: {reason}")
             feature_engineer = FeatureEngineer(session=session)
             df = await feature_engineer.build_training_dataset()
 
-            if len(df) < 100:
-                logger.error(f"Insufficient training data: {len(df)} samples")
-                return
+        # ── Phase 2: CPU work (no DB session held) ──
+        if len(df) < 100:
+            logger.error(f"Insufficient training data: {len(df)} samples")
+            duration_ms = (time.time() - start_time) * 1000
+            record_job_run(job="weekly_recalibration", status="error", duration_ms=duration_ms)
+            return
 
-            # Train in executor to avoid blocking the event loop
-            import asyncio
-            from concurrent.futures import ThreadPoolExecutor
+        # Train in executor to avoid blocking the event loop
+        from concurrent.futures import ThreadPoolExecutor
 
-            loop = asyncio.get_event_loop()
-            with ThreadPoolExecutor() as executor:
-                train_result = await loop.run_in_executor(executor, ml_engine.train, df)
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor() as executor:
+            train_result = await loop.run_in_executor(executor, ml_engine.train, df)
 
-            new_brier = train_result["brier_score"]
-            logger.info(f"Training complete: Brier Score = {new_brier:.4f}")
+        new_brier = train_result["brier_score"]
+        logger.info(f"Training complete: Brier Score = {new_brier:.4f}")
+
+        # ── Phase 3: DB work (validate + snapshot) ──
+        async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
+            recalibrator = RecalibrationEngine(session)
 
             # Step 6: Validate new model against baseline
             is_valid, validation_msg = await recalibrator.validate_new_model(new_brier)
             logger.info(f"Validation result: {validation_msg}")
 
             if not is_valid:
-                logger.warning(f"ROLLBACK: New model rejected - keeping previous version")
-                # Reload the previous model
+                logger.warning("ROLLBACK: New model rejected - keeping previous version")
                 ml_engine.load_model()
+                duration_ms = (time.time() - start_time) * 1000
+                record_job_run(job="weekly_recalibration", status="ok", duration_ms=duration_ms)
                 return
 
             # Step 7: Create snapshot and activate new model
@@ -3453,8 +3474,14 @@ async def weekly_recalibration(ml_engine):
             )
             logger.info(f"New model deployed: {snapshot.model_version} (Brier: {new_brier:.4f})")
 
+        duration_ms = (time.time() - start_time) * 1000
+        record_job_run(job="weekly_recalibration", status="ok", duration_ms=duration_ms)
+
     except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
         logger.error(f"Weekly recalibration failed: {e}")
+        sentry_capture_exception(e, job_id="weekly_recalibration")
+        record_job_run(job="weekly_recalibration", status="error", duration_ms=duration_ms)
 
 
 # =============================================================================
