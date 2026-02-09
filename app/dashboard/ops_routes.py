@@ -4112,6 +4112,30 @@ async def trigger_historical_stats_backfill(request: Request):
     }
 
 
+@router.post("/dashboard/ops/weekly_recalibration")
+async def trigger_weekly_recalibration(request: Request):
+    """
+    Manually trigger the weekly recalibration job.
+
+    This runs: sync → audit → team adjustments → retrain evaluation → snapshot.
+    Protected by dashboard token. Typically takes 1-5 minutes.
+    """
+    if not verify_dashboard_token_bool(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from app.scheduler import weekly_recalibration
+    from app.state import ml_engine
+
+    start_time = time.time()
+    await weekly_recalibration(ml_engine)
+    duration_ms = int((time.time() - start_time) * 1000)
+
+    return {
+        "status": "executed",
+        "duration_ms": duration_ms,
+    }
+
+
 @router.post("/dashboard/ops/match_link")
 async def link_match_to_api_football(
     request: Request,
