@@ -25,6 +25,7 @@ from app.state import ml_engine
 from app.telemetry.sentry import init_sentry
 from app.logos.routes import router as logos_router
 from app.dashboard.model_benchmark import router as model_benchmark_router
+from app.dashboard.benchmark_matrix import router as benchmark_matrix_router
 from app.dashboard.football_routes import router as football_routes_router
 from app.dashboard.admin_routes import router as admin_routes_router
 from app.dashboard.settings_routes import router as settings_routes_router
@@ -352,6 +353,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.include_router(core_router)
 app.include_router(logos_router)
 app.include_router(model_benchmark_router)
+app.include_router(benchmark_matrix_router)
 app.include_router(football_routes_router)
 app.include_router(admin_routes_router)
 app.include_router(settings_routes_router)

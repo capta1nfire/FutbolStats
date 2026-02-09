@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
+import { Suspense, useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   usePredictionsApi,
@@ -25,9 +25,12 @@ import {
   PredictionsFilterPanel,
   PredictionDetailDrawer,
   PredictionsCoverageCard,
+  BenchmarkMatrix,
+  BenchmarkViewTabs,
   PREDICTIONS_COLUMN_OPTIONS,
   PREDICTIONS_DEFAULT_VISIBILITY,
 } from "@/components/predictions";
+import type { PredictionsView } from "@/components/predictions";
 import { CustomizeColumnsPanel, Pagination } from "@/components/tables";
 import {
   parseNumericId,
@@ -94,6 +97,27 @@ function PredictionsPageContent() {
       router.replace(`${BASE_PATH}${search ? `?${search}` : ""}`, { scroll: false });
     }
   }, [selectedIdParam, selectedPredictionId, router, searchParams]);
+
+  // View tab state with localStorage persistence
+  const [activeView, setActiveViewState] = useState<PredictionsView>("predictions");
+  const isViewInitialized = useRef(false);
+  useEffect(() => {
+    if (isViewInitialized.current) return;
+    isViewInitialized.current = true;
+    try {
+      const stored = localStorage.getItem("predictions:activeView");
+      if (stored === "predictions" || stored === "benchmark") {
+        setActiveViewState(stored);
+      }
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => {
+    if (!isViewInitialized.current) return;
+    try { localStorage.setItem("predictions:activeView", activeView); } catch { /* ignore */ }
+  }, [activeView]);
+  const setActiveView = useCallback((view: PredictionsView) => {
+    setActiveViewState(view);
+  }, []);
 
   // UI state (non-URL)
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
@@ -275,6 +299,22 @@ function PredictionsPageContent() {
     setCurrentPage(page);
   }, []);
 
+  // Benchmark view: full-width, no filter panel
+  if (activeView === "benchmark") {
+    return (
+      <div className="h-full flex flex-col overflow-hidden bg-background">
+        {/* Header with view tabs */}
+        <div className="h-12 flex items-center justify-between px-6 border-b border-border">
+          <h1 className="text-lg font-semibold text-foreground">Predictions</h1>
+          <div className="w-[180px]">
+            <BenchmarkViewTabs activeView={activeView} onViewChange={setActiveView} />
+          </div>
+        </div>
+        <BenchmarkMatrix />
+      </div>
+    );
+  }
+
   return (
     <div className="h-full flex overflow-hidden relative">
       {/* FilterPanel */}
@@ -310,26 +350,31 @@ function PredictionsPageContent() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden bg-background">
-        {/* Header with mock indicator */}
+        {/* Header with view tabs and mock indicator */}
         <div className="h-12 flex items-center justify-between px-6 border-b border-border">
           <h1 className="text-lg font-semibold text-foreground">Predictions</h1>
-          {isDegraded && !isLoading && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-[var(--status-warning-bg)] border border-[var(--status-warning-border)]">
-                    <Database className="h-3.5 w-3.5 text-[var(--status-warning-text)]" />
-                    <span className="text-[10px] text-[var(--status-warning-text)] font-medium">
-                      mock
-                    </span>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  <p>Using mock data - backend unavailable</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
+          <div className="flex items-center gap-3">
+            {isDegraded && !isLoading && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-[var(--status-warning-bg)] border border-[var(--status-warning-border)]">
+                      <Database className="h-3.5 w-3.5 text-[var(--status-warning-text)]" />
+                      <span className="text-[10px] text-[var(--status-warning-text)] font-medium">
+                        mock
+                      </span>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    <p>Using mock data - backend unavailable</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            <div className="w-[180px]">
+              <BenchmarkViewTabs activeView={activeView} onViewChange={setActiveView} />
+            </div>
+          </div>
         </div>
 
         {/* Coverage Card */}

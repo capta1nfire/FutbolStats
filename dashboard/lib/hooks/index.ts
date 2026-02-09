@@ -62,6 +62,8 @@ export * from "./use-logos";
 export * from "./use-debounce";
 // Model Benchmark
 export * from "./use-model-benchmark";
+// Benchmark Matrix
+export * from "./use-benchmark-matrix";
 // Compact predictions preference
 export * from "./use-compact-predictions";
 // Model benchmark selection preference

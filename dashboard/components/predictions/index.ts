@@ -5,3 +5,5 @@ export { PredictionsCoverageCard } from "./PredictionsCoverageCard";
 export { PredictionsTable, PREDICTIONS_COLUMN_OPTIONS, PREDICTIONS_DEFAULT_VISIBILITY } from "./PredictionsTable";
 export { PredictionsFilterPanel } from "./PredictionsFilterPanel";
 export { PredictionDetailDrawer } from "./PredictionDetailDrawer";
+export { BenchmarkMatrix } from "./BenchmarkMatrix";
+export { BenchmarkViewTabs, type PredictionsView } from "./BenchmarkViewTabs";
