@@ -7663,25 +7663,17 @@ def start_scheduler(ml_engine):
     from app.config import get_settings as _get_shadow_settings
     _shadow_cfg = _get_shadow_settings()
     if _shadow_cfg.MODEL_SHADOW_ARCHITECTURE == "two_stage":
-        # Fire immediately on first startup to catch missed Tuesday slot,
-        # then follow cron. Internal _should_trigger_shadow_retrain() gate
-        # ensures actual retrain only when needed (first_run / interval / volume).
-        _shadow_first_fire = datetime.utcnow() + timedelta(seconds=60)
         scheduler.add_job(
             shadow_recalibration,
             trigger=CronTrigger(day_of_week="tue", hour=5, minute=0),
             id="shadow_recalibration",
             name="Shadow Two-Stage Recalibration",
             replace_existing=True,
-            next_run_time=_shadow_first_fire,
             max_instances=1,
             coalesce=True,
             misfire_grace_time=300,
         )
-        logger.info(
-            f"Registered shadow_recalibration job "
-            f"(first fire in 60s, then bi-weekly Tuesdays 5AM UTC)"
-        )
+        logger.info("Registered shadow_recalibration job (bi-weekly Tuesdays 5AM UTC)")
 
     # Live Global Sync: Every 60 seconds (real-time results)
     # Uses 1 API call per minute = 1,440 calls/day (of 7,500 available)
