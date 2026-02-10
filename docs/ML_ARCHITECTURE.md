@@ -5,7 +5,7 @@ Documentación técnica del sistema de predicciones ML, sus guardrails y mecanis
 ## Estado actual (Feb 2026)
 
 - **Producción**: Model A `v1.0.1-league-only` (XGBoost baseline, 14 features league-only) + kill-switch + policy draw cap.
-- **Shadow two-stage**: disponible en código, pero **pausado/deshabilitado** mientras se evalúa ext-C.
+- **Shadow two-stage**: `v1.1.0-twostage` **ACTIVO** con reentrenamiento automático bi-semanal (ATI-aprobado 2026-02-09). Mejor accuracy interna (Brier 0.2094). No sirve predicciones públicas.
 - **Sensor B**: diagnóstico de calibración (LogReg L2) con guardrails de estabilidad numérica + sanity en OPS.
 - **ext-C (Automatic Shadow)**: job automático que genera predicciones `v1.0.2-ext-C` en `predictions_experiments` (no servido).
 
@@ -187,10 +187,10 @@ Para agregar otra liga: `MARKET_ANCHOR_LEAGUE_OVERRIDES=128:1.0,239:0.8`
 
 ---
 
-## Shadow Mode (Two-Stage Architecture)
+## Shadow Mode (Two-Stage Architecture) - v1.1.0-twostage
 
 ### Propósito
-Evaluar arquitectura two-stage para mejorar predicción de empates sin degradar métricas generales.
+Arquitectura two-stage para mejorar predicción de empates. Actualmente el modelo con mejor accuracy interna (Brier 0.2094), superando a Model A. **No sirve predicciones públicas** — solo inferencia interna vía `shadow_predictions`.
 
 ### Arquitectura
 **Stage 1**: Binary classifier (draw vs non-draw)
@@ -214,12 +214,46 @@ MODEL_SHADOW_ARCHITECTURE=two_stage      # Shadow mode
 MODEL_DRAW_THRESHOLD=0.0                 # Deshabilitado, usar argmax
 ```
 
-### Criterios de GO/NO-GO
-- **GO**: brier_shadow <= brier_baseline + 0.002 AND accuracy_drop < 2%
-- **NO-GO**: Cualquier degradación fuera de tolerancia
+### Reentrenamiento automático (ATI-aprobado 2026-02-09)
+
+Job: `shadow_recalibration` — separado de `weekly_recalibration` (Model A). No afecta producción.
+
+**Cadencia**: Martes 5AM UTC, con check interno de ≥14 días desde último retrain aprobado.
+
+**Triggers**:
+- **Intervalo**: ≥14 días desde último `validation_verdict='approved'`
+- **Volumen**: ≥1,500 nuevos FT matches en cohort (ligas activas domésticas, tainted=false)
+
+**Cohort** (idéntico a Model A):
+- `league_only=True` (features calculadas solo con partidos de liga)
+- Ligas: `admin_leagues(is_active=true, kind='league')` — 25 ligas activas
+- `min_date=2023-01-01`
+- `status='FT'` only
+
+**Validación (retrain gate)**:
+- `new_brier < last_shadow_brier` → aprobado
+- Si snapshot previo no tiene `dataset_mode` (régimen viejo 69K) → rebaseline automático (primer run con nuevo cohort siempre aprueba)
+
+**Deploy (shadow-only)**:
+- Snapshot en `model_snapshots` con `is_active=False`, `is_baseline=False`
+- Model blob serializado en DB (`save_to_bytes`)
+- Hot-reload de `_shadow_engine` global sin restart (safe fallback: si falla, conserva engine anterior)
+
+**Guardrails**:
+- Cooldown: 3 rechazos consecutivos → skip 14 días
+- Scheduler: `max_instances=1, coalesce=True, misfire_grace_time=300`
+- `is_active=False` siempre — no usa `create_snapshot()` (que desactivaría Model A)
+- Patrón 3-phase DB→CPU→DB (evita idle connection timeout Railway)
+- Trazabilidad: métricas JSONB en `job_runs` + `training_config` en snapshot
+
+**Criterios de promoción a producción** (P1 futuro, no implementado):
+- N≥300 evaluaciones shadow vs market
+- ΔBrier ≤ -0.005 (shadow mejor que Model A)
+- CI95 < 0 (significativo)
+- Guardrail market: skill vs Pinnacle ≤ 0.010
 
 ### Estado Actual
-Disponible en código. Actualmente se considera **pausado/deshabilitado** mientras se evalúa `ext-C`.
+**ACTIVO** — shadow mode habilitado (`MODEL_SHADOW_ARCHITECTURE=two_stage`), reentrenamiento automático registrado. Snapshot actual: v1.1.0-twostage (Brier 0.2094, 69K muestras, régimen pre-cohort — será rebaselined en primer retrain automático).
 
 Ver `/dashboard/ops.json` → `shadow_mode` para el estado/métricas actuales.
 
@@ -537,10 +571,12 @@ Esto evita “mejoras falsas” por entrenar con resultados incluidos luego en e
 - Draw predictions: 16.1% pero degradó Brier/LogLoss
 - Resultado: Sweep de pesos no encontró punto aceptable
 
-### FASE 2 (v1.1.0-twostage) - PAUSADO
+### FASE 2 (v1.1.0-twostage) - ACTIVO (retrain automático 2026-02-09)
 - Arquitectura two-stage descrita arriba
-- En pausa mientras se prioriza evaluación OOS de `ext-C`
-- Reanudar cuando haya ventana de evaluación dedicada (>=200 evaluaciones)
+- Snapshot original: 15-Ene-2026, Brier 0.2094, 69K muestras (régimen pre-cohort)
+- **Reentrenamiento automático** aprobado ATI 2026-02-09: job `shadow_recalibration`, bi-semanal, cohort-matched (21K, league_only, 2023+)
+- Primer retrain será rebaseline (cambio de cohort 69K→21K)
+- Criterio de promoción a producción: N≥300, ΔBrier≤-0.005, CI95<0 (P1 futuro)
 
 ### Market Anchor Argentina (2026-02-08) - ACTIVO
 - **Diagnóstico**: modelo sin señal en Argentina (Brier 0.6625 > naive 0.6545)

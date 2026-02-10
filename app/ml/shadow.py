@@ -96,6 +96,27 @@ def get_shadow_engine() -> Optional[TwoStageEngine]:
     return _shadow_engine
 
 
+def reload_shadow_engine(blob: bytes) -> bool:
+    """Hot-reload shadow engine from new model blob without restart.
+
+    Safe fallback (ATI P0-5): if load fails, previous engine is preserved
+    and shadow inference continues uninterrupted.
+    """
+    global _shadow_engine, _shadow_enabled
+    old_engine = _shadow_engine
+
+    new_engine = TwoStageEngine()
+    if new_engine.load_from_bytes(blob):
+        _shadow_engine = new_engine
+        _shadow_enabled = True
+        logger.info(f"Shadow engine hot-reloaded: {new_engine.model_version}")
+        return True
+    else:
+        _shadow_engine = old_engine  # Restore previous
+        logger.error("Hot-reload failed, keeping previous shadow engine")
+        return False
+
+
 async def log_shadow_prediction(
     session: AsyncSession,
     match_id: int,

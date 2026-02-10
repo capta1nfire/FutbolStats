@@ -3354,6 +3354,14 @@ async def daily_audit():
 RECALIB_COOLDOWN_REJECTS = 3       # Skip retrain after N consecutive rejects
 RECALIB_COOLDOWN_DAYS = 14         # Cooldown duration in days
 
+# Shadow (Two-Stage) retrain constants
+SHADOW_RETRAIN_INTERVAL_DAYS = 14     # Retrain every 14 days
+SHADOW_RETRAIN_VOLUME_TRIGGER = 1500  # OR: N new FT matches since last approved retrain
+SHADOW_COOLDOWN_REJECTS = 3           # Skip after N consecutive rejects
+SHADOW_COOLDOWN_DAYS = 14             # Cooldown duration
+SHADOW_MODEL_VERSION = "v1.1.0-twostage"
+SHADOW_DRAW_WEIGHT = 1.2
+
 
 async def _check_recalib_cooldown() -> tuple[bool, int]:
     """Check if we're in cooldown from consecutive retrain→reject cycles.
@@ -3430,6 +3438,116 @@ async def _get_training_league_ids(session) -> list[int]:
 
 # Training cohort: matches from 2023+ in active domestic leagues, league_only features
 TRAINING_MIN_DATE = datetime(2023, 1, 1)
+
+
+async def _check_shadow_cooldown() -> tuple[bool, int]:
+    """Check if shadow retrain is in cooldown from consecutive rejects.
+
+    Same logic as _check_recalib_cooldown but for shadow_recalibration job.
+    Returns (in_cooldown: bool, consecutive_rejects: int).
+    """
+    try:
+        from app.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(text("""
+                SELECT metrics
+                FROM job_runs
+                WHERE job_name = 'shadow_recalibration'
+                  AND status = 'ok'
+                  AND metrics IS NOT NULL
+                ORDER BY started_at DESC
+                LIMIT :n
+            """), {"n": SHADOW_COOLDOWN_REJECTS})
+            rows = result.fetchall()
+
+        if len(rows) < SHADOW_COOLDOWN_REJECTS:
+            return False, 0
+
+        consecutive_rejects = 0
+        for row in rows:
+            m = row[0] if row[0] else {}
+            if m.get("validation_verdict") == "rejected":
+                consecutive_rejects += 1
+            else:
+                break
+
+        return consecutive_rejects >= SHADOW_COOLDOWN_REJECTS, consecutive_rejects
+    except Exception as e:
+        logger.warning(f"Shadow cooldown check failed (proceeding): {e}")
+        return False, 0
+
+
+async def _record_shadow_run(
+    status: str, run_metrics: dict, start_time: float, error: str = None,
+) -> None:
+    """Persist shadow_recalibration run to DB (session-based) + Prometheus.
+
+    Uses app.jobs.tracking.record_job_run (proven to persist metrics correctly)
+    instead of telemetry fire-and-forget which stores JSONB null.
+    """
+    from datetime import timedelta
+    duration_ms = (time.time() - start_time) * 1000
+    job_started_at = datetime.utcnow() - timedelta(milliseconds=duration_ms)
+    try:
+        async with get_session_with_retry(max_retries=2, retry_delay=0.5) as s:
+            from app.jobs.tracking import record_job_run as record_job_run_db
+            await record_job_run_db(
+                s, "shadow_recalibration", status, job_started_at,
+                error=error, metrics=run_metrics,
+            )
+    except Exception as db_err:
+        logger.warning(f"Failed to persist shadow recalib run to DB: {db_err}")
+    record_job_run(job="shadow_recalibration", status=status, duration_ms=duration_ms)
+
+
+async def _should_trigger_shadow_retrain(session) -> tuple[bool, str]:
+    """Evaluate if shadow model retrain should be triggered.
+
+    ATI P0-1: Anchor on validation_verdict='approved', NOT status='ok'
+    (ok includes no_retrain/skipped_cooldown runs).
+
+    ATI P0-2: Volume trigger uses cohort-aware count (active leagues, tainted=false).
+
+    Returns (should_trigger, reason).
+    """
+    # P0-1: Last approved shadow retrain
+    result = await session.execute(text("""
+        SELECT finished_at FROM job_runs
+        WHERE job_name = 'shadow_recalibration'
+          AND metrics IS NOT NULL
+          AND metrics->>'validation_verdict' = 'approved'
+        ORDER BY finished_at DESC LIMIT 1
+    """))
+    row = result.first()
+    last_approved_at = row[0] if row else None
+
+    # First run ever
+    if last_approved_at is None:
+        return True, "first_run"
+
+    # Interval trigger
+    days_since = (datetime.utcnow() - last_approved_at).days
+    if days_since >= SHADOW_RETRAIN_INTERVAL_DAYS:
+        return True, f"interval_{days_since}d"
+
+    # P0-2: Volume trigger — cohort-aware (active domestic leagues, tainted=false)
+    # P1: status='FT' only (matches build_training_dataset which excludes AET/PEN)
+    training_league_ids = await _get_training_league_ids(session)
+    result = await session.execute(text("""
+        SELECT COUNT(*) FROM matches
+        WHERE status = 'FT'
+          AND home_goals IS NOT NULL AND away_goals IS NOT NULL
+          AND (tainted IS NULL OR tainted = false)
+          AND league_id = ANY(:league_ids)
+          AND date >= :cutoff
+    """), {"league_ids": training_league_ids, "cutoff": last_approved_at})
+    new_ft_count = result.scalar() or 0
+
+    if new_ft_count >= SHADOW_RETRAIN_VOLUME_TRIGGER:
+        return True, f"volume_{new_ft_count}_ft"
+
+    return False, f"no_trigger (days={days_since}, new_ft={new_ft_count})"
 
 
 async def weekly_recalibration(ml_engine):
@@ -3627,6 +3745,229 @@ async def weekly_recalibration(ml_engine):
         sentry_capture_exception(e, job_id="weekly_recalibration")
         run_metrics["validation_verdict"] = "error"
         await _record_recalib_run("error", run_metrics, start_time, error=str(e))
+
+
+# =============================================================================
+# SHADOW (TWO-STAGE) AUTOMATIC RETRAINING
+# =============================================================================
+# Separate from weekly_recalibration (Model A). Does NOT affect production
+# predictions (is_active always False). ATI-approved 2026-02-09.
+
+
+async def shadow_recalibration():
+    """
+    Shadow (Two-Stage) model automatic retraining.
+    Runs every Tuesday at 5:00 AM UTC (bi-weekly via internal interval check).
+
+    Separate from weekly_recalibration (Model A).
+    Does NOT affect production predictions (is_active remains False).
+
+    Steps:
+    1. Check trigger (interval >= 14d OR volume >= 1500 new FT)
+    2. Check cooldown (3 consecutive rejects → skip 14d)
+    3. Build cohort-matched dataset (same as Model A)
+    4. Train TwoStageEngine in ThreadPoolExecutor
+    5. Validate vs last shadow snapshot (rebaseline if cohort changed)
+    6. Save snapshot + hot-reload shadow engine
+    """
+    logger.info("[SHADOW_RECALIB] Starting shadow recalibration job...")
+    start_time = time.time()
+    run_metrics: dict = {}
+
+    try:
+        from app.ml.engine import TwoStageEngine
+        from app.models import ModelSnapshot
+
+        # ── Phase 1: DB work (trigger + cooldown + dataset) ──
+        async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
+            # Step 1: Check trigger
+            should_trigger, reason = await _should_trigger_shadow_retrain(session)
+            run_metrics["trigger_reason"] = reason
+            logger.info(f"[SHADOW_RECALIB] Trigger evaluation: {reason}")
+
+            if not should_trigger:
+                logger.info("[SHADOW_RECALIB] Skipping - no trigger")
+                run_metrics["validation_verdict"] = "no_retrain"
+                await _record_shadow_run("ok", run_metrics, start_time)
+                return
+
+            # Step 2: Cooldown check
+            in_cooldown, n_rejects = await _check_shadow_cooldown()
+            if in_cooldown:
+                logger.info(
+                    f"[SHADOW_RECALIB] COOLDOWN: {n_rejects} consecutive rejects, "
+                    f"skipping for {SHADOW_COOLDOWN_DAYS}d"
+                )
+                run_metrics["validation_verdict"] = "skipped_cooldown"
+                run_metrics["consecutive_rejects"] = n_rejects
+                await _record_shadow_run("ok", run_metrics, start_time)
+                return
+
+            # Step 3: Build cohort-matched dataset (same as Model A)
+            training_league_ids = await _get_training_league_ids(session)
+            logger.info(
+                f"[SHADOW_RECALIB] Building dataset: "
+                f"league_ids_count={len(training_league_ids)}, "
+                f"min_date={TRAINING_MIN_DATE.date()}, league_only=True"
+            )
+            feature_engineer = FeatureEngineer(session=session)
+            df = await feature_engineer.build_training_dataset(
+                league_only=True,
+                league_ids=training_league_ids,
+                min_date=TRAINING_MIN_DATE,
+            )
+
+        # Cohort metadata for traceability
+        cohort_meta = {
+            "dataset_mode": "league_only_active_domestic_recent",
+            "league_only": True,
+            "league_ids_source": "admin_leagues(is_active=true, kind='league')",
+            "league_ids_count": len(training_league_ids),
+            "min_date": str(TRAINING_MIN_DATE.date()),
+        }
+        run_metrics.update(cohort_meta)
+
+        # ── Phase 2: CPU work (no DB session held) ──
+        if len(df) < 100:
+            logger.error(f"[SHADOW_RECALIB] Insufficient data: {len(df)} samples")
+            run_metrics["samples_trained"] = len(df)
+            run_metrics["validation_verdict"] = "insufficient_data"
+            await _record_shadow_run("error", run_metrics, start_time)
+            return
+
+        run_metrics["samples_trained"] = len(df)
+
+        engine = TwoStageEngine(
+            model_version=SHADOW_MODEL_VERSION,
+            draw_weight=SHADOW_DRAW_WEIGHT,
+        )
+
+        from concurrent.futures import ThreadPoolExecutor
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor() as executor:
+            train_result = await loop.run_in_executor(executor, engine.train, df)
+
+        new_brier = train_result["brier_score"]
+        cv_scores = train_result["cv_scores"]
+        logger.info(f"[SHADOW_RECALIB] Training complete: Brier = {new_brier:.4f}")
+        run_metrics["new_brier"] = round(new_brier, 6)
+        run_metrics["cv_scores"] = cv_scores
+
+        # ── Phase 3: DB work (validate + snapshot + hot-reload) ──
+        async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
+            # Get last shadow snapshot for comparison
+            from sqlalchemy import select
+            result = await session.execute(
+                select(ModelSnapshot)
+                .where(ModelSnapshot.model_version.like("%twostage%"))
+                .order_by(ModelSnapshot.created_at.desc())
+                .limit(1)
+            )
+            last_shadow = result.scalar_one_or_none()
+
+            # P0-3: Rebaseline check — if previous snapshot lacks dataset_mode,
+            # it was trained on old regime (69K). Don't compare apples to oranges.
+            is_rebaseline = False
+            if last_shadow:
+                prev_config = last_shadow.training_config or {}
+                if not prev_config.get("dataset_mode"):
+                    is_rebaseline = True
+                    logger.info(
+                        f"[SHADOW_RECALIB] REBASELINE: Previous snapshot "
+                        f"(id={last_shadow.id}, brier={last_shadow.brier_score:.4f}) "
+                        f"lacks dataset_mode — old regime. Auto-approving."
+                    )
+
+            run_metrics["is_rebaseline"] = is_rebaseline
+
+            # Retrain gate
+            is_valid = True
+            if last_shadow and not is_rebaseline:
+                run_metrics["last_shadow_brier"] = round(last_shadow.brier_score, 6)
+                if new_brier >= last_shadow.brier_score:
+                    is_valid = False
+                    validation_msg = (
+                        f"New Brier ({new_brier:.4f}) >= last shadow "
+                        f"({last_shadow.brier_score:.4f}) - REJECTED"
+                    )
+                else:
+                    validation_msg = (
+                        f"Improved: {last_shadow.brier_score:.4f} → {new_brier:.4f} "
+                        f"(Δ={last_shadow.brier_score - new_brier:.4f}) - APPROVED"
+                    )
+            elif is_rebaseline:
+                validation_msg = f"REBASELINE: New cohort baseline Brier = {new_brier:.4f} - APPROVED"
+            else:
+                validation_msg = f"First shadow snapshot: Brier = {new_brier:.4f} - APPROVED"
+
+            logger.info(f"[SHADOW_RECALIB] Validation: {validation_msg}")
+            run_metrics["validation_msg"] = validation_msg
+
+            if not is_valid:
+                logger.warning("[SHADOW_RECALIB] New shadow model rejected")
+                run_metrics["validation_verdict"] = "rejected"
+                await _record_shadow_run("ok", run_metrics, start_time)
+                return
+
+            # Save snapshot — insert directly, NOT via create_snapshot()
+            # (create_snapshot sets is_active=False on ALL snapshots, killing Model A)
+            blob = engine.save_to_bytes()
+            training_config = {
+                **cohort_meta,
+                "architecture": "two_stage",
+                "draw_weight": SHADOW_DRAW_WEIGHT,
+                "samples_trained": len(df),
+                "cv_scores": cv_scores,
+                "brier_score": round(new_brier, 6),
+                "is_rebaseline": is_rebaseline,
+            }
+
+            snapshot = ModelSnapshot(
+                model_version=SHADOW_MODEL_VERSION,
+                model_path="db_blob",
+                model_blob=blob,
+                brier_score=new_brier,
+                cv_brier_scores={"scores": cv_scores},
+                samples_trained=len(df),
+                is_active=False,
+                is_baseline=False,
+                training_config=training_config,
+            )
+            session.add(snapshot)
+            await session.commit()
+            await session.refresh(snapshot)
+            logger.info(
+                f"[SHADOW_RECALIB] Snapshot saved: id={snapshot.id}, "
+                f"brier={new_brier:.4f}"
+            )
+
+        # Hot-reload shadow engine (P0-5: safe fallback)
+        from app.ml.shadow import reload_shadow_engine
+        if reload_shadow_engine(blob):
+            run_metrics["hot_reload"] = "success"
+        else:
+            run_metrics["hot_reload"] = "failed"
+            run_metrics["validation_verdict"] = "reload_failed"
+            logger.warning(
+                "[SHADOW_RECALIB] Hot-reload failed — snapshot saved, "
+                "engine will pick up on next restart"
+            )
+            await _record_shadow_run("ok", run_metrics, start_time)
+            return
+
+        run_metrics["validation_verdict"] = "approved"
+        run_metrics["snapshot_id"] = snapshot.id
+        await _record_shadow_run("ok", run_metrics, start_time)
+        logger.info(
+            f"[SHADOW_RECALIB] Complete: Brier {new_brier:.4f}, "
+            f"snapshot_id={snapshot.id}, hot-reload OK"
+        )
+
+    except Exception as e:
+        logger.error(f"[SHADOW_RECALIB] Failed: {e}")
+        sentry_capture_exception(e, job_id="shadow_recalibration")
+        run_metrics["validation_verdict"] = "error"
+        await _record_shadow_run("error", run_metrics, start_time, error=str(e))
 
 
 # =============================================================================
@@ -7315,6 +7656,22 @@ def start_scheduler(ml_engine):
         name="Weekly Recalibration",
         replace_existing=True,
     )
+
+    # Shadow (Two-Stage) recalibration: Tuesday at 5:00 AM UTC (bi-weekly)
+    # Only registered if shadow mode is enabled. Internal interval check ensures
+    # actual retrain only runs every 14 days (or on volume trigger).
+    if settings.MODEL_SHADOW_ARCHITECTURE == "two_stage":
+        scheduler.add_job(
+            shadow_recalibration,
+            trigger=CronTrigger(day_of_week="tue", hour=5, minute=0),
+            id="shadow_recalibration",
+            name="Shadow Two-Stage Recalibration",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=300,
+        )
+        logger.info("Registered shadow_recalibration job (bi-weekly Tuesdays 5AM UTC)")
 
     # Live Global Sync: Every 60 seconds (real-time results)
     # Uses 1 API call per minute = 1,440 calls/day (of 7,500 available)
