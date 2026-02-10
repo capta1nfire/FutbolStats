@@ -7660,7 +7660,9 @@ def start_scheduler(ml_engine):
     # Shadow (Two-Stage) recalibration: Tuesday at 5:00 AM UTC (bi-weekly)
     # Only registered if shadow mode is enabled. Internal interval check ensures
     # actual retrain only runs every 14 days (or on volume trigger).
-    if settings.MODEL_SHADOW_ARCHITECTURE == "two_stage":
+    from app.config import get_settings as _get_shadow_settings
+    _shadow_cfg = _get_shadow_settings()
+    if _shadow_cfg.MODEL_SHADOW_ARCHITECTURE == "two_stage":
         scheduler.add_job(
             shadow_recalibration,
             trigger=CronTrigger(day_of_week="tue", hour=5, minute=0),
