@@ -1209,12 +1209,13 @@ async def _predictions_catchup_on_startup():
     """
     Predictions catch-up on startup (P2 resilience).
 
-    Handles missed daily_save_predictions runs due to deploys/restarts.
-    Conditions to trigger:
-    - hours_since_last_prediction_saved > 6
-    - ns_next_48h > 0 (there are upcoming matches to predict)
+    Maintains pre-check (hours_since_last > 6, ns_next_48h > 0) then delegates
+    to daily_save_predictions for single-path guardrails (kill-switch, shadow,
+    league_only, market anchor).
 
-    This is fire-and-forget, idempotent (upsert), and non-blocking.
+    ATI P0 fix: previous implementation bypassed kill-switch, shadow predictions,
+    and league_only features (api.py:1280-1329). Now uses identical code path
+    as scheduler to eliminate guardrail drift.
     """
     import asyncio
 
@@ -1222,6 +1223,7 @@ async def _predictions_catchup_on_startup():
     await asyncio.sleep(5)
 
     try:
+        # Pre-check with short-lived session (closes before daily_save_predictions)
         async with AsyncSessionLocal() as session:
             now = datetime.utcnow()
 
@@ -1233,8 +1235,7 @@ async def _predictions_catchup_on_startup():
 
             hours_since_last = None
             if last_pred_at:
-                delta = now - last_pred_at
-                hours_since_last = delta.total_seconds() / 3600
+                hours_since_last = (now - last_pred_at).total_seconds() / 3600
 
             # 2) Check NS matches in next 48h
             res = await session.execute(
@@ -1252,7 +1253,6 @@ async def _predictions_catchup_on_startup():
                 (hours_since_last is None or hours_since_last > 6)
                 and ns_next_48h > 0
             )
-
             hours_str = f"{hours_since_last:.1f}" if hours_since_last else "N/A"
 
             if not should_catchup:
@@ -1262,75 +1262,25 @@ async def _predictions_catchup_on_startup():
                 )
                 return
 
-            # 4) Trigger catch-up
-            logger.warning(
-                f"[OPS_ALERT] predictions catch-up on startup triggered: "
-                f"hours_since_last={hours_str}, ns_next_48h={ns_next_48h}"
+        # 4) Delegate to daily_save_predictions (single path with all guardrails)
+        logger.warning(
+            f"[OPS_ALERT] predictions catch-up on startup triggered: "
+            f"hours_since_last={hours_str}, ns_next_48h={ns_next_48h}"
+        )
+        from app.scheduler import daily_save_predictions
+        result = await daily_save_predictions(return_metrics=True)
+
+        if result:
+            status = result.get("status", "unknown")
+            log_fn = logger.warning if status in ("partial", "error") else logger.info
+            log_fn(
+                f"[STARTUP] Predictions catch-up via daily_save_predictions: "
+                f"status={status}, saved={result.get('saved', 0)}, "
+                f"eligible={result.get('n_eligible', 0)}, "
+                f"filtered={result.get('n_filtered', 0)}"
             )
-
-            # Use same logic as /dashboard/predictions/trigger endpoint
-            from app.db_utils import upsert
-
-            # Check ML model is loaded
-            if not ml_engine.is_loaded:
-                logger.error("[STARTUP] Predictions catch-up aborted: ML model not loaded")
-                return
-
-            # Get features for upcoming matches
-            feature_engineer = FeatureEngineer(session=session)
-            df = await feature_engineer.get_upcoming_matches_features()
-
-            if len(df) == 0:
-                logger.info("[STARTUP] Predictions catch-up: no upcoming matches found")
-                return
-
-            # Filter to NS only
-            df_ns = df[df["status"] == "NS"].copy()
-
-            if len(df_ns) == 0:
-                logger.info("[STARTUP] Predictions catch-up: no NS matches to predict")
-                return
-
-            # Generate predictions
-            predictions = ml_engine.predict(df_ns)
-
-            # Save to database (idempotent upsert)
-            saved = 0
-            for pred in predictions:
-                match_id = pred.get("match_id")
-                if not match_id:
-                    continue
-
-                probs = pred["probabilities"]
-                try:
-                    await session.execute(text("SAVEPOINT sp_pred"))
-                    await upsert(
-                        session,
-                        Prediction,
-                        values={
-                            "match_id": match_id,
-                            "model_version": ml_engine.model_version,
-                            "home_prob": probs["home"],
-                            "draw_prob": probs["draw"],
-                            "away_prob": probs["away"],
-                        },
-                        conflict_columns=["match_id", "model_version"],
-                        update_columns=["home_prob", "draw_prob", "away_prob"],
-                    )
-                    await session.execute(text("RELEASE SAVEPOINT sp_pred"))
-                    saved += 1
-                except Exception as e:
-                    try:
-                        await session.execute(text("ROLLBACK TO SAVEPOINT sp_pred"))
-                    except Exception:
-                        pass
-                    logger.warning(f"[STARTUP] Predictions catch-up: match {match_id} failed: {e}")
-
-            await session.commit()
-            logger.info(
-                f"[STARTUP] Predictions catch-up complete: saved={saved}, "
-                f"ns_matches={len(df_ns)}, model={ml_engine.model_version}"
-            )
+        else:
+            logger.info("[STARTUP] Predictions catch-up: daily_save_predictions returned None")
 
     except Exception as e:
         logger.error(f"[STARTUP] Predictions catch-up failed: {e}")

@@ -2218,6 +2218,13 @@ async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
         # Record shadow/sensor batch counters
         if is_shadow_enabled() and (shadow_logged > 0 or shadow_errors > 0):
             record_shadow_predictions_batch(logged=shadow_logged, errors=shadow_errors)
+        elif not is_shadow_enabled() and killswitch_eligible > 0:
+            from app.telemetry.metrics import record_shadow_engine_not_loaded_skip
+            record_shadow_engine_not_loaded_skip(killswitch_eligible)
+            logger.info(
+                f"[DAILY-SAVE] Shadow engine not loaded, "
+                f"{killswitch_eligible} eligible predictions without shadow"
+            )
         if sensor_settings.SENSOR_ENABLED and (sensor_logged > 0 or sensor_errors > 0):
             record_sensor_predictions_batch(logged=sensor_logged, errors=sensor_errors)
 

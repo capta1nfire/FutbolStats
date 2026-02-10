@@ -811,6 +811,12 @@ shadow_predictions_errors_total = Counter(
     [],
 )
 
+shadow_engine_not_loaded_skips_total = Counter(
+    "shadow_engine_not_loaded_skips_total",
+    "Shadow mode: prediction attempts skipped because engine not loaded",
+    [],
+)
+
 shadow_eval_lag_minutes = Gauge(
     "shadow_eval_lag_minutes",
     "Shadow mode: minutes since oldest pending prediction (0 if none pending)",
@@ -893,6 +899,14 @@ def record_shadow_predictions_batch(
             shadow_predictions_errors_total.inc(errors)
     except Exception as e:
         logger.warning(f"Failed to record shadow batch metrics: {e}")
+
+
+def record_shadow_engine_not_loaded_skip(count: int = 1) -> None:
+    """Record shadow predictions skipped due to engine not loaded."""
+    try:
+        shadow_engine_not_loaded_skips_total.inc(count)
+    except Exception:
+        pass
 
 
 def record_shadow_evaluation_batch(
