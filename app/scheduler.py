@@ -3419,6 +3419,19 @@ async def _record_recalib_run(
     record_job_run(job="weekly_recalibration", status=status, duration_ms=duration_ms)
 
 
+async def _get_training_league_ids(session) -> list[int]:
+    """Get active domestic league IDs for training cohort from admin_leagues."""
+    result = await session.execute(text(
+        "SELECT league_id FROM admin_leagues "
+        "WHERE is_active = true AND kind = 'league' ORDER BY league_id"
+    ))
+    return [row[0] for row in result.fetchall()]
+
+
+# Training cohort: matches from 2023+ in active domestic leagues, league_only features
+TRAINING_MIN_DATE = datetime(2023, 1, 1)
+
+
 async def weekly_recalibration(ml_engine):
     """
     Weekly intelligent recalibration job.
@@ -3429,7 +3442,7 @@ async def weekly_recalibration(ml_engine):
     2. Run audit on recent matches
     3. Update team confidence adjustments
     4. Evaluate if retraining is needed (with cooldown check)
-    5. If retraining: build league_only dataset, train, validate, deploy
+    5. If retraining: build cohort-matched dataset, train, validate, deploy
     """
     logger.info("Starting weekly recalibration job...")
     start_time = time.time()
@@ -3515,10 +3528,29 @@ async def weekly_recalibration(ml_engine):
                     return
 
             # Step 5a: Build training dataset (DB)
-            # P0-1: Use league_only=True to match serving parity
-            logger.info(f"Triggering retrain: {reason}")
+            # ATI P0: Cohort-matched — active domestic leagues + 2023+ + league_only features
+            training_league_ids = await _get_training_league_ids(session)
+            logger.info(
+                f"Triggering retrain: {reason} | cohort: "
+                f"league_ids_count={len(training_league_ids)}, "
+                f"min_date={TRAINING_MIN_DATE.date()}, league_only=True"
+            )
             feature_engineer = FeatureEngineer(session=session)
-            df = await feature_engineer.build_training_dataset(league_only=True)
+            df = await feature_engineer.build_training_dataset(
+                league_only=True,
+                league_ids=training_league_ids,
+                min_date=TRAINING_MIN_DATE,
+            )
+
+        # Cohort metadata for traceability
+        cohort_meta = {
+            "dataset_mode": "league_only_active_domestic_recent",
+            "league_only": True,
+            "league_ids_source": "admin_leagues(is_active=true, kind='league')",
+            "league_ids_count": len(training_league_ids),
+            "min_date": str(TRAINING_MIN_DATE.date()),
+        }
+        run_metrics.update(cohort_meta)
 
         # ── Phase 2: CPU work (no DB session held) ──
         if len(df) < 100:
@@ -3571,13 +3603,19 @@ async def weekly_recalibration(ml_engine):
                 return
 
             # Step 7: Create snapshot and activate new model
+            training_config = {
+                **cohort_meta,
+                "samples_trained": train_result["samples_trained"],
+                "cv_scores": train_result["cv_scores"],
+                "brier_score": round(new_brier, 6),
+            }
             snapshot = await recalibrator.create_snapshot(
                 model_version=ml_engine.model_version,
                 model_path=train_result["model_path"],
                 brier_score=new_brier,
                 cv_scores=train_result["cv_scores"],
                 samples_trained=train_result["samples_trained"],
-                training_config=None,  # Could add hyperparams here
+                training_config=training_config,
             )
             logger.info(f"New model deployed: {snapshot.model_version} (Brier: {new_brier:.4f})")
 
