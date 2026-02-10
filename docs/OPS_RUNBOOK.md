@@ -186,6 +186,7 @@ xcrun simctl spawn booted defaults write com.futbolstats.app dashboard_token 'tu
 shadow_predictions_logged_total      # Counter: predicciones shadow registradas
 shadow_predictions_evaluated_total   # Counter: predicciones evaluadas vs FT
 shadow_predictions_errors_total      # Counter: errores en logging
+shadow_engine_not_loaded_skips_total # Counter: predicciones sin shadow (engine no cargado)
 shadow_eval_lag_minutes              # Gauge: minutos desde oldest pending FT
 shadow_pending_ft_to_evaluate        # Gauge: partidos FT con evaluaciones pendientes
 
@@ -310,6 +311,12 @@ curl -s -H "X-API-Key: $API_KEY" \
 - El engine selecciona features dinámicamente según `model.n_features_in_`
 - Si el modelo espera 14 y runtime produce 17, se truncan automáticamente
 - OPS muestra `n_features` para diagnóstico rápido
+
+**Predictions pipeline (single path):**
+- Todas las predicciones se generan via `daily_save_predictions()` (scheduler 7AM UTC + startup catch-up + trigger-fase0 manual)
+- El startup catch-up (`_predictions_catchup_on_startup` en api.py) solo evalúa si es necesario (hours_since_last > 6 + ns_next_48h > 0) y delega al mismo code path
+- Guardrails incluidos en el path único: kill-switch, shadow predictions, league_only features, market anchor
+- Si `shadow_engine_not_loaded_skips_total` crece en /metrics, shadow no está cargado y las predicciones no tienen shadow
 
 ---
 
