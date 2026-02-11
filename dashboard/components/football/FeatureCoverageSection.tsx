@@ -117,13 +117,19 @@ const TIER_LABELS: Record<string, string> = {
  */
 export function FeatureCoverageSection({ coverage }: FeatureCoverageSectionProps) {
   const { killswitch, sources, tiers } = coverage;
+  const lookbackDays = killswitch?.lookback_days ?? 90;
 
   return (
     <div className="space-y-3">
-      <h4 className="text-sm font-medium text-foreground flex items-center gap-2">
-        <Database className="h-4 w-4 text-muted-foreground" />
-        Feature Coverage
-      </h4>
+      <div className="flex items-center justify-between">
+        <h4 className="text-sm font-medium text-foreground flex items-center gap-2">
+          <Database className="h-4 w-4 text-muted-foreground" />
+          Feature Coverage
+        </h4>
+        <span className="text-[10px] text-muted-foreground">
+          Last {lookbackDays}d
+        </span>
+      </div>
 
       {/* Layer 1: Kill-switch */}
       {killswitch && (
@@ -139,7 +145,7 @@ export function FeatureCoverageSection({ coverage }: FeatureCoverageSectionProps
       {sources && (
         <div className="space-y-1.5">
           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
-            Sources ({sources.total_matches} matches)
+            Sources ({sources.total_matches} league matches in TITAN)
           </p>
           <CoverageRow label="Odds" source={sources.odds} />
           <CoverageRow label="xG" source={sources.xg} />
