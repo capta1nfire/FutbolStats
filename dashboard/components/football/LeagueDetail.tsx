@@ -34,6 +34,7 @@ import {
   Settings,
 } from "lucide-react";
 import { toast } from "sonner";
+import { FeatureCoverageSection } from "./FeatureCoverageSection";
 
 const LEAGUE_DETAIL_TABS = [
   { id: "standings", icon: null, label: "Standings" },
@@ -47,6 +48,7 @@ const TEAM_DETAIL_TABS = [
   { id: "overview", label: "Overview" },
   { id: "matches", label: "Matches" },
   { id: "stats", label: "Stats" },
+  { id: "coverage", label: "Coverage" },
   { id: "transfers", label: "Transfers" },
 ] as const;
 
@@ -1210,6 +1212,22 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                 <div className="rounded-lg border border-border px-4 py-8 text-center">
                   <BarChart3 className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
                   <p className="text-sm text-muted-foreground">Stats coming soon</p>
+                </div>
+              )}
+
+              {teamTab === "coverage" && (
+                <div className="space-y-4">
+                  {selectedTeam.isLoading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader size="sm" />
+                    </div>
+                  ) : selectedTeam.data?.feature_coverage ? (
+                    <FeatureCoverageSection coverage={selectedTeam.data.feature_coverage} />
+                  ) : (
+                    <div className="rounded-lg border border-border px-4 py-8 text-center">
+                      <p className="text-sm text-muted-foreground">No coverage data available</p>
+                    </div>
+                  )}
                 </div>
               )}
 
