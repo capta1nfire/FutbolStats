@@ -414,12 +414,40 @@ export interface TeamFormMatch {
   home: boolean;
 }
 
+// Feature Coverage (ATI P0 - Team Detail widget)
+export interface FeatureCoverageSource {
+  count: number;
+  pct: number;
+}
+
+export interface FeatureCoverageKillswitch {
+  ft_league_matches: number;
+  lookback_days: number;
+  min_required: number;
+  status: "ok" | "warning" | "blocked";
+}
+
+export interface FeatureCoverage {
+  killswitch: FeatureCoverageKillswitch | null;
+  sources: {
+    total_matches: number;
+    odds: FeatureCoverageSource;
+    xg: FeatureCoverageSource;
+    lineup: FeatureCoverageSource;
+    xi_depth: FeatureCoverageSource;
+    form: FeatureCoverageSource;
+    h2h: FeatureCoverageSource;
+  } | null;
+  tiers: Record<string, FeatureCoverageSource> | null;
+}
+
 export interface TeamDetail {
   team: TeamInfo;
   wikidata_enrichment?: TeamWikidataEnrichment | null;
   stats?: TeamStats;
   leagues_played?: TeamLeague[];
   recent_form?: TeamFormMatch[];
+  feature_coverage?: FeatureCoverage | null;
 }
 
 export type TeamDetailResponse = FootballApiResponse<TeamDetail>;

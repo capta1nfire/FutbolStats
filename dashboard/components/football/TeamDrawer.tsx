@@ -28,6 +28,7 @@ import type {
 import { TeamLogoSettings } from "./TeamLogoSettings";
 import { TeamEnrichmentSettings } from "./TeamEnrichmentSettings";
 import { TeamWikiSettings } from "./TeamWikiSettings";
+import { FeatureCoverageSection } from "./FeatureCoverageSection";
 import { ManagerCard, InjuryList } from "@/components/squad";
 
 interface TeamDrawerProps {
@@ -295,6 +296,11 @@ export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDr
           <>
             {/* Stats Summary */}
             {data.stats && <StatsSummarySection stats={data.stats} />}
+
+            {/* Feature Coverage (ATI P0) */}
+            {data.feature_coverage && (
+              <FeatureCoverageSection coverage={data.feature_coverage} />
+            )}
 
             {/* Competitions */}
             {data.leagues_played && <LeaguesSection leagues={data.leagues_played} />}

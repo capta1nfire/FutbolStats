@@ -1076,7 +1076,118 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
         else:
             payload["wikidata_enrichment"] = None
 
+    # Feature coverage (ATI P0 - fail-soft)
+    payload["feature_coverage"] = await _build_feature_coverage(session, team_id)
+
     return payload
+
+
+async def _build_feature_coverage(session: AsyncSession, team_id: int) -> Optional[dict]:
+    """
+    Build feature coverage data for a team (ATI P0).
+
+    3 layers: kill-switch status, source coverage, TITAN tiers.
+    Uses dynamic config from get_settings() for lookback/min thresholds.
+    Fail-soft: returns None if titan schema doesn't exist or query fails.
+    """
+    try:
+        from app.config import get_settings
+        _cfg = get_settings()
+        lookback_days = _cfg.KILLSWITCH_LOOKBACK_DAYS
+        min_league_matches = _cfg.KILLSWITCH_MIN_LEAGUE_MATCHES
+    except Exception:
+        lookback_days = 90
+        min_league_matches = 5
+
+    try:
+        # Query 1: Kill-switch status (ATI P0-1: JOIN admin_leagues, P0-2: dynamic config)
+        ks_result = await session.execute(text("""
+            SELECT COUNT(*) as ft_league_matches
+            FROM (
+                SELECT m.date
+                FROM matches m
+                JOIN admin_leagues al ON m.league_id = al.league_id AND al.kind = 'league'
+                WHERE m.status = 'FT'
+                  AND m.date >= NOW() - MAKE_INTERVAL(days => :lookback_days)
+                  AND (m.home_team_id = :tid OR m.away_team_id = :tid)
+            ) sub
+        """), {"tid": team_id, "lookback_days": lookback_days})
+        ft_count = int(ks_result.scalar() or 0)
+
+        if ft_count >= min_league_matches + 3:
+            ks_status = "ok"
+        elif ft_count >= min_league_matches:
+            ks_status = "warning"
+        else:
+            ks_status = "blocked"
+
+        killswitch = {
+            "ft_league_matches": ft_count,
+            "lookback_days": lookback_days,
+            "min_required": min_league_matches,
+            "status": ks_status,
+        }
+    except Exception as e:
+        logger.warning(f"[FEATURE-COVERAGE] kill-switch query failed for team {team_id}: {e}")
+        killswitch = None
+
+    try:
+        # Query 2: TITAN coverage (ATI P0-3: league-only, P0-4: past matches only)
+        cov_result = await session.execute(text("""
+            SELECT
+                COUNT(*) as total_matches,
+                COUNT(*) FILTER (WHERE fm.odds_home_close IS NOT NULL) as with_odds,
+                COUNT(*) FILTER (WHERE fm.xg_home_last5 IS NOT NULL OR fm.xg_away_last5 IS NOT NULL) as with_xg,
+                COUNT(*) FILTER (WHERE fm.sofascore_home_formation IS NOT NULL OR fm.sofascore_away_formation IS NOT NULL) as with_lineup,
+                COUNT(*) FILTER (WHERE fm.xi_home_def_count IS NOT NULL OR fm.xi_away_def_count IS NOT NULL) as with_xi_depth,
+                COUNT(*) FILTER (WHERE fm.form_home_last5 IS NOT NULL OR fm.form_away_last5 IS NOT NULL) as with_form,
+                COUNT(*) FILTER (WHERE fm.h2h_total_matches IS NOT NULL AND fm.h2h_total_matches > 0) as with_h2h,
+                COUNT(*) FILTER (WHERE fm.tier1_complete) as tier1_ok,
+                COUNT(*) FILTER (WHERE fm.tier1b_complete) as tier1b_ok,
+                COUNT(*) FILTER (WHERE fm.tier1c_complete) as tier1c_ok,
+                COUNT(*) FILTER (WHERE fm.tier1d_complete) as tier1d_ok,
+                COUNT(*) FILTER (WHERE fm.tier2_complete) as tier2_ok,
+                COUNT(*) FILTER (WHERE fm.tier3_complete) as tier3_ok
+            FROM titan.feature_matrix fm
+            JOIN admin_leagues al ON fm.competition_id = al.league_id AND al.kind = 'league'
+            WHERE (fm.home_team_id = :tid OR fm.away_team_id = :tid)
+              AND fm.kickoff_utc <= NOW()
+              AND fm.kickoff_utc >= NOW() - MAKE_INTERVAL(days => :lookback_days)
+        """), {"tid": team_id, "lookback_days": lookback_days})
+        row = cov_result.fetchone()
+
+        if not row or row.total_matches == 0:
+            return {"killswitch": killswitch, "sources": None, "tiers": None}
+
+        total = row.total_matches
+
+        def _pct(count: int) -> float:
+            return round(100.0 * count / total, 1) if total > 0 else 0.0
+
+        sources = {
+            "total_matches": total,
+            "odds": {"count": row.with_odds, "pct": _pct(row.with_odds)},
+            "xg": {"count": row.with_xg, "pct": _pct(row.with_xg)},
+            "lineup": {"count": row.with_lineup, "pct": _pct(row.with_lineup)},
+            "xi_depth": {"count": row.with_xi_depth, "pct": _pct(row.with_xi_depth)},
+            "form": {"count": row.with_form, "pct": _pct(row.with_form)},
+            "h2h": {"count": row.with_h2h, "pct": _pct(row.with_h2h)},
+        }
+
+        tiers = {
+            "tier1": {"count": row.tier1_ok, "pct": _pct(row.tier1_ok)},
+            "tier1b": {"count": row.tier1b_ok, "pct": _pct(row.tier1b_ok)},
+            "tier1c": {"count": row.tier1c_ok, "pct": _pct(row.tier1c_ok)},
+            "tier1d": {"count": row.tier1d_ok, "pct": _pct(row.tier1d_ok)},
+            "tier2": {"count": row.tier2_ok, "pct": _pct(row.tier2_ok)},
+            "tier3": {"count": row.tier3_ok, "pct": _pct(row.tier3_ok)},
+        }
+
+        return {"killswitch": killswitch, "sources": sources, "tiers": tiers}
+
+    except Exception as e:
+        logger.warning(f"[FEATURE-COVERAGE] TITAN query failed for team {team_id}: {e}")
+        return {"killswitch": killswitch, "sources": None, "tiers": None} if killswitch else None
 
 
 # =============================================================================
