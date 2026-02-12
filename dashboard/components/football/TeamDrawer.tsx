@@ -33,7 +33,7 @@ import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { TeamLogoSettings } from "./TeamLogoSettings";
 import { TeamEnrichmentSettings } from "./TeamEnrichmentSettings";
-import type { TeamEnrichmentHandle } from "./TeamEnrichmentSettings";
+import type { TeamEnrichmentHandle, EnrichmentFormState } from "./TeamEnrichmentSettings";
 import { TeamWikiSettings } from "./TeamWikiSettings";
 import { ManagerCard, InjuryList } from "@/components/squad";
 
@@ -244,6 +244,7 @@ const TEAM_TABS = [
 export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDrawerProps) {
   const [activeTab, setActiveTab] = useState("overview");
   const [enrichmentNotes, setEnrichmentNotes] = useState("");
+  const [enrichmentForm, setEnrichmentForm] = useState<EnrichmentFormState>({ isDirty: false, canSave: false, isPending: false });
   const enrichmentRef = useRef<TeamEnrichmentHandle>(null);
   const { data, isLoading, error, refetch } = useFootballTeam(teamId);
   const deleteMutation = useTeamEnrichmentDeleteMutation();
@@ -355,6 +356,7 @@ export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDr
                 enrichment={data.wikidata_enrichment}
                 notes={enrichmentNotes}
                 onNotesChange={setEnrichmentNotes}
+                onFormStateChange={setEnrichmentForm}
               />
               <TeamWikiSettings
                 teamId={data.team.team_id}
@@ -377,12 +379,12 @@ export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDr
               </div>
 
               {/* Save/Cancel buttons for enrichment */}
-              {enrichmentRef.current?.isDirty && (
+              {enrichmentForm.isDirty && (
                 <div className="flex items-center justify-end gap-3 pt-2 border-t border-border">
                   <button
                     type="button"
                     onClick={() => enrichmentRef.current?.handleReset()}
-                    disabled={enrichmentRef.current?.isPending}
+                    disabled={enrichmentForm.isPending}
                     className="text-sm px-3 py-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-[color:var(--field-bg-hover)] transition-colors disabled:opacity-50"
                   >
                     Cancel
@@ -390,9 +392,9 @@ export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDr
                   <Button
                     size="sm"
                     onClick={() => enrichmentRef.current?.handleSave()}
-                    disabled={!enrichmentRef.current?.canSave}
+                    disabled={!enrichmentForm.canSave}
                   >
-                    {enrichmentRef.current?.isPending ? (
+                    {enrichmentForm.isPending ? (
                       <>
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                         Saving...
@@ -405,8 +407,8 @@ export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDr
               )}
 
               {/* Remove override + info */}
-              {data.wikidata_enrichment?.has_override && !enrichmentRef.current?.isDirty && (
-                <div className="pt-2 border-t border-border space-y-2">
+              {data.wikidata_enrichment?.has_override && !enrichmentForm.isDirty && (
+                <div className="pt-2 space-y-2">
                   <Button
                     variant="ghost"
                     size="sm"

@@ -84,10 +84,13 @@ function validateStadiumWikidataId(value: string): ValidationResult {
 // Component
 // =============================================================================
 
-export interface TeamEnrichmentHandle {
+export interface EnrichmentFormState {
   isDirty: boolean;
   canSave: boolean;
   isPending: boolean;
+}
+
+export interface TeamEnrichmentHandle {
   handleSave: () => void;
   handleReset: () => void;
 }
@@ -98,6 +101,7 @@ interface TeamEnrichmentSettingsProps {
   enrichment?: TeamWikidataEnrichment | null;
   notes: string;
   onNotesChange: (value: string) => void;
+  onFormStateChange?: (state: EnrichmentFormState) => void;
 }
 
 export const TeamEnrichmentSettings = forwardRef(function TeamEnrichmentSettings(
@@ -107,6 +111,7 @@ export const TeamEnrichmentSettings = forwardRef(function TeamEnrichmentSettings
     enrichment,
     notes,
     onNotesChange,
+    onFormStateChange,
   }: TeamEnrichmentSettingsProps,
   ref: Ref<TeamEnrichmentHandle>,
 ) {
@@ -270,12 +275,14 @@ export const TeamEnrichmentSettings = forwardRef(function TeamEnrichmentSettings
   const canSave = isDirty && !hasValidationErrors && !isPending;
 
   useImperativeHandle(ref, () => ({
-    isDirty,
-    canSave,
-    isPending,
     handleSave,
     handleReset,
-  }), [isDirty, canSave, isPending, handleSave, handleReset]);
+  }), [handleSave, handleReset]);
+
+  // Notify parent of reactive state changes
+  useEffect(() => {
+    onFormStateChange?.({ isDirty, canSave, isPending });
+  }, [isDirty, canSave, isPending, onFormStateChange]);
 
   // If no enrichment data at all, show placeholder
   if (!enrichment) {
