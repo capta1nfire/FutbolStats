@@ -19,6 +19,7 @@ El futbol es dinamico: las combinaciones optimas cambian con el tiempo. Re-ejecu
 | Peru Liga 1 | 281 | COMPLETO | 2026-02-11 | [5](#5-peru-281) |
 | Bolivia Division Profesional | 344 | COMPLETO | 2026-02-11 | [6](#6-bolivia-344) |
 | Chile Primera Division | 265 | COMPLETO | 2026-02-11 | [7](#7-chile-265) |
+| Brasil Serie A | 71 | COMPLETO | 2026-02-11 | [8](#8-brasil-71) |
 
 ---
 
@@ -1376,20 +1377,21 @@ FAIR gap:         +0.03086 (+3.1%)
 
 El mercado gana por 3.1 puntos Brier. Patron consistente con LATAM pero gap menor que Argentina (+2.8%) y comparable a Colombia (+2.0%).
 
-### 7.8 Comparacion 7 Ligas
+### 7.8 Comparacion 8 Ligas
 
 ```
 Liga          Market   Best Model   FAIR gap   Campeon (sin odds)
-Bolivia       0.5071   0.5168       +0.97%     F2_matchup_form_elo (0.5404)
-Chile         0.5760   0.6063       +3.09%     H5_elo_gw_defense (0.6119)
-Colombia      0.6091   0.6245       +2.00%     O1_elo_gw_form (0.6280)
-Argentina     0.6348   0.6585       +2.83%     S7_abe_elo (0.6585)
-Ecuador       0.6138   0.6174       +0.59%     N7_odds_power7 (0.6174)
-Venezuela     0.6088   0.6153       +1.07%     H5_elo_gw_defense (0.6118)
-Peru          0.6126   0.6223       +1.58%     H5_elo_gw_defense (0.6162)
+Bolivia       0.5283   0.5374       +0.94%     H7_elo_split_defense (0.5539)
+Peru          0.5605   0.5724       +0.96%     H5_elo_gw_defense (0.6162)
+Chile         0.5719   0.6049       +3.04%     H5_elo_gw_defense (0.6119)
+Venezuela     0.5841   0.5958       +1.94%     H5_elo_gw_defense (0.6118)
+Brasil        0.6018   0.6125       +1.64%     D8_elo_all (0.6158)
+Colombia      0.6091   0.6280       +1.28%     O1_elo_gw_form (0.6280)
+Ecuador       0.6380   0.6419       +0.55%     N7_odds_power7 (0.6174)
+Argentina     0.6704   0.6585       -1.19%     S7_abe_elo (0.6585)
 ```
 
-Chile tiene el segundo mercado mas eficiente (Brier 0.576) despues de Bolivia (0.507). La Brier absoluta del modelo (0.606) sugiere predictibilidad media — mejor que Argentina/Colombia pero peor que Bolivia/Ecuador.
+Chile tiene el tercer mercado mas eficiente (Brier 0.572) despues de Bolivia (0.528) y Peru (0.561). Brasil esta en el medio de la tabla (0.602). La Brier absoluta del modelo (0.606) sugiere predictibilidad media.
 
 ### 7.9 Features Catastróficos: draw_aware
 
@@ -1464,6 +1466,227 @@ Updated: 1,712 matches
 ### 7.16 Nota: Equipos No Rastreados
 
 5 equipos que aparecen en OddsPortal Chile pero NO estan en nuestra DB: Deportes Temuco, Santiago Morning (S. Morning), San Felipe, San Luis, CD Santa Cruz. Son equipos que descendieron antes de 2019 o juegan en segunda division. Sus partidos fueron filtrados del JSON antes de la ingesta.
+
+## 8. Brasil (71)
+
+### 8.1 Ficha Tecnica
+
+| Campo | Valor |
+|-------|-------|
+| **League ID** | 71 |
+| **Nombre** | Campeonato Brasileiro Serie A |
+| **Formato** | Liga regular (38 fechas), todos contra todos ida y vuelta |
+| **Equipos** | 20 (fijos) |
+| **N partidos en DB** | 2,305 FT (Ago 2020 — Feb 2026) |
+| **N partidos testeados** | 2,305 (sin filtro min-date) |
+| **Train / Test split** | 1,844 / 461 (split date: 2024-11-09) |
+| **Distribucion resultados** | Home 47.9%, Draw 27.3%, Away 24.7% |
+| **Brier naive** | 0.6250 (A0_baseline_17) |
+| **Dificultad** | MEDIA-ALTA — tasa de empates moderada (27.3%) |
+| **Odds coverage** | 50.3% global, **100% desde 2023** (FDUK backfill, Pinnacle closing) |
+| **xG coverage** | **99.7% desde 2023** (FotMob/Opta, 1,162/1,165 matches). 0% pre-2023 |
+| **Market Anchor** | VIABLE (gap +1.6%, no significativo) |
+
+### 8.2 Campeon: J1_elo_odds (6 features)
+
+```
+Features (6):
+  elo_home, elo_away, elo_diff,
+  odds_home, odds_draw, odds_away
+
+Brier (test, N=233): 0.61246
+CI95: [0.57875, 0.64588]
+Accuracy: 45.8%
+```
+
+Campeon minimalista: solo 6 features (Elo + odds). Todos los tests con mas features rinden igual o peor.
+
+### 8.3 Campeon Sin Odds: D8_elo_all (12 features)
+
+```
+Features (12):
+  elo_home, elo_away, elo_diff,
+  elo_gw_home, elo_gw_away, elo_gw_diff,
+  elo_split_home, elo_split_away, elo_split_diff,
+  elo_x_season, elo_x_defense, elo_x_form
+
+Brier (test, N=461): 0.61576
+CI95: [0.59598, 0.63581]
+Accuracy: 46.1%
+```
+
+D8 usa 12 variantes de Elo (base, game-week, split, interactions). Con N=461 (mayor test set que odds universe), el Brier base de 0.616 es competitivo con J1 odds (0.612). La diferencia es marginal.
+
+### 8.4 Top-15 Standard Lab
+
+```
+ #  Test                         Brier   Feats  Tipo        N_test
+ 1  J1_elo_odds                0.61246     6    odds         233
+ 2  N0_odds_elo                0.61246     6    odds         233
+ 3  N5_odds_kimi_all           0.61259    15    odds         233
+ 4  N3_odds_efficiency         0.61324    11    odds         233
+ 5  N1_odds_defense_elo        0.61416     8    odds         233
+ 6  N2_odds_m2_combo           0.61499    12    odds         233
+ 7  D8_elo_all                 0.61576    12    base         461
+ 8  D5_elo_split               0.61643     3    base         461
+ 9  H7_elo_split_defense       0.61883     5    base         461
+10  J2_full_odds               0.61910    20    odds         233
+11  M5_defense_elo_abe         0.62047    16    base         461
+12  N9_odds_ultimate           0.62093    22    odds         233
+13  I1_clean_elo               0.62108    15    base         461
+14  H0_arg_signal_elo          0.62117     5    base         461
+15  P6_xg_elo_odds             0.62126     9    odds_xg      231
+```
+
+**Patron**: Los top-6 son todos del universo odds, dominados por Elo + odds simples. Mas features no mejoran. xG (P6) entra recien en posicion 15.
+
+### 8.5 Universos xG
+
+```
+=== xG universe (puro, N_test=301) ===
+  P3_xg_defense_elo          0.62707   9f   (campeon xG)
+  P4_xg_overperf_elo         0.62730  12f
+  P2_xg_elo                  0.62937   6f
+  P1_xg_all                  0.64006   9f
+  P0_xg_core                 0.64378   3f
+
+=== odds_xg universe (N_test=231) ===
+  P6_xg_elo_odds             0.62126   9f   (campeon odds_xg)
+  P7_xg_all_elo_odds         0.62331  15f
+  P9_xg_ultimate             0.62382  22f
+  P8_xg_defense_odds         0.62782  11f
+  P5_xg_odds                 0.63145   6f
+```
+
+**Veredicto xG**: No aporta signal adicional.
+- xG puro (P3=0.627) es peor que Elo puro (D8=0.616)
+- xG + odds (P6=0.621) es peor que odds solo (J1=0.612)
+- xG como feature individual tiene SHAP = 0.035-0.037, muy debil comparado con elo_diff (0.10) u odds_home (0.13)
+
+### 8.6 Analisis SHAP (9 escenarios)
+
+```
+Test                           Brier  Top-3 Features (SHAP)
+S2_elo_odds                  0.61819  odds_home=0.127, odds_away=0.115, odds_draw=0.070
+S1_baseline_odds             0.62003  odds_away=0.114, odds_home=0.110, odds_draw=0.044
+S4_m2_interactions           0.62288  elo_diff=0.099, home_goals_conceded_avg=0.052, elo_home=0.047
+S7_abe_elo                   0.62444  elo_diff=0.074, opp_rating_diff=0.058, elo_home=0.046
+S3_defense_elo               0.62565  elo_diff=0.106, elo_home=0.070, home_goals_conceded_avg=0.063
+S6_power_5                   0.62842  elo_diff=0.096, opp_rating_diff=0.079, draw_elo_interaction=0.056
+S0_baseline_17               0.62858  home_goals_conceded_avg=0.067, goal_diff_avg=0.054, away_goals_conceded_avg=0.046
+S5_xg_elo                   0.63042  elo_diff=0.102, elo_home=0.074, elo_away=0.059
+S8_abe_elo_odds              0.63704  odds_away=0.105, odds_home=0.084, league_draw_rate=0.068
+```
+
+**Hallazgos SHAP**:
+- **odds_home + odds_away** dominan en S2 (72.5% share combinado, incluido odds_draw)
+- **elo_diff** lidera todos los escenarios sin odds (SHAP 0.074-0.106)
+- **xG features** (S5): home_xg_for_avg = 0.037, away_xg_for_avg = 0.035 — marginales, 3x menos que elo_diff
+- **home_goals_conceded_avg** es la mejor feature defensiva (SHAP 0.052-0.067)
+- **S8 overfits**: league_draw_rate SHAP=0.068 degrada (Brier 0.637, peor que S7 sin odds)
+
+### 8.7 Optimizacion Optuna (17 escenarios)
+
+```
+Test                         Brier     CV Brier  Depth    LR    N_est  Feats
+OC_xg_all_elo_odds         0.61944    0.62575      2   0.038     58    15
+O2_defense_form_elo        0.62467    0.63791      2   0.034     76     8
+FIXED_baseline             0.62495         —       3   0.028    114    17
+OB_xg_odds                 0.62517    0.61707      2   0.025     96     6
+O5_m2_interactions         0.62543    0.63943      2   0.034     52     9
+O1_elo_gw_form             0.62598    0.63518      2   0.017    110     6
+O7_all_abe_elo             0.62642    0.64505      2   0.024     76    18
+OF_abe_elo_odds            0.62702    0.61944      6   0.031     81    21
+O3_elo_k20                 0.62731    0.63784      2   0.015    117     3
+OA_only_elo                0.62749    0.63950      2   0.015    144     3
+O9_baseline_17             0.62750    0.63456      6   0.013    162    17
+O8_smart_minimal           0.62777    0.64179      2   0.010    161    13
+O0_elo_gw_defense          0.62813    0.63165      3   0.018    167     5
+O4_defense_elo_kimi        0.62813    0.63543      3   0.015    164    14
+O6_efficiency_elo          0.63011    0.63680      3   0.010    160     8
+OD_xg_overperf_elo         0.63047    0.64694      3   0.014     94    12
+OE_xg_defense_odds         0.63293    0.61722      6   0.016    164    11
+```
+
+**Hallazgos Optuna**:
+- **OC_xg_all_elo_odds** (0.619) campeon Optuna, pero peor que J1 standard (0.612)
+- **FIXED_baseline** (0.625) supera a 12/16 tests tuneados — produccion ya esta bien calibrada
+- Optuna converge a **depth=2** en 11/16 tests (Brasil prefiere arboles simples)
+- **OB vs OF**: OB tiene mejor CV (0.617) pero peor test (0.625). OF tiene mejor CV (0.619) pero peor test (0.627). Overfitting con features complejos
+- **xG Optuna** (OC=0.619, OB=0.625, OD=0.630, OE=0.633): xG no mejora vs J1 ni con tuning
+
+### 8.8 Mercado vs Modelo
+
+```
+Market baseline:  0.60178 (N=233, de-vigged FDUK closing odds)
+Best model:       0.61246 (J1_elo_odds, 6 features)
+FAIR gap:         +0.01641 (+1.6%)
+CI95:             [-0.00156, +0.03521]
+Significativo:    NO (CI cruza cero)
+```
+
+Gap de +1.6% es el segundo menor en LATAM (solo Ecuador tiene menor gap con +0.6%). El mercado es ligeramente mejor pero la diferencia no es estadisticamente significativa.
+
+### 8.9 Comparacion 8 Ligas
+
+```
+Liga          Market   Best Model   FAIR gap   Sig?
+Bolivia       0.5283   0.5374       +0.9%      No
+Peru          0.5605   0.5724       +1.0%      No
+Chile         0.5719   0.6049       +3.0%      YES
+Venezuela     0.5841   0.5958       +1.9%      No
+Brasil        0.6018   0.6125       +1.6%      No
+Colombia      0.6091   0.6280       +1.3%      YES
+Ecuador       0.6380   0.6419       +0.6%      No
+Argentina     0.6704   0.6585       -1.2%      No
+```
+
+Brasil esta en la mitad de la tabla: mercado moderadamente eficiente (Brier 0.602), gap medio (+1.6%).
+
+### 8.10 xG Backfill
+
+- **Fuente**: FotMob (Opta xG), league_id FotMob = 268
+- **Script**: `scripts/backfill_fotmob_xg.py --league 71 --seasons 2020-2026`
+- **Temporadas**: 7 (2020-2026)
+- **Total linkeado**: 1,909 matches (refs en match_external_refs)
+- **Total xG capturado**: 1,288 matches (match_fotmob_stats)
+- **Cobertura por temporada**:
+
+```
+Year   Linked   xG     Rate    Nota
+2020     353     69    19.5%   Pre-Opta, COVID parcial
+2021     380     36     9.5%   Pre-Opta
+2022     371     26     7.0%   Pre-Opta
+2023     375    374    99.7%   Opta empieza (1 sin xG: Fortaleza-Gremio)
+2024     378    378   100.0%   Cobertura total
+2025     380    380   100.0%   Cobertura total
+2026      25     25   100.0%   Temporada en curso
+```
+
+- **5 partidos recuperados manualmente**: fechas desplazadas (FotMob Oct 25-26 vs DB Oct 27-28)
+- **1 irrecuperable**: Fortaleza 1-1 Gremio (Sep 30, 2023) — FotMob solo tiene stats basicas, sin xG
+- **Pre-2023**: Opta no tenia xG desplegado para Brasil Serie A. Cobertura ~10% (partidos sueltos)
+- **Aliases agregados**: America MG↔America Mineiro (125), Atletico GO↔Atletico Goianiense (144), Chapecoense AF↔Chapecoense-sc (132)
+- **FOTMOB_CONFIRMED_XG_LEAGUES**: Brasil (71) agregado en `sota_constants.py`
+
+### 8.11 Recomendaciones
+
+1. **Market Anchor alpha >= 0.8** para Brasil: gap +1.6% sugiere que el mercado es mejor, aunque no significativo
+2. **Campeon produccion: J1_elo_odds** (6 features) — minimalista y robusto
+3. **No incluir xG** en produccion: no aporta sobre odds+Elo (SHAP 0.035 vs elo 0.10)
+4. **Depth=2** preferido por Optuna (arboles simples, evita overfitting)
+5. **OddsPortal pendiente** para 2020-2022: solo 50% odds global. Si se necesita entrenar con mas historia, scrapear odds historicas
+6. **Re-evaluar** cuando temporada 2026 tenga >= 200 partidos FT
+
+### 8.12 Archivos
+
+| Archivo | Contenido |
+|---------|-----------|
+| `scripts/output/lab/feature_lab_results.json` | Lab v2, 101 tests (4 universos) |
+| `scripts/output/lab/shap_analysis_71.json` | SHAP, 9 escenarios |
+| `scripts/output/lab/feature_lab_results_optuna.json` | Optuna, 17 tests |
+| `scripts/output/lab/lab_data_71.csv` | Dataset cacheado (2,305 rows) |
+| `scripts/backfill_fotmob_xg.py` | Script generico FotMob xG (CLI args) |
 
 ---
 

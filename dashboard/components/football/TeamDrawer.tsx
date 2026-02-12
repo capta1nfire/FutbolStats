@@ -380,7 +380,7 @@ export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDr
 
               {/* Save/Cancel buttons for enrichment */}
               {enrichmentForm.isDirty && (
-                <div className="flex items-center justify-end gap-3 pt-2 border-t border-border">
+                <div className="flex items-center justify-end gap-3 pt-2">
                   <button
                     type="button"
                     onClick={() => enrichmentRef.current?.handleReset()}
