@@ -1,9 +1,10 @@
 """
-Backfill FotMob xG for Argentina historical seasons (2023-2025).
+Backfill FotMob xG for historical seasons.
 
 Usage:
     set -a && source .env && set +a
-    python3.12 scripts/backfill_fotmob_xg.py
+    python3 scripts/backfill_fotmob_xg.py --league 71 --seasons 2020-2026
+    python3 scripts/backfill_fotmob_xg.py --league 128              # default: 2023-2025
 
 Phases per season:
   A) Fetch FotMob fixtures, link to our matches via calculate_match_score
@@ -11,6 +12,9 @@ Phases per season:
 
 Rate limit: 1.5s per request. ~10-13 min per season.
 """
+from __future__ import annotations
+
+import argparse
 import asyncio
 import json
 import logging
@@ -23,12 +27,34 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-FOTMOB_LEAGUE_ID = 112  # Argentina in FotMob
-OUR_LEAGUE_ID = 128     # Argentina in API-Football
-SEASONS = [2023, 2024, 2025]
+# League mapping from sota_constants
+from app.etl.sota_constants import LEAGUE_ID_TO_FOTMOB
 
 
-async def backfill_season(session, provider, alias_index, season: int) -> dict:
+def parse_args():
+    parser = argparse.ArgumentParser(description="Backfill FotMob xG for a league")
+    parser.add_argument("--league", type=int, required=True,
+                        help="API-Football league_id (e.g. 71 for Brazil, 128 for Argentina)")
+    parser.add_argument("--seasons", type=str, default=None,
+                        help="Season range (e.g. '2020-2026') or comma-separated (e.g. '2023,2024,2025')")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Only run Phase A (linking), skip xG capture")
+    return parser.parse_args()
+
+
+def parse_seasons(seasons_str: str | None, league_id: int) -> list[int]:
+    """Parse seasons argument. Default: 2023-2025."""
+    if not seasons_str:
+        return [2023, 2024, 2025]
+    if "-" in seasons_str and "," not in seasons_str:
+        start, end = seasons_str.split("-")
+        return list(range(int(start), int(end) + 1))
+    return [int(s.strip()) for s in seasons_str.split(",")]
+
+
+async def backfill_season(session, provider, alias_index, season: int,
+                          our_league_id: int, fotmob_league_id: int,
+                          dry_run: bool = False) -> dict:
     """Link + capture xG for one historical season."""
     from sqlalchemy import text
     from app.etl.sofascore_provider import calculate_match_score
@@ -39,7 +65,7 @@ async def backfill_season(session, provider, alias_index, season: int) -> dict:
 
     # --- Phase A: Link ---
     logger.info("[%d] Phase A: fetching FotMob fixtures...", season)
-    fm_fixtures, error = await provider.get_league_fixtures(FOTMOB_LEAGUE_ID, season=season)
+    fm_fixtures, error = await provider.get_league_fixtures(fotmob_league_id, season=season)
     if error:
         logger.error("[%d] Failed to fetch fixtures: %s", season, error)
         return metrics
@@ -60,7 +86,7 @@ async def backfill_season(session, provider, alias_index, season: int) -> dict:
           AND m.season = :season
           AND mer.match_id IS NULL
         ORDER BY m.date
-    """), {"league_id": OUR_LEAGUE_ID, "season": season})
+    """), {"league_id": our_league_id, "season": season})
     unlinked = result.fetchall()
     metrics["our_matches"] = len(unlinked)
     logger.info("[%d] Our DB: %d unlinked FT matches", season, len(unlinked))
@@ -90,7 +116,6 @@ async def backfill_season(session, provider, alias_index, season: int) -> dict:
                     best_matched_by = matched_by
 
             if best_score >= 0.75 and best_fixture:
-                confidence_label = "auto" if best_score >= 0.90 else "review"
                 await session.execute(text("""
                     INSERT INTO match_external_refs (match_id, source, source_match_id, confidence, matched_by)
                     VALUES (:match_id, 'fotmob', :source_match_id, :confidence, :matched_by)
@@ -109,6 +134,10 @@ async def backfill_season(session, provider, alias_index, season: int) -> dict:
         logger.info("[%d] Phase A done: linked=%d, skipped_low=%d",
                     season, metrics["linked"], metrics["skipped_low"])
 
+    if dry_run:
+        logger.info("[%d] Dry run — skipping Phase B (xG capture)", season)
+        return metrics
+
     # --- Phase B: Capture xG ---
     logger.info("[%d] Phase B: capturing xG...", season)
     result = await session.execute(text("""
@@ -121,7 +150,7 @@ async def backfill_season(session, provider, alias_index, season: int) -> dict:
           AND m.season = :season
           AND mfs.match_id IS NULL
         ORDER BY m.date
-    """), {"league_id": OUR_LEAGUE_ID, "season": season})
+    """), {"league_id": our_league_id, "season": season})
     to_capture = result.fetchall()
     logger.info("[%d] %d matches need xG capture", season, len(to_capture))
 
@@ -197,6 +226,19 @@ async def main():
     from app.etl.fotmob_provider import FotmobProvider
     from app.etl.sofascore_aliases import build_alias_index
 
+    args = parse_args()
+
+    our_league_id = args.league
+    fotmob_league_id = LEAGUE_ID_TO_FOTMOB.get(our_league_id)
+    if not fotmob_league_id:
+        logger.error("No FotMob mapping for league_id=%d. Check LEAGUE_ID_TO_FOTMOB in sota_constants.py",
+                      our_league_id)
+        sys.exit(1)
+
+    seasons = parse_seasons(args.seasons, our_league_id)
+    logger.info("League: %d → FotMob %d | Seasons: %s | Dry-run: %s",
+                our_league_id, fotmob_league_id, seasons, args.dry_run)
+
     db_url = os.environ.get("DATABASE_URL_ASYNC") or os.environ.get("DATABASE_URL", "")
     if "postgresql://" in db_url and "+asyncpg" not in db_url:
         db_url = db_url.replace("postgresql://", "postgresql+asyncpg://")
@@ -209,9 +251,14 @@ async def main():
 
     all_metrics = []
     try:
-        for season in SEASONS:
+        for season in seasons:
             async with async_session() as session:
-                metrics = await backfill_season(session, provider, alias_index, season)
+                metrics = await backfill_season(
+                    session, provider, alias_index, season,
+                    our_league_id=our_league_id,
+                    fotmob_league_id=fotmob_league_id,
+                    dry_run=args.dry_run,
+                )
                 all_metrics.append(metrics)
                 logger.info("[%d] === COMPLETE === %s", season, metrics)
     finally:
@@ -222,8 +269,8 @@ async def main():
     total_linked = sum(m["linked"] for m in all_metrics)
     total_xg = sum(m["xg_captured"] for m in all_metrics)
     logger.info("=" * 60)
-    logger.info("BACKFILL COMPLETE: %d seasons, %d linked, %d xG captured",
-                len(SEASONS), total_linked, total_xg)
+    logger.info("BACKFILL COMPLETE: league=%d, %d seasons, %d linked, %d xG captured",
+                our_league_id, len(seasons), total_linked, total_xg)
     for m in all_metrics:
         logger.info("  %s", m)
 

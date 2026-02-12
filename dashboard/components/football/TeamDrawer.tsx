@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useFootballTeam, useTeamSquad } from "@/lib/hooks";
+import { useState, useEffect, useRef } from "react";
+import { useFootballTeam, useTeamSquad, useTeamEnrichmentDeleteMutation } from "@/lib/hooks";
 import { DetailDrawer } from "@/components/shell";
 import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,9 @@ import {
   BarChart3,
   Image as ImageIcon,
   Info,
+  Loader2,
   Settings,
+  Trash2,
 } from "lucide-react";
 import type {
   TeamInfo,
@@ -25,8 +27,13 @@ import type {
   TeamLeague,
   TeamFormMatch,
 } from "@/lib/types";
+import { SurfaceCard } from "@/components/ui/surface-card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { TeamLogoSettings } from "./TeamLogoSettings";
 import { TeamEnrichmentSettings } from "./TeamEnrichmentSettings";
+import type { TeamEnrichmentHandle } from "./TeamEnrichmentSettings";
 import { TeamWikiSettings } from "./TeamWikiSettings";
 import { ManagerCard, InjuryList } from "@/components/squad";
 
@@ -236,7 +243,15 @@ const TEAM_TABS = [
  */
 export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDrawerProps) {
   const [activeTab, setActiveTab] = useState("overview");
+  const [enrichmentNotes, setEnrichmentNotes] = useState("");
+  const enrichmentRef = useRef<TeamEnrichmentHandle>(null);
   const { data, isLoading, error, refetch } = useFootballTeam(teamId);
+  const deleteMutation = useTeamEnrichmentDeleteMutation();
+
+  // Sync notes state when enrichment data changes
+  useEffect(() => {
+    setEnrichmentNotes(data?.wikidata_enrichment?.override?.notes ?? "");
+  }, [data?.wikidata_enrichment?.override?.notes]);
 
   // Content based on state
   let content: React.ReactNode;
@@ -320,17 +335,109 @@ export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDr
         )}
 
         {activeTab === "settings" && (
-          <div className="space-y-4 pb-4">
-            <TeamEnrichmentSettings
-              teamId={data.team.team_id}
-              teamName={data.team.name}
-              enrichment={data.wikidata_enrichment}
-            />
-            <TeamWikiSettings
-              teamId={data.team.team_id}
-              teamName={data.team.name}
-              wiki={data.team.wiki}
-            />
+          <div className="pb-4">
+            <SurfaceCard className="space-y-4">
+              <h4 className="text-sm font-medium flex items-center gap-1.5">
+                Team Enrichment
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Info className="h-4 w-4 text-primary" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" sideOffset={6}>
+                    Override values (leave empty to use Wikidata)
+                  </TooltipContent>
+                </Tooltip>
+              </h4>
+              <TeamEnrichmentSettings
+                ref={enrichmentRef}
+                teamId={data.team.team_id}
+                teamName={data.team.name}
+                enrichment={data.wikidata_enrichment}
+                notes={enrichmentNotes}
+                onNotesChange={setEnrichmentNotes}
+              />
+              <TeamWikiSettings
+                teamId={data.team.team_id}
+                teamName={data.team.name}
+                wiki={data.team.wiki}
+              />
+              {/* Notes - last field in the card */}
+              <div className="space-y-1">
+                <Label htmlFor={`team-${data.team.team_id}-notes`} className="text-xs">
+                  Notes <span className="opacity-50">(optional)</span>
+                </Label>
+                <Input
+                  id={`team-${data.team.team_id}-notes`}
+                  type="text"
+                  placeholder="Reason for override..."
+                  value={enrichmentNotes}
+                  onChange={(e) => setEnrichmentNotes(e.target.value)}
+                  className="h-8 text-sm"
+                />
+              </div>
+
+              {/* Save/Cancel buttons for enrichment */}
+              {enrichmentRef.current?.isDirty && (
+                <div className="flex items-center justify-end gap-3 pt-2 border-t border-border">
+                  <button
+                    type="button"
+                    onClick={() => enrichmentRef.current?.handleReset()}
+                    disabled={enrichmentRef.current?.isPending}
+                    className="text-sm px-3 py-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-[color:var(--field-bg-hover)] transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <Button
+                    size="sm"
+                    onClick={() => enrichmentRef.current?.handleSave()}
+                    disabled={!enrichmentRef.current?.canSave}
+                  >
+                    {enrichmentRef.current?.isPending ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      "Apply Changes"
+                    )}
+                  </Button>
+                </div>
+              )}
+
+              {/* Remove override + info */}
+              {data.wikidata_enrichment?.has_override && !enrichmentRef.current?.isDirty && (
+                <div className="pt-2 border-t border-border space-y-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      deleteMutation.mutate(
+                        { teamId: data.team.team_id },
+                        {
+                          onSuccess: () => toast.success("Override removed"),
+                          onError: (err) => toast.error(err.message),
+                        }
+                      )
+                    }
+                    disabled={deleteMutation.isPending}
+                    className="text-destructive hover:text-destructive"
+                  >
+                    {deleteMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-4 w-4 mr-1" />
+                    )}
+                    Remove override
+                  </Button>
+                  {data.wikidata_enrichment.override?.updated_at && (
+                    <div className="text-xs text-muted-foreground">
+                      Override by {data.wikidata_enrichment.override.source || "manual"} ·{" "}
+                      {new Date(data.wikidata_enrichment.override.updated_at).toLocaleDateString()}
+                    </div>
+                  )}
+                </div>
+              )}
+            </SurfaceCard>
           </div>
         )}
       </div>

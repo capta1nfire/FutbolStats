@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Sofascore Provider for XI/ratings/formation data.
 

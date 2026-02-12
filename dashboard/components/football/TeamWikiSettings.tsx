@@ -190,10 +190,7 @@ export function TeamWikiSettings({ teamId, teamName, wiki }: TeamWikiSettingsPro
   const wikidataIdInputId = `team-${teamId}-wikidata-id`;
 
   return (
-    <SurfaceCard className="space-y-4">
-      {/* Header */}
-      <h4 className="text-sm font-medium">Wikipedia</h4>
-
+    <div className="space-y-4">
       {/* Form */}
       <div className="space-y-4">
         {/* Wiki URL Input */}
@@ -364,6 +361,6 @@ export function TeamWikiSettings({ teamId, teamName, wiki }: TeamWikiSettingsPro
           </div>
         </div>
       )}
-    </SurfaceCard>
+    </div>
   );
 }

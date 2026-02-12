@@ -14,6 +14,7 @@ export interface TeamEnrichmentPutRequest {
   short_name?: string | null;
   stadium_name?: string | null;
   stadium_capacity?: number | null;
+  stadium_wikidata_id?: string | null;
   city?: string | null;
   website?: string | null;
   twitter_handle?: string | null;

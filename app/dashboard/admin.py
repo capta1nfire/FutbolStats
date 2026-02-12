@@ -821,7 +821,7 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
             twe.fetched_at,
             -- Merged values (override > wikidata)
             COALESCE(o.stadium_name, twe.stadium_name) AS stadium_name,
-            twe.stadium_wikidata_id,
+            COALESCE(o.stadium_wikidata_id, twe.stadium_wikidata_id) AS stadium_wikidata_id,
             COALESCE(o.stadium_capacity, twe.stadium_capacity) AS stadium_capacity,
             twe.stadium_altitude_m,
             COALESCE(o.admin_location_label, twe.admin_location_label) AS admin_location_label,
@@ -837,6 +837,7 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
                 WHEN o.team_id IS NOT NULL AND (
                     o.full_name IS NOT NULL OR o.short_name IS NOT NULL OR
                     o.stadium_name IS NOT NULL OR o.stadium_capacity IS NOT NULL OR
+                    o.stadium_wikidata_id IS NOT NULL OR
                     o.website IS NOT NULL OR o.twitter_handle IS NOT NULL OR
                     o.instagram_handle IS NOT NULL OR o.lat IS NOT NULL OR o.lon IS NOT NULL OR
                     o.admin_location_label IS NOT NULL
@@ -848,6 +849,7 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
                 WHEN o.team_id IS NOT NULL AND (
                     o.full_name IS NOT NULL OR o.short_name IS NOT NULL OR
                     o.stadium_name IS NOT NULL OR o.stadium_capacity IS NOT NULL OR
+                    o.stadium_wikidata_id IS NOT NULL OR
                     o.website IS NOT NULL OR o.twitter_handle IS NOT NULL OR
                     o.instagram_handle IS NOT NULL OR o.lat IS NOT NULL OR o.lon IS NOT NULL OR
                     o.admin_location_label IS NOT NULL
@@ -859,6 +861,7 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
             o.short_name AS override_short_name,
             o.stadium_name AS override_stadium_name,
             o.stadium_capacity AS override_stadium_capacity,
+            o.stadium_wikidata_id AS override_stadium_wikidata_id,
             o.admin_location_label AS override_city,
             o.website AS override_website,
             o.twitter_handle AS override_twitter,
@@ -1064,6 +1067,7 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
                     "short_name": getattr(enrichment_row, "override_short_name", None),
                     "stadium_name": getattr(enrichment_row, "override_stadium_name", None),
                     "stadium_capacity": getattr(enrichment_row, "override_stadium_capacity", None),
+                    "stadium_wikidata_id": getattr(enrichment_row, "override_stadium_wikidata_id", None),
                     "city": getattr(enrichment_row, "override_city", None),
                     "website": getattr(enrichment_row, "override_website", None),
                     "twitter": getattr(enrichment_row, "override_twitter", None),

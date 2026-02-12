@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useImperativeHandle, forwardRef } from "react";
+import type { Ref } from "react";
 import { useTeamEnrichmentPutMutation, useTeamEnrichmentDeleteMutation } from "@/lib/hooks";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -69,21 +70,46 @@ function validateCapacity(value: string): ValidationResult {
   return { isValid: true };
 }
 
+const WIKIDATA_QID_REGEX = /^Q\d{1,10}$/;
+
+function validateStadiumWikidataId(value: string): ValidationResult {
+  if (!value.trim()) return { isValid: true };
+  if (!WIKIDATA_QID_REGEX.test(value.trim())) {
+    return { isValid: false, error: "Q-number format (e.g. Q12345)" };
+  }
+  return { isValid: true };
+}
+
 // =============================================================================
 // Component
 // =============================================================================
+
+export interface TeamEnrichmentHandle {
+  isDirty: boolean;
+  canSave: boolean;
+  isPending: boolean;
+  handleSave: () => void;
+  handleReset: () => void;
+}
 
 interface TeamEnrichmentSettingsProps {
   teamId: number;
   teamName: string;
   enrichment?: TeamWikidataEnrichment | null;
+  notes: string;
+  onNotesChange: (value: string) => void;
 }
 
-export function TeamEnrichmentSettings({
-  teamId,
-  teamName,
-  enrichment,
-}: TeamEnrichmentSettingsProps) {
+export const TeamEnrichmentSettings = forwardRef(function TeamEnrichmentSettings(
+  {
+    teamId,
+    teamName,
+    enrichment,
+    notes,
+    onNotesChange,
+  }: TeamEnrichmentSettingsProps,
+  ref: Ref<TeamEnrichmentHandle>,
+) {
   // Form state - use override values for edit, fall back to effective values for display
   const [fullName, setFullName] = useState(enrichment?.override?.full_name ?? "");
   const [shortName, setShortName] = useState(enrichment?.override?.short_name ?? "");
@@ -91,11 +117,13 @@ export function TeamEnrichmentSettings({
   const [stadiumCapacity, setStadiumCapacity] = useState(
     enrichment?.override?.stadium_capacity?.toString() ?? ""
   );
+  const [stadiumWikidataId, setStadiumWikidataId] = useState(
+    enrichment?.override?.stadium_wikidata_id ?? ""
+  );
   const [website, setWebsite] = useState(enrichment?.override?.website ?? "");
   const [twitter, setTwitter] = useState(enrichment?.override?.twitter ?? "");
   const [instagram, setInstagram] = useState(enrichment?.override?.instagram ?? "");
   const [source, setSource] = useState(enrichment?.override?.source ?? "manual");
-  const [notes, setNotes] = useState(enrichment?.override?.notes ?? "");
 
   // Validation errors
   const [errors, setErrors] = useState<Record<string, string | null>>({});
@@ -110,11 +138,11 @@ export function TeamEnrichmentSettings({
     setShortName(enrichment?.override?.short_name ?? "");
     setStadiumName(enrichment?.override?.stadium_name ?? "");
     setStadiumCapacity(enrichment?.override?.stadium_capacity?.toString() ?? "");
+    setStadiumWikidataId(enrichment?.override?.stadium_wikidata_id ?? "");
     setWebsite(enrichment?.override?.website ?? "");
     setTwitter(enrichment?.override?.twitter ?? "");
     setInstagram(enrichment?.override?.instagram ?? "");
     setSource(enrichment?.override?.source ?? "manual");
-    setNotes(enrichment?.override?.notes ?? "");
     setErrors({});
   }, [enrichment]);
 
@@ -124,6 +152,7 @@ export function TeamEnrichmentSettings({
     shortName !== (enrichment?.override?.short_name ?? "") ||
     stadiumName !== (enrichment?.override?.stadium_name ?? "") ||
     stadiumCapacity !== (enrichment?.override?.stadium_capacity?.toString() ?? "") ||
+    stadiumWikidataId !== (enrichment?.override?.stadium_wikidata_id ?? "") ||
     website !== (enrichment?.override?.website ?? "") ||
     twitter !== (enrichment?.override?.twitter ?? "") ||
     instagram !== (enrichment?.override?.instagram ?? "") ||
@@ -145,9 +174,12 @@ export function TeamEnrichmentSettings({
     const capacityResult = validateCapacity(stadiumCapacity);
     if (!capacityResult.isValid) newErrors.stadiumCapacity = capacityResult.error ?? null;
 
+    const wikidataResult = validateStadiumWikidataId(stadiumWikidataId);
+    if (!wikidataResult.isValid) newErrors.stadiumWikidataId = wikidataResult.error ?? null;
+
     setErrors(newErrors);
     return Object.values(newErrors).every((e) => e === null || e === undefined);
-  }, [twitter, instagram, website, stadiumCapacity]);
+  }, [twitter, instagram, website, stadiumCapacity, stadiumWikidataId]);
 
   // Handle reset
   const handleReset = useCallback(() => {
@@ -155,12 +187,13 @@ export function TeamEnrichmentSettings({
     setShortName(enrichment?.override?.short_name ?? "");
     setStadiumName(enrichment?.override?.stadium_name ?? "");
     setStadiumCapacity(enrichment?.override?.stadium_capacity?.toString() ?? "");
+    setStadiumWikidataId(enrichment?.override?.stadium_wikidata_id ?? "");
     setWebsite(enrichment?.override?.website ?? "");
     setTwitter(enrichment?.override?.twitter ?? "");
     setInstagram(enrichment?.override?.instagram ?? "");
-    setNotes(enrichment?.override?.notes ?? "");
+    onNotesChange(enrichment?.override?.notes ?? "");
     setErrors({});
-  }, [enrichment]);
+  }, [enrichment, onNotesChange]);
 
   // Handle save
   const handleSave = useCallback(() => {
@@ -180,6 +213,7 @@ export function TeamEnrichmentSettings({
           stadium_capacity: stadiumCapacity.trim()
             ? parseInt(stadiumCapacity, 10)
             : null,
+          stadium_wikidata_id: stadiumWikidataId.trim() || null,
           website: website.trim() || null,
           twitter_handle: cleanTwitter,
           instagram_handle: cleanInstagram,
@@ -206,6 +240,7 @@ export function TeamEnrichmentSettings({
     shortName,
     stadiumName,
     stadiumCapacity,
+    stadiumWikidataId,
     website,
     twitter,
     instagram,
@@ -234,115 +269,135 @@ export function TeamEnrichmentSettings({
   const hasValidationErrors = Object.values(errors).some((e) => e);
   const canSave = isDirty && !hasValidationErrors && !isPending;
 
+  useImperativeHandle(ref, () => ({
+    isDirty,
+    canSave,
+    isPending,
+    handleSave,
+    handleReset,
+  }), [isDirty, canSave, isPending, handleSave, handleReset]);
+
   // If no enrichment data at all, show placeholder
   if (!enrichment) {
     return (
-      <SurfaceCard className="space-y-3">
-        <h4 className="text-sm font-medium flex items-center gap-2">
-          <Database className="h-4 w-4 text-muted-foreground" />
-          Team Enrichment
-        </h4>
-        <p className="text-xs text-muted-foreground">
-          No Wikidata enrichment available for this team.
-        </p>
-      </SurfaceCard>
+      <p className="text-xs text-muted-foreground">
+        No Wikidata enrichment available for this team.
+      </p>
     );
   }
 
   return (
-    <SurfaceCard className="space-y-4">
-      {/* Header with source badge */}
-      <div className="flex items-center justify-between">
-        <h4 className="text-sm font-medium flex items-center gap-2">
-          <Database className="h-4 w-4 text-muted-foreground" />
-          Team Enrichment
-        </h4>
-        <Badge
-          variant={enrichment.has_override ? "default" : "secondary"}
-          className="text-xs"
-        >
-          {enrichment.has_override ? (
-            <Edit3 className="h-3 w-3 mr-1" />
-          ) : (
-            <CheckCircle className="h-3 w-3 mr-1" />
-          )}
-          {enrichment.source_badge?.label || "Wikidata"}
-        </Badge>
-      </div>
-
-      {/* Effective values (read-only display) */}
-      <div className="bg-background/20 rounded-lg p-3 border border-border space-y-2">
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <CheckCircle className="h-3 w-3" />
-          <span>Current values</span>
-        </div>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-          {enrichment.full_name && (
-            <div className="col-span-2">
-              <span className="text-muted-foreground">Full name:</span>{" "}
-              <span className="text-foreground">{enrichment.full_name}</span>
-            </div>
-          )}
-          {enrichment.stadium_name && (
-            <div>
-              <span className="text-muted-foreground">Stadium:</span>{" "}
-              <span className="text-foreground">{enrichment.stadium_name}</span>
-            </div>
-          )}
-          {enrichment.stadium_capacity && (
-            <div>
-              <span className="text-muted-foreground">Capacity:</span>{" "}
-              <span className="text-foreground">
-                {enrichment.stadium_capacity.toLocaleString()}
-              </span>
-            </div>
-          )}
-          {enrichment.twitter && (
-            <div>
-              <span className="text-muted-foreground">X.com:</span>{" "}
-              <a
-                href={`https://x.com/${enrichment.twitter}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary hover:underline"
-              >
-                @{enrichment.twitter}
-              </a>
-            </div>
-          )}
-          {enrichment.instagram && (
-            <div>
-              <span className="text-muted-foreground">Instagram:</span>{" "}
-              <a
-                href={`https://instagram.com/${enrichment.instagram}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary hover:underline"
-              >
-                @{enrichment.instagram}
-              </a>
-            </div>
-          )}
-          {enrichment.website && (
-            <div className="col-span-2">
-              <span className="text-muted-foreground">Website:</span>{" "}
-              <a
-                href={enrichment.website}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary hover:underline"
-              >
-                {enrichment.website}
-              </a>
-            </div>
-          )}
-        </div>
-      </div>
-
+    <div className="space-y-4">
       {/* Override form */}
       <div className="space-y-3">
-        <div className="text-xs text-muted-foreground">
-          Override values (leave empty to use Wikidata)
+        {/* Names row */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <Label htmlFor={`team-${teamId}-fullname`} className="text-xs">
+              Full name
+            </Label>
+            <Input
+              id={`team-${teamId}-fullname`}
+              type="text"
+              placeholder="Full official name"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              disabled={isPending}
+              className="h-8 text-sm"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={`team-${teamId}-shortname`} className="text-xs">
+              Short name
+            </Label>
+            <Input
+              id={`team-${teamId}-shortname`}
+              type="text"
+              placeholder="Short name"
+              value={shortName}
+              onChange={(e) => setShortName(e.target.value)}
+              disabled={isPending}
+              className="h-8 text-sm"
+            />
+          </div>
+        </div>
+
+        {/* Stadium row */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <Label htmlFor={`team-${teamId}-stadium`} className="text-xs">
+              Stadium name
+            </Label>
+            <Input
+              id={`team-${teamId}-stadium`}
+              type="text"
+              placeholder="Stadium name"
+              value={stadiumName}
+              onChange={(e) => setStadiumName(e.target.value)}
+              disabled={isPending}
+              className="h-8 text-sm"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={`team-${teamId}-capacity`} className="text-xs">
+              Capacity
+            </Label>
+            <Input
+              id={`team-${teamId}-capacity`}
+              type="number"
+              placeholder="0-199999"
+              value={stadiumCapacity}
+              onChange={(e) => setStadiumCapacity(e.target.value)}
+              disabled={isPending}
+              className="h-8 text-sm"
+              min={0}
+              max={199999}
+              aria-invalid={!!errors.stadiumCapacity}
+            />
+            {errors.stadiumCapacity && (
+              <p className="text-xs text-destructive">{errors.stadiumCapacity}</p>
+            )}
+          </div>
+        </div>
+
+        {/* Stadium Wikidata ID */}
+        <div className="space-y-1">
+          <Label htmlFor={`team-${teamId}-stadium-wikidata`} className="text-xs">
+            Stadium Wikidata ID
+          </Label>
+          <Input
+            id={`team-${teamId}-stadium-wikidata`}
+            type="text"
+            placeholder="Q00000"
+            value={stadiumWikidataId}
+            onChange={(e) => setStadiumWikidataId(e.target.value)}
+            disabled={isPending}
+            className="h-8 text-sm"
+            aria-invalid={!!errors.stadiumWikidataId}
+          />
+          {errors.stadiumWikidataId && (
+            <p className="text-xs text-destructive">{errors.stadiumWikidataId}</p>
+          )}
+        </div>
+
+        {/* Website */}
+        <div className="space-y-1">
+          <Label htmlFor={`team-${teamId}-website`} className="text-xs">
+            Website
+          </Label>
+          <Input
+            id={`team-${teamId}-website`}
+            type="url"
+            placeholder="https://..."
+            value={website}
+            onChange={(e) => setWebsite(e.target.value)}
+            disabled={isPending}
+            className="h-8 text-sm"
+            aria-invalid={!!errors.website}
+          />
+          {errors.website && (
+            <p className="text-xs text-destructive">{errors.website}</p>
+          )}
         </div>
 
         {/* Social handles row */}
@@ -385,172 +440,8 @@ export function TeamEnrichmentSettings({
           </div>
         </div>
 
-        {/* Website */}
-        <div className="space-y-1">
-          <Label htmlFor={`team-${teamId}-website`} className="text-xs">
-            Website
-          </Label>
-          <Input
-            id={`team-${teamId}-website`}
-            type="url"
-            placeholder="https://..."
-            value={website}
-            onChange={(e) => setWebsite(e.target.value)}
-            disabled={isPending}
-            className="h-8 text-sm"
-            aria-invalid={!!errors.website}
-          />
-          {errors.website && (
-            <p className="text-xs text-destructive">{errors.website}</p>
-          )}
-        </div>
-
-        {/* Stadium row */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <Label htmlFor={`team-${teamId}-stadium`} className="text-xs">
-              Stadium name
-            </Label>
-            <Input
-              id={`team-${teamId}-stadium`}
-              type="text"
-              placeholder="Stadium name"
-              value={stadiumName}
-              onChange={(e) => setStadiumName(e.target.value)}
-              disabled={isPending}
-              className="h-8 text-sm"
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor={`team-${teamId}-capacity`} className="text-xs">
-              Capacity
-            </Label>
-            <Input
-              id={`team-${teamId}-capacity`}
-              type="number"
-              placeholder="0-199999"
-              value={stadiumCapacity}
-              onChange={(e) => setStadiumCapacity(e.target.value)}
-              disabled={isPending}
-              className="h-8 text-sm"
-              min={0}
-              max={199999}
-              aria-invalid={!!errors.stadiumCapacity}
-            />
-            {errors.stadiumCapacity && (
-              <p className="text-xs text-destructive">{errors.stadiumCapacity}</p>
-            )}
-          </div>
-        </div>
-
-        {/* Names row */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <Label htmlFor={`team-${teamId}-fullname`} className="text-xs">
-              Full name
-            </Label>
-            <Input
-              id={`team-${teamId}-fullname`}
-              type="text"
-              placeholder="Full official name"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              disabled={isPending}
-              className="h-8 text-sm"
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor={`team-${teamId}-shortname`} className="text-xs">
-              Short name
-            </Label>
-            <Input
-              id={`team-${teamId}-shortname`}
-              type="text"
-              placeholder="Short name"
-              value={shortName}
-              onChange={(e) => setShortName(e.target.value)}
-              disabled={isPending}
-              className="h-8 text-sm"
-            />
-          </div>
-        </div>
-
-        {/* Notes */}
-        <div className="space-y-1">
-          <Label htmlFor={`team-${teamId}-notes`} className="text-xs">
-            Notes <span className="opacity-50">(optional)</span>
-          </Label>
-          <Input
-            id={`team-${teamId}-notes`}
-            type="text"
-            placeholder="Reason for override..."
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            disabled={isPending}
-            className="h-8 text-sm"
-          />
-        </div>
       </div>
 
-      {/* Action buttons */}
-      {(isDirty || enrichment.has_override) && (
-        <div className="flex items-center justify-between pt-2 border-t border-border">
-          {/* Delete button - only show if there's an existing override */}
-          {enrichment.has_override && !isDirty && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleDelete}
-              disabled={isPending}
-              className="text-destructive hover:text-destructive"
-            >
-              {deleteMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4 mr-1" />
-              )}
-              Remove override
-            </Button>
-          )}
-          {!enrichment.has_override && !isDirty && <div />}
-
-          {/* Save/Cancel buttons - only show when dirty */}
-          {isDirty && (
-            <div className="flex items-center gap-3 ml-auto">
-              <button
-                type="button"
-                onClick={handleReset}
-                disabled={isPending}
-                className="text-sm px-3 py-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-[color:var(--field-bg-hover)] transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <Button
-                size="sm"
-                onClick={handleSave}
-                disabled={!canSave}
-              >
-                {putMutation.isPending ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Saving...
-                  </>
-                ) : (
-                  "Apply Changes"
-                )}
-              </Button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Override info */}
-      {enrichment.has_override && enrichment.override?.updated_at && (
-        <div className="text-xs text-muted-foreground">
-          Override by {enrichment.override.source || "manual"} ·{" "}
-          {new Date(enrichment.override.updated_at).toLocaleDateString()}
-        </div>
-      )}
-    </SurfaceCard>
+    </div>
   );
-}
+});

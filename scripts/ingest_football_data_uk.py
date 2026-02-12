@@ -3,23 +3,36 @@
 Football-Data UK Odds Ingestion Pipeline
 
 Reproducible, auditable pipeline for ingesting historical odds from Football-Data UK.
-Supports two modes:
+Supports two CSV formats:
+  - Main leagues (EUR): per-season files at mmz4281/{season}/{code}.csv
+  - Extra leagues (LATAM+): multi-season file at new/{code}.csv
+
+Modes:
   - PHASE A (default): Warehouse-only mode - builds local DuckDB warehouse
   - PHASE B (optional): Postgres backfill - updates matches.opening_odds_* in DB
 
 Usage:
-    # Warehouse only (default, safe)
+    # Main leagues only (warehouse)
     python3 scripts/ingest_football_data_uk.py --warehouse-only
 
-    # With Postgres backfill (dry-run first!)
-    DATABASE_URL="postgresql://..." python3 scripts/ingest_football_data_uk.py --backfill-postgres --dry-run
-    DATABASE_URL="postgresql://..." python3 scripts/ingest_football_data_uk.py --backfill-postgres
+    # Extra leagues only (ARG, BRA, MEX, USA)
+    python3 scripts/ingest_football_data_uk.py --only-extra
+
+    # Both main + extra
+    python3 scripts/ingest_football_data_uk.py --extra-leagues
+
+    # Filter to specific leagues
+    python3 scripts/ingest_football_data_uk.py --only-extra --leagues ARG
+
+    # Postgres backfill (dry-run first!)
+    python3 scripts/ingest_football_data_uk.py --extra-leagues --backfill-postgres --dry-run
+    python3 scripts/ingest_football_data_uk.py --extra-leagues --backfill-postgres --no-dry-run
 
 RESTRICTIONS:
     - Does NOT touch: odds_snapshots, market_movement_snapshots, lineup_movement_snapshots, odds_history
     - Does NOT modify any PIT/scheduler/ETL odds live logic
-    - Backfill ONLY updates: matches.opening_odds_home/draw/away WHERE NULL
-    - Backfill ONLY for Top5 leagues: {39, 140, 135, 78, 61}
+    - Backfill ONLY updates: matches.opening_odds_* WHERE NULL (never overwrites)
+    - Sets opening_odds_source, opening_odds_kind, opening_odds_column for auditability
 """
 
 import argparse
@@ -58,12 +71,27 @@ except ImportError:
 # =============================================================================
 
 # Division mapping: FDUK code -> API-Football league_id
+# "Main leagues" use per-season CSVs: mmz4281/{season}/{code}.csv
 DIVISION_MAPPING = {
     "E0": 39,    # EPL
     "SP1": 140,  # La Liga
     "I1": 135,   # Serie A
     "D1": 78,    # Bundesliga
     "F1": 61,    # Ligue 1
+    "N1": 88,    # Eredivisie
+    "B1": 144,   # Belgian Pro League
+    "P1": 94,    # Primeira Liga
+    "T1": 203,   # Super Lig
+    "E1": 40,    # EFL Championship
+}
+
+# "Extra leagues" use multi-season CSVs: new/{code}.csv
+# Different column format (Home/Away, PSCH/PSCD/PSCA, etc.)
+EXTRA_LEAGUE_MAPPING = {
+    "ARG": 128,  # Argentina Primera Division
+    "BRA": 71,   # Brazil Serie A
+    "MEX": 262,  # Mexico Liga MX
+    "USA": 253,  # MLS
 }
 
 # Reverse mapping for logs
@@ -73,11 +101,21 @@ LEAGUE_NAMES = {
     135: "SerieA",
     78: "Bundesliga",
     61: "Ligue1",
+    88: "Eredivisie",
+    144: "BelgianPro",
+    94: "PrimeiraLiga",
+    203: "SuperLig",
+    40: "Championship",
+    128: "Argentina",
+    71: "BrazilSerieA",
+    262: "LigaMX",
+    253: "MLS",
 }
 
 # Seasons to ingest (newest first)
 SEASONS = [
-    "2425",  # 2024-2025 (current, partial)
+    "2526",  # 2025-2026 (current, partial)
+    "2425",  # 2024-2025
     "2324",  # 2023-2024
     "2223",  # 2022-2023
     "2122",  # 2021-2022
@@ -89,8 +127,12 @@ SEASONS = [
     "1516",  # 2015-2016
 ]
 
-# FDUK base URL
+# FDUK base URLs
 FDUK_BASE_URL = "https://www.football-data.co.uk/mmz4281"
+FDUK_EXTRA_URL = "https://www.football-data.co.uk/new"
+
+# Minimum season year for extra leagues (filter older data)
+EXTRA_MIN_SEASON_YEAR = 2023
 
 # Paths
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -257,6 +299,43 @@ def get_odds_and_provider(row: dict) -> tuple[Optional[float], Optional[float], 
     return None, None, None, "none"
 
 
+def get_odds_and_provider_extra(row: dict) -> tuple[Optional[float], Optional[float], Optional[float], str]:
+    """
+    Extract closing odds from extra-league CSV format.
+    Priority: Pinnacle Closing > Avg Closing > B365 Closing > Max Closing.
+    Column names use 'C' suffix: PSCH, PSCD, PSCA, AvgCH, etc.
+    """
+    # Try Pinnacle Closing first (best for ML)
+    psh = parse_float(row.get("PSCH", ""))
+    psd = parse_float(row.get("PSCD", ""))
+    psa = parse_float(row.get("PSCA", ""))
+    if psh and psd and psa and psh > 1 and psd > 1 and psa > 1:
+        return psh, psd, psa, "PS"
+
+    # Try Average Closing
+    avgh = parse_float(row.get("AvgCH", ""))
+    avgd = parse_float(row.get("AvgCD", ""))
+    avga = parse_float(row.get("AvgCA", ""))
+    if avgh and avgd and avga and avgh > 1 and avgd > 1 and avga > 1:
+        return avgh, avgd, avga, "Avg"
+
+    # Try B365 Closing
+    b365h = parse_float(row.get("B365CH", ""))
+    b365d = parse_float(row.get("B365CD", ""))
+    b365a = parse_float(row.get("B365CA", ""))
+    if b365h and b365d and b365a and b365h > 1 and b365d > 1 and b365a > 1:
+        return b365h, b365d, b365a, "B365"
+
+    # Try Max Closing
+    maxh = parse_float(row.get("MaxCH", ""))
+    maxd = parse_float(row.get("MaxCD", ""))
+    maxa = parse_float(row.get("MaxCA", ""))
+    if maxh and maxd and maxa and maxh > 1 and maxd > 1 and maxa > 1:
+        return maxh, maxd, maxa, "Max"
+
+    return None, None, None, "none"
+
+
 def calculate_devig(odds_h: float, odds_d: float, odds_a: float) -> tuple[float, float, float, float]:
     """
     Calculate de-vigged probabilities and overround.
@@ -320,6 +399,76 @@ def parse_csv(content: str, division: str, season_code: str) -> list[FDUKMatch]:
     return matches
 
 
+def parse_extra_csv(content: str, division: str, min_season_year: int = EXTRA_MIN_SEASON_YEAR) -> list[FDUKMatch]:
+    """Parse FDUK extra-league CSV content (multi-season format).
+
+    Extra leagues use different column names:
+      Home/Away (not HomeTeam/AwayTeam), HG/AG (not FTHG/FTAG), Res (not FTR).
+    Season field is "2023/2024" format — filtered by min_season_year.
+    """
+    matches = []
+    reader = csv.DictReader(StringIO(content))
+
+    for row in reader:
+        # Season filter: supports "2023/2024" or "2023" (single year)
+        season_str = row.get("Season", "").strip()
+        if not season_str:
+            continue
+
+        try:
+            if "/" in season_str:
+                # "2023/2024" → start_year=2023, season_code="2324"
+                start_year = int(season_str.split("/")[0])
+                season_code = season_str.split("/")[0][-2:] + season_str.split("/")[1][-2:]
+            else:
+                # "2023" → start_year=2023, season_code="2324"
+                start_year = int(season_str)
+                season_code = f"{start_year % 100:02d}{(start_year + 1) % 100:02d}"
+        except ValueError:
+            continue
+
+        if start_year < min_season_year:
+            continue
+
+        date_iso = parse_date(row.get("Date", ""))
+        if not date_iso:
+            continue
+
+        home_team = row.get("Home", "").strip()
+        away_team = row.get("Away", "").strip()
+        if not home_team or not away_team:
+            continue
+
+        odds_h, odds_d, odds_a, provider = get_odds_and_provider_extra(row)
+
+        # Calculate de-vigged probabilities
+        p_home, p_draw, p_away, overround = None, None, None, None
+        if odds_h and odds_d and odds_a:
+            p_home, p_draw, p_away, overround = calculate_devig(odds_h, odds_d, odds_a)
+
+        match = FDUKMatch(
+            division=division,
+            season_code=season_code,
+            date=date_iso,
+            home_team=home_team,
+            away_team=away_team,
+            fthg=parse_int(row.get("HG", "")),
+            ftag=parse_int(row.get("AG", "")),
+            ftr=row.get("Res", "").strip() or None,
+            odds_home=odds_h,
+            odds_draw=odds_d,
+            odds_away=odds_a,
+            odds_provider=provider,
+            overround=overround,
+            p_home=p_home,
+            p_draw=p_draw,
+            p_away=p_away,
+        )
+        matches.append(match)
+
+    return matches
+
+
 # =============================================================================
 # DATA FETCHING
 # =============================================================================
@@ -344,16 +493,71 @@ def fetch_csv(division: str, season_code: str, logger: logging.Logger) -> Option
         return None
 
 
+def fetch_extra_csv(division: str, logger: logging.Logger) -> Optional[str]:
+    """Fetch multi-season CSV from Football-Data UK extra leagues."""
+    url = f"{FDUK_EXTRA_URL}/{division}.csv"
+
+    try:
+        response = httpx.get(url, timeout=30, follow_redirects=True)
+        if response.status_code == 200:
+            logger.info(f"  Fetched extra {division}: {len(response.text)} bytes")
+            return response.text
+        elif response.status_code == 404:
+            logger.warning(f"  Not found: {url}")
+            return None
+        else:
+            logger.error(f"  HTTP {response.status_code}: {url}")
+            return None
+    except Exception as e:
+        logger.error(f"  Error fetching {url}: {e}")
+        return None
+
+
+# =============================================================================
+# LEAGUE ID HELPERS
+# =============================================================================
+
+def get_league_id_for_division(division: str) -> Optional[int]:
+    """Get league_id from either main or extra division mapping."""
+    return DIVISION_MAPPING.get(division) or EXTRA_LEAGUE_MAPPING.get(division)
+
+
+# Provider column mapping for metadata (main vs extra)
+PROVIDER_COLUMN_MAP_MAIN = {"B365": "B365H", "PS": "PSH", "Avg": "AvgH"}
+PROVIDER_COLUMN_MAP_EXTRA = {"PS": "PSCH", "Avg": "AvgCH", "B365": "B365CH", "Max": "MaxCH"}
+
+
+def get_odds_metadata(fduk_match: FDUKMatch) -> tuple[str, str, str]:
+    """Return (source, kind, column) metadata for the match.
+
+    Main leagues: pre-closing odds (PSH, B365H, AvgH)
+    Extra leagues: closing odds (PSCH, AvgCH, B365CH, MaxCH)
+    """
+    provider = fduk_match.odds_provider
+    is_extra = fduk_match.division in EXTRA_LEAGUE_MAPPING
+
+    if is_extra:
+        col = PROVIDER_COLUMN_MAP_EXTRA.get(provider, f"{provider}CH")
+        source = f"football-data.co.uk ({provider})"
+        kind = "closing"
+    else:
+        col = PROVIDER_COLUMN_MAP_MAIN.get(provider, f"{provider}H")
+        source = f"football-data.co.uk ({provider})"
+        kind = "proxy_pre_closing"
+
+    return source, kind, col
+
+
 # =============================================================================
 # WAREHOUSE (DuckDB)
 # =============================================================================
 
-def init_warehouse(db_path: Path) -> "duckdb.DuckDBPyConnection":
+def init_warehouse(db_path) -> "duckdb.DuckDBPyConnection":
     """Initialize DuckDB warehouse with schema."""
     if not HAS_DUCKDB:
         raise ImportError("DuckDB is required for warehouse mode. Install with: pip install duckdb")
 
-    conn = duckdb.connect(str(db_path))
+    conn = duckdb.connect(str(db_path) if db_path != ":memory:" else ":memory:")
 
     # Drop and recreate for clean state (warehouse is regenerated each run)
     conn.execute("DROP TABLE IF EXISTS fduk_matches")
@@ -570,10 +774,10 @@ async def backfill_postgres(
     }
 
     try:
-        # Group matches by league
+        # Group matches by league (both main + extra divisions)
         by_league = {}
         for m in matches:
-            league_id = DIVISION_MAPPING.get(m.division)
+            league_id = get_league_id_for_division(m.division)
             if league_id:
                 by_league.setdefault(league_id, []).append(m)
 
@@ -617,17 +821,26 @@ async def backfill_postgres(
                     stats["skipped_has_odds"] += 1
                     continue
 
+                # Build metadata
+                source, kind, col = get_odds_metadata(fduk_match)
+                match_date = datetime.strptime(fduk_match.date, "%Y-%m-%d")
+
                 # Update
                 if not dry_run:
                     await conn.execute("""
                         UPDATE matches
                         SET opening_odds_home = $1,
                             opening_odds_draw = $2,
-                            opening_odds_away = $3
+                            opening_odds_away = $3,
+                            opening_odds_source = $5,
+                            opening_odds_kind = $6,
+                            opening_odds_column = $7,
+                            opening_odds_recorded_at = $8,
+                            opening_odds_recorded_at_type = 'file_asof'
                         WHERE id = $4
                           AND opening_odds_home IS NULL
                     """, fduk_match.odds_home, fduk_match.odds_draw, fduk_match.odds_away,
-                    result.db_match_id)
+                    result.db_match_id, source, kind, col, match_date)
 
                 stats["updated"] += 1
 
@@ -669,7 +882,7 @@ def generate_coverage_report(conn: "duckdb.DuckDBPyConnection") -> dict:
     for row in rows:
         report["by_league_season"].append({
             "division": row[0],
-            "league": LEAGUE_NAMES.get(DIVISION_MAPPING.get(row[0]), row[0]),
+            "league": LEAGUE_NAMES.get(get_league_id_for_division(row[0]), row[0]),
             "season": row[1],
             "total": row[2],
             "with_odds": row[3],
@@ -769,7 +982,15 @@ def main():
     parser.add_argument("--fuzzy-threshold", type=float, default=0.85,
                         help="Fuzzy matching threshold")
     parser.add_argument("--seasons", nargs="+", default=SEASONS,
-                        help="Seasons to process")
+                        help="Seasons to process (main leagues only)")
+    parser.add_argument("--extra-leagues", action="store_true",
+                        help="Also ingest extra leagues (ARG, BRA, MEX, USA)")
+    parser.add_argument("--only-extra", action="store_true",
+                        help="Only ingest extra leagues (skip main)")
+    parser.add_argument("--leagues", nargs="+", default=None,
+                        help="Filter to specific division codes (e.g., ARG BRA E0)")
+    parser.add_argument("--in-memory", action="store_true",
+                        help="Use in-memory DuckDB (allows parallel runs)")
     args = parser.parse_args()
 
     # Resolve dry-run flag
@@ -790,6 +1011,8 @@ def main():
     logger.info(f"Mode: {'Warehouse + Backfill' if args.backfill_postgres else 'Warehouse only'}")
     logger.info(f"Dry run: {dry_run}")
     logger.info(f"Seasons: {args.seasons}")
+    logger.info(f"Extra leagues: {args.extra_leagues or args.only_extra}")
+    logger.info(f"League filter: {args.leagues or 'all'}")
     logger.info(f"Log: {log_path}")
 
     # Load aliases
@@ -798,26 +1021,50 @@ def main():
     logger.info(f"Loaded {len(aliases)} team aliases")
 
     # Initialize warehouse
-    logger.info(f"\nInitializing warehouse: {WAREHOUSE_PATH}")
-    warehouse = init_warehouse(WAREHOUSE_PATH)
+    wh_path = ":memory:" if args.in_memory else WAREHOUSE_PATH
+    logger.info(f"\nInitializing warehouse: {wh_path}")
+    warehouse = init_warehouse(Path(wh_path) if wh_path != ":memory:" else wh_path)
 
     # Fetch and parse all data
     all_matches = []
+    league_filter = set(args.leagues) if args.leagues else None
 
-    for division, league_id in DIVISION_MAPPING.items():
-        league_name = LEAGUE_NAMES.get(league_id, division)
-        logger.info(f"\n{'=' * 50}")
-        logger.info(f"Processing {league_name} ({division})")
+    # ── Main leagues (per-season CSVs) ──
+    if not args.only_extra:
+        for division, league_id in DIVISION_MAPPING.items():
+            if league_filter and division not in league_filter:
+                continue
+            league_name = LEAGUE_NAMES.get(league_id, division)
+            logger.info(f"\n{'=' * 50}")
+            logger.info(f"Processing {league_name} ({division})")
 
-        for season in args.seasons:
-            csv_content = fetch_csv(division, season, logger)
+            for season in args.seasons:
+                csv_content = fetch_csv(division, season, logger)
+                if csv_content:
+                    matches = parse_csv(csv_content, division, season)
+                    logger.info(f"    {season}: {len(matches)} matches parsed")
+
+                    inserted = insert_to_warehouse(warehouse, matches)
+                    logger.info(f"    {season}: {inserted} inserted to warehouse")
+
+                    all_matches.extend(matches)
+
+    # ── Extra leagues (multi-season CSVs) ──
+    if args.extra_leagues or args.only_extra:
+        for division, league_id in EXTRA_LEAGUE_MAPPING.items():
+            if league_filter and division not in league_filter:
+                continue
+            league_name = LEAGUE_NAMES.get(league_id, division)
+            logger.info(f"\n{'=' * 50}")
+            logger.info(f"Processing EXTRA {league_name} ({division})")
+
+            csv_content = fetch_extra_csv(division, logger)
             if csv_content:
-                matches = parse_csv(csv_content, division, season)
-                logger.info(f"    {season}: {len(matches)} matches parsed")
+                matches = parse_extra_csv(csv_content, division)
+                logger.info(f"    {len(matches)} matches parsed (season >= {EXTRA_MIN_SEASON_YEAR})")
 
-                # Insert to warehouse
                 inserted = insert_to_warehouse(warehouse, matches)
-                logger.info(f"    {season}: {inserted} inserted to warehouse")
+                logger.info(f"    {inserted} inserted to warehouse")
 
                 all_matches.extend(matches)
 

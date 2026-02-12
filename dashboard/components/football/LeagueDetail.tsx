@@ -770,7 +770,6 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
             {activeTab === "standings" && (
               <div>
                 <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-                  <Trophy className="h-4 w-4 text-muted-foreground" />
                   <h2 className="text-sm font-semibold text-foreground">Standings</h2>
                   {standingsData && (
                     <span className="text-xs text-muted-foreground ml-auto">
@@ -1037,7 +1036,6 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                                 ? `${selectedTeam.data.wikidata_enrichment.lat.toFixed(6)}, ${selectedTeam.data.wikidata_enrichment.lon.toFixed(6)}`
                                 : null,
                             ],
-                            ["Updated", selectedTeam.data.wikidata_enrichment.wikidata_updated_at],
                           ].map(([label, value]) => (
                             <tr key={label}>
                               <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
@@ -1055,6 +1053,15 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                                     >
                                       {value}
                                     </button>
+                                  ) : label === "Coords" ? (
+                                    <a
+                                      href={`https://www.google.com/maps?q=${value}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-primary hover:opacity-80 transition-opacity"
+                                    >
+                                      {value}
+                                    </a>
                                   ) : (
                                     <span className="break-words">{value}</span>
                                   )
@@ -1185,6 +1192,24 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                                     {selectedTeam.data.wikidata_enrichment.stadium_wikidata_id}
                                   </a>
                                 </Button>
+                              ) : (
+                                <span className="text-muted-foreground">-</span>
+                              )}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className="py-2 px-3 text-[11px] text-muted-foreground whitespace-nowrap">
+                              Updated
+                            </td>
+                            <td className="py-2 px-3 text-sm text-foreground">
+                              {selectedTeam.data.wikidata_enrichment.wikidata_updated_at ? (
+                                <span>
+                                  {new Date(selectedTeam.data.wikidata_enrichment.wikidata_updated_at).toLocaleDateString(undefined, {
+                                    year: "numeric",
+                                    month: "short",
+                                    day: "numeric",
+                                  })}
+                                </span>
                               ) : (
                                 <span className="text-muted-foreground">-</span>
                               )}

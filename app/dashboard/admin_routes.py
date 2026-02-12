@@ -310,6 +310,7 @@ async def dashboard_admin_put_team_enrichment(request: Request, team_id: int):
         website = normalize(body.get("website"))
         twitter_handle = normalize(body.get("twitter_handle"))
         instagram_handle = normalize(body.get("instagram_handle"))
+        stadium_wikidata_id = normalize(body.get("stadium_wikidata_id"))
         source = normalize(body.get("source")) or "manual"
         notes = normalize(body.get("notes"))
 
@@ -344,12 +345,18 @@ async def dashboard_admin_put_team_enrichment(request: Request, team_id: int):
             if website.lower().startswith(("javascript:", "data:")):
                 raise HTTPException(status_code=400, detail="Invalid website URL scheme")
 
+        # Validate stadium_wikidata_id (Q-number format)
+        if stadium_wikidata_id:
+            if not re.match(r'^Q\d{1,10}$', stadium_wikidata_id):
+                raise HTTPException(status_code=400, detail="stadium_wikidata_id must be a Wikidata Q-number (e.g. Q12345)")
+
         # P0 ABE: Check if all fields are NULL -> DELETE instead
         all_null = all([
             full_name is None,
             short_name is None,
             stadium_name is None,
             stadium_capacity is None,
+            stadium_wikidata_id is None,
             website is None,
             twitter_handle is None,
             instagram_handle is None,
@@ -369,18 +376,19 @@ async def dashboard_admin_put_team_enrichment(request: Request, team_id: int):
                     text("""
                         INSERT INTO team_enrichment_overrides (
                             team_id, full_name, short_name, stadium_name, stadium_capacity,
-                            website, twitter_handle, instagram_handle, source, notes,
-                            created_at, updated_at
+                            stadium_wikidata_id, website, twitter_handle, instagram_handle,
+                            source, notes, created_at, updated_at
                         ) VALUES (
                             :tid, :full_name, :short_name, :stadium_name, :stadium_capacity,
-                            :website, :twitter_handle, :instagram_handle, :source, :notes,
-                            NOW(), NOW()
+                            :stadium_wikidata_id, :website, :twitter_handle, :instagram_handle,
+                            :source, :notes, NOW(), NOW()
                         )
                         ON CONFLICT (team_id) DO UPDATE SET
                             full_name = EXCLUDED.full_name,
                             short_name = EXCLUDED.short_name,
                             stadium_name = EXCLUDED.stadium_name,
                             stadium_capacity = EXCLUDED.stadium_capacity,
+                            stadium_wikidata_id = EXCLUDED.stadium_wikidata_id,
                             website = EXCLUDED.website,
                             twitter_handle = EXCLUDED.twitter_handle,
                             instagram_handle = EXCLUDED.instagram_handle,
@@ -394,6 +402,7 @@ async def dashboard_admin_put_team_enrichment(request: Request, team_id: int):
                         "short_name": short_name,
                         "stadium_name": stadium_name,
                         "stadium_capacity": stadium_capacity,
+                        "stadium_wikidata_id": stadium_wikidata_id,
                         "website": website,
                         "twitter_handle": twitter_handle,
                         "instagram_handle": instagram_handle,

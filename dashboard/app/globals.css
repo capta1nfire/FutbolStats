@@ -302,6 +302,11 @@
   .shadow-tooltip {
     box-shadow: var(--shadow-tooltip);
   }
+
+  /* Tooltip trigger: default cursor */
+  [data-slot="tooltip-trigger"] {
+    cursor: default;
+  }
 }
 
 /* Three-dot bounce loader */

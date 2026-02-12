@@ -334,6 +334,7 @@ export interface TeamEnrichmentOverride {
   short_name: string | null;
   stadium_name: string | null;
   stadium_capacity: number | null;
+  stadium_wikidata_id: string | null;
   city: string | null;
   website: string | null;
   twitter: string | null;

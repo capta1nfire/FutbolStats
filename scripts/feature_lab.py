@@ -1,0 +1,2669 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+"""
+Feature Lab — Experimental Feature Testing
+============================================
+Local-only script for testing different feature combinations.
+Compares performance across leagues (e.g. Argentina vs Primeira Liga).
+
+PIT (Point-in-Time) Safety:
+  - Elo ratings: sequential update, each match uses pre-match Elo
+  - Rolling features: computed from history[-ROLLING_WINDOW:] before current match
+  - Odds: frozen at match time (closing preferred, opening fallback, never mixed
+    within the same match; odds_snapshot column tracks which type each match uses)
+  - xG: rolling averages from Understat/FotMob, lagged (pre-match only)
+  - Temporal split: strict chronological (sorted by date + match_id tiebreaker),
+    no future leakage
+  - Universe system: pre-filtered DataFrames ensure identical N, split_idx, and
+    split_date for all tests within the same data availability universe
+
+Usage:
+  source .env
+  python scripts/feature_lab.py --extract                # Extract fresh from DB
+  python scripts/feature_lab.py                          # Use cached data
+  python scripts/feature_lab.py --league 128             # Single league
+  python scripts/feature_lab.py --league 128 --league 94 # Multiple leagues
+  python scripts/feature_lab.py --lockbox                # 70/15/15 one-shot eval
+  python scripts/feature_lab.py --shap --league 128      # SHAP explainability
+  python scripts/feature_lab.py --optuna --league 128    # Optuna hypertuning
+"""
+
+import json
+import sys
+import argparse
+import warnings
+from datetime import datetime
+from math import exp
+from pathlib import Path
+from typing import Optional
+
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+
+import numpy as np
+import pandas as pd
+import xgboost as xgb
+from sklearn.metrics import log_loss
+
+try:
+    import optuna
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    HAS_OPTUNA = True
+except ImportError:
+    HAS_OPTUNA = False
+
+try:
+    import shap
+    HAS_SHAP = True
+except ImportError:
+    HAS_SHAP = False
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# ─── Constants ────────────────────────────────────────────────
+
+ROLLING_WINDOW = 10
+TIME_DECAY_LAMBDA = 0.01
+DRAW_WEIGHT = 1.5
+N_SEEDS = 5
+N_BOOTSTRAP = 1000
+TEST_FRACTION = 0.2
+
+# Elo constants
+ELO_INITIAL = 1500
+ELO_K = 32
+ELO_HOME_ADV = 100  # Home team gets +100 Elo for expected score calc
+
+# Production XGBoost hyperparams (from engine.py)
+PROD_HYPERPARAMS = {
+    "objective": "multi:softprob",
+    "num_class": 3,
+    "max_depth": 3,
+    "learning_rate": 0.0283,
+    "n_estimators": 114,
+    "min_child_weight": 7,
+    "subsample": 0.72,
+    "colsample_bytree": 0.71,
+    "reg_alpha": 2.8e-05,
+    "reg_lambda": 0.000904,
+    "use_label_encoder": False,
+    "eval_metric": "mlogloss",
+    "verbosity": 0,
+}
+
+# Feature sets
+BASELINE_FEATURES = [
+    "home_goals_scored_avg", "home_goals_conceded_avg",
+    "home_shots_avg", "home_corners_avg",
+    "home_rest_days", "home_matches_played",
+    "away_goals_scored_avg", "away_goals_conceded_avg",
+    "away_shots_avg", "away_corners_avg",
+    "away_rest_days", "away_matches_played",
+    "goal_diff_avg", "rest_diff",
+    "abs_attack_diff", "abs_defense_diff", "abs_strength_gap",
+]
+
+NO_REST_FEATURES = [f for f in BASELINE_FEATURES
+                    if f not in ("home_rest_days", "away_rest_days", "rest_diff")]
+
+ELO_FEATURES = ["elo_home", "elo_away", "elo_diff"]
+ODDS_FEATURES = ["odds_home", "odds_draw", "odds_away"]
+
+# xG features (rolling averages from Understat/FotMob)
+XG_CORE = ["home_xg_for_avg", "away_xg_for_avg", "xg_diff"]
+XG_DEFENSE = ["home_xg_against_avg", "away_xg_against_avg", "xg_defense_diff"]
+XG_OVERPERF = ["home_xg_overperf", "away_xg_overperf", "xg_overperf_diff"]
+XG_ALL = XG_CORE + XG_DEFENSE + XG_OVERPERF
+
+# ─── Surgical feature groups ─────────────────────────────────
+
+# Argentina SIGNAL features (from feature_diagnostic)
+ARG_SIGNAL = ["home_matches_played", "home_goals_conceded_avg"]
+
+# Defense-only: what each team concedes
+DEFENSE_PAIR = ["home_goals_conceded_avg", "away_goals_conceded_avg"]
+
+# Attack-only: what each team scores
+ATTACK_PAIR = ["home_goals_scored_avg", "away_goals_scored_avg"]
+
+# Strength summary: one number that captures attack-defense balance
+STRENGTH_MINIMAL = ["goal_diff_avg"]
+
+# Competitiveness group (v1.0.1 additions)
+COMPETITIVENESS = ["abs_attack_diff", "abs_defense_diff", "abs_strength_gap"]
+
+# Core stats (goals only, no shots/corners/rest)
+GOALS_CORE = [
+    "home_goals_scored_avg", "home_goals_conceded_avg",
+    "away_goals_scored_avg", "away_goals_conceded_avg",
+    "goal_diff_avg",
+]
+
+# Clean baseline: remove all NOISE features identified globally
+CLEAN_FEATURES = [f for f in BASELINE_FEATURES
+                  if f not in ("home_rest_days", "away_rest_days", "rest_diff",
+                               "home_shots_avg", "away_shots_avg")]
+
+ELO_GW_FEATURES = ["elo_gw_home", "elo_gw_away", "elo_gw_diff"]
+ELO_K10 = [f"elo_k10_{s}" for s in ("home", "away", "diff")]
+ELO_K20 = [f"elo_k20_{s}" for s in ("home", "away", "diff")]
+ELO_K50 = [f"elo_k50_{s}" for s in ("home", "away", "diff")]
+ELO_K64 = [f"elo_k64_{s}" for s in ("home", "away", "diff")]
+ELO_SPLIT = ["elo_honly_home", "elo_aonly_away", "elo_split_diff"]
+ELO_MOMENTUM = ["elo_momentum_home", "elo_momentum_away", "elo_momentum_diff"]
+ELO_PROBS = ["elo_prob_home", "elo_prob_away", "elo_draw_proxy"]
+
+FORM_CORE = ["home_win_rate5", "away_win_rate5", "form_diff"]
+FORM_DRAW = ["home_draw_rate5", "away_draw_rate5", "draw_propensity"]
+FORM_FULL = FORM_CORE + FORM_DRAW + [
+    "home_unbeaten", "away_unbeaten", "unbeaten_diff",
+    "home_volatility", "away_volatility",
+    "home_clean_sheet5", "away_clean_sheet5",
+    "home_scoring_streak", "away_scoring_streak",
+]
+
+MATCHUP_FEATURES = [
+    "matchup_h_attack_v_a_defense", "matchup_a_attack_v_h_defense",
+    "expected_openness", "defensive_solidity",
+]
+
+H2H_FEATURES = ["h2h_home_winrate", "h2h_n_meetings"]
+SURPRISE_FEATURES = ["surprise_home", "surprise_away", "surprise_sum"]
+CALENDAR_FEATURES = ["match_month", "season_phase"]
+
+# ─── Wave 7: Opponent-Adjusted Ratings (ABE #1) ─────────────
+OPP_ADJ_FEATURES = ["opp_att_home", "opp_def_home", "opp_att_away", "opp_def_away",
+                     "opp_rating_diff"]
+
+# ─── Wave 8: ABE Features ───────────────────────────────────
+OVERPERF_FEATURES = ["overperf_home", "overperf_away", "overperf_diff"]
+DRAW_AWARE_FEATURES = ["draw_tendency_home", "draw_tendency_away",
+                       "draw_elo_interaction", "league_draw_rate"]
+HOME_BIAS_FEATURES = ["home_bias_home", "home_bias_away", "home_bias_diff"]
+
+# ─── Wave 9: Kimi Features ──────────────────────────────────
+INTERACTION_FEATURES = ["elo_x_rest", "elo_x_season", "elo_x_defense",
+                        "form_x_defense"]
+EFFICIENCY_FEATURES = ["finish_eff_home", "finish_eff_away",
+                       "def_eff_home", "def_eff_away",
+                       "efficiency_diff"]
+
+TESTS = {
+    # ═══════════════════════════════════════════════════════
+    # SECTION A: ANCHORS (reference points)
+    # ═══════════════════════════════════════════════════════
+    "A0_baseline_17":       BASELINE_FEATURES,
+    "A1_only_elo_k32":      ELO_FEATURES,
+
+    # ═══════════════════════════════════════════════════════
+    # SECTION B: SINGLE FEATURES (what's the minimum?)
+    # ═══════════════════════════════════════════════════════
+    "B0_1f_goaldiff":       STRENGTH_MINIMAL,
+    "B1_1f_h_defense":      ["home_goals_conceded_avg"],
+    "B2_1f_h_matchplay":    ["home_matches_played"],
+    "B3_1f_elo_diff":       ["elo_diff"],
+    "B4_1f_elo_prob_h":     ["elo_prob_home"],
+    "B5_1f_form_diff":      ["form_diff"],
+
+    # ═══════════════════════════════════════════════════════
+    # SECTION C: PAIRS (which 2 features capture the most?)
+    # ═══════════════════════════════════════════════════════
+    "C0_defense_pair":      DEFENSE_PAIR,
+    "C1_attack_pair":       ATTACK_PAIR,
+    "C2_arg_signal":        ARG_SIGNAL,
+    "C3_elo_diff_form":     ["elo_diff", "form_diff"],
+    "C4_elo_diff_defense":  ["elo_diff", "home_goals_conceded_avg"],
+    "C5_elo_prob_draw":     ["elo_prob_home", "draw_propensity"],
+    "C6_matchup_core":      ["matchup_h_attack_v_a_defense", "matchup_a_attack_v_h_defense"],
+
+    # ═══════════════════════════════════════════════════════
+    # SECTION D: ELO VARIANTS (which Elo is best?)
+    # ═══════════════════════════════════════════════════════
+    "D0_elo_gw":            ELO_GW_FEATURES,
+    "D1_elo_k10":           ELO_K10,
+    "D2_elo_k20":           ELO_K20,
+    "D3_elo_k50":           ELO_K50,
+    "D4_elo_k64":           ELO_K64,
+    "D5_elo_split":         ELO_SPLIT,
+    "D6_elo_momentum":      ELO_MOMENTUM,
+    "D7_elo_probs":         ELO_PROBS,
+    "D8_elo_all":           ELO_FEATURES + ELO_GW_FEATURES + ELO_SPLIT + ELO_MOMENTUM,
+
+    # ═══════════════════════════════════════════════════════
+    # SECTION E: FORM & STREAKS (does momentum matter?)
+    # ═══════════════════════════════════════════════════════
+    "E0_form_core":         FORM_CORE,
+    "E1_form_draw":         FORM_DRAW,
+    "E2_form_full":         FORM_FULL,
+    "E3_form_elo":          FORM_CORE + ELO_FEATURES,
+    "E4_form_full_elo":     FORM_FULL + ELO_FEATURES,
+    "E5_streaks_elo":       ["home_unbeaten", "away_unbeaten",
+                             "home_scoring_streak", "away_scoring_streak"] + ELO_FEATURES,
+
+    # ═══════════════════════════════════════════════════════
+    # SECTION F: MATCHUPS (the actual confrontation)
+    # ═══════════════════════════════════════════════════════
+    "F0_matchup_only":      MATCHUP_FEATURES,
+    "F1_matchup_elo":       MATCHUP_FEATURES + ELO_FEATURES,
+    "F2_matchup_form_elo":  MATCHUP_FEATURES + FORM_CORE + ELO_FEATURES,
+    "F3_h2h":               H2H_FEATURES,
+    "F4_h2h_elo":           H2H_FEATURES + ELO_FEATURES,
+
+    # ═══════════════════════════════════════════════════════
+    # SECTION G: SURPRISE & META
+    # ═══════════════════════════════════════════════════════
+    "G0_surprise":          SURPRISE_FEATURES,
+    "G1_surprise_elo":      SURPRISE_FEATURES + ELO_FEATURES,
+    "G2_calendar":          CALENDAR_FEATURES,
+    "G3_calendar_elo":      CALENDAR_FEATURES + ELO_FEATURES,
+
+    # ═══════════════════════════════════════════════════════
+    # SECTION H: BEST-OF COMBOS (mixing winners)
+    # ═══════════════════════════════════════════════════════
+    "H0_arg_signal_elo":    ARG_SIGNAL + ELO_FEATURES,
+    "H1_defense_elo":       DEFENSE_PAIR + ELO_FEATURES,
+    "H2_defense_form_elo":  DEFENSE_PAIR + FORM_CORE + ELO_FEATURES,
+    "H3_defense_matchup_elo": DEFENSE_PAIR + MATCHUP_FEATURES + ELO_FEATURES,
+    "H4_kitchen_sink":      (DEFENSE_PAIR + MATCHUP_FEATURES + FORM_CORE +
+                             ELO_FEATURES + ELO_PROBS + H2H_FEATURES),
+    "H5_elo_gw_defense":    DEFENSE_PAIR + ELO_GW_FEATURES,
+    "H6_elo_gw_form":       FORM_CORE + ELO_GW_FEATURES,
+    "H7_elo_split_defense": DEFENSE_PAIR + ELO_SPLIT,
+    "H8_surprise_form_elo": SURPRISE_FEATURES + FORM_CORE + ELO_FEATURES,
+    "H9_minimal_power":     ["elo_diff", "home_goals_conceded_avg", "form_diff",
+                             "matchup_h_attack_v_a_defense"],
+
+    # ═══════════════════════════════════════════════════════
+    # SECTION I: CLEAN BASELINES (noise removal)
+    # ═══════════════════════════════════════════════════════
+    "I0_clean_no_noise":    CLEAN_FEATURES,
+    "I1_clean_elo":         CLEAN_FEATURES + ELO_FEATURES,
+    "I2_goals_core":        GOALS_CORE,
+    "I3_goals_core_elo":    GOALS_CORE + ELO_FEATURES,
+
+    # ═══════════════════════════════════════════════════════
+    # SECTION J: ODDS (if available)
+    # ═══════════════════════════════════════════════════════
+    "J0_only_odds":         ODDS_FEATURES,
+    "J1_elo_odds":          ELO_FEATURES + ODDS_FEATURES,
+    "J2_full_odds":         BASELINE_FEATURES + ODDS_FEATURES,
+
+    # ═══════════════════════════════════════════════════════
+    # SECTION K: ABE FEATURES (opponent-adjusted, overperf, draw-aware, home bias)
+    # ═══════════════════════════════════════════════════════
+    "K0_opp_adj_only":      OPP_ADJ_FEATURES,
+    "K1_opp_adj_elo":       OPP_ADJ_FEATURES + ELO_FEATURES,
+    "K2_overperf_only":     OVERPERF_FEATURES,
+    "K3_overperf_elo":      OVERPERF_FEATURES + ELO_FEATURES,
+    "K4_draw_aware":        DRAW_AWARE_FEATURES,
+    "K5_draw_aware_elo":    DRAW_AWARE_FEATURES + ELO_FEATURES,
+    "K6_home_bias":         HOME_BIAS_FEATURES,
+    "K7_home_bias_elo":     HOME_BIAS_FEATURES + ELO_FEATURES,
+    "K8_all_abe":           OPP_ADJ_FEATURES + OVERPERF_FEATURES + DRAW_AWARE_FEATURES + HOME_BIAS_FEATURES,
+    "K9_all_abe_elo":       OPP_ADJ_FEATURES + OVERPERF_FEATURES + DRAW_AWARE_FEATURES + HOME_BIAS_FEATURES + ELO_FEATURES,
+
+    # ═══════════════════════════════════════════════════════
+    # SECTION L: KIMI FEATURES (interactions, efficiency)
+    # ═══════════════════════════════════════════════════════
+    "L0_interactions":      INTERACTION_FEATURES,
+    "L1_interactions_elo":  INTERACTION_FEATURES + ELO_FEATURES,
+    "L2_efficiency":        EFFICIENCY_FEATURES,
+    "L3_efficiency_elo":    EFFICIENCY_FEATURES + ELO_FEATURES,
+    "L4_kimi_all_elo":      INTERACTION_FEATURES + EFFICIENCY_FEATURES + ELO_FEATURES,
+
+    # ═══════════════════════════════════════════════════════
+    # SECTION M: GRAND COMBOS (ABE + Kimi + Lab winners)
+    # ═══════════════════════════════════════════════════════
+    "M0_h0_opp_adj":        ARG_SIGNAL + ELO_FEATURES + OPP_ADJ_FEATURES,
+    "M1_h0_overperf":       ARG_SIGNAL + ELO_FEATURES + OVERPERF_FEATURES,
+    "M2_h0_interactions":   ARG_SIGNAL + ELO_FEATURES + INTERACTION_FEATURES,
+    "M3_h0_draw_aware":     ARG_SIGNAL + ELO_FEATURES + DRAW_AWARE_FEATURES,
+    "M4_smart_minimal":     DEFENSE_PAIR + ELO_FEATURES + OPP_ADJ_FEATURES + OVERPERF_FEATURES,
+    "M5_defense_elo_abe":   DEFENSE_PAIR + ELO_FEATURES + OPP_ADJ_FEATURES + OVERPERF_FEATURES + HOME_BIAS_FEATURES,
+    "M6_defense_elo_kimi":  DEFENSE_PAIR + ELO_FEATURES + INTERACTION_FEATURES + EFFICIENCY_FEATURES,
+    "M7_ultimate":          (DEFENSE_PAIR + ELO_FEATURES + OPP_ADJ_FEATURES +
+                             OVERPERF_FEATURES + DRAW_AWARE_FEATURES +
+                             INTERACTION_FEATURES + EFFICIENCY_FEATURES),
+    "M8_power_5":           ["elo_diff", "opp_rating_diff", "overperf_diff",
+                             "home_goals_conceded_avg", "draw_elo_interaction"],
+    "M9_power_7":           ["elo_diff", "opp_rating_diff", "overperf_diff",
+                             "home_goals_conceded_avg", "draw_elo_interaction",
+                             "finish_eff_home", "elo_x_defense"],
+
+    # ═══════════════════════════════════════════════════════════
+    # SECTION N: ODDS COMBOS (winners + market signal)
+    # ═══════════════════════════════════════════════════════════
+    "N0_odds_elo":          ELO_FEATURES + ODDS_FEATURES,
+    "N1_odds_defense_elo":  DEFENSE_PAIR + ELO_FEATURES + ODDS_FEATURES,
+    "N2_odds_m2_combo":     ARG_SIGNAL + ELO_FEATURES + INTERACTION_FEATURES + ODDS_FEATURES,
+    "N3_odds_efficiency":   EFFICIENCY_FEATURES + ELO_FEATURES + ODDS_FEATURES,
+    "N4_odds_abe_best":     HOME_BIAS_FEATURES + OPP_ADJ_FEATURES + ELO_FEATURES + ODDS_FEATURES,
+    "N5_odds_kimi_all":     INTERACTION_FEATURES + EFFICIENCY_FEATURES + ELO_FEATURES + ODDS_FEATURES,
+    "N6_odds_clean":        CLEAN_FEATURES + ODDS_FEATURES,
+    "N7_odds_power7":       ["elo_diff", "opp_rating_diff", "overperf_diff",
+                             "home_goals_conceded_avg", "draw_elo_interaction",
+                             "finish_eff_home", "elo_x_defense"] + ODDS_FEATURES,
+    "N8_odds_minimal":      ["elo_diff", "home_goals_conceded_avg"] + ODDS_FEATURES,
+    "N9_odds_ultimate":     (DEFENSE_PAIR + ELO_FEATURES + OPP_ADJ_FEATURES +
+                             INTERACTION_FEATURES + EFFICIENCY_FEATURES + ODDS_FEATURES),
+
+    # ═══════════════════════════════════════════════════════════
+    # SECTION P: xG FEATURES (Understat EUR / FotMob LATAM)
+    # ═══════════════════════════════════════════════════════════
+    "P0_xg_core":           XG_CORE,
+    "P1_xg_all":            XG_ALL,
+    "P2_xg_elo":            XG_CORE + ELO_FEATURES,
+    "P3_xg_defense_elo":    XG_CORE + XG_DEFENSE + ELO_FEATURES,
+    "P4_xg_overperf_elo":   XG_ALL + ELO_FEATURES,
+    "P5_xg_odds":           XG_CORE + ODDS_FEATURES,
+    "P6_xg_elo_odds":       XG_CORE + ELO_FEATURES + ODDS_FEATURES,
+    "P7_xg_all_elo_odds":   XG_ALL + ELO_FEATURES + ODDS_FEATURES,
+    "P8_xg_defense_odds":   DEFENSE_PAIR + XG_CORE + XG_DEFENSE + ODDS_FEATURES,
+    "P9_xg_ultimate":       (XG_ALL + ELO_FEATURES + DEFENSE_PAIR +
+                             ODDS_FEATURES + OPP_ADJ_FEATURES),
+}
+
+# ─── Section O: Optuna candidates (top performers to re-tune) ────
+# These are the champions/top-5 from lab runs across all leagues.
+# Run with --optuna flag to tune each one with Optuna per-league.
+OPTUNA_CANDIDATES = {
+    # Universal top performers (appeared in top-5 across multiple leagues)
+    "O0_elo_gw_defense":    DEFENSE_PAIR + ELO_GW_FEATURES,       # top in ITA, GER, ESP
+    "O1_elo_gw_form":       FORM_CORE + ELO_GW_FEATURES,          # #1 La Liga
+    "O2_defense_form_elo":  DEFENSE_PAIR + FORM_CORE + ELO_FEATURES,  # #1 Premier League
+    "O3_elo_k20":           ELO_K20,                               # top in ITA, ESP
+    "O4_defense_elo_kimi":  DEFENSE_PAIR + ELO_FEATURES + INTERACTION_FEATURES + EFFICIENCY_FEATURES,  # top ENG
+    # LATAM champions
+    "O5_m2_interactions":   ARG_SIGNAL + ELO_FEATURES + INTERACTION_FEATURES,  # #1 Argentina
+    "O6_efficiency_elo":    EFFICIENCY_FEATURES + ELO_FEATURES,    # #1 Liga MX
+    # ABE combos
+    "O7_all_abe_elo":       OPP_ADJ_FEATURES + OVERPERF_FEATURES + DRAW_AWARE_FEATURES + HOME_BIAS_FEATURES + ELO_FEATURES,
+    "O8_smart_minimal":     DEFENSE_PAIR + ELO_FEATURES + OPP_ADJ_FEATURES + OVERPERF_FEATURES,
+    # Anchors (to measure if Optuna helps baseline/elo)
+    "O9_baseline_17":       BASELINE_FEATURES,
+    "OA_only_elo":          ELO_FEATURES,
+    # xG + odds combos (promising in ITA, FRA)
+    "OB_xg_odds":           XG_CORE + ODDS_FEATURES,
+    "OC_xg_all_elo_odds":   XG_ALL + ELO_FEATURES + ODDS_FEATURES,
+    "OD_xg_overperf_elo":   XG_ALL + ELO_FEATURES,
+    "OE_xg_defense_odds":   DEFENSE_PAIR + XG_CORE + XG_DEFENSE + ODDS_FEATURES,
+    "OF_abe_elo_odds":      OPP_ADJ_FEATURES + OVERPERF_FEATURES + DRAW_AWARE_FEATURES + HOME_BIAS_FEATURES + ELO_FEATURES + ODDS_FEATURES,
+}
+
+LEAGUE_NAMES = {
+    128: "Argentina",
+    239: "Colombia",
+    242: "Ecuador",
+    281: "Peru",
+    299: "Venezuela",
+    344: "Bolivia",
+    265: "Chile",
+    94:  "Primeira Liga",
+    262: "Liga MX",
+    140: "La Liga",
+    39:  "Premier League",
+    135: "Serie A",
+    78:  "Bundesliga",
+    61:  "Ligue 1",
+}
+
+
+# ─── Data Extraction ─────────────────────────────────────────
+
+def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") -> pd.DataFrame:
+    """Extract PIT-safe training data for a single league.
+
+    Replicates feature_diagnostic._extract_via_sql() pattern
+    but scoped to one league for faster iteration.
+    """
+    import psycopg2
+    from app.config import get_settings
+    settings = get_settings()
+
+    db_url = settings.DATABASE_URL
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+    conn = psycopg2.connect(db_url)
+    league_name = LEAGUE_NAMES.get(league_id, f"league_{league_id}")
+
+    print(f"\n  Extracting {league_name} (id={league_id})...")
+
+    query = """
+        SELECT m.id AS match_id, m.date, m.league_id,
+               m.home_team_id, m.away_team_id,
+               m.home_goals, m.away_goals,
+               m.stats, m.match_weight,
+               m.odds_home AS odds_home_close,
+               m.odds_draw AS odds_draw_close,
+               m.odds_away AS odds_away_close,
+               m.opening_odds_home AS odds_home_open,
+               m.opening_odds_draw AS odds_draw_open,
+               m.opening_odds_away AS odds_away_open,
+               COALESCE(u.xg_home, f.xg_home) AS xg_home_raw,
+               COALESCE(u.xg_away, f.xg_away) AS xg_away_raw
+        FROM matches m
+        LEFT JOIN match_understat_team u ON m.id = u.match_id
+        LEFT JOIN match_fotmob_stats f ON m.id = f.match_id
+        WHERE m.status = 'FT'
+          AND m.home_goals IS NOT NULL
+          AND m.away_goals IS NOT NULL
+          AND m.tainted = false
+          AND m.league_id = %s
+        ORDER BY m.date, m.id
+    """
+    matches = pd.read_sql(query, conn, params=(league_id,))
+
+    # ── Fix 0: odds_snapshot — consistent triplet, no per-column mixing ──
+    has_close = (matches["odds_home_close"].notna() &
+                 matches["odds_draw_close"].notna() &
+                 matches["odds_away_close"].notna())
+    has_open = (matches["odds_home_open"].notna() &
+                matches["odds_draw_open"].notna() &
+                matches["odds_away_open"].notna())
+
+    matches["odds_snapshot"] = "missing"
+    matches.loc[has_open & ~has_close, "odds_snapshot"] = "opening"
+    matches.loc[has_close, "odds_snapshot"] = "closing"
+
+    # Use closing triplet if available, else opening triplet, else NaN
+    matches["odds_home"] = matches["odds_home_close"].where(has_close,
+                           matches["odds_home_open"].where(has_open))
+    matches["odds_draw"] = matches["odds_draw_close"].where(has_close,
+                           matches["odds_draw_open"].where(has_open))
+    matches["odds_away"] = matches["odds_away_close"].where(has_close,
+                           matches["odds_away_open"].where(has_open))
+
+    snap_counts = matches["odds_snapshot"].value_counts()
+    print(f"  Odds snapshot: {dict(snap_counts)} "
+          f"({snap_counts.get('closing', 0) + snap_counts.get('opening', 0)}/{len(matches)} "
+          f"= {(snap_counts.get('closing', 0) + snap_counts.get('opening', 0)) / len(matches) * 100:.1f}% coverage)")
+    conn.close()
+    print(f"  Raw matches: {len(matches)}")
+
+    if matches.empty:
+        print(f"  [ERROR] No matches for league {league_id}")
+        return pd.DataFrame()
+
+    # Flatten stats JSON
+    def extract_side_stats(stats, side):
+        if not stats or not isinstance(stats, dict):
+            return 0, 0
+        s = stats.get(side, {})
+        shots = s.get("total_shots", s.get("shots_on_goal", 0)) or 0
+        corners = s.get("corner_kicks", 0) or 0
+        return int(shots), int(corners)
+
+    matches["home_shots"] = matches["stats"].apply(lambda s: extract_side_stats(s, "home")[0])
+    matches["home_corners"] = matches["stats"].apply(lambda s: extract_side_stats(s, "home")[1])
+    matches["away_shots"] = matches["stats"].apply(lambda s: extract_side_stats(s, "away")[0])
+    matches["away_corners"] = matches["stats"].apply(lambda s: extract_side_stats(s, "away")[1])
+    matches["match_weight"] = matches["match_weight"].fillna(1.0)
+
+    # Rolling features per team
+    print("  Computing rolling features...")
+    home_rows = matches[["match_id", "date", "home_team_id", "home_goals", "away_goals",
+                          "home_shots", "home_corners", "match_weight",
+                          "xg_home_raw", "xg_away_raw"]].copy()
+    home_rows.columns = ["match_id", "date", "team_id", "goals_scored", "goals_conceded",
+                          "shots", "corners", "match_weight", "xg_for", "xg_against"]
+
+    away_rows = matches[["match_id", "date", "away_team_id", "away_goals", "home_goals",
+                          "away_shots", "away_corners", "match_weight",
+                          "xg_away_raw", "xg_home_raw"]].copy()
+    away_rows.columns = ["match_id", "date", "team_id", "goals_scored", "goals_conceded",
+                          "shots", "corners", "match_weight", "xg_for", "xg_against"]
+
+    team_matches = pd.concat([home_rows, away_rows]).sort_values(["team_id", "date"])
+
+    def compute_team_rolling(group, tid):
+        group = group.sort_values("date")
+        results = []
+        history = []
+
+        for _, row in group.iterrows():
+            if len(history) > 0:
+                window = history[-ROLLING_WINDOW:]
+                ref_date = row["date"]
+                total_w = 0
+                sum_gs, sum_gc, sum_sh, sum_co = 0.0, 0.0, 0.0, 0.0
+                # xG rolling (only count matches that have xG)
+                xg_total_w = 0
+                sum_xg_for, sum_xg_against = 0.0, 0.0
+
+                for h in window:
+                    days = (ref_date - h["date"]).days
+                    decay = exp(-TIME_DECAY_LAMBDA * days)
+                    w = h["match_weight"] * decay
+                    total_w += w
+                    sum_gs += h["goals_scored"] * w
+                    sum_gc += h["goals_conceded"] * w
+                    sum_sh += h["shots"] * w
+                    sum_co += h["corners"] * w
+                    if h["xg_for"] is not None:
+                        xg_total_w += w
+                        sum_xg_for += h["xg_for"] * w
+                        sum_xg_against += h["xg_against"] * w
+
+                if total_w > 0:
+                    goals_scored_avg = sum_gs / total_w
+                    goals_conceded_avg = sum_gc / total_w
+                    shots_avg = sum_sh / total_w
+                    corners_avg = sum_co / total_w
+                else:
+                    goals_scored_avg, goals_conceded_avg = 1.0, 1.0
+                    shots_avg, corners_avg = 10.0, 4.0
+
+                if xg_total_w > 0:
+                    xg_for_avg = sum_xg_for / xg_total_w
+                    xg_against_avg = sum_xg_against / xg_total_w
+                else:
+                    xg_for_avg, xg_against_avg = None, None
+
+                rest_days = (ref_date - history[-1]["date"]).days
+                matches_played = len(history)
+            else:
+                goals_scored_avg, goals_conceded_avg = 1.0, 1.0
+                shots_avg, corners_avg = 10.0, 4.0
+                xg_for_avg, xg_against_avg = None, None
+                rest_days, matches_played = 30, 0
+
+            results.append({
+                "match_id": row["match_id"],
+                "team_id": tid,
+                "goals_scored_avg": round(goals_scored_avg, 3),
+                "goals_conceded_avg": round(goals_conceded_avg, 3),
+                "shots_avg": round(shots_avg, 3),
+                "corners_avg": round(corners_avg, 3),
+                "rest_days": rest_days,
+                "matches_played": matches_played,
+                "xg_for_avg": round(xg_for_avg, 3) if xg_for_avg is not None else None,
+                "xg_against_avg": round(xg_against_avg, 3) if xg_against_avg is not None else None,
+            })
+
+            xg_f = row["xg_for"] if pd.notna(row["xg_for"]) else None
+            xg_a = row["xg_against"] if pd.notna(row["xg_against"]) else None
+            history.append({
+                "date": row["date"],
+                "goals_scored": row["goals_scored"],
+                "goals_conceded": row["goals_conceded"],
+                "shots": row["shots"],
+                "corners": row["corners"],
+                "match_weight": row["match_weight"],
+                "xg_for": xg_f,
+                "xg_against": xg_a,
+            })
+
+        return pd.DataFrame(results)
+
+    # pandas 3.0: groupby excludes key column from groups, iterate manually
+    team_feature_parts = []
+    for tid, group in team_matches.groupby("team_id"):
+        team_feature_parts.append(compute_team_rolling(group, tid))
+    team_features = pd.concat(team_feature_parts).reset_index(drop=True)
+
+    # Merge home/away features back
+    home_feats = team_features.merge(
+        matches[["match_id", "home_team_id"]],
+        left_on=["match_id", "team_id"],
+        right_on=["match_id", "home_team_id"],
+    ).drop(columns=["team_id", "home_team_id"])
+    home_feats = home_feats.rename(columns={
+        c: f"home_{c}" for c in ["goals_scored_avg", "goals_conceded_avg",
+                                   "shots_avg", "corners_avg", "rest_days", "matches_played",
+                                   "xg_for_avg", "xg_against_avg"]
+    })
+
+    away_feats = team_features.merge(
+        matches[["match_id", "away_team_id"]],
+        left_on=["match_id", "team_id"],
+        right_on=["match_id", "away_team_id"],
+    ).drop(columns=["team_id", "away_team_id"])
+    away_feats = away_feats.rename(columns={
+        c: f"away_{c}" for c in ["goals_scored_avg", "goals_conceded_avg",
+                                   "shots_avg", "corners_avg", "rest_days", "matches_played",
+                                   "xg_for_avg", "xg_against_avg"]
+    })
+
+    # Build final dataset
+    df = matches[["match_id", "date", "league_id", "home_team_id", "away_team_id",
+                   "home_goals", "away_goals", "odds_home", "odds_draw", "odds_away"]].copy()
+    df = df.merge(home_feats, on="match_id", how="left")
+    df = df.merge(away_feats, on="match_id", how="left")
+
+    # Derived features
+    df["goal_diff_avg"] = df["home_goals_scored_avg"] - df["away_goals_scored_avg"]
+    df["rest_diff"] = df["home_rest_days"] - df["away_rest_days"]
+    df["abs_attack_diff"] = (df["home_goals_scored_avg"] - df["away_goals_scored_avg"]).abs()
+    df["abs_defense_diff"] = (df["home_goals_conceded_avg"] - df["away_goals_conceded_avg"]).abs()
+    home_net = df["home_goals_scored_avg"] - df["home_goals_conceded_avg"]
+    away_net = df["away_goals_scored_avg"] - df["away_goals_conceded_avg"]
+    df["abs_strength_gap"] = (home_net - away_net).abs()
+
+    # xG derived features
+    df["xg_diff"] = df["home_xg_for_avg"] - df["away_xg_for_avg"]
+    df["xg_defense_diff"] = df["home_xg_against_avg"] - df["away_xg_against_avg"]
+    df["home_xg_overperf"] = df["home_goals_scored_avg"] - df["home_xg_for_avg"]
+    df["away_xg_overperf"] = df["away_goals_scored_avg"] - df["away_xg_for_avg"]
+    df["xg_overperf_diff"] = df["home_xg_overperf"] - df["away_xg_overperf"]
+
+    # Result label (0=H, 1=D, 2=A)
+    df["result"] = np.where(
+        df["home_goals"] > df["away_goals"], 0,
+        np.where(df["home_goals"] == df["away_goals"], 1, 2)
+    )
+
+    # Compute ALL features (Elo + variants + form + matchup + surprise + calendar)
+    print("  Computing Elo-goals ratings...")
+    df = compute_elo_goals(df)
+    df = compute_all_experimental_features(df)
+
+    # Coverage report
+    n_total = len(df)
+    n_odds = df[ODDS_FEATURES].notna().all(axis=1).sum()
+    n_elo = df["elo_home"].notna().sum()
+    n_xg = df["home_xg_for_avg"].notna().sum()
+    print(f"  Final: {n_total} matches | Odds: {n_odds}/{n_total} ({100*n_odds/n_total:.0f}%) "
+          f"| Elo: {n_elo}/{n_total} ({100*n_elo/n_total:.0f}%) "
+          f"| xG: {n_xg}/{n_total} ({100*n_xg/n_total:.0f}%)")
+
+    # Save
+    out_path = Path(output_dir) / f"lab_data_{league_id}.csv"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(out_path, index=False)
+    print(f"  Saved to {out_path}")
+
+    return df
+
+
+# ─── Elo-Goals Computation ───────────────────────────────────
+
+def compute_elo_goals(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute Elo ratings based on actual goals (not xG).
+
+    PIT-safe: each match uses Elo BEFORE the match.
+    Sequential update in chronological order.
+    """
+    df = df.sort_values("date").reset_index(drop=True)
+    ratings = {}  # team_id -> current Elo
+
+    elo_home_col = []
+    elo_away_col = []
+
+    for _, row in df.iterrows():
+        h_id = row["home_team_id"]
+        a_id = row["away_team_id"]
+
+        # Pre-match Elo (PIT-safe: use BEFORE update)
+        r_h = ratings.get(h_id, ELO_INITIAL)
+        r_a = ratings.get(a_id, ELO_INITIAL)
+
+        elo_home_col.append(r_h)
+        elo_away_col.append(r_a)
+
+        # Expected scores (with home advantage)
+        exp_h = 1.0 / (1.0 + 10.0 ** ((r_a - (r_h + ELO_HOME_ADV)) / 400.0))
+        exp_a = 1.0 - exp_h
+
+        # Actual scores
+        hg, ag = row["home_goals"], row["away_goals"]
+        if hg > ag:
+            s_h, s_a = 1.0, 0.0
+        elif hg == ag:
+            s_h, s_a = 0.5, 0.5
+        else:
+            s_h, s_a = 0.0, 1.0
+
+        # Update ratings
+        ratings[h_id] = r_h + ELO_K * (s_h - exp_h)
+        ratings[a_id] = r_a + ELO_K * (s_a - exp_a)
+
+    df["elo_home"] = elo_home_col
+    df["elo_away"] = elo_away_col
+    df["elo_diff"] = df["elo_home"] - df["elo_away"]
+
+    return df
+
+
+# ─── WAVE 2: Elo Variants ────────────────────────────────────
+
+def compute_elo_goal_weighted(df: pd.DataFrame) -> pd.DataFrame:
+    """Elo where K scales by goal margin.
+    Dominant wins (3-0) update more than scrappy wins (1-0).
+    Formula: K_eff = K * ln(1 + goal_diff)
+    """
+    df = df.sort_values("date").reset_index(drop=True)
+    ratings = {}
+    cols_h, cols_a = [], []
+
+    for _, row in df.iterrows():
+        h_id, a_id = row["home_team_id"], row["away_team_id"]
+        r_h = ratings.get(h_id, ELO_INITIAL)
+        r_a = ratings.get(a_id, ELO_INITIAL)
+        cols_h.append(r_h)
+        cols_a.append(r_a)
+
+        exp_h = 1.0 / (1.0 + 10.0 ** ((r_a - (r_h + ELO_HOME_ADV)) / 400.0))
+        exp_a = 1.0 - exp_h
+
+        hg, ag = row["home_goals"], row["away_goals"]
+        gdiff = abs(hg - ag)
+        k_eff = ELO_K * np.log1p(gdiff)  # ln(1 + |goal_diff|)
+
+        if hg > ag:
+            s_h, s_a = 1.0, 0.0
+        elif hg == ag:
+            s_h, s_a = 0.5, 0.5
+        else:
+            s_h, s_a = 0.0, 1.0
+
+        ratings[h_id] = r_h + k_eff * (s_h - exp_h)
+        ratings[a_id] = r_a + k_eff * (s_a - exp_a)
+
+    df["elo_gw_home"] = cols_h
+    df["elo_gw_away"] = cols_a
+    df["elo_gw_diff"] = df["elo_gw_home"] - df["elo_gw_away"]
+    return df
+
+
+def compute_elo_k_sweep(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute Elo for multiple K values to find optimal sensitivity."""
+    for k_val in [10, 20, 50, 64]:
+        df = df.sort_values("date").reset_index(drop=True)
+        ratings = {}
+        cols_h, cols_a = [], []
+
+        for _, row in df.iterrows():
+            h_id, a_id = row["home_team_id"], row["away_team_id"]
+            r_h = ratings.get(h_id, ELO_INITIAL)
+            r_a = ratings.get(a_id, ELO_INITIAL)
+            cols_h.append(r_h)
+            cols_a.append(r_a)
+
+            exp_h = 1.0 / (1.0 + 10.0 ** ((r_a - (r_h + ELO_HOME_ADV)) / 400.0))
+            hg, ag = row["home_goals"], row["away_goals"]
+            s_h = 1.0 if hg > ag else (0.5 if hg == ag else 0.0)
+
+            ratings[h_id] = r_h + k_val * (s_h - exp_h)
+            ratings[a_id] = r_a + k_val * ((1 - s_h) - (1 - exp_h))
+
+        df[f"elo_k{k_val}_home"] = cols_h
+        df[f"elo_k{k_val}_away"] = cols_a
+        df[f"elo_k{k_val}_diff"] = df[f"elo_k{k_val}_home"] - df[f"elo_k{k_val}_away"]
+    return df
+
+
+def compute_elo_home_away_split(df: pd.DataFrame) -> pd.DataFrame:
+    """Separate Elo ratings for home and away performance.
+    Some teams are lions at home but kittens away.
+    """
+    df = df.sort_values("date").reset_index(drop=True)
+    home_ratings = {}  # Elo only from home games
+    away_ratings = {}  # Elo only from away games
+    cols = {"elo_honly_home": [], "elo_aonly_away": []}
+
+    for _, row in df.iterrows():
+        h_id, a_id = row["home_team_id"], row["away_team_id"]
+        r_h = home_ratings.get(h_id, ELO_INITIAL)
+        r_a = away_ratings.get(a_id, ELO_INITIAL)
+        cols["elo_honly_home"].append(r_h)
+        cols["elo_aonly_away"].append(r_a)
+
+        exp_h = 1.0 / (1.0 + 10.0 ** ((r_a - r_h) / 400.0))
+        hg, ag = row["home_goals"], row["away_goals"]
+        s_h = 1.0 if hg > ag else (0.5 if hg == ag else 0.0)
+
+        home_ratings[h_id] = r_h + ELO_K * (s_h - exp_h)
+        away_ratings[a_id] = r_a + ELO_K * ((1 - s_h) - (1 - exp_h))
+
+    df["elo_honly_home"] = cols["elo_honly_home"]
+    df["elo_aonly_away"] = cols["elo_aonly_away"]
+    df["elo_split_diff"] = df["elo_honly_home"] - df["elo_aonly_away"]
+    return df
+
+
+def compute_elo_momentum(df: pd.DataFrame) -> pd.DataFrame:
+    """Elo momentum: rate of change over last 5 matches.
+    Positive = team is on the rise. Negative = declining.
+    """
+    df = df.sort_values("date").reset_index(drop=True)
+    ratings = {}       # current rating
+    elo_history = {}   # team_id -> list of last N ratings
+
+    cols_mom_h, cols_mom_a = [], []
+
+    for _, row in df.iterrows():
+        h_id, a_id = row["home_team_id"], row["away_team_id"]
+        r_h = ratings.get(h_id, ELO_INITIAL)
+        r_a = ratings.get(a_id, ELO_INITIAL)
+
+        # Momentum = current - avg_of_last_5 (before this match)
+        hist_h = elo_history.get(h_id, [ELO_INITIAL])
+        hist_a = elo_history.get(a_id, [ELO_INITIAL])
+        mom_h = r_h - np.mean(hist_h[-5:])
+        mom_a = r_a - np.mean(hist_a[-5:])
+        cols_mom_h.append(mom_h)
+        cols_mom_a.append(mom_a)
+
+        # Update Elo
+        exp_h = 1.0 / (1.0 + 10.0 ** ((r_a - (r_h + ELO_HOME_ADV)) / 400.0))
+        hg, ag = row["home_goals"], row["away_goals"]
+        s_h = 1.0 if hg > ag else (0.5 if hg == ag else 0.0)
+
+        new_r_h = r_h + ELO_K * (s_h - exp_h)
+        new_r_a = r_a + ELO_K * ((1 - s_h) - (1 - exp_h))
+        ratings[h_id] = new_r_h
+        ratings[a_id] = new_r_a
+
+        # Track history
+        elo_history.setdefault(h_id, []).append(new_r_h)
+        elo_history.setdefault(a_id, []).append(new_r_a)
+
+    df["elo_momentum_home"] = cols_mom_h
+    df["elo_momentum_away"] = cols_mom_a
+    df["elo_momentum_diff"] = df["elo_momentum_home"] - df["elo_momentum_away"]
+    return df
+
+
+# ─── WAVE 3: Form & Streak Features ──────────────────────────
+
+def compute_form_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute form-based features per team.
+    - win_rate_last5: % of wins in last 5 matches
+    - draw_rate_last5: % of draws (draw-prone teams)
+    - unbeaten_streak: consecutive matches without losing
+    - volatility: std of goals scored in last 5
+    - clean_sheet_rate: % of last 5 with 0 goals conceded
+    """
+    df = df.sort_values("date").reset_index(drop=True)
+
+    # Build team-centric match history
+    team_history = {}  # team_id -> list of {result, goals_scored, goals_conceded}
+
+    form_cols = {
+        "home_win_rate5": [], "away_win_rate5": [],
+        "home_draw_rate5": [], "away_draw_rate5": [],
+        "home_unbeaten": [], "away_unbeaten": [],
+        "home_volatility": [], "away_volatility": [],
+        "home_clean_sheet5": [], "away_clean_sheet5": [],
+        "home_scoring_streak": [], "away_scoring_streak": [],
+    }
+
+    for _, row in df.iterrows():
+        h_id, a_id = row["home_team_id"], row["away_team_id"]
+        hg, ag = row["home_goals"], row["away_goals"]
+
+        for team_id, prefix, gs, gc in [
+            (h_id, "home", hg, ag),
+            (a_id, "away", ag, hg),
+        ]:
+            hist = team_history.get(team_id, [])
+            last5 = hist[-5:] if hist else []
+
+            if len(last5) >= 2:
+                wins = sum(1 for h in last5 if h["result"] == "W")
+                draws = sum(1 for h in last5 if h["result"] == "D")
+                n = len(last5)
+                form_cols[f"{prefix}_win_rate5"].append(wins / n)
+                form_cols[f"{prefix}_draw_rate5"].append(draws / n)
+
+                # Volatility: std of goals scored
+                goals = [h["gs"] for h in last5]
+                form_cols[f"{prefix}_volatility"].append(float(np.std(goals)))
+
+                # Clean sheet rate
+                cs = sum(1 for h in last5 if h["gc"] == 0)
+                form_cols[f"{prefix}_clean_sheet5"].append(cs / n)
+
+                # Unbeaten streak (count backwards from most recent)
+                streak = 0
+                for h in reversed(hist):
+                    if h["result"] != "L":
+                        streak += 1
+                    else:
+                        break
+                form_cols[f"{prefix}_unbeaten"].append(min(streak, 20))
+
+                # Scoring streak (consecutive scoring)
+                s_streak = 0
+                for h in reversed(hist):
+                    if h["gs"] > 0:
+                        s_streak += 1
+                    else:
+                        break
+                form_cols[f"{prefix}_scoring_streak"].append(min(s_streak, 20))
+
+            else:
+                # Defaults
+                form_cols[f"{prefix}_win_rate5"].append(0.33)
+                form_cols[f"{prefix}_draw_rate5"].append(0.33)
+                form_cols[f"{prefix}_volatility"].append(1.0)
+                form_cols[f"{prefix}_clean_sheet5"].append(0.2)
+                form_cols[f"{prefix}_unbeaten"].append(0)
+                form_cols[f"{prefix}_scoring_streak"].append(0)
+
+            # Record this match
+            res = "W" if gs > gc else ("D" if gs == gc else "L")
+            team_history.setdefault(team_id, []).append({
+                "result": res, "gs": gs, "gc": gc
+            })
+
+    for col_name, values in form_cols.items():
+        df[col_name] = values
+
+    # Derived form features
+    df["form_diff"] = df["home_win_rate5"] - df["away_win_rate5"]
+    df["draw_propensity"] = df["home_draw_rate5"] + df["away_draw_rate5"]
+    df["unbeaten_diff"] = df["home_unbeaten"] - df["away_unbeaten"]
+
+    return df
+
+
+# ─── WAVE 4: Matchup Features ────────────────────────────────
+
+def compute_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Cross-features that capture the actual confrontation.
+    Attack vs Defense matchups: the real battle.
+    """
+    # Confrontation: home attack vs away defense, and vice versa
+    df["matchup_h_attack_v_a_defense"] = (
+        df["home_goals_scored_avg"] - df["away_goals_conceded_avg"]
+    )
+    df["matchup_a_attack_v_h_defense"] = (
+        df["away_goals_scored_avg"] - df["home_goals_conceded_avg"]
+    )
+    # Positive = attacker dominates defender
+
+    # Total expected goals (proxy for how open the match will be)
+    df["expected_openness"] = (
+        df["home_goals_scored_avg"] + df["away_goals_scored_avg"]
+    )
+
+    # Defensive solidity: both teams concede little = tight match
+    df["defensive_solidity"] = -(
+        df["home_goals_conceded_avg"] + df["away_goals_conceded_avg"]
+    )
+
+    return df
+
+
+def compute_h2h_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Head-to-head record between the two teams.
+    Some matchups are historically lopsided regardless of form.
+    """
+    df = df.sort_values("date").reset_index(drop=True)
+    h2h_history = {}  # (team_a, team_b) -> list of results from team_a perspective
+
+    cols_h2h_home_wr = []
+    cols_h2h_n = []
+
+    for _, row in df.iterrows():
+        h_id, a_id = row["home_team_id"], row["away_team_id"]
+        hg, ag = row["home_goals"], row["away_goals"]
+
+        # H2H key: always (min, max) for consistency
+        key = (min(h_id, a_id), max(h_id, a_id))
+        hist = h2h_history.get(key, [])
+
+        # Home team's win rate in H2H
+        if hist:
+            h_wins = sum(1 for h in hist if
+                         (h["winner"] == h_id))
+            cols_h2h_home_wr.append(h_wins / len(hist))
+            cols_h2h_n.append(min(len(hist), 20))
+        else:
+            cols_h2h_home_wr.append(0.5)
+            cols_h2h_n.append(0)
+
+        # Record
+        winner = h_id if hg > ag else (a_id if ag > hg else None)
+        h2h_history.setdefault(key, []).append({"winner": winner})
+
+    df["h2h_home_winrate"] = cols_h2h_home_wr
+    df["h2h_n_meetings"] = cols_h2h_n
+    return df
+
+
+# ─── WAVE 5: Surprise & Meta Features ────────────────────────
+
+def compute_surprise_features(df: pd.DataFrame) -> pd.DataFrame:
+    """How 'surprising' are this team's recent results?
+    Teams that frequently upset expectations may continue to do so.
+    """
+    df = df.sort_values("date").reset_index(drop=True)
+
+    # Need elo_home/elo_away already computed
+    team_surprises = {}  # team_id -> list of surprise values
+
+    cols_surprise_h, cols_surprise_a = [], []
+
+    for _, row in df.iterrows():
+        h_id, a_id = row["home_team_id"], row["away_team_id"]
+        hg, ag = row["home_goals"], row["away_goals"]
+
+        # Surprise for each team
+        for team_id, prefix, cols in [
+            (h_id, "home", cols_surprise_h),
+            (a_id, "away", cols_surprise_a),
+        ]:
+            hist = team_surprises.get(team_id, [])
+            last5 = hist[-5:]
+            if last5:
+                cols.append(float(np.mean(last5)))
+            else:
+                cols.append(0.0)
+
+        # Compute surprise for this match
+        elo_h = row.get("elo_home", ELO_INITIAL)
+        elo_a = row.get("elo_away", ELO_INITIAL)
+        exp_h = 1.0 / (1.0 + 10.0 ** ((elo_a - (elo_h + ELO_HOME_ADV)) / 400.0))
+
+        actual_h = 1.0 if hg > ag else (0.5 if hg == ag else 0.0)
+        surprise = abs(actual_h - exp_h)  # 0 = expected, ~1 = huge upset
+
+        team_surprises.setdefault(h_id, []).append(surprise)
+        team_surprises.setdefault(a_id, []).append(surprise)
+
+    df["surprise_home"] = cols_surprise_h
+    df["surprise_away"] = cols_surprise_a
+    df["surprise_sum"] = df["surprise_home"] + df["surprise_away"]
+    return df
+
+
+def compute_elo_expected_probs(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert Elo to expected win probability.
+    This is what bookmakers essentially do — useful as direct feature.
+    """
+    elo_h = df["elo_home"].values
+    elo_a = df["elo_away"].values
+    df["elo_prob_home"] = 1.0 / (1.0 + 10.0 ** ((elo_a - (elo_h + ELO_HOME_ADV)) / 400.0))
+    df["elo_prob_away"] = 1.0 - df["elo_prob_home"]
+    # Draw probability proxy: closer the probs, higher draw chance
+    df["elo_draw_proxy"] = 1.0 - abs(df["elo_prob_home"] - df["elo_prob_away"])
+    return df
+
+
+# ─── WAVE 6: Seasonal & Calendar Features ────────────────────
+
+def compute_calendar_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Calendar-based features. Season phase matters."""
+    df["match_month"] = pd.to_datetime(df["date"]).dt.month
+    # Season phase: early (1-3), mid (4-6), late (7-9), final (10-12)
+    df["season_phase"] = pd.to_datetime(df["date"]).dt.month % 12 // 3
+    return df
+
+
+# ─── WAVE 7: Opponent-Adjusted Ratings (ABE #1) ─────────────
+
+def compute_opponent_adjusted_ratings(df: pd.DataFrame) -> pd.DataFrame:
+    """Opponent-adjusted attack/defense ratings.
+
+    ABE's #1 pick: instead of raw goal averages, rate teams based on
+    WHO they played. Scoring 2 vs River Plate is worth more than 2 vs
+    a bottom team. Uses iterative EMA approach.
+
+    For each team:
+      att_power = EMA of (goals_scored / opponent_def_rating)
+      def_power = EMA of (goals_conceded / opponent_att_rating)
+
+    Higher att_power = stronger attack. Lower def_power = stronger defense.
+    """
+    df = df.sort_values("date").reset_index(drop=True)
+
+    # Running ratings per team (attack, defense)
+    att_ratings = {}  # team_id -> float (higher = better attack)
+    def_ratings = {}  # team_id -> float (lower = better defense)
+    ALPHA = 0.15  # EMA smoothing factor (balance reactivity vs stability)
+    INIT_ATT = 1.0
+    INIT_DEF = 1.0
+
+    cols = {k: [] for k in ["opp_att_home", "opp_def_home",
+                             "opp_att_away", "opp_def_away"]}
+
+    for _, row in df.iterrows():
+        h_id, a_id = row["home_team_id"], row["away_team_id"]
+        hg, ag = row["home_goals"], row["away_goals"]
+
+        # Pre-match ratings (PIT-safe)
+        att_h = att_ratings.get(h_id, INIT_ATT)
+        def_h = def_ratings.get(h_id, INIT_DEF)
+        att_a = att_ratings.get(a_id, INIT_ATT)
+        def_a = def_ratings.get(a_id, INIT_DEF)
+
+        cols["opp_att_home"].append(att_h)
+        cols["opp_def_home"].append(def_h)
+        cols["opp_att_away"].append(att_a)
+        cols["opp_def_away"].append(def_a)
+
+        # Post-match update: normalize by opponent quality
+        # Home scored hg against away defense def_a
+        opp_def_a = max(def_a, 0.3)  # Floor to avoid division explosion
+        opp_att_a = max(att_a, 0.3)
+        opp_def_h = max(def_h, 0.3)
+        opp_att_h = max(att_h, 0.3)
+
+        # "I scored 3 goals vs a defense rated 0.5 → adj_scored = 3/0.5 = 6.0 (impressive)"
+        # "I scored 3 goals vs a defense rated 2.0 → adj_scored = 3/2.0 = 1.5 (expected)"
+        adj_scored_h = hg / opp_def_a
+        adj_conceded_h = ag / opp_att_a
+        adj_scored_a = ag / opp_def_h
+        adj_conceded_a = hg / opp_att_h
+
+        # EMA update
+        att_ratings[h_id] = att_h * (1 - ALPHA) + adj_scored_h * ALPHA
+        def_ratings[h_id] = def_h * (1 - ALPHA) + adj_conceded_h * ALPHA
+        att_ratings[a_id] = att_a * (1 - ALPHA) + adj_scored_a * ALPHA
+        def_ratings[a_id] = def_a * (1 - ALPHA) + adj_conceded_a * ALPHA
+
+    for col_name, values in cols.items():
+        df[col_name] = values
+
+    # Derived: overall rating diff (net quality difference)
+    df["opp_rating_diff"] = (
+        (df["opp_att_home"] - df["opp_def_home"]) -
+        (df["opp_att_away"] - df["opp_def_away"])
+    )
+    return df
+
+
+# ─── WAVE 8: ABE Features (overperf, draw-aware, home bias) ─
+
+def compute_overperformance(df: pd.DataFrame) -> pd.DataFrame:
+    """Overperformance vs Elo expectations (ABE #3).
+
+    Better than raw win_rate because it discounts opponent strength.
+    overperf > 0 = team is winning more than Elo expects (hot streak vs strong opponents)
+    overperf < 0 = team is underperforming (losing to weaker teams)
+    """
+    df = df.sort_values("date").reset_index(drop=True)
+
+    team_overperf = {}  # team_id -> list of (actual_pts - expected_pts) per match
+    cols_h, cols_a = [], []
+
+    for _, row in df.iterrows():
+        h_id, a_id = row["home_team_id"], row["away_team_id"]
+        hg, ag = row["home_goals"], row["away_goals"]
+
+        # Pre-match: average overperf over last 5
+        for team_id, col_list in [(h_id, cols_h), (a_id, cols_a)]:
+            hist = team_overperf.get(team_id, [])
+            last5 = hist[-5:]
+            col_list.append(float(np.mean(last5)) if last5 else 0.0)
+
+        # Post-match: compute overperf for this match
+        elo_h = row.get("elo_home", ELO_INITIAL)
+        elo_a = row.get("elo_away", ELO_INITIAL)
+        exp_h = 1.0 / (1.0 + 10.0 ** ((elo_a - (elo_h + ELO_HOME_ADV)) / 400.0))
+        exp_a = 1.0 - exp_h
+
+        # Points: W=3, D=1, L=0 → normalized to [0,1] scale
+        if hg > ag:
+            pts_h, pts_a = 1.0, 0.0
+        elif hg == ag:
+            pts_h, pts_a = 0.33, 0.33
+        else:
+            pts_h, pts_a = 0.0, 1.0
+
+        # Overperf = actual - expected
+        team_overperf.setdefault(h_id, []).append(pts_h - exp_h)
+        team_overperf.setdefault(a_id, []).append(pts_a - exp_a)
+
+    df["overperf_home"] = cols_h
+    df["overperf_away"] = cols_a
+    df["overperf_diff"] = df["overperf_home"] - df["overperf_away"]
+    return df
+
+
+def compute_draw_aware_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Draw-aware features (ABE #4).
+
+    Argentina is draw-heavy. Standard Elo treats draws as 0.5 for both
+    teams, but some teams and matchup types draw disproportionately.
+
+    Features:
+    - draw_tendency: how often this team draws relative to Elo-expected
+    - draw_elo_interaction: when Elo is close, draws are more likely
+    - league_draw_rate: overall draw rate in the league (context)
+    """
+    df = df.sort_values("date").reset_index(drop=True)
+
+    # League-wide draw rate (rolling, using all matches so far)
+    total_matches = 0
+    total_draws = 0
+
+    team_draws = {}  # team_id -> list of (is_draw,)
+    cols_tend_h, cols_tend_a = [], []
+    cols_league_dr = []
+
+    for _, row in df.iterrows():
+        h_id, a_id = row["home_team_id"], row["away_team_id"]
+        hg, ag = row["home_goals"], row["away_goals"]
+        is_draw = 1.0 if hg == ag else 0.0
+
+        # League draw rate up to now
+        cols_league_dr.append(total_draws / max(total_matches, 1))
+
+        # Team draw tendency (last 10 matches)
+        for team_id, col_list in [(h_id, cols_tend_h), (a_id, cols_tend_a)]:
+            hist = team_draws.get(team_id, [])
+            last10 = hist[-10:]
+            col_list.append(float(np.mean(last10)) if last10 else 0.27)  # default ~league avg
+
+        # Update
+        total_matches += 1
+        total_draws += is_draw
+        team_draws.setdefault(h_id, []).append(is_draw)
+        team_draws.setdefault(a_id, []).append(is_draw)
+
+    df["draw_tendency_home"] = cols_tend_h
+    df["draw_tendency_away"] = cols_tend_a
+    df["league_draw_rate"] = cols_league_dr
+
+    # Interaction: when Elo is close AND both teams draw a lot, draw is more likely
+    elo_closeness = 1.0 - abs(df["elo_prob_home"] - df["elo_prob_away"])
+    df["draw_elo_interaction"] = (
+        elo_closeness * (df["draw_tendency_home"] + df["draw_tendency_away"]) / 2
+    )
+    return df
+
+
+def compute_home_bias(df: pd.DataFrame) -> pd.DataFrame:
+    """Per-team home advantage bias (ABE #5).
+
+    Some teams are disproportionately strong at home (atmosphere, altitude,
+    travel distance for visitors). This measures deviation from league average
+    with shrinkage towards 0 (regularized).
+    """
+    df = df.sort_values("date").reset_index(drop=True)
+
+    team_home_record = {}  # team_id -> {"home_wins": int, "home_matches": int,
+                           #              "away_wins": int, "away_matches": int}
+    cols_bias_h, cols_bias_a = [], []
+
+    # League average home win rate (rolling)
+    total_home_wins = 0
+    total_matches = 0
+
+    SHRINKAGE_N = 10  # Regularization: need N home matches before full weight
+
+    for _, row in df.iterrows():
+        h_id, a_id = row["home_team_id"], row["away_team_id"]
+        hg, ag = row["home_goals"], row["away_goals"]
+
+        league_home_wr = total_home_wins / max(total_matches, 1) if total_matches > 0 else 0.45
+
+        # Home team's home bias
+        rec_h = team_home_record.get(h_id, {"hw": 0, "hm": 0, "aw": 0, "am": 0})
+        if rec_h["hm"] >= 3:
+            raw_home_wr = rec_h["hw"] / rec_h["hm"]
+            raw_away_wr = rec_h["aw"] / max(rec_h["am"], 1)
+            raw_bias = raw_home_wr - raw_away_wr
+            # Shrinkage: weight towards 0 based on sample size
+            shrink_w = min(rec_h["hm"] / SHRINKAGE_N, 1.0)
+            cols_bias_h.append(raw_bias * shrink_w)
+        else:
+            cols_bias_h.append(0.0)
+
+        # Away team's home bias (how strong they are at home → less impact when away)
+        rec_a = team_home_record.get(a_id, {"hw": 0, "hm": 0, "aw": 0, "am": 0})
+        if rec_a["hm"] >= 3:
+            raw_home_wr = rec_a["hw"] / rec_a["hm"]
+            raw_away_wr = rec_a["aw"] / max(rec_a["am"], 1)
+            raw_bias = raw_home_wr - raw_away_wr
+            shrink_w = min(rec_a["hm"] / SHRINKAGE_N, 1.0)
+            cols_bias_a.append(raw_bias * shrink_w)
+        else:
+            cols_bias_a.append(0.0)
+
+        # Update records
+        is_h_win = 1 if hg > ag else 0
+        is_a_win = 1 if ag > hg else 0
+        total_home_wins += is_h_win
+        total_matches += 1
+
+        rec_h = team_home_record.setdefault(h_id, {"hw": 0, "hm": 0, "aw": 0, "am": 0})
+        rec_h["hw"] += is_h_win
+        rec_h["hm"] += 1
+
+        rec_a = team_home_record.setdefault(a_id, {"hw": 0, "hm": 0, "aw": 0, "am": 0})
+        rec_a["aw"] += is_a_win
+        rec_a["am"] += 1
+
+    df["home_bias_home"] = cols_bias_h
+    df["home_bias_away"] = cols_bias_a
+    df["home_bias_diff"] = df["home_bias_home"] - df["home_bias_away"]
+    return df
+
+
+# ─── WAVE 9: Kimi Features (interactions, efficiency) ───────
+
+def compute_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Multiplicative interaction features (Kimi #1).
+
+    Football effects are multiplicative, not additive.
+    The favorite (high Elo) suffers more from fatigue than the underdog.
+    Strong defense matters more when facing a strong attack.
+    """
+    # elo_diff × rest_diff: fatigue affects favorites more
+    df["elo_x_rest"] = df["elo_diff"] * df["rest_diff"]
+
+    # elo_diff × season_phase: Elo matters more early season? Or late?
+    df["elo_x_season"] = df["elo_diff"] * df["season_phase"]
+
+    # elo_diff × defensive quality: Elo advantage amplified by good defense
+    df["elo_x_defense"] = df["elo_diff"] * (
+        df["away_goals_conceded_avg"] - df["home_goals_conceded_avg"]
+    )
+
+    # form × defense: hot team + solid defense = danger
+    df["form_x_defense"] = df["form_diff"] * (
+        df["home_goals_conceded_avg"] - df["away_goals_conceded_avg"]
+    )
+
+    return df
+
+
+def compute_efficiency_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Tactical efficiency ratios (Kimi #4).
+
+    Goals/shots = finishing efficiency. A team with 1.5 goals from 10 shots
+    is more efficient than one with 1.5 goals from 15 shots.
+    This captures quality of chances without needing xG.
+    """
+    # Finishing efficiency: goals per shot (avoid div by zero)
+    h_shots = df["home_shots_avg"].clip(lower=1.0)
+    a_shots = df["away_shots_avg"].clip(lower=1.0)
+
+    df["finish_eff_home"] = df["home_goals_scored_avg"] / h_shots
+    df["finish_eff_away"] = df["away_goals_scored_avg"] / a_shots
+
+    # Defensive efficiency: goals conceded per opponent shot
+    # Lower = better defense (concede fewer goals per shot faced)
+    df["def_eff_home"] = df["home_goals_conceded_avg"] / a_shots
+    df["def_eff_away"] = df["away_goals_conceded_avg"] / h_shots
+
+    # Net efficiency difference
+    df["efficiency_diff"] = (
+        (df["finish_eff_home"] - df["def_eff_home"]) -
+        (df["finish_eff_away"] - df["def_eff_away"])
+    )
+    return df
+
+
+# ─── Master Feature Computation ──────────────────────────────
+
+def compute_all_experimental_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Run all feature computation waves."""
+    print("  [Wave 2] Elo variants (goal-weighted, K-sweep, split, momentum)...")
+    df = compute_elo_goal_weighted(df)
+    df = compute_elo_k_sweep(df)
+    df = compute_elo_home_away_split(df)
+    df = compute_elo_momentum(df)
+
+    print("  [Wave 3] Form features (streaks, volatility, clean sheets)...")
+    df = compute_form_features(df)
+
+    print("  [Wave 4] Matchup features (confrontation, H2H)...")
+    df = compute_matchup_features(df)
+    df = compute_h2h_features(df)
+
+    print("  [Wave 5] Surprise & meta features...")
+    df = compute_surprise_features(df)
+    df = compute_elo_expected_probs(df)
+
+    print("  [Wave 6] Calendar features...")
+    df = compute_calendar_features(df)
+
+    print("  [Wave 7] Opponent-adjusted ratings (ABE)...")
+    df = compute_opponent_adjusted_ratings(df)
+
+    print("  [Wave 8] Overperf + draw-aware + home bias (ABE)...")
+    df = compute_overperformance(df)
+    df = compute_draw_aware_features(df)
+    df = compute_home_bias(df)
+
+    print("  [Wave 9] Interactions + efficiency (Kimi)...")
+    df = compute_interaction_features(df)
+    df = compute_efficiency_features(df)
+
+    return df
+
+
+# ─── Universe System (Fix 1 + Fix 3) ─────────────────────────
+
+# All optional feature groups that define universe boundaries
+_ODDS_SET = set(ODDS_FEATURES)
+_XG_SET = set(XG_ALL)  # XG_CORE + XG_DEFENSE + XG_OVERPERF
+
+
+def classify_test_universe(feature_names: list) -> str:
+    """Determine which universe a test belongs to based on its features."""
+    feats = set(feature_names)
+    needs_odds = bool(feats & _ODDS_SET)
+    needs_xg = bool(feats & _XG_SET)
+    if needs_odds and needs_xg:
+        return "odds_xg"
+    elif needs_odds:
+        return "odds"
+    elif needs_xg:
+        return "xg"
+    return "base"
+
+
+def compute_universes(df: pd.DataFrame, tests_dict: dict) -> dict:
+    """Pre-compute fixed universes for fair comparison across tests.
+
+    Returns dict mapping universe_id -> DataFrame, all sorted by ["date","match_id"]
+    with NaN-free base features. Tests within the same universe share identical
+    N, split_idx, and split_date.
+
+    Universes:
+      - base:    all non-optional features present (no odds, no xG required)
+      - odds:    base ∩ valid odds triplet (odds_home > 1.0)
+      - xg:      base ∩ xG core present
+      - odds_xg: base ∩ odds ∩ xG core
+    """
+    # Collect all "base" features (non-optional) across all tests
+    all_base_feats = set()
+    for feats in tests_dict.values():
+        non_optional = [f for f in feats if f not in _ODDS_SET and f not in _XG_SET]
+        all_base_feats.update(non_optional)
+
+    # Only keep features that actually exist in the dataframe
+    available_base = sorted(f for f in all_base_feats if f in df.columns)
+    missing_base = all_base_feats - set(df.columns)
+    if missing_base:
+        print(f"  [UNIVERSE] Warning: {len(missing_base)} base features not in data: "
+              f"{sorted(missing_base)[:5]}...")
+
+    # Universe: base (dropna on all base features)
+    df_base = df.dropna(subset=available_base).copy()
+    df_base = df_base.sort_values(["date", "match_id"]).reset_index(drop=True)
+
+    # Universe: odds (base + valid odds triplet)
+    odds_mask = (df_base["odds_home"].notna() &
+                 df_base["odds_draw"].notna() &
+                 df_base["odds_away"].notna() &
+                 (df_base["odds_home"] > 1.0))
+    df_odds = df_base[odds_mask].copy().reset_index(drop=True)
+
+    # Universe: xg (base + xG core available)
+    xg_cols = [c for c in XG_CORE if c in df_base.columns]
+    if xg_cols:
+        xg_mask = df_base[xg_cols].notna().all(axis=1)
+        df_xg = df_base[xg_mask].copy().reset_index(drop=True)
+    else:
+        df_xg = pd.DataFrame()
+
+    # Universe: odds_xg (intersection)
+    if not df_xg.empty:
+        oxg_mask = (df_xg["odds_home"].notna() &
+                    df_xg["odds_draw"].notna() &
+                    df_xg["odds_away"].notna() &
+                    (df_xg["odds_home"] > 1.0))
+        df_odds_xg = df_xg[oxg_mask].copy().reset_index(drop=True)
+    else:
+        df_odds_xg = pd.DataFrame()
+
+    universes = {
+        "base": df_base,
+        "odds": df_odds,
+        "xg": df_xg,
+        "odds_xg": df_odds_xg,
+    }
+
+    # Report
+    for uid, udf in universes.items():
+        if udf.empty:
+            print(f"  [UNIVERSE] {uid}: EMPTY (0 rows)")
+        else:
+            split_idx = int(len(udf) * (1 - TEST_FRACTION))
+            split_date = udf.iloc[split_idx]["date"]
+            print(f"  [UNIVERSE] {uid}: N={len(udf)} "
+                  f"(train={split_idx}, test={len(udf)-split_idx}, "
+                  f"split={split_date})")
+
+    return universes
+
+
+# ─── Model Training & Evaluation ─────────────────────────────
+
+def multiclass_brier(y_true, y_prob):
+    """Multi-class Brier score (lower = better)."""
+    n_classes = y_prob.shape[1]
+    y_onehot = np.eye(n_classes)[y_true.astype(int)]
+    return float(np.mean(np.sum((y_prob - y_onehot) ** 2, axis=1)))
+
+
+def _prepare_dataset(df_universe: pd.DataFrame, feature_names: list,
+                     test_name: str, min_total: int = 100,
+                     min_test: int = 50,
+                     lockbox_mode: bool = False) -> Optional[dict]:
+    """Temporal split on pre-filtered universe. Shared by evaluate/optuna/shap.
+
+    The universe DataFrame is already filtered by compute_universes() — no dropna
+    here. This ensures all tests within the same universe share identical N,
+    split_idx, and split_date for fair comparison.
+
+    Returns dict with keys: df_train, df_test, X_tr, y_tr, X_te, y_te, df_sorted.
+    In lockbox mode also: df_val, X_val, y_val, df_lockbox, X_lock, y_lock.
+    Returns {"error": ...} dict on failure.
+    """
+    missing = [f for f in feature_names if f not in df_universe.columns]
+    if missing:
+        return {"error": f"missing_features: {missing}"}
+
+    # Defensive: verify no NaN in required features (universe should be clean)
+    nan_rows = df_universe[feature_names].isna().any(axis=1).sum()
+    if nan_rows > 0:
+        return {"error": f"universe_nan_leak: {nan_rows} rows with NaN in {test_name}"}
+
+    if len(df_universe) < min_total:
+        return {"error": f"insufficient_data: {len(df_universe)}"}
+
+    # Already sorted by compute_universes() — ["date", "match_id"]
+    df_sorted = df_universe
+
+    if lockbox_mode:
+        # 70/15/15 split
+        n = len(df_sorted)
+        train_end = int(n * 0.70)
+        val_end = int(n * 0.85)
+        df_train = df_sorted.iloc[:train_end]
+        df_val = df_sorted.iloc[train_end:val_end]
+        df_lockbox = df_sorted.iloc[val_end:]
+
+        if len(df_val) < min_test:
+            return {"error": f"insufficient_val: {len(df_val)}"}
+        if len(df_lockbox) < min_test:
+            return {"error": f"insufficient_lockbox: {len(df_lockbox)}"}
+
+        return {
+            "df_train": df_train, "df_test": df_val, "df_sorted": df_sorted,
+            "X_tr": df_train[feature_names].values.astype(np.float32),
+            "y_tr": df_train["result"].values.astype(int),
+            "X_te": df_val[feature_names].values.astype(np.float32),
+            "y_te": df_val["result"].values.astype(int),
+            "df_val": df_val,
+            "df_lockbox": df_lockbox,
+            "X_lock": df_lockbox[feature_names].values.astype(np.float32),
+            "y_lock": df_lockbox["result"].values.astype(int),
+        }
+
+    # Standard 80/20 split
+    split_idx = int(len(df_sorted) * (1 - TEST_FRACTION))
+    df_train = df_sorted.iloc[:split_idx]
+    df_test = df_sorted.iloc[split_idx:]
+
+    if len(df_test) < min_test:
+        return {"error": f"insufficient_test: {len(df_test)}"}
+
+    X_tr = df_train[feature_names].values.astype(np.float32)
+    y_tr = df_train["result"].values.astype(int)
+    X_te = df_test[feature_names].values.astype(np.float32)
+    y_te = df_test["result"].values.astype(int)
+
+    return {
+        "df_train": df_train, "df_test": df_test, "df_sorted": df_sorted,
+        "X_tr": X_tr, "y_tr": y_tr, "X_te": X_te, "y_te": y_te,
+    }
+
+
+def train_xgb(X_train, y_train, seed=42):
+    """Train XGBoost with production hyperparams."""
+    params = {**PROD_HYPERPARAMS, "random_state": seed}
+    model = xgb.XGBClassifier(**params)
+    sample_weight = np.ones(len(y_train), dtype=np.float32)
+    sample_weight[y_train == 1] = DRAW_WEIGHT
+    model.fit(X_train, y_train, sample_weight=sample_weight, verbose=False)
+    return model
+
+
+def bootstrap_ci(y_true, y_prob, n_bootstrap=N_BOOTSTRAP, seed=42):
+    """Bootstrap 95% CI for Brier score."""
+    rng = np.random.RandomState(seed)
+    n = len(y_true)
+    briers = []
+    for _ in range(n_bootstrap):
+        idx = rng.choice(n, size=n, replace=True)
+        b = multiclass_brier(y_true[idx], y_prob[idx])
+        briers.append(b)
+    return float(np.percentile(briers, 2.5)), float(np.percentile(briers, 97.5))
+
+
+def bootstrap_paired_delta(y_true, y_prob_model, y_prob_market,
+                           n_bootstrap=N_BOOTSTRAP, seed=42):
+    """Bootstrap 95% CI for Δ(model_brier - market_brier) using paired samples.
+
+    Uses per-match Brier contributions so both model and market are evaluated
+    on exactly the same bootstrap samples → captures correlation.
+    """
+    rng = np.random.RandomState(seed)
+    n = len(y_true)
+    n_classes = y_prob_model.shape[1]
+    y_onehot = np.eye(n_classes)[y_true.astype(int)]
+
+    # Per-match Brier contributions
+    model_per_match = np.sum((y_prob_model - y_onehot) ** 2, axis=1)
+    market_per_match = np.sum((y_prob_market - y_onehot) ** 2, axis=1)
+    delta_per_match = model_per_match - market_per_match
+
+    deltas = []
+    for _ in range(n_bootstrap):
+        idx = rng.choice(n, size=n, replace=True)
+        deltas.append(float(np.mean(delta_per_match[idx])))
+
+    return float(np.percentile(deltas, 2.5)), float(np.percentile(deltas, 97.5))
+
+
+OPTUNA_N_TRIALS = 50
+OPTUNA_CV_FOLDS = 3
+
+
+def optuna_tune(X_train, y_train, n_trials=OPTUNA_N_TRIALS, n_folds=OPTUNA_CV_FOLDS,
+                seed=42) -> tuple[dict, float]:
+    """Find optimal XGBoost hyperparams via Optuna with temporal CV on train set.
+
+    Returns (best_params_dict, best_cv_brier).
+    Uses 3-fold forward-chaining (temporal) to avoid future leakage.
+    """
+    n = len(X_train)
+    fold_size = n // (n_folds + 1)
+    # Forward-chaining folds: train on [0:i], validate on [i:i+fold_size]
+    folds = []
+    for i in range(1, n_folds + 1):
+        tr_end = fold_size * i
+        va_end = min(tr_end + fold_size, n)
+        if va_end > tr_end:
+            folds.append((list(range(0, tr_end)), list(range(tr_end, va_end))))
+
+    sample_weight_full = np.ones(len(y_train), dtype=np.float32)
+    sample_weight_full[y_train == 1] = DRAW_WEIGHT
+
+    def objective(trial):
+        params = {
+            "objective": "multi:softprob",
+            "num_class": 3,
+            "max_depth": trial.suggest_int("max_depth", 2, 6),
+            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.15, log=True),
+            "n_estimators": trial.suggest_int("n_estimators", 50, 300),
+            "min_child_weight": trial.suggest_int("min_child_weight", 3, 15),
+            "subsample": trial.suggest_float("subsample", 0.5, 0.9),
+            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.4, 1.0),
+            "reg_alpha": trial.suggest_float("reg_alpha", 1e-6, 1.0, log=True),
+            "reg_lambda": trial.suggest_float("reg_lambda", 1e-6, 1.0, log=True),
+            "use_label_encoder": False,
+            "eval_metric": "mlogloss",
+            "verbosity": 0,
+            "random_state": seed,
+        }
+
+        briers = []
+        for tr_idx, va_idx in folds:
+            X_tr, y_tr = X_train[tr_idx], y_train[tr_idx]
+            X_va, y_va = X_train[va_idx], y_train[va_idx]
+            sw_tr = sample_weight_full[tr_idx]
+
+            model = xgb.XGBClassifier(**params)
+            model.fit(X_tr, y_tr, sample_weight=sw_tr, verbose=False)
+            y_prob = model.predict_proba(X_va)
+            briers.append(multiclass_brier(y_va, y_prob))
+
+        return float(np.mean(briers))
+
+    study = optuna.create_study(direction="minimize",
+                                 sampler=optuna.samplers.TPESampler(seed=seed))
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+
+    best = study.best_params
+    best.update({
+        "objective": "multi:softprob",
+        "num_class": 3,
+        "use_label_encoder": False,
+        "eval_metric": "mlogloss",
+        "verbosity": 0,
+    })
+    return best, study.best_value
+
+
+def evaluate_feature_set_optuna(df_universe: pd.DataFrame, feature_names: list,
+                                test_name: str) -> Optional[dict]:
+    """Like evaluate_feature_set but with Optuna-tuned hyperparams per test."""
+    prep = _prepare_dataset(df_universe, feature_names, test_name)
+    if "error" in prep:
+        return {"test": test_name, **prep}
+
+    df_train, df_test, df_sorted = prep["df_train"], prep["df_test"], prep["df_sorted"]
+    X_tr, y_tr, X_te, y_te = prep["X_tr"], prep["y_tr"], prep["X_te"], prep["y_te"]
+
+    # Optuna tuning on train set
+    print(f"    Optuna tuning ({OPTUNA_N_TRIALS} trials, {OPTUNA_CV_FOLDS}-fold temporal CV)...")
+    best_params, cv_brier = optuna_tune(X_tr, y_tr)
+    print(f"    Best CV Brier: {cv_brier:.5f} | depth={best_params['max_depth']} "
+          f"lr={best_params['learning_rate']:.4f} n_est={best_params['n_estimators']} "
+          f"mcw={best_params['min_child_weight']}")
+
+    # Evaluate with tuned params (multi-seed) — collect for ensemble
+    all_briers, all_logloss, all_accuracy = [], [], []
+    all_y_probs = []
+
+    for seed_i in range(N_SEEDS):
+        seed = seed_i * 42 + 7
+        params = {**best_params, "random_state": seed}
+        model = xgb.XGBClassifier(**params)
+        sw = np.ones(len(y_tr), dtype=np.float32)
+        sw[y_tr == 1] = DRAW_WEIGHT
+        model.fit(X_tr, y_tr, sample_weight=sw, verbose=False)
+        y_prob = model.predict_proba(X_te)
+
+        all_briers.append(multiclass_brier(y_te, y_prob))
+        all_logloss.append(log_loss(y_te, y_prob, labels=[0, 1, 2]))
+        all_accuracy.append(float(np.mean(model.predict(X_te) == y_te)))
+        all_y_probs.append(y_prob)
+
+    # Fix 2: CI from ensemble
+    ensemble_prob = np.mean(all_y_probs, axis=0)
+    brier_ensemble = multiclass_brier(y_te, ensemble_prob)
+    ci_lo, ci_hi = bootstrap_ci(y_te, ensemble_prob)
+
+    return {
+        "test": test_name,
+        "universe": classify_test_universe(feature_names),
+        "n_features": len(feature_names),
+        "features": feature_names,
+        "n_train": len(df_train),
+        "n_test": len(df_test),
+        "date_range": [str(df_sorted["date"].min()), str(df_sorted["date"].max())],
+        "split_date": str(df_test["date"].min()),
+        "brier_ensemble": round(brier_ensemble, 5),
+        "brier_ci95": [round(ci_lo, 5), round(ci_hi, 5)],
+        "brier_seed_mean": round(float(np.mean(all_briers)), 5),
+        "brier_seed_std": round(float(np.std(all_briers)), 5),
+        "brier_seed_range": [round(min(all_briers), 5), round(max(all_briers), 5)],
+        "logloss_mean": round(float(np.mean(all_logloss)), 5),
+        "accuracy_mean": round(float(np.mean(all_accuracy)), 4),
+        "optuna_params": {k: v for k, v in best_params.items()
+                          if k not in ("objective", "num_class", "use_label_encoder",
+                                       "eval_metric", "verbosity")},
+        "optuna_cv_brier": round(cv_brier, 5),
+        "optuna_n_trials": OPTUNA_N_TRIALS,
+    }
+
+
+def evaluate_feature_set(df_universe: pd.DataFrame, feature_names: list,
+                         test_name: str,
+                         lockbox_mode: bool = False) -> Optional[dict]:
+    """Train & evaluate a feature set. Returns metrics dict or None if insufficient data."""
+    prep = _prepare_dataset(df_universe, feature_names, test_name,
+                            lockbox_mode=lockbox_mode)
+    if "error" in prep:
+        return {"test": test_name, **prep}
+
+    df_train, df_test, df_sorted = prep["df_train"], prep["df_test"], prep["df_sorted"]
+    X_tr, y_tr, X_te, y_te = prep["X_tr"], prep["y_tr"], prep["X_te"], prep["y_te"]
+
+    # Multi-seed evaluation — collect all predictions for ensemble
+    all_briers, all_logloss, all_accuracy = [], [], []
+    all_y_probs = []
+
+    for seed_i in range(N_SEEDS):
+        seed = seed_i * 42 + 7
+        model = train_xgb(X_tr, y_tr, seed=seed)
+        y_prob = model.predict_proba(X_te)
+
+        all_briers.append(multiclass_brier(y_te, y_prob))
+        all_logloss.append(log_loss(y_te, y_prob, labels=[0, 1, 2]))
+        all_accuracy.append(float(np.mean(model.predict(X_te) == y_te)))
+        all_y_probs.append(y_prob)
+
+    # Fix 2: CI from ensemble (average of all seed predictions)
+    ensemble_prob = np.mean(all_y_probs, axis=0)
+    brier_ensemble = multiclass_brier(y_te, ensemble_prob)
+    ci_lo, ci_hi = bootstrap_ci(y_te, ensemble_prob)
+
+    # Label distribution in test
+    test_dist = df_test["result"].value_counts().sort_index()
+    test_pct = (test_dist / len(df_test) * 100).round(1).to_dict()
+
+    return {
+        "test": test_name,
+        "universe": classify_test_universe(feature_names),
+        "n_features": len(feature_names),
+        "features": feature_names,
+        "n_train": len(df_train),
+        "n_test": len(df_test),
+        "date_range": [str(df_sorted["date"].min()), str(df_sorted["date"].max())],
+        "split_date": str(df_test["date"].min()),
+        "brier_ensemble": round(brier_ensemble, 5),
+        "brier_ci95": [round(ci_lo, 5), round(ci_hi, 5)],
+        "brier_seed_mean": round(float(np.mean(all_briers)), 5),
+        "brier_seed_std": round(float(np.std(all_briers)), 5),
+        "brier_seed_range": [round(min(all_briers), 5), round(max(all_briers), 5)],
+        "logloss_mean": round(float(np.mean(all_logloss)), 5),
+        "accuracy_mean": round(float(np.mean(all_accuracy)), 4),
+        "test_distribution": {
+            "H": test_pct.get(0, 0),
+            "D": test_pct.get(1, 0),
+            "A": test_pct.get(2, 0),
+        },
+    }
+
+
+# ─── Market Baseline ─────────────────────────────────────────
+
+def market_brier(df_odds_universe: pd.DataFrame,
+                 lockbox_mode: bool = False) -> Optional[dict]:
+    """Compute Brier from devigged market odds as probabilistic baseline.
+
+    Receives the odds universe (pre-filtered) so the split is identical
+    to all other tests in the same universe.
+
+    In lockbox mode uses 70/15/15 split (evaluates on val slice, aligned
+    with model tests). Standard mode uses 80/20.
+    """
+    if len(df_odds_universe) < 50:
+        return None
+
+    if lockbox_mode:
+        n = len(df_odds_universe)
+        train_end = int(n * 0.70)
+        val_end = int(n * 0.85)
+        df_test = df_odds_universe.iloc[train_end:val_end]
+    else:
+        split_idx = int(len(df_odds_universe) * (1 - TEST_FRACTION))
+        df_test = df_odds_universe.iloc[split_idx:]
+
+    if len(df_test) < 30:
+        return None
+
+    # De-vig: normalize implied probs to sum=1
+    inv_h = 1.0 / df_test["odds_home"].values
+    inv_d = 1.0 / df_test["odds_draw"].values
+    inv_a = 1.0 / df_test["odds_away"].values
+    total = inv_h + inv_d + inv_a
+
+    market_probs = np.column_stack([inv_h / total, inv_d / total, inv_a / total])
+    y_true = df_test["result"].values.astype(int)
+
+    brier = multiclass_brier(y_true, market_probs)
+    ci_lo, ci_hi = bootstrap_ci(y_true, market_probs)
+
+    return {
+        "test": "MKT_market",
+        "universe": "odds",
+        "n_test": len(df_test),
+        "brier_ensemble": round(brier, 5),
+        "brier_ci95": [round(ci_lo, 5), round(ci_hi, 5)],
+    }
+
+
+def fair_model_vs_market(df_odds_universe: pd.DataFrame, feature_names: list,
+                         test_name: str,
+                         params: dict | None = None,
+                         lockbox_mode: bool = False) -> Optional[dict]:
+    """Compare model vs market on the SAME test subset (ABE P1-C).
+
+    Both are evaluated on the odds universe test set, so N is identical.
+    Now includes paired bootstrap CI for the delta.
+
+    In lockbox mode uses 70/15/15 split (evaluates on val slice, aligned
+    with model tests). Standard mode uses 80/20.
+
+    Args:
+        df_odds_universe: Pre-filtered odds universe DataFrame.
+        params: Optional XGBoost hyperparams (e.g. from Optuna). If None,
+                uses production hyperparams via train_xgb().
+        lockbox_mode: If True, use 70/15/15 split (train/val/lockbox).
+    """
+    # Verify model features exist
+    missing = [f for f in feature_names if f not in df_odds_universe.columns]
+    if missing:
+        return None
+
+    # Check for NaN in model features within odds universe
+    nan_rows = df_odds_universe[feature_names].isna().any(axis=1).sum()
+    if nan_rows > 0:
+        return None
+
+    if len(df_odds_universe) < 100:
+        return None
+
+    if lockbox_mode:
+        n = len(df_odds_universe)
+        train_end = int(n * 0.70)
+        val_end = int(n * 0.85)
+        df_train = df_odds_universe.iloc[:train_end]
+        df_test = df_odds_universe.iloc[train_end:val_end]
+    else:
+        split_idx = int(len(df_odds_universe) * (1 - TEST_FRACTION))
+        df_train = df_odds_universe.iloc[:split_idx]
+        df_test = df_odds_universe.iloc[split_idx:]
+
+    if len(df_test) < 50:
+        return None
+
+    X_tr = df_train[feature_names].values.astype(np.float32)
+    y_tr = df_train["result"].values.astype(int)
+    X_te = df_test[feature_names].values.astype(np.float32)
+    y_te = df_test["result"].values.astype(int)
+
+    # Model prediction — use tuned params if provided, else production defaults
+    if params:
+        merged = {**PROD_HYPERPARAMS, **params, "random_state": 42}
+        model = xgb.XGBClassifier(**merged)
+        sample_weight = np.ones(len(y_tr), dtype=np.float32)
+        sample_weight[y_tr == 1] = DRAW_WEIGHT
+        model.fit(X_tr, y_tr, sample_weight=sample_weight, verbose=False)
+    else:
+        model = train_xgb(X_tr, y_tr, seed=42)
+    y_prob_model = model.predict_proba(X_te)
+    model_brier = multiclass_brier(y_te, y_prob_model)
+
+    # Market prediction (de-vig)
+    inv_h = 1.0 / df_test["odds_home"].values
+    inv_d = 1.0 / df_test["odds_draw"].values
+    inv_a = 1.0 / df_test["odds_away"].values
+    total = inv_h + inv_d + inv_a
+    market_probs = np.column_stack([inv_h / total, inv_d / total, inv_a / total])
+    market_brier_val = multiclass_brier(y_te, market_probs)
+
+    # Fix 2: paired bootstrap CI for delta
+    delta_ci_lo, delta_ci_hi = bootstrap_paired_delta(y_te, y_prob_model, market_probs)
+
+    return {
+        "test": test_name,
+        "n_test_fair": len(df_test),
+        "model_brier_fair": round(model_brier, 5),
+        "market_brier_fair": round(market_brier_val, 5),
+        "delta": round(model_brier - market_brier_val, 5),
+        "delta_ci95": [round(delta_ci_lo, 5), round(delta_ci_hi, 5)],
+        "market_wins": model_brier > market_brier_val,
+    }
+
+
+# ─── Run All Tests for One League ────────────────────────────
+
+def run_league_tests(df: pd.DataFrame, league_id: int,
+                     lockbox_mode: bool = False) -> dict:
+    """Run all feature set tests for one league using fixed universes."""
+    league_name = LEAGUE_NAMES.get(league_id, f"league_{league_id}")
+
+    print(f"\n{'=' * 70}")
+    print(f"  FEATURE LAB: {league_name} (id={league_id})")
+    print(f"  Matches: {len(df)} | Seeds: {N_SEEDS} | Bootstrap: {N_BOOTSTRAP}")
+    if lockbox_mode:
+        print(f"  Mode: LOCKBOX (70/15/15)")
+    print(f"{'=' * 70}")
+
+    # Fix 1: compute universes once
+    universes = compute_universes(df, TESTS)
+
+    # Run anchor tests (A0, A1) in each non-empty universe for intra-universe deltas
+    anchor_tests = {"A0_baseline_17": TESTS["A0_baseline_17"],
+                    "A1_only_elo_k32": TESTS["A1_only_elo_k32"]}
+    anchors_by_universe = {}
+    for uid, udf in universes.items():
+        if udf.empty:
+            continue
+        for anchor_name, anchor_feats in anchor_tests.items():
+            key = f"{anchor_name}@{uid}"
+            res = evaluate_feature_set(udf, anchor_feats, key,
+                                       lockbox_mode=lockbox_mode)
+            if res and "error" not in res:
+                anchors_by_universe[key] = res
+
+    results = []
+    for test_name, features in TESTS.items():
+        uid = classify_test_universe(features)
+        udf = universes.get(uid, pd.DataFrame())
+
+        print(f"\n  [{test_name}] {len(features)} features (universe={uid})...")
+        if udf.empty:
+            res = {"test": test_name, "universe": uid,
+                   "error": f"empty_universe:{uid}"}
+            print(f"    SKIP: {res['error']}")
+            results.append(res)
+            continue
+
+        res = evaluate_feature_set(udf, features, test_name,
+                                   lockbox_mode=lockbox_mode)
+        if res and "error" not in res:
+            print(f"    Brier: {res['brier_ensemble']:.5f} "
+                  f"(seeds: {res['brier_seed_mean']:.5f} ± {res['brier_seed_std']:.5f}) "
+                  f"CI95[{res['brier_ci95'][0]:.5f}, {res['brier_ci95'][1]:.5f}] "
+                  f"Acc: {res['accuracy_mean']:.3f} "
+                  f"(N_train={res['n_train']}, N_test={res['n_test']})")
+        elif res:
+            print(f"    SKIP: {res['error']}")
+        results.append(res)
+
+    # Market baseline (uses odds universe, lockbox-aware split)
+    print(f"\n  [MKT_market] De-vigged odds baseline...")
+    mkt = market_brier(universes["odds"], lockbox_mode=lockbox_mode)
+    if mkt:
+        print(f"    Brier: {mkt['brier_ensemble']:.5f} "
+              f"CI95[{mkt['brier_ci95'][0]:.5f}, {mkt['brier_ci95'][1]:.5f}] "
+              f"(N_test={mkt['n_test']})")
+    else:
+        print(f"    SKIP: insufficient odds data")
+
+    # Fair model-vs-market comparison with paired delta CI (lockbox-aware)
+    fair_comparisons = {}
+    if mkt:
+        # Best result per universe that has odds
+        for uid in ("odds", "odds_xg"):
+            valid = [r for r in results
+                     if r and "error" not in r and r.get("universe") == uid]
+            if not valid:
+                continue
+            best = min(valid, key=lambda r: r["brier_ensemble"])
+            fair = fair_model_vs_market(universes[uid], best["features"],
+                                        best["test"],
+                                        lockbox_mode=lockbox_mode)
+            if fair:
+                fair_comparisons[best["test"]] = fair
+                delta_ci = fair.get("delta_ci95", [None, None])
+                print(f"\n  [FAIR] {best['test']} vs market (N={fair['n_test_fair']}): "
+                      f"model={fair['model_brier_fair']:.5f} "
+                      f"market={fair['market_brier_fair']:.5f} "
+                      f"Δ={fair['delta']:+.5f} "
+                      f"CI95[{delta_ci[0]:+.5f}, {delta_ci[1]:+.5f}]")
+
+    # Lockbox evaluation (Fix 4) — champion selected PER UNIVERSE
+    lockbox_results = []
+    if lockbox_mode:
+        for uid, udf in universes.items():
+            if udf.empty:
+                continue
+            # Find best test within THIS universe only
+            valid_in_uid = [r for r in results
+                           if r and "error" not in r
+                           and r.get("universe") == uid]
+            if not valid_in_uid:
+                continue
+            champion = min(valid_in_uid, key=lambda r: r["brier_ensemble"])
+            prep = _prepare_dataset(udf, champion["features"],
+                                    champion["test"], lockbox_mode=True)
+            if "error" in prep:
+                continue
+            # Train on train+val, evaluate on lockbox (one-shot)
+            X_tv = np.vstack([prep["X_tr"], prep["X_te"]])
+            y_tv = np.concatenate([prep["y_tr"], prep["y_te"]])
+            model = train_xgb(X_tv, y_tv, seed=42)
+            y_prob_lock = model.predict_proba(prep["X_lock"])
+            lock_brier = multiclass_brier(prep["y_lock"], y_prob_lock)
+            lock_ci = bootstrap_ci(prep["y_lock"], y_prob_lock)
+            lock_entry = {
+                "champion": champion["test"],
+                "universe": uid,
+                "n_lockbox": len(prep["df_lockbox"]),
+                "lockbox_brier": round(lock_brier, 5),
+                "lockbox_ci95": [round(lock_ci[0], 5), round(lock_ci[1], 5)],
+                "split_dates": {
+                    "train_end": str(prep["df_train"]["date"].max()),
+                    "val_end": str(prep["df_test"]["date"].max()),
+                    "lockbox_start": str(prep["df_lockbox"]["date"].min()),
+                },
+            }
+            lockbox_results.append(lock_entry)
+            print(f"\n  [LOCKBOX] {champion['test']} (universe={uid}): "
+                  f"Brier={lock_brier:.5f} "
+                  f"CI95[{lock_ci[0]:.5f}, {lock_ci[1]:.5f}] "
+                  f"(N={len(prep['df_lockbox'])})")
+
+    return {
+        "league_id": league_id,
+        "league_name": league_name,
+        "n_matches": len(df),
+        "universes": {uid: len(udf) for uid, udf in universes.items()},
+        "anchors_by_universe": anchors_by_universe,
+        "tests": [r for r in results if r is not None],
+        "market_baseline": mkt,
+        "fair_comparisons": fair_comparisons,
+        "lockbox": lockbox_results if lockbox_mode else None,
+    }
+
+
+# ─── Comparison Table ────────────────────────────────────────
+
+def print_comparison(all_results: list[dict]):
+    """Print cross-league comparison table."""
+    print(f"\n{'=' * 90}")
+    print(f"  CROSS-LEAGUE COMPARISON")
+    print(f"{'=' * 90}")
+
+    # Header
+    leagues = [r["league_name"] for r in all_results]
+    header = f"  {'Test':<20}"
+    for lg in leagues:
+        header += f" {'Brier ' + lg:>25}"
+    print(header)
+    print(f"  {'─' * 20}" + f" {'─' * 25}" * len(leagues))
+
+    # Collect all test names (preserving order)
+    all_tests = list(TESTS.keys()) + ["MKT_market"]
+
+    for test_name in all_tests:
+        row = f"  {test_name:<20}"
+        for lg_result in all_results:
+            found = None
+            if test_name == "MKT_market":
+                found = lg_result.get("market_baseline")
+            else:
+                for t in lg_result["tests"]:
+                    if t and t.get("test") == test_name:
+                        found = t
+                        break
+
+            if found and "error" not in found:
+                brier = found.get("brier_ensemble", found.get("brier_mean", 0))
+                if "brier_ci95" in found:
+                    ci_lo, ci_hi = found["brier_ci95"]
+                    row += f"  {brier:.5f} [{ci_lo:.4f},{ci_hi:.4f}]"
+                else:
+                    row += f"  {brier:.5f}                 "
+            else:
+                err = found.get("error", "no data") if found else "no data"
+                row += f"  {'—':>25}"
+        print(row)
+
+    # Delta from baseline
+    print(f"\n  DELTA vs T0 (negative = better):")
+    print(f"  {'Test':<20}", end="")
+    for lg in leagues:
+        print(f" {'Δ ' + lg:>15}", end="")
+    print()
+    print(f"  {'─' * 20}" + f" {'─' * 15}" * len(leagues))
+
+    for test_name in all_tests:
+        if test_name == "A0_baseline_17":
+            continue
+        row = f"  {test_name:<20}"
+        for lg_result in all_results:
+            # Get baseline brier
+            base_brier = None
+            for t in lg_result["tests"]:
+                if t and t.get("test") == "A0_baseline_17" and "error" not in t:
+                    base_brier = t.get("brier_ensemble", t.get("brier_mean"))
+                    break
+
+            # Get this test's brier
+            found = None
+            if test_name == "MKT_market":
+                found = lg_result.get("market_baseline")
+            else:
+                for t in lg_result["tests"]:
+                    if t and t.get("test") == test_name:
+                        found = t
+                        break
+
+            if found and "error" not in found and base_brier is not None:
+                delta = found.get("brier_ensemble", found.get("brier_mean", 0)) - base_brier
+                sign = "+" if delta > 0 else ""
+                row += f"  {sign}{delta:.5f}      "
+            else:
+                row += f"  {'—':>15}"
+        print(row)
+
+
+# ─── Optuna Runner ───────────────────────────────────────────
+
+def run_optuna_tests(df: pd.DataFrame, league_id: int) -> dict:
+    """Run Optuna-tuned evaluation on champion feature sets using universes."""
+    league_name = LEAGUE_NAMES.get(league_id, f"league_{league_id}")
+
+    print(f"\n{'=' * 70}")
+    print(f"  OPTUNA LAB: {league_name} (id={league_id})")
+    print(f"  Matches: {len(df)} | Candidates: {len(OPTUNA_CANDIDATES)}")
+    print(f"  Trials: {OPTUNA_N_TRIALS} | CV Folds: {OPTUNA_CV_FOLDS}")
+    print(f"{'=' * 70}")
+
+    # Compute universes for optuna candidates
+    universes = compute_universes(df, OPTUNA_CANDIDATES)
+
+    results = []
+    for test_name, features in OPTUNA_CANDIDATES.items():
+        uid = classify_test_universe(features)
+        udf = universes.get(uid, pd.DataFrame())
+        print(f"\n  [{test_name}] {len(features)} features (universe={uid})...")
+        if udf.empty:
+            res = {"test": test_name, "universe": uid, "error": f"empty_universe:{uid}"}
+            print(f"    SKIP: {res['error']}")
+            results.append(res)
+            continue
+        res = evaluate_feature_set_optuna(udf, features, test_name)
+        if res and "error" not in res:
+            print(f"    TUNED Brier: {res['brier_ensemble']:.5f} "
+                  f"(seeds: {res['brier_seed_mean']:.5f} ± {res['brier_seed_std']:.5f}) "
+                  f"CI95[{res['brier_ci95'][0]:.5f}, {res['brier_ci95'][1]:.5f}] "
+                  f"Acc: {res['accuracy_mean']:.3f}")
+        elif res:
+            print(f"    SKIP: {res['error']}")
+        results.append(res)
+
+    # Also run fixed-params baseline for comparison (base universe)
+    print(f"\n  [FIXED_baseline] A0 with prod hyperparams (control)...")
+    fixed_res = evaluate_feature_set(universes["base"], BASELINE_FEATURES, "FIXED_baseline")
+    if fixed_res and "error" not in fixed_res:
+        print(f"    FIXED Brier: {fixed_res['brier_ensemble']:.5f} "
+              f"(seeds: {fixed_res['brier_seed_mean']:.5f} ± {fixed_res['brier_seed_std']:.5f})")
+    results.append(fixed_res)
+
+    # Market baseline (odds universe)
+    print(f"\n  [MKT_market] De-vigged odds baseline...")
+    mkt = market_brier(universes["odds"])
+    if mkt:
+        print(f"    Brier: {mkt['brier_ensemble']:.5f} "
+              f"CI95[{mkt['brier_ci95'][0]:.5f}, {mkt['brier_ci95'][1]:.5f}] "
+              f"(N_test={mkt['n_test']})")
+    else:
+        print(f"    SKIP: insufficient odds data")
+
+    # Fair model-vs-market comparison with paired delta CI
+    fair_comparisons = {}
+    if mkt:
+        valid = [r for r in results if r and "error" not in r and r.get("test") != "FIXED_baseline"]
+        if valid:
+            best = min(valid, key=lambda r: r["brier_ensemble"])
+            best_uid = best.get("universe", "odds")
+            # Use odds universe (or odds_xg if that's the best's universe)
+            fair_udf = universes.get(best_uid if "odds" in best_uid else "odds",
+                                     universes["odds"])
+            fair = fair_model_vs_market(
+                fair_udf, best["features"], best["test"],
+                params=best.get("optuna_params"),
+            )
+            if fair:
+                fair_comparisons[best["test"]] = fair
+                delta_ci = fair.get("delta_ci95", [None, None])
+                print(f"\n  [FAIR] {best['test']} vs market (N={fair['n_test_fair']}): "
+                      f"model={fair['model_brier_fair']:.5f} market={fair['market_brier_fair']:.5f} "
+                      f"Δ={fair['delta']:+.5f} "
+                      f"CI95[{delta_ci[0]:+.5f}, {delta_ci[1]:+.5f}]")
+
+    # Summary table
+    print(f"\n  {'─' * 65}")
+    print(f"  {'Test':<25} {'Brier':>10} {'CV Brier':>10} {'Depth':>6} {'LR':>8} {'N_est':>6}")
+    print(f"  {'─' * 65}")
+    for r in results:
+        if r and "error" not in r:
+            name = r["test"]
+            brier = r.get("brier_ensemble", r.get("brier_mean", 0))
+            cv = r.get("optuna_cv_brier", "—")
+            p = r.get("optuna_params", {})
+            depth = p.get("max_depth", "—")
+            lr = p.get("learning_rate", "—")
+            n_est = p.get("n_estimators", "—")
+            cv_str = f"{cv:.5f}" if isinstance(cv, float) else str(cv)
+            lr_str = f"{lr:.4f}" if isinstance(lr, float) else str(lr)
+            print(f"  {name:<25} {brier:>10.5f} {cv_str:>10} {depth!s:>6} {lr_str:>8} {n_est!s:>6}")
+    if mkt:
+        print(f"  {'MKT_market':<25} {mkt['brier_ensemble']:>10.5f}")
+    print(f"  {'─' * 65}")
+
+    return {
+        "league_id": league_id,
+        "league_name": league_name,
+        "n_matches": len(df),
+        "mode": "optuna",
+        "tests": [r for r in results if r is not None],
+        "market_baseline": mkt,
+        "fair_comparisons": fair_comparisons,
+    }
+
+
+def print_optuna_comparison(all_results: list[dict]):
+    """Print cross-league comparison for Optuna results."""
+    print(f"\n{'=' * 90}")
+    print(f"  OPTUNA CROSS-LEAGUE COMPARISON")
+    print(f"{'=' * 90}")
+
+    leagues = [r["league_name"] for r in all_results]
+    header = f"  {'Test':<25}"
+    for lg in leagues:
+        header += f" {lg:>20}"
+    print(header)
+    print(f"  {'─' * 25}" + f" {'─' * 20}" * len(leagues))
+
+    all_tests = list(OPTUNA_CANDIDATES.keys()) + ["FIXED_baseline", "MKT_market"]
+
+    for test_name in all_tests:
+        row = f"  {test_name:<25}"
+        for lg_result in all_results:
+            found = None
+            if test_name == "MKT_market":
+                found = lg_result.get("market_baseline")
+            else:
+                for t in lg_result["tests"]:
+                    if t and t.get("test") == test_name:
+                        found = t
+                        break
+            if found and "error" not in found:
+                brier = found.get("brier_ensemble", found.get("brier_mean", 0))
+                row += f"  {brier:.5f}             "
+            else:
+                row += f"  {'—':>20}"
+        print(row)
+
+
+# ─── SHAP Analysis ────────────────────────────────────────────
+
+# Feature sets to analyze with SHAP (key tests that answer specific questions)
+SHAP_TESTS = {
+    "S0_baseline_17":       ("Baseline v1.0.1", BASELINE_FEATURES),
+    "S1_baseline_odds":     ("Baseline + Odds", BASELINE_FEATURES + ODDS_FEATURES),
+    "S2_elo_odds":          ("Elo + Odds", ELO_FEATURES + ODDS_FEATURES),
+    "S3_defense_elo":       ("Defense + Elo", DEFENSE_PAIR + ELO_FEATURES),
+    "S4_m2_interactions":   ("ARG Signal + Elo + Interactions", ARG_SIGNAL + ELO_FEATURES + INTERACTION_FEATURES),
+    "S5_xg_elo":            ("xG + Elo", XG_CORE + ELO_FEATURES),
+    "S6_power_5":           ("Power 5", ["elo_diff", "opp_rating_diff", "overperf_diff",
+                                          "home_goals_conceded_avg", "draw_elo_interaction"]),
+    "S7_abe_elo":           ("ABE + Elo", OPP_ADJ_FEATURES + OVERPERF_FEATURES + DRAW_AWARE_FEATURES + HOME_BIAS_FEATURES + ELO_FEATURES),
+    "S8_abe_elo_odds":      ("ABE + Elo + Odds", OPP_ADJ_FEATURES + OVERPERF_FEATURES + DRAW_AWARE_FEATURES + HOME_BIAS_FEATURES + ELO_FEATURES + ODDS_FEATURES),
+}
+
+
+def run_shap_analysis(df: pd.DataFrame, league_id: int, output_dir: str) -> dict:
+    """Run SHAP TreeExplainer on key feature sets using fixed universes.
+
+    Answers:
+    - Which features drive predictions per class (H/D/A)?
+    - How do odds interact with the model?
+    - Are there non-linear interactions?
+    """
+    league_name = LEAGUE_NAMES.get(league_id, f"league_{league_id}")
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    print(f"\n{'=' * 70}")
+    print(f"  SHAP ANALYSIS: {league_name} (id={league_id})")
+    print(f"  Tests: {len(SHAP_TESTS)} key feature sets")
+    print(f"{'=' * 70}")
+
+    # Compute universes for SHAP tests
+    shap_feats_dict = {k: v[1] for k, v in SHAP_TESTS.items()}
+    universes = compute_universes(df, shap_feats_dict)
+
+    all_shap_results = []
+
+    for test_key, (label, feature_names) in SHAP_TESTS.items():
+        uid = classify_test_universe(feature_names)
+        udf = universes.get(uid, pd.DataFrame())
+        print(f"\n  [{test_key}] {label} ({len(feature_names)} features, universe={uid})...")
+
+        if udf.empty:
+            print(f"    SKIP: empty_universe:{uid}")
+            all_shap_results.append({"test": test_key, "label": label,
+                                     "error": f"empty_universe:{uid}"})
+            continue
+
+        prep = _prepare_dataset(udf, feature_names, test_key)
+        if "error" in prep:
+            print(f"    SKIP: {prep['error']}")
+            all_shap_results.append({"test": test_key, "label": label, **prep})
+            continue
+
+        df_train, df_test = prep["df_train"], prep["df_test"]
+        X_tr, y_tr, X_te, y_te = prep["X_tr"], prep["y_tr"], prep["X_te"], prep["y_te"]
+        needs_odds = any(f in ODDS_FEATURES for f in feature_names)
+
+        # Train model (single seed for SHAP — deterministic enough)
+        model = train_xgb(X_tr, y_tr, seed=42)
+        y_prob = model.predict_proba(X_te)
+        brier = multiclass_brier(y_te, y_prob)
+
+        # SHAP TreeExplainer
+        print(f"    Computing SHAP values (N_test={len(df_test)})...")
+        explainer = shap.TreeExplainer(model)
+        shap_raw = explainer.shap_values(X_te)
+
+        # SHAP 0.49+: ndarray (n_samples, n_features, n_classes)
+        # Older SHAP: list of 3 arrays [H, D, A], each (n_samples, n_features)
+        if isinstance(shap_raw, np.ndarray) and shap_raw.ndim == 3:
+            # (n_samples, n_features, n_classes) → per-class: shap_raw[:, :, cls]
+            shap_per_class = [shap_raw[:, :, c] for c in range(shap_raw.shape[2])]
+        else:
+            shap_per_class = shap_raw  # list of arrays
+
+        class_names = ["Home", "Draw", "Away"]
+        result = {
+            "test": test_key,
+            "label": label,
+            "n_features": len(feature_names),
+            "features": feature_names,
+            "n_train": len(df_train),
+            "n_test": len(df_test),
+            "brier": round(brier, 5),
+        }
+
+        # Per-class SHAP importance (mean absolute SHAP value per feature)
+        per_class = {}
+        for cls_idx, cls_name in enumerate(class_names):
+            sv = shap_per_class[cls_idx]  # (n_test, n_features)
+            mean_abs = np.mean(np.abs(sv), axis=0)
+
+            # Rank features by importance
+            ranking = sorted(zip(feature_names, mean_abs.tolist()),
+                             key=lambda x: x[1], reverse=True)
+
+            per_class[cls_name] = {
+                "ranking": [{"feature": f, "mean_abs_shap": round(v, 5)} for f, v in ranking],
+                "top3": [f for f, _ in ranking[:3]],
+            }
+
+        result["per_class"] = per_class
+
+        # Global importance (mean across all classes)
+        global_importance = np.zeros(len(feature_names))
+        for cls_idx in range(3):
+            global_importance += np.mean(np.abs(shap_per_class[cls_idx]), axis=0)
+        global_importance /= 3.0
+
+        global_ranking = sorted(zip(feature_names, global_importance.tolist()),
+                                key=lambda x: x[1], reverse=True)
+        result["global_ranking"] = [{"feature": f, "mean_abs_shap": round(v, 5)} for f, v in global_ranking]
+
+        # SHAP interaction detection: mean SHAP value (signed) per feature per class
+        # Positive mean = pushes towards this class, Negative = pushes away
+        signed_means = {}
+        for cls_idx, cls_name in enumerate(class_names):
+            sv = shap_per_class[cls_idx]
+            means = np.mean(sv, axis=0)
+            signed_means[cls_name] = {f: round(float(v), 5) for f, v in zip(feature_names, means)}
+        result["signed_mean_shap"] = signed_means
+
+        # For odds tests: analyze how odds features interact with model
+        if needs_odds:
+            odds_idx = [feature_names.index(f) for f in ODDS_FEATURES if f in feature_names]
+            non_odds_idx = [i for i in range(len(feature_names)) if i not in odds_idx]
+
+            odds_contrib = sum(global_importance[i] for i in odds_idx)
+            non_odds_contrib = sum(global_importance[i] for i in non_odds_idx)
+            total = odds_contrib + non_odds_contrib
+
+            result["odds_analysis"] = {
+                "odds_share_pct": round(odds_contrib / total * 100, 1) if total > 0 else 0,
+                "non_odds_share_pct": round(non_odds_contrib / total * 100, 1) if total > 0 else 0,
+                "odds_dominance": odds_contrib > non_odds_contrib,
+            }
+
+        all_shap_results.append(result)
+
+        # Print summary
+        print(f"    Brier: {brier:.5f}")
+        print(f"    Global top-5:")
+        for rank_item in result["global_ranking"][:5]:
+            print(f"      {rank_item['feature']:<35} {rank_item['mean_abs_shap']:.5f}")
+
+        if needs_odds and "odds_analysis" in result:
+            oa = result["odds_analysis"]
+            print(f"    Odds share: {oa['odds_share_pct']}% | Non-odds: {oa['non_odds_share_pct']}%")
+
+    # Cross-test summary table
+    print(f"\n{'=' * 70}")
+    print(f"  SHAP SUMMARY: {league_name}")
+    print(f"{'=' * 70}")
+    print(f"  {'Test':<25} {'Brier':>8} {'#1 Feature':<30} {'#2 Feature':<25}")
+    print(f"  {'─' * 88}")
+    for r in all_shap_results:
+        if "error" in r:
+            print(f"  {r['test']:<25} {'—':>8} {r['error']}")
+            continue
+        gr = r["global_ranking"]
+        f1 = gr[0]["feature"] if len(gr) > 0 else "—"
+        f2 = gr[1]["feature"] if len(gr) > 1 else "—"
+        print(f"  {r['test']:<25} {r['brier']:>8.5f} {f1:<30} {f2:<25}")
+
+    # Per-class comparison: which features matter most for DRAWS?
+    print(f"\n  DRAW-CLASS Top-3 per test:")
+    for r in all_shap_results:
+        if "error" in r:
+            continue
+        draw_top3 = r["per_class"]["Draw"]["top3"]
+        print(f"    {r['test']:<25} {', '.join(draw_top3)}")
+
+    # Save results
+    shap_output = {
+        "meta": {
+            "timestamp": datetime.now().isoformat(),
+            "league_id": league_id,
+            "league_name": league_name,
+            "n_matches": len(df),
+            "universes": {uid: len(udf) for uid, udf in universes.items()},
+        },
+        "shap_results": all_shap_results,
+    }
+
+    shap_path = out_path / f"shap_analysis_{league_id}.json"
+    with open(shap_path, "w") as f:
+        json.dump(shap_output, f, indent=2, default=str)
+    print(f"\n  SHAP results saved to: {shap_path}")
+
+    return shap_output
+
+
+# ─── Main ─────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(description="Feature Lab — Experimental Feature Testing")
+    parser.add_argument("--extract", action="store_true",
+                        help="Extract fresh data from DB")
+    parser.add_argument("--league", type=int, action="append", default=None,
+                        help="League ID(s) to test (can repeat). Default: 128, 94")
+    parser.add_argument("--data-dir", type=str, default="scripts/output/lab",
+                        help="Directory for cached data")
+    parser.add_argument("--optuna", action="store_true",
+                        help="Run Optuna tuning on champion feature sets (Section O)")
+    parser.add_argument("--shap", action="store_true",
+                        help="Run SHAP explainability analysis on key feature sets")
+    parser.add_argument("--lockbox", action="store_true",
+                        help="Lockbox mode: 70/15/15 split, one-shot champion eval")
+    parser.add_argument("--min-date", type=str, default=None,
+                        help="Min date filter YYYY-MM-DD (applied after load)")
+    args = parser.parse_args()
+
+    league_ids = args.league or [128, 94]
+    data_dir = args.data_dir
+    run_optuna = args.optuna
+    run_shap = args.shap
+    lockbox_mode = args.lockbox
+
+    if run_optuna and not HAS_OPTUNA:
+        print("  ERROR: optuna not installed. Run: pip install optuna")
+        sys.exit(1)
+
+    if run_shap and not HAS_SHAP:
+        print("  ERROR: shap not installed. Run: pip install shap")
+        sys.exit(1)
+
+    if run_shap:
+        mode_label = "SHAP"
+    elif run_optuna:
+        mode_label = "OPTUNA"
+    elif lockbox_mode:
+        mode_label = "LOCKBOX"
+    else:
+        mode_label = "STANDARD"
+
+    print(f"\n  FEATURE LAB ({mode_label})")
+    print(f"  {'=' * 50}")
+    print(f"  Leagues: {[LEAGUE_NAMES.get(l, l) for l in league_ids]}")
+    if run_shap:
+        print(f"  SHAP tests: {len(SHAP_TESTS)} key feature sets")
+    elif run_optuna:
+        print(f"  Candidates: {len(OPTUNA_CANDIDATES)} champion sets")
+        print(f"  Optuna: {OPTUNA_N_TRIALS} trials × {OPTUNA_CV_FOLDS}-fold temporal CV")
+    else:
+        print(f"  Tests: {len(TESTS)} feature sets + market baseline")
+    print(f"  Seeds: {N_SEEDS} | Bootstrap: {N_BOOTSTRAP}")
+
+    all_results = []
+
+    for league_id in league_ids:
+        csv_path = Path(data_dir) / f"lab_data_{league_id}.csv"
+
+        if args.extract or not csv_path.exists():
+            df = extract_league_data(league_id, output_dir=data_dir)
+        else:
+            print(f"\n  Loading cached: {csv_path}")
+            df = pd.read_csv(csv_path, parse_dates=["date"])
+            # Recompute all sequential features (Elo + variants + form + matchup)
+            df = compute_elo_goals(df)
+            df = compute_all_experimental_features(df)
+            print(f"  Loaded {len(df)} rows, {len(df.columns)} columns")
+
+        if args.min_date:
+            cutoff = pd.Timestamp(args.min_date)
+            before = len(df)
+            df = df[df["date"] >= cutoff].reset_index(drop=True)
+            print(f"  Date filter >= {args.min_date}: {before} → {len(df)} rows")
+
+        if df.empty:
+            print(f"  SKIP: no data for league {league_id}")
+            continue
+
+        if run_shap:
+            result = run_shap_analysis(df, league_id, data_dir)
+        elif run_optuna:
+            result = run_optuna_tests(df, league_id)
+        else:
+            result = run_league_tests(df, league_id, lockbox_mode=lockbox_mode)
+        all_results.append(result)
+
+    # Cross-league comparison (standard/optuna modes only)
+    if not run_shap and len(all_results) > 1:
+        if run_optuna:
+            print_optuna_comparison(all_results)
+        else:
+            print_comparison(all_results)
+
+    # Save results (standard/optuna modes — SHAP saves its own file)
+    if not run_shap:
+        suffix = "_optuna" if run_optuna else ""
+        output_path = Path(data_dir) / f"feature_lab_results{suffix}.json"
+        with open(output_path, "w") as f:
+            json.dump({
+                "meta": {
+                    "timestamp": datetime.now().isoformat(),
+                    "mode": mode_label,
+                    "leagues": league_ids,
+                    "n_seeds": N_SEEDS,
+                    "n_bootstrap": N_BOOTSTRAP,
+                    "elo_k": ELO_K,
+                    "elo_home_adv": ELO_HOME_ADV,
+                    "elo_initial": ELO_INITIAL,
+                    "test_fraction": TEST_FRACTION,
+                    "rolling_window": ROLLING_WINDOW,
+                    "time_decay_lambda": TIME_DECAY_LAMBDA,
+                    "draw_weight": DRAW_WEIGHT,
+                    **({"optuna_n_trials": OPTUNA_N_TRIALS,
+                        "optuna_cv_folds": OPTUNA_CV_FOLDS} if run_optuna else
+                       {"prod_hyperparams": PROD_HYPERPARAMS}),
+                },
+                "results": all_results,
+            }, f, indent=2, default=str)
+        print(f"\n  Results saved to: {output_path}")
+
+
+if __name__ == "__main__":
+    main()

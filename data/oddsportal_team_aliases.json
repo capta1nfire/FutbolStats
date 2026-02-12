@@ -1,0 +1,526 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "description": "OddsPortal team name -> internal team_id mapping (league-scoped)",
+    "source": "oddsportal.com via OddsHarvester",
+    "total_entries": 0,
+    "leagues_covered": ["ColombiaPrimeraA", "EcuadorLigaPro", "VenezuelaPrimeraDivision", "PeruLiga1", "BoliviaDivisionProfesional", "ChilePrimeraDivision"]
+  },
+  "ColombiaPrimeraA": {
+    "_comment": "league_ids: [239]. 26 teams in DB (2020-2026). Verified via smoke_colombia_2024.json",
+
+    "Aguilas": 4202,
+    "Aguilas Doradas": 4202,
+    "Rionegro Aguilas": 4202,
+    "Rionegro": 4202,
+
+    "Alianza": 4207,
+    "Alianza Petrolera": 4207,
+    "Alianza Valledupar": 4207,
+    "Alianza FC": 4207,
+
+    "America De Cali": 4208,
+    "America de Cali": 4208,
+    "América de Cali": 4208,
+
+    "Atl. Nacional": 4199,
+    "Atletico Nacional": 4199,
+    "Atlético Nacional": 4199,
+    "Nacional": 4199,
+
+    "Bucaramanga": 4204,
+    "Atl. Bucaramanga": 4204,
+    "Atletico Bucaramanga": 4204,
+    "Atlético Bucaramanga": 4204,
+
+    "Chico": 4213,
+    "Boyaca Chico": 4213,
+    "Boyacá Chicó": 4213,
+    "Chicó": 4213,
+
+    "Cortulua": 4216,
+    "Cortuluá": 4216,
+    "Inter Palmira": 4216,
+
+    "Cucuta": 4201,
+    "Cúcuta": 4201,
+    "Cucuta Deportivo": 4201,
+    "Cúcuta Deportivo": 4201,
+
+    "Dep. Cali": 4203,
+    "Deportivo Cali": 4203,
+
+    "Dep. Pasto": 4206,
+    "Deportivo Pasto": 4206,
+
+    "Deportes Tolima": 4212,
+    "Tolima": 4212,
+
+    "Envigado": 4209,
+    "Envigado FC": 4209,
+
+    "Fortaleza": 4217,
+    "Fortaleza FC": 4217,
+    "Fortaleza CEIF": 4217,
+
+    "Huila": 4196,
+    "Atl. Huila": 4196,
+    "Atletico Huila": 4196,
+    "Atlético Huila": 4196,
+
+    "Ind. Medellin": 4194,
+    "Independiente Medellin": 4194,
+    "Independiente Medellín": 4194,
+    "DIM": 4194,
+
+    "Inter Bogota": 4195,
+    "Inter Bogotá": 4195,
+    "Internacional de Bogota": 4195,
+    "Internacional de Bogotá": 4195,
+    "La Equidad": 4195,
+    "Equidad": 4195,
+
+    "Jaguares de Cordoba": 4198,
+    "Jaguares": 4198,
+    "Jaguares de Córdoba": 4198,
+
+    "Junior": 4211,
+    "Junior FC": 4211,
+    "Junior de Barranquilla": 4211,
+
+    "Llaneros": 6143,
+    "Llaneros FC": 6143,
+
+    "Millonarios": 4210,
+    "Millonarios FC": 4210,
+
+    "Once Caldas": 4200,
+
+    "Patriotas": 4193,
+    "Patriotas FC": 4193,
+    "Patriotas Boyaca": 4193,
+    "Patriotas Boyacá": 4193,
+
+    "Pereira": 4214,
+    "Dep. Pereira": 4214,
+    "Deportivo Pereira": 4214,
+
+    "Quindio": 4215,
+    "Quindío": 4215,
+    "Deportes Quindio": 4215,
+    "Deportes Quindío": 4215,
+
+    "Santa Fe": 4205,
+    "Ind. Santa Fe": 4205,
+    "Independiente Santa Fe": 4205,
+
+    "Union Magdalena": 4197,
+    "Unión Magdalena": 4197,
+    "U. Magdalena": 4197
+  },
+
+  "EcuadorLigaPro": {
+    "_comment": "league_ids: [242]. 25 teams in DB (2019-2026). OddsPortal names verified via Playwright probe.",
+
+    "Aucas": 4270,
+    "SD Aucas": 4270,
+
+    "Barcelona SC": 4229,
+    "Barcelona": 4229,
+    "Barcelona Guayaquil": 4229,
+
+    "Cumbaya": 4306,
+    "Cumbayá": 4306,
+    "Cumbayá FC": 4306,
+
+    "Delfin": 4218,
+    "Delfin SC": 4218,
+    "Delfín": 4218,
+
+    "Dep. Cuenca": 4297,
+    "Deportivo Cuenca": 4297,
+
+    "EL Nacional": 4266,
+    "El Nacional": 4266,
+
+    "Emelec": 4241,
+    "CS Emelec": 4241,
+
+    "Fuerza A.": 4295,
+    "Fuerza Amarilla": 4295,
+
+    "Gualaceo": 4305,
+    "Gualaceo SC": 4305,
+
+    "Guayaquil City": 4294,
+    "Guayaquil City FC": 4294,
+
+    "Imbabura": 4308,
+    "Imbabura SC": 4308,
+
+    "Ind. del Valle": 4249,
+    "Independiente del Valle": 4249,
+
+    "LDU Quito": 4238,
+    "LDU de Quito": 4238,
+    "Liga de Quito": 4238,
+
+    "LDU Portoviejo": 4302,
+
+    "Libertad": 4307,
+    "Libertad FC": 4307,
+
+    "Macara": 4247,
+    "Macará": 4247,
+
+    "Manta": 4304,
+    "Manta FC": 4304,
+
+    "Mushuc Runa": 4300,
+    "Mushuc Runa SC": 4300,
+
+    "Nueve de Octubre": 4303,
+    "9 de Octubre": 4303,
+
+    "Olmedo": 4296,
+    "CD Olmedo": 4296,
+
+    "Orense": 4301,
+    "Orense SC": 4301,
+
+    "Tecnico U.": 4298,
+    "Tecnico Universitario": 4298,
+    "Técnico Universitario": 4298,
+
+    "U. Catolica": 4253,
+    "Universidad Catolica": 4253,
+    "Universidad Católica": 4253,
+
+    "America de Quito": 4299,
+    "América de Quito": 4299,
+
+    "Cuniburo": 6144
+  },
+
+  "VenezuelaPrimeraDivision": {
+    "_comment": "league_ids: [299]. 27 teams in DB (2019-2026). OddsPortal names verified via Playwright scrape 2021-2026.",
+
+    "Aragua": 4328,
+    "Aragua FC": 4328,
+
+    "Atl. Venezuela": 4362,
+    "Atletico Venezuela": 4362,
+
+    "Carabobo": 4242,
+    "Carabobo FC": 4242,
+
+    "Caracas": 4228,
+    "Caracas FC": 4228,
+
+    "Dep. Tachira": 4246,
+    "Deportivo Tachira": 4246,
+    "Deportivo Tachira FC": 4246,
+
+    "Estudiantes Merida": 4250,
+    "Estudiantes de Merida": 4250,
+    "Estudiantes de Merida FC": 4250,
+
+    "Gran Valencia": 4364,
+
+    "Inter de Barinas": 4337,
+    "Hermanos Colmenarez": 4337,
+    "CD Hermanos Colmenarez": 4337,
+
+    "La Guaira": 4220,
+    "Deportivo La Guaira": 4220,
+
+    "Lara": 4240,
+    "Deportivo Lara": 4240,
+
+    "Metropolitanos": 4269,
+    "Metropolitanos FC": 4269,
+
+    "Mineros": 4326,
+    "Mineros de Guyana": 4326,
+
+    "Monagas": 4261,
+    "Monagas SC": 4261,
+
+    "Portuguesa": 4273,
+    "Portuguesa FC": 4273,
+
+    "Puerto Cabello": 4271,
+
+    "Trujillanos": 4360,
+    "Trujillanos FC": 4360,
+
+    "Universidad Central": 4365,
+    "UCV": 4365,
+
+    "Yaracuyanos": 4363,
+    "Yaracuyanos FC": 4363,
+
+    "Zamora": 4236,
+    "Zamora FC": 4236,
+
+    "Zulia": 4323,
+    "Zulia FC": 4323,
+
+    "AC Lala FC": 4359,
+    "Lala FC": 4359,
+    "Lala": 4359,
+
+    "Angostura": 4366,
+    "Angostura FC": 4366,
+
+    "Rayo Zuliano": 4342,
+
+    "Anzoategui FC": 6152,
+    "Academia Anzoategui": 6152,
+    "Academia Anzoátegui": 6152
+  },
+
+  "PeruLiga1": {
+    "_comment": "league_ids: [281]. 31 teams in DB (2019-2026). OddsPortal names verified via Playwright scrape 2019-2026.",
+
+    "AD Cantolao": 4283,
+    "Academia Cantolao": 4283,
+
+    "AD Tarma": 4290,
+    "ADT": 4290,
+
+    "Alianza Atl.": 4289,
+    "Alianza Atletico": 4289,
+    "Alianza Atlético": 4289,
+
+    "Alianza Huanuco": 4282,
+    "Alianza Universidad": 4282,
+
+    "Alianza Lima": 4235,
+
+    "Ayacucho": 4257,
+    "Ayacucho FC": 4257,
+
+    "Binacional": 4251,
+    "Deportivo Binacional": 4251,
+
+    "Cajamarca": 4277,
+    "UTC": 4277,
+    "UTC Cajamarca": 4277,
+
+    "Carlos Mannucci": 4278,
+    "Carlos A. Mannucci": 4278,
+
+    "Carlos Stein": 4286,
+
+    "Cesar Vallejo": 4254,
+    "César Vallejo": 4254,
+
+    "Cienciano": 4284,
+
+    "Comerciantes Unidos": 4292,
+
+    "Los Chankas": 4293,
+    "Cultural Santa Rosa": 4293,
+
+    "Cusco": 4288,
+    "Cusco FC": 4288,
+
+    "Dep. Municipal": 4280,
+    "Deportivo Municipal": 4280,
+
+    "Deportivo Garcilaso": 4291,
+
+    "FBC Melgar": 4225,
+    "Melgar": 4225,
+
+    "FC Cajamarca": 6186,
+
+    "Grau": 4285,
+    "Atletico Grau": 4285,
+    "Atlético Grau": 4285,
+
+    "Juan Pablo II": 6151,
+    "Juan Pablo II College": 6151,
+
+    "Llacuabamba": 4287,
+    "Deportivo Llacuabamba": 4287,
+
+    "Moquegua": 6187,
+    "UCV Moquegua": 6187,
+
+    "Pirata": 4281,
+    "Molinos El Pirata": 4281,
+
+    "Real Garcilaso": 4221,
+
+    "Sport Boys": 4275,
+
+    "Sport Huancayo": 4264,
+
+    "Sporting Cristal": 4234,
+
+    "U. San Martin": 4276,
+    "U. San Martín": 4276,
+
+    "U. de Deportes": 4243,
+    "Universitario": 4243,
+
+    "Union Comercio": 4279,
+    "Unión Comercio": 4279
+  },
+
+  "BoliviaDivisionProfesional": {
+    "_comment": "league_ids: [344]. 27 teams in DB (2019-2025). OddsPortal names verified via Playwright scrape 2019-2025.",
+
+    "ABB": 6154,
+    "Academia del Balompie": 6154,
+
+    "Always Ready": 4258,
+
+    "Aurora": 4272,
+
+    "Blooming": 4330,
+
+    "Bolivar": 4222,
+    "Bolívar": 4222,
+
+    "Destroyers": 4350,
+    "Club Destroyers": 4350,
+
+    "GV San Jose": 4356,
+    "GV San José": 4356,
+    "Gualberto Villarroel SJ": 4356,
+
+    "Guabira": 4322,
+    "Guabirá": 4322,
+
+    "Independiente": 4263,
+    "Independiente Petrolero": 4263,
+
+    "Libertad Gran Mamore": 4353,
+    "Libertad": 4353,
+
+    "Nacional Potosi": 4265,
+    "Nacional Potosí": 4265,
+
+    "Oriente Petrolero": 4325,
+
+    "Palmaflor": 4334,
+    "Atlético Palmaflor": 4334,
+    "Atl. Palmaflor": 4334,
+
+    "Real Oruro": 4357,
+
+    "Real Potosi": 4349,
+    "Real Potosí": 4349,
+
+    "Royal Pari": 4255,
+
+    "SA Bulo Bulo": 4355,
+    "San Antonio Bulo Bulo": 4355,
+
+    "San Jose": 4231,
+    "San José": 4231,
+
+    "San Juan FC": 6153,
+    "CD IN San Juan FC": 6153,
+
+    "Santa Cruz": 4351,
+
+    "Sport Boys": 4348,
+
+    "The Strongest": 4226,
+
+    "Tomayapo": 4340,
+    "Real Tomayapo": 4340,
+
+    "U. Sucre": 4352,
+    "Club Universitario": 4352,
+
+    "Universitario de Vinto": 4341,
+
+    "Vaca Diez": 4354,
+    "Vaca Díez": 4354,
+
+    "Wilstermann": 4232,
+    "Jorge Wilstermann": 4232
+  },
+
+  "ChilePrimeraDivision": {
+    "_comment": "league_ids: [265]. 27 teams in DB (2019-2026). OddsPortal names verified via Playwright scrape 2019-2026.",
+
+    "A. Italiano": 4181,
+    "Audax Italiano": 4181,
+
+    "Antofagasta": 4174,
+
+    "Cobreloa": 4192,
+
+    "Cobresal": 4185,
+
+    "Colo Colo": 4170,
+
+    "Copiapo": 4191,
+    "Deportes Copiapo": 4191,
+
+    "Coquimbo": 4171,
+    "Coquimbo Unido": 4171,
+
+    "Curico Unido": 4173,
+
+    "D. Concepcion": 6148,
+    "Concepción": 6148,
+
+    "Deportes Iquique": 4183,
+
+    "Everton": 4176,
+    "Everton de Vina": 4176,
+    "Everton de Viña": 4176,
+
+    "Huachipato": 4178,
+
+    "La Serena": 4187,
+    "D. La Serena": 4187,
+
+    "Limache": 6147,
+    "Deportes Limache": 6147,
+
+    "Magallanes": 4190,
+
+    "Melipilla": 4188,
+    "D. Melipilla": 4188,
+
+    "Nublense": 4189,
+
+    "O'Higgins": 4172,
+
+    "Palestino": 4177,
+
+    "Rangers": 6149,
+    "Rangers de Talca": 6149,
+
+    "Recoleta": 6146,
+    "Deportivo Recoleta": 6146,
+
+    "S. Wanderers": 4186,
+    "Santiago Wanderers": 4186,
+
+    "San Marcos de Arica": 6150,
+
+    "U. Catolica": 4180,
+    "Universidad Catolica": 4180,
+
+    "U. De Chile": 4179,
+    "Universidad de Chile": 4179,
+
+    "U. De Concepcion": 4175,
+    "Universidad de Concepcion": 4175,
+
+    "U. Espanola": 4184,
+    "Union Espanola": 4184,
+    "Unión Española": 4184,
+
+    "Union La Calera": 4182
+  }
+}

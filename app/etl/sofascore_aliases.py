@@ -74,6 +74,9 @@ SOFASCORE_OVERRIDES: dict[int, list[str]] = {
     154: ["Fortaleza EC", "Fortaleza"],
     123: ["Sport Recife", "Sport"],
     134: ["Atletico Paranaense", "Athletico Paranaense", "Athletico"],
+    125: ["America Mineiro", "America MG", "América Mineiro"],
+    144: ["Atletico Goianiense", "Atletico GO", "Atlético Goianiense"],
+    132: ["Chapecoense-sc", "Chapecoense AF", "Chapecoense"],
     # Portugal
     212: ["FC Porto", "Porto"],
     762: ["GIL Vicente", "Gil Vicente"],
