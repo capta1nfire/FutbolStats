@@ -188,6 +188,9 @@ EFFICIENCY_FEATURES = ["finish_eff_home", "finish_eff_away",
                        "def_eff_home", "def_eff_away",
                        "efficiency_diff"]
 
+# ─── Wave 10: XI Continuity (ATI) ─────────────────────────────
+XI_CONTINUITY_FEATURES = ["xi_continuity_home", "xi_continuity_away", "xi_continuity_diff"]
+
 TESTS = {
     # ═══════════════════════════════════════════════════════
     # SECTION A: ANCHORS (reference points)
@@ -361,6 +364,18 @@ TESTS = {
     "P8_xg_defense_odds":   DEFENSE_PAIR + XG_CORE + XG_DEFENSE + ODDS_FEATURES,
     "P9_xg_ultimate":       (XG_ALL + ELO_FEATURES + DEFENSE_PAIR +
                              ODDS_FEATURES + OPP_ADJ_FEATURES),
+
+    # ═══════════════════════════════════════════════════════════
+    # SECTION Q: XI CONTINUITY (ATI — lineup stability signal)
+    # ═══════════════════════════════════════════════════════════
+    "Q0_xi_only":           XI_CONTINUITY_FEATURES,
+    "Q1_xi_elo":            XI_CONTINUITY_FEATURES + ELO_FEATURES,
+    "Q2_xi_elo_form":       XI_CONTINUITY_FEATURES + ELO_FEATURES + FORM_CORE,
+    "Q3_xi_defense_elo":    XI_CONTINUITY_FEATURES + DEFENSE_PAIR + ELO_FEATURES,
+    "Q4_xi_odds":           XI_CONTINUITY_FEATURES + ODDS_FEATURES,
+    "Q5_xi_elo_odds":       XI_CONTINUITY_FEATURES + ELO_FEATURES + ODDS_FEATURES,
+    "Q6_xi_full":           XI_CONTINUITY_FEATURES + DEFENSE_PAIR + ELO_FEATURES + FORM_CORE + ODDS_FEATURES,
+    "Q7_xi_xg_elo_odds":    XI_CONTINUITY_FEATURES + XG_CORE + ELO_FEATURES + ODDS_FEATURES,
 }
 
 # ─── Section O: Optuna candidates (top performers to re-tune) ────
@@ -398,13 +413,23 @@ LEAGUE_NAMES = {
     299: "Venezuela",
     344: "Bolivia",
     265: "Chile",
+    250: "Paraguay",
+    268: "Uruguay",
+    71:  "Brasil",
     94:  "Primeira Liga",
     262: "Liga MX",
+    253: "MLS",
     140: "La Liga",
     39:  "Premier League",
     135: "Serie A",
     78:  "Bundesliga",
     61:  "Ligue 1",
+}
+
+# Split-season leagues: primary league_id → all league_ids to extract together
+SPLIT_LEAGUE_IDS: dict[int, list[int]] = {
+    250: [250, 252],  # Paraguay Apertura + Clausura
+    268: [268, 270],  # Uruguay Apertura + Clausura
 }
 
 
@@ -415,6 +440,7 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
 
     Replicates feature_diagnostic._extract_via_sql() pattern
     but scoped to one league for faster iteration.
+    For split-season leagues (Paraguay, Uruguay), extracts all sub-league_ids together.
     """
     import psycopg2
     from app.config import get_settings
@@ -427,7 +453,9 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
     conn = psycopg2.connect(db_url)
     league_name = LEAGUE_NAMES.get(league_id, f"league_{league_id}")
 
-    print(f"\n  Extracting {league_name} (id={league_id})...")
+    # Split-season: extract all sub-leagues together
+    extract_ids = SPLIT_LEAGUE_IDS.get(league_id, [league_id])
+    print(f"\n  Extracting {league_name} (ids={extract_ids})...")
 
     query = """
         SELECT m.id AS match_id, m.date, m.league_id,
@@ -449,10 +477,10 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
           AND m.home_goals IS NOT NULL
           AND m.away_goals IS NOT NULL
           AND m.tainted = false
-          AND m.league_id = %s
+          AND m.league_id = ANY(%s)
         ORDER BY m.date, m.id
     """
-    matches = pd.read_sql(query, conn, params=(league_id,))
+    matches = pd.read_sql(query, conn, params=(extract_ids,))
 
     # ── Fix 0: odds_snapshot — consistent triplet, no per-column mixing ──
     has_close = (matches["odds_home_close"].notna() &
@@ -478,6 +506,21 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
     print(f"  Odds snapshot: {dict(snap_counts)} "
           f"({snap_counts.get('closing', 0) + snap_counts.get('opening', 0)}/{len(matches)} "
           f"= {(snap_counts.get('closing', 0) + snap_counts.get('opening', 0)) / len(matches) * 100:.1f}% coverage)")
+
+    # ── XI Continuity: load match_lineups ────────────────────
+    lineup_query = """
+        SELECT ml.match_id, ml.team_id, ml.starting_xi_ids
+        FROM match_lineups ml
+        JOIN matches m ON m.id = ml.match_id
+        WHERE m.league_id = ANY(%s)
+          AND m.status = 'FT'
+          AND ml.starting_xi_ids IS NOT NULL
+          AND array_length(ml.starting_xi_ids, 1) >= 7
+        ORDER BY m.date, ml.match_id
+    """
+    lineups_df = pd.read_sql(lineup_query, conn, params=(extract_ids,))
+    print(f"  Lineups loaded: {len(lineups_df)} rows")
+
     conn.close()
     print(f"  Raw matches: {len(matches)}")
 
@@ -658,14 +701,86 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
     df = compute_elo_goals(df)
     df = compute_all_experimental_features(df)
 
+    # ── XI Continuity (Section Q) ────────────────────────────
+    XI_WINDOW = 15
+    print("  Computing XI continuity...")
+    if not lineups_df.empty:
+        # Build lookup: match_id -> {team_id -> starting_xi_ids}
+        lineup_lookup: dict[int, dict[int, list[int]]] = {}
+        for _, lrow in lineups_df.iterrows():
+            mid = lrow["match_id"]
+            tid = lrow["team_id"]
+            xi = lrow["starting_xi_ids"]
+            if isinstance(xi, list) and len(xi) >= 7:
+                lineup_lookup.setdefault(mid, {})[tid] = xi
+
+        # Chronological pass (PIT-safe: update history AFTER computing)
+        df = df.sort_values("date").reset_index(drop=True)
+        xi_home_col: list[float | None] = []
+        xi_away_col: list[float | None] = []
+        team_xi_history: dict[int, list[list[int]]] = {}
+
+        for _, row in df.iterrows():
+            mid = row["match_id"]
+            h_id = row["home_team_id"]
+            a_id = row["away_team_id"]
+            match_xis = lineup_lookup.get(mid, {})
+
+            h_xi = match_xis.get(h_id)
+            a_xi = match_xis.get(a_id)
+
+            # Home xi_continuity
+            h_hist = team_xi_history.get(h_id, [])
+            if h_xi and len(h_hist) >= 3:
+                window = h_hist[-XI_WINDOW:]
+                n = len(window)
+                pcounts: dict[int, int] = {}
+                for past_xi in window:
+                    for pid in past_xi:
+                        pcounts[pid] = pcounts.get(pid, 0) + 1
+                rates = [pcounts.get(pid, 0) / n for pid in h_xi]
+                xi_home_col.append(round(sum(rates) / len(rates), 4))
+            else:
+                xi_home_col.append(None)
+
+            # Away xi_continuity
+            a_hist = team_xi_history.get(a_id, [])
+            if a_xi and len(a_hist) >= 3:
+                window = a_hist[-XI_WINDOW:]
+                n = len(window)
+                pcounts2: dict[int, int] = {}
+                for past_xi in window:
+                    for pid in past_xi:
+                        pcounts2[pid] = pcounts2.get(pid, 0) + 1
+                rates = [pcounts2.get(pid, 0) / n for pid in a_xi]
+                xi_away_col.append(round(sum(rates) / len(rates), 4))
+            else:
+                xi_away_col.append(None)
+
+            # Update histories AFTER computing (PIT-safe)
+            if h_xi:
+                team_xi_history.setdefault(h_id, []).append(h_xi)
+            if a_xi:
+                team_xi_history.setdefault(a_id, []).append(a_xi)
+
+        df["xi_continuity_home"] = xi_home_col
+        df["xi_continuity_away"] = xi_away_col
+        df["xi_continuity_diff"] = df["xi_continuity_home"] - df["xi_continuity_away"]
+    else:
+        df["xi_continuity_home"] = None
+        df["xi_continuity_away"] = None
+        df["xi_continuity_diff"] = None
+
     # Coverage report
     n_total = len(df)
     n_odds = df[ODDS_FEATURES].notna().all(axis=1).sum()
     n_elo = df["elo_home"].notna().sum()
     n_xg = df["home_xg_for_avg"].notna().sum()
+    n_xi = df["xi_continuity_home"].notna().sum()
     print(f"  Final: {n_total} matches | Odds: {n_odds}/{n_total} ({100*n_odds/n_total:.0f}%) "
           f"| Elo: {n_elo}/{n_total} ({100*n_elo/n_total:.0f}%) "
-          f"| xG: {n_xg}/{n_total} ({100*n_xg/n_total:.0f}%)")
+          f"| xG: {n_xg}/{n_total} ({100*n_xg/n_total:.0f}%) "
+          f"| XI: {n_xi}/{n_total} ({100*n_xi/n_total:.0f}%)")
 
     # Save
     out_path = Path(output_dir) / f"lab_data_{league_id}.csv"
@@ -1434,6 +1549,7 @@ def compute_all_experimental_features(df: pd.DataFrame) -> pd.DataFrame:
 # All optional feature groups that define universe boundaries
 _ODDS_SET = set(ODDS_FEATURES)
 _XG_SET = set(XG_ALL)  # XG_CORE + XG_DEFENSE + XG_OVERPERF
+_XI_SET = set(XI_CONTINUITY_FEATURES)
 
 
 def classify_test_universe(feature_names: list) -> str:
@@ -1441,13 +1557,15 @@ def classify_test_universe(feature_names: list) -> str:
     feats = set(feature_names)
     needs_odds = bool(feats & _ODDS_SET)
     needs_xg = bool(feats & _XG_SET)
-    if needs_odds and needs_xg:
-        return "odds_xg"
-    elif needs_odds:
-        return "odds"
-    elif needs_xg:
-        return "xg"
-    return "base"
+    needs_xi = bool(feats & _XI_SET)
+    parts = []
+    if needs_xi:
+        parts.append("xi")
+    if needs_odds:
+        parts.append("odds")
+    if needs_xg:
+        parts.append("xg")
+    return "_".join(parts) if parts else "base"
 
 
 def compute_universes(df: pd.DataFrame, tests_dict: dict) -> dict:
@@ -1457,16 +1575,22 @@ def compute_universes(df: pd.DataFrame, tests_dict: dict) -> dict:
     with NaN-free base features. Tests within the same universe share identical
     N, split_idx, and split_date.
 
-    Universes:
-      - base:    all non-optional features present (no odds, no xG required)
-      - odds:    base ∩ valid odds triplet (odds_home > 1.0)
-      - xg:      base ∩ xG core present
-      - odds_xg: base ∩ odds ∩ xG core
+    Universes (2^3 possible, only those needed are populated):
+      - base:        all non-optional features present
+      - odds:        base ∩ valid odds triplet (odds_home > 1.0)
+      - xg:          base ∩ xG core present
+      - odds_xg:     base ∩ odds ∩ xG
+      - xi:          base ∩ xi_continuity present
+      - xi_odds:     base ∩ xi ∩ odds
+      - xi_xg:       base ∩ xi ∩ xG
+      - xi_odds_xg:  base ∩ xi ∩ odds ∩ xG
     """
+    _ALL_OPTIONAL = _ODDS_SET | _XG_SET | _XI_SET
+
     # Collect all "base" features (non-optional) across all tests
     all_base_feats = set()
     for feats in tests_dict.values():
-        non_optional = [f for f in feats if f not in _ODDS_SET and f not in _XG_SET]
+        non_optional = [f for f in feats if f not in _ALL_OPTIONAL]
         all_base_feats.update(non_optional)
 
     # Only keep features that actually exist in the dataframe
@@ -1480,37 +1604,37 @@ def compute_universes(df: pd.DataFrame, tests_dict: dict) -> dict:
     df_base = df.dropna(subset=available_base).copy()
     df_base = df_base.sort_values(["date", "match_id"]).reset_index(drop=True)
 
-    # Universe: odds (base + valid odds triplet)
+    # Determine which universes are actually needed
+    needed = set()
+    for feats in tests_dict.values():
+        needed.add(classify_test_universe(feats))
+
+    # Build filter masks on df_base
     odds_mask = (df_base["odds_home"].notna() &
                  df_base["odds_draw"].notna() &
                  df_base["odds_away"].notna() &
                  (df_base["odds_home"] > 1.0))
-    df_odds = df_base[odds_mask].copy().reset_index(drop=True)
 
-    # Universe: xg (base + xG core available)
     xg_cols = [c for c in XG_CORE if c in df_base.columns]
-    if xg_cols:
-        xg_mask = df_base[xg_cols].notna().all(axis=1)
-        df_xg = df_base[xg_mask].copy().reset_index(drop=True)
-    else:
-        df_xg = pd.DataFrame()
+    xg_mask = df_base[xg_cols].notna().all(axis=1) if xg_cols else pd.Series(False, index=df_base.index)
 
-    # Universe: odds_xg (intersection)
-    if not df_xg.empty:
-        oxg_mask = (df_xg["odds_home"].notna() &
-                    df_xg["odds_draw"].notna() &
-                    df_xg["odds_away"].notna() &
-                    (df_xg["odds_home"] > 1.0))
-        df_odds_xg = df_xg[oxg_mask].copy().reset_index(drop=True)
-    else:
-        df_odds_xg = pd.DataFrame()
+    xi_cols = [c for c in XI_CONTINUITY_FEATURES if c in df_base.columns]
+    xi_mask = df_base[xi_cols].notna().all(axis=1) if xi_cols else pd.Series(False, index=df_base.index)
 
-    universes = {
-        "base": df_base,
-        "odds": df_odds,
-        "xg": df_xg,
-        "odds_xg": df_odds_xg,
-    }
+    # Build universes
+    universes: dict[str, pd.DataFrame] = {"base": df_base}
+
+    def _add(uid: str, mask: pd.Series) -> None:
+        if uid in needed:
+            universes[uid] = df_base[mask].copy().reset_index(drop=True)
+
+    _add("odds", odds_mask)
+    _add("xg", xg_mask)
+    _add("odds_xg", odds_mask & xg_mask)
+    _add("xi", xi_mask)
+    _add("xi_odds", xi_mask & odds_mask)
+    _add("xi_xg", xi_mask & xg_mask)
+    _add("xi_odds_xg", xi_mask & odds_mask & xg_mask)
 
     # Report
     for uid, udf in universes.items():

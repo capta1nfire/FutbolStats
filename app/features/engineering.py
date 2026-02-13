@@ -487,6 +487,78 @@ def calculate_xi_features(
     return features
 
 
+async def compute_xi_continuity(
+    session: AsyncSession,
+    team_id: int,
+    match_date: datetime,
+    starting_xi_ids: list[int],
+    window: int = 15,
+) -> Optional[float]:
+    """
+    Compute XI continuity score for a team's lineup.
+
+    For each player in today's XI, calculate start_rate = times started
+    in the team's last `window` matches / window.
+    xi_continuity = mean(start_rate of the 11 starters).
+
+    Range: 0.0 (no regular starters) to 1.0 (all regular starters).
+
+    PIT-safe: only uses matches with date < match_date.
+
+    Args:
+        session: Database session.
+        team_id: Internal team ID.
+        match_date: Kickoff datetime (PIT boundary).
+        starting_xi_ids: API-Football player IDs of current starting XI.
+        window: Number of recent matches to consider.
+
+    Returns:
+        Float 0.0-1.0, or None if insufficient data.
+    """
+    if not starting_xi_ids:
+        return None
+
+    # Fetch starting_xi_ids from the team's last `window` matches (PIT-safe)
+    result = await session.execute(
+        text("""
+            SELECT ml.starting_xi_ids
+            FROM match_lineups ml
+            JOIN matches m ON m.id = ml.match_id
+            WHERE ml.team_id = :team_id
+              AND m.date < :match_date
+              AND m.status IN ('FT', 'AET', 'PEN')
+              AND ml.starting_xi_ids IS NOT NULL
+              AND array_length(ml.starting_xi_ids, 1) >= 7
+            ORDER BY m.date DESC
+            LIMIT :window
+        """),
+        {"team_id": team_id, "match_date": match_date, "window": window},
+    )
+    rows = result.fetchall()
+
+    if len(rows) < 3:
+        return None  # Not enough history
+
+    n_matches = len(rows)
+
+    # Count how often each player_id appeared as starter
+    player_counts: dict[int, int] = {}
+    for row in rows:
+        for pid in row.starting_xi_ids:
+            player_counts[pid] = player_counts.get(pid, 0) + 1
+
+    # Calculate start_rate for each player in today's XI
+    start_rates = []
+    for pid in starting_xi_ids:
+        rate = player_counts.get(pid, 0) / n_matches
+        start_rates.append(rate)
+
+    if not start_rates:
+        return None
+
+    return round(sum(start_rates) / len(start_rates), 4)
+
+
 async def load_team_kickoff_history(
     session: AsyncSession,
     team_id: int,
@@ -1436,6 +1508,37 @@ class FeatureEngineer:
             # Restaurar fecha original (importante si match está en session)
             match.date = orig_date
 
+    @staticmethod
+    def _extract_odds_triplet(match) -> tuple:
+        """Extract odds using triplet-atomic logic: closing > opening > None.
+
+        PIT guardrail: if odds_recorded_at exists and is AFTER match.date,
+        treat closing odds as missing (potential leakage).
+        Never mixes closing and opening within the same match.
+        """
+        # Check closing triplet (with PIT guard)
+        has_close = (
+            match.odds_home is not None
+            and match.odds_draw is not None
+            and match.odds_away is not None
+        )
+        if has_close and match.odds_recorded_at and match.date:
+            if match.odds_recorded_at > match.date:
+                has_close = False  # PIT violation: odds captured after kickoff
+
+        # Check opening triplet
+        has_open = (
+            match.opening_odds_home is not None
+            and match.opening_odds_draw is not None
+            and match.opening_odds_away is not None
+        )
+
+        if has_close:
+            return match.odds_home, match.odds_draw, match.odds_away
+        elif has_open:
+            return match.opening_odds_home, match.opening_odds_draw, match.opening_odds_away
+        return None, None, None
+
     async def build_training_dataset(
         self,
         min_date: Optional[datetime] = None,
@@ -1513,10 +1616,11 @@ class FeatureEngineer:
                 features["home_goals"] = match.home_goals
                 features["away_goals"] = match.away_goals
 
-                # Add odds if available
-                features["odds_home"] = match.odds_home
-                features["odds_draw"] = match.odds_draw
-                features["odds_away"] = match.odds_away
+                # Add odds: closing > opening > None (triplet-atomic, PIT-safe)
+                oh, od, oa = self._extract_odds_triplet(match)
+                features["odds_home"] = oh
+                features["odds_draw"] = od
+                features["odds_away"] = oa
 
                 rows.append(features)
 
@@ -1598,10 +1702,11 @@ class FeatureEngineer:
                 features["home_goals"] = match.home_goals
                 features["away_goals"] = match.away_goals
 
-                # Add odds if available
-                features["odds_home"] = match.odds_home
-                features["odds_draw"] = match.odds_draw
-                features["odds_away"] = match.odds_away
+                # Add odds: closing > opening > None (triplet-atomic, PIT-safe)
+                oh, od, oa = self._extract_odds_triplet(match)
+                features["odds_home"] = oh
+                features["odds_draw"] = od
+                features["odds_away"] = oa
 
                 rows.append(features)
 
@@ -1744,9 +1849,11 @@ class FeatureEngineer:
                 # External IDs for team override resolution
                 features["home_team_external_id"] = match.home_team.external_id if match.home_team else None
                 features["away_team_external_id"] = match.away_team.external_id if match.away_team else None
-                features["odds_home"] = match.odds_home
-                features["odds_draw"] = match.odds_draw
-                features["odds_away"] = match.odds_away
+                # Add odds: closing > opening > None (triplet-atomic, PIT-safe)
+                oh, od, oa = self._extract_odds_triplet(match)
+                features["odds_home"] = oh
+                features["odds_draw"] = od
+                features["odds_away"] = oa
                 # Include match status and score for iOS display
                 features["status"] = match.status
                 features["elapsed"] = match.elapsed  # Current minute for live matches
