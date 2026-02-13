@@ -132,6 +132,16 @@ class Match(SQLModel, table=True):
     odds_away: Optional[float] = Field(default=None, description="Bookmaker odds for away win")
     odds_recorded_at: Optional[datetime] = Field(default=None, description="When odds were last recorded")
 
+    # Historical/backfill odds (FDUK, OddsPortal, Sofascore)
+    opening_odds_home: Optional[float] = Field(default=None)
+    opening_odds_draw: Optional[float] = Field(default=None)
+    opening_odds_away: Optional[float] = Field(default=None)
+    opening_odds_source: Optional[str] = Field(default=None, max_length=100)
+    opening_odds_kind: Optional[str] = Field(default=None, max_length=50)
+    opening_odds_column: Optional[str] = Field(default=None, max_length=50)
+    opening_odds_recorded_at: Optional[datetime] = Field(default=None)
+    opening_odds_recorded_at_type: Optional[str] = Field(default=None, max_length=50)
+
     # Venue information
     venue_name: Optional[str] = Field(default=None, max_length=255, description="Stadium name")
     venue_city: Optional[str] = Field(default=None, max_length=100, description="Stadium city")
@@ -1471,6 +1481,56 @@ class MatchSofascoreLineup(SQLModel, table=True):
 
     # Point-in-time tracking
     captured_at: datetime = Field(default_factory=datetime.utcnow, description="When snapshot was captured (UTC)")
+
+
+class Player(SQLModel, table=True):
+    """
+    Player catalog from API-Football squads endpoint.
+
+    Used to cross-reference with match_lineups.starting_xi_ids for XI continuity.
+    external_id is the API-Football player ID (same as in lineups and injuries).
+    """
+
+    __tablename__ = "players"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    external_id: int = Field(unique=True, index=True, description="API-Football player ID")
+    name: str = Field(max_length=200, description="Player full name")
+    position: Optional[str] = Field(default=None, max_length=20, description="Goalkeeper/Defender/Midfielder/Attacker")
+    team_id: Optional[int] = Field(default=None, foreign_key="teams.id", description="Current team (internal ID)")
+    team_external_id: Optional[int] = Field(default=None, description="Current team (API-Football ID)")
+    jersey_number: Optional[int] = Field(default=None, description="Squad number")
+    age: Optional[int] = Field(default=None, description="Current age from API")
+    photo_url: Optional[str] = Field(default=None, max_length=500, description="Player headshot URL")
+    last_synced_at: Optional[datetime] = Field(default_factory=datetime.utcnow, description="Last sync timestamp")
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow, description="Row creation timestamp")
+
+
+class MatchLineup(SQLModel, table=True):
+    """
+    API-Football lineup per match/team.
+
+    Stores starting XI IDs, substitute IDs, formation, and coach.
+    starting_xi_ids are API-Football player IDs that cross-reference with players.external_id.
+    """
+
+    __tablename__ = "match_lineups"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    match_id: int = Field(foreign_key="matches.id", description="Internal match ID")
+    team_id: int = Field(foreign_key="teams.id", description="Internal team ID")
+    is_home: bool = Field(description="True if home team")
+    formation: Optional[str] = Field(default=None, max_length=20, description="e.g. 4-3-3")
+    starting_xi_ids: list = Field(sa_column=Column(JSON), description="API-Football player IDs [int]")
+    starting_xi_names: list = Field(sa_column=Column(JSON), description="Player names [str]")
+    starting_xi_positions: list = Field(sa_column=Column(JSON), description="Player positions [str]")
+    substitutes_ids: list = Field(sa_column=Column(JSON), description="Substitute player IDs [int]")
+    substitutes_names: list = Field(sa_column=Column(JSON), description="Substitute names [str]")
+    coach_id: Optional[int] = Field(default=None, description="Coach API-Football ID")
+    coach_name: Optional[str] = Field(default=None, max_length=200)
+    lineup_confirmed_at: Optional[datetime] = Field(default=None, description="When lineup was confirmed")
+    source: Optional[str] = Field(default=None, max_length=50, description="e.g. api-football")
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
 
 
 class OpsSetting(SQLModel, table=True):

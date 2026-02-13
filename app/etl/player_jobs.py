@@ -507,6 +507,270 @@ async def _detect_and_record_change(
 
 
 # ---------------------------------------------------------------------------
+# Job 3: sync_squads
+# ---------------------------------------------------------------------------
+
+async def sync_squads(
+    session: AsyncSession,
+    leagues: Optional[list[int]] = None,
+) -> dict:
+    """
+    Fetch squads for all active teams, upsert into players table.
+
+    For each team:
+      1. GET /players/squads?team={ext_id} → list of players
+      2. UPSERT into players table by external_id
+
+    Args:
+        session: Async DB session
+        leagues: Override league list (default: TRACKED_LEAGUES)
+
+    Returns:
+        Metrics dict
+    """
+    metrics = {
+        "teams_attempted": 0,
+        "teams_ok": 0,
+        "players_upserted": 0,
+        "errors": 0,
+        "error_details": [],
+    }
+
+    target_leagues = leagues or TRACKED_LEAGUES
+    active_teams = await _get_active_teams(session, target_leagues)
+    logger.info(f"[SQUAD_SYNC] Found {len(active_teams)} active teams across {len(target_leagues)} leagues")
+
+    provider = APIFootballProvider()
+
+    try:
+        for team in active_teams:
+            metrics["teams_attempted"] += 1
+            team_id = team["id"]
+            team_ext_id = team["external_id"]
+            team_name = team["name"]
+
+            try:
+                players = await provider.get_players_squad(team_ext_id)
+
+                if not players:
+                    logger.debug(f"[SQUAD_SYNC] No squad data for {team_name} (ext={team_ext_id})")
+                    metrics["teams_ok"] += 1
+                    continue
+
+                await session.execute(text("SAVEPOINT sp_squad"))
+                try:
+                    for p in players:
+                        await session.execute(
+                            text("""
+                                INSERT INTO players
+                                    (external_id, name, position, team_id, team_external_id,
+                                     jersey_number, age, photo_url, last_synced_at)
+                                VALUES
+                                    (:ext_id, :name, :position, :team_id, :team_ext_id,
+                                     :number, :age, :photo, NOW())
+                                ON CONFLICT (external_id) DO UPDATE SET
+                                    name = EXCLUDED.name,
+                                    position = EXCLUDED.position,
+                                    team_id = EXCLUDED.team_id,
+                                    team_external_id = EXCLUDED.team_external_id,
+                                    jersey_number = EXCLUDED.jersey_number,
+                                    age = EXCLUDED.age,
+                                    photo_url = EXCLUDED.photo_url,
+                                    last_synced_at = NOW()
+                            """),
+                            {
+                                "ext_id": p["id"],
+                                "name": p.get("name", "Unknown"),
+                                "position": p.get("position"),
+                                "team_id": team_id,
+                                "team_ext_id": team_ext_id,
+                                "number": p.get("number"),
+                                "age": p.get("age"),
+                                "photo": p.get("photo"),
+                            },
+                        )
+                        metrics["players_upserted"] += 1
+
+                    await session.execute(text("RELEASE SAVEPOINT sp_squad"))
+                except Exception:
+                    await session.execute(text("ROLLBACK TO SAVEPOINT sp_squad"))
+                    raise
+
+                metrics["teams_ok"] += 1
+
+            except Exception as e:
+                metrics["errors"] += 1
+                metrics["error_details"].append(f"team={team_name}: {e}")
+                logger.error(f"[SQUAD_SYNC] Error for {team_name}: {e}")
+
+        await session.commit()
+
+    except Exception as e:
+        metrics["errors"] += 1
+        logger.error(f"[SQUAD_SYNC] Fatal error: {e}", exc_info=True)
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+    finally:
+        await provider.close()
+
+    logger.info(
+        f"[SQUAD_SYNC] Complete: teams={metrics['teams_ok']}/{metrics['teams_attempted']}, "
+        f"players={metrics['players_upserted']}, errors={metrics['errors']}"
+    )
+    return metrics
+
+
+# ---------------------------------------------------------------------------
+# Job 4: sync_match_lineups
+# ---------------------------------------------------------------------------
+
+async def sync_match_lineups(
+    session: AsyncSession,
+    lookback_hours: int = 48,
+    max_fixtures: int = 50,
+) -> dict:
+    """
+    Fetch lineups for recent FT matches that don't have lineup data yet.
+
+    Runs periodically (every 6h) to catch newly finished matches.
+    Similar pattern to stats_backfill: find gaps, fill them.
+
+    Args:
+        session: Async DB session
+        lookback_hours: How far back to look for FT matches (default 48h)
+        max_fixtures: Max API calls per run (default 50)
+
+    Returns:
+        Metrics dict
+    """
+    metrics = {
+        "checked": 0,
+        "fetched": 0,
+        "inserted": 0,
+        "no_data": 0,
+        "errors": 0,
+        "error_details": [],
+    }
+
+    # Find FT matches without lineups
+    result = await session.execute(
+        text("""
+            SELECT m.id as match_id, m.external_id, m.home_team_id, m.away_team_id
+            FROM matches m
+            LEFT JOIN (SELECT DISTINCT match_id FROM match_lineups) ml ON ml.match_id = m.id
+            WHERE m.status IN ('FT', 'AET', 'PEN')
+              AND m.date >= NOW() - make_interval(hours => :lookback)
+              AND m.external_id IS NOT NULL
+              AND ml.match_id IS NULL
+            ORDER BY m.date DESC
+            LIMIT :max_fix
+        """),
+        {"lookback": lookback_hours, "max_fix": max_fixtures},
+    )
+    matches = result.fetchall()
+    metrics["checked"] = len(matches)
+
+    if not matches:
+        logger.info("[LINEUP_SYNC] No FT matches need lineups")
+        return metrics
+
+    logger.info(f"[LINEUP_SYNC] Found {len(matches)} FT matches without lineups")
+
+    provider = APIFootballProvider()
+
+    try:
+        for match in matches:
+            match_id = match.match_id
+            fixture_ext_id = match.external_id
+
+            try:
+                lineups = await provider.get_lineups(fixture_ext_id)
+                metrics["fetched"] += 1
+
+                if not lineups or (not lineups.get("home") and not lineups.get("away")):
+                    metrics["no_data"] += 1
+                    continue
+
+                await session.execute(text("SAVEPOINT sp_lineup"))
+                try:
+                    for side, is_home in [("home", True), ("away", False)]:
+                        lineup = lineups.get(side)
+                        if not lineup:
+                            continue
+
+                        team_id = match.home_team_id if is_home else match.away_team_id
+
+                        xi_ids = [p["id"] for p in lineup.get("starting_xi", [])]
+                        xi_names = [p["name"] for p in lineup.get("starting_xi", [])]
+                        xi_positions = [p.get("pos", "") for p in lineup.get("starting_xi", [])]
+                        sub_ids = [p["id"] for p in lineup.get("substitutes", [])]
+                        sub_names = [p["name"] for p in lineup.get("substitutes", [])]
+
+                        coach = lineup.get("coach") or {}
+
+                        await session.execute(
+                            text("""
+                                INSERT INTO match_lineups
+                                    (match_id, team_id, is_home, formation,
+                                     starting_xi_ids, starting_xi_names, starting_xi_positions,
+                                     substitutes_ids, substitutes_names,
+                                     coach_id, coach_name, source, created_at)
+                                VALUES
+                                    (:match_id, :team_id, :is_home, :formation,
+                                     CAST(:xi_ids AS INTEGER[]), CAST(:xi_names AS VARCHAR[]),
+                                     CAST(:xi_positions AS VARCHAR[]),
+                                     CAST(:sub_ids AS INTEGER[]), CAST(:sub_names AS VARCHAR[]),
+                                     :coach_id, :coach_name, 'api-football', NOW())
+                                ON CONFLICT (match_id, team_id) DO NOTHING
+                            """),
+                            {
+                                "match_id": match_id,
+                                "team_id": team_id,
+                                "is_home": is_home,
+                                "formation": lineup.get("formation"),
+                                "xi_ids": xi_ids,
+                                "xi_names": xi_names,
+                                "xi_positions": xi_positions,
+                                "sub_ids": sub_ids,
+                                "sub_names": sub_names,
+                                "coach_id": coach.get("id"),
+                                "coach_name": coach.get("name"),
+                            },
+                        )
+                        metrics["inserted"] += 1
+
+                    await session.execute(text("RELEASE SAVEPOINT sp_lineup"))
+                except Exception:
+                    await session.execute(text("ROLLBACK TO SAVEPOINT sp_lineup"))
+                    raise
+
+            except Exception as e:
+                metrics["errors"] += 1
+                metrics["error_details"].append(f"fixture={fixture_ext_id}: {e}")
+                logger.error(f"[LINEUP_SYNC] Error for fixture {fixture_ext_id}: {e}")
+
+        await session.commit()
+
+    except Exception as e:
+        metrics["errors"] += 1
+        logger.error(f"[LINEUP_SYNC] Fatal error: {e}", exc_info=True)
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+    finally:
+        await provider.close()
+
+    logger.info(
+        f"[LINEUP_SYNC] Complete: checked={metrics['checked']}, "
+        f"inserted={metrics['inserted']}, no_data={metrics['no_data']}, errors={metrics['errors']}"
+    )
+    return metrics
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
