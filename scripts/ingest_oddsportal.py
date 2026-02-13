@@ -66,6 +66,7 @@ SECTION_CONFIG = {
     "BrasilSerieA":             {"league_ids": [71],       "prefix": "brazil-serie-a"},
     "MexicoLigaMX":             {"league_ids": [262],      "prefix": "mexico-liga-mx"},
     "MLS":                      {"league_ids": [253],      "prefix": "usa-mls"},
+    "SaudiProLeague":           {"league_ids": [307],      "prefix": "saudi"},
 }
 
 # Bookmaker priority for odds extraction (ABE P0)
@@ -201,29 +202,55 @@ async def match_op_to_db(
 
     # Parse match date (OddsHarvester appends " UTC" suffix)
     date_str = op_match.get("match_date", "").replace(" UTC", "").strip()
-    try:
-        match_date = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
-    except ValueError:
+    match_date = None
+    if date_str:
         try:
-            match_date = datetime.strptime(date_str, "%Y-%m-%d")
+            match_date = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
         except ValueError:
+            try:
+                match_date = datetime.strptime(date_str, "%Y-%m-%d")
+            except ValueError:
+                pass  # Fall through to dateless mode
+
+    if match_date:
+        # Date-based matching: ±2 day tolerance
+        rows = await conn.fetch("""
+            SELECT id, league_id, home_goals, away_goals, opening_odds_home
+            FROM matches
+            WHERE home_team_id = $1
+              AND away_team_id = $2
+              AND league_id = ANY($3::int[])
+              AND ABS(EXTRACT(EPOCH FROM (date - $4::timestamp))) < 172800
+              AND status IN ('FT', 'AET', 'PEN')
+            ORDER BY ABS(EXTRACT(EPOCH FROM (date - $4::timestamp)))
+            LIMIT 1
+        """, home_id, away_id, league_ids, match_date)
+    else:
+        # Dateless matching: use season + score for disambiguation
+        season = op_match.get("season")
+        op_hs = op_match.get("home_score")
+        op_as = op_match.get("away_score")
+        if season and op_hs is not None and op_as is not None:
+            rows = await conn.fetch("""
+                SELECT id, league_id, home_goals, away_goals, opening_odds_home
+                FROM matches
+                WHERE home_team_id = $1
+                  AND away_team_id = $2
+                  AND league_id = ANY($3::int[])
+                  AND season = $4
+                  AND home_goals = $5
+                  AND away_goals = $6
+                  AND status IN ('FT', 'AET', 'PEN')
+                ORDER BY date
+            """, home_id, away_id, league_ids, season, int(op_hs), int(op_as))
+            # Ambiguous: multiple matches with same teams+score+season → skip
+            if len(rows) > 1:
+                return None, f"ambiguous:{home_name} vs {away_name} season={season} score={op_hs}-{op_as} ({len(rows)} matches)"
+        else:
             return None, f"bad_date:{date_str}"
 
-    # Query DB with ±1 day tolerance, league_id = ANY(...)
-    rows = await conn.fetch("""
-        SELECT id, league_id, home_goals, away_goals, opening_odds_home
-        FROM matches
-        WHERE home_team_id = $1
-          AND away_team_id = $2
-          AND league_id = ANY($3::int[])
-          AND ABS(EXTRACT(EPOCH FROM (date - $4::timestamp))) < 172800
-          AND status IN ('FT', 'AET', 'PEN')
-        ORDER BY ABS(EXTRACT(EPOCH FROM (date - $4::timestamp)))
-        LIMIT 1
-    """, home_id, away_id, league_ids, match_date)
-
     if not rows:
-        return None, f"no_db_match:{home_name} vs {away_name} on {date_str}"
+        return None, f"no_db_match:{home_name} vs {away_name} season={op_match.get('season', '?')}"
 
     row = rows[0]
 

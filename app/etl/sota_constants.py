@@ -97,37 +97,65 @@ LEAGUE_PROXY_COUNTRY: dict[int, str] = {
 # FotMob league ID mapping (API-Football ID → FotMob league ID)
 # Only CONFIRMED entries are processed by jobs (see FOTMOB_CONFIRMED_XG_LEAGUES).
 LEAGUE_ID_TO_FOTMOB: dict[int, int] = {
-    128: 112,   # Argentina Primera División (CONFIRMED)
-    71: 268,    # Brazil Serie A (CONFIRMED 2026-02-11)
-    239: 274,   # Colombia Primera A (CONFIRMED 2026-02-09)
-    250: 14056, # Paraguay Apertura (TBD: verify)
-    252: 14056, # Paraguay Clausura (TBD: verify)
-    265: 11653, # Chile Primera División (TBD: verify)
-    242: 14064, # Ecuador Liga Pro (TBD: verify)
-    268: 13475, # Uruguay Apertura (TBD: verify)
-    270: 13475, # Uruguay Clausura (TBD: verify)
-    281: 14070, # Perú Liga 1 (TBD: verify)
-    299: 17015, # Venezuela Primera División (TBD: verify)
-    344: 15736, # Bolivia Primera División (TBD: verify)
-    253: 130,   # MLS (TBD: verify)
-    262: 230,   # Mexico Liga MX (TBD: verify)
-    307: 955,   # Saudi Pro League (TBD: verify)
-    88: 57,     # Eredivisie (TBD: verify)
-    94: 61,     # Primeira Liga (TBD: verify)
-    144: 54,    # Belgian Pro League (TBD: verify)
-    203: 71,    # Süper Lig (TBD: verify)
-    40: 47,     # EFL Championship (TBD: verify)
-    2: 42,      # Champions League (TBD: verify)
-    3: 73,      # Europa League (TBD: verify)
-    848: 10216, # Conference League (TBD: verify)
+    # LATAM — xG confirmed
+    128: 112,   # Argentina Primera División (CONFIRMED 2026-02-08, xG YES)
+    71: 268,    # Brazil Serie A (CONFIRMED 2026-02-11, xG YES)
+    239: 274,   # Colombia Primera A (CONFIRMED 2026-02-09, xG YES 2025+)
+    253: 130,   # MLS (CONFIRMED 2026-02-12, xG YES)
+    262: 230,   # Mexico Liga MX (CONFIRMED 2026-02-12, xG YES)
+    # LATAM — NO xG (Opta not deployed)
+    250: 199,   # Paraguay Apertura (VERIFIED 2026-02-12, NO xG)
+    252: 199,   # Paraguay Clausura (VERIFIED 2026-02-12, NO xG)
+    268: 161,   # Uruguay Apertura (VERIFIED 2026-02-12, NO xG)
+    270: 161,   # Uruguay Clausura (VERIFIED 2026-02-12, NO xG)
+    265: 273,   # Chile Primera División (VERIFIED 2026-02-12, NO xG)
+    242: 246,   # Ecuador Liga Pro (VERIFIED 2026-02-12, season not started)
+    281: 131,   # Perú Liga 1 (VERIFIED 2026-02-12, NO xG)
+    299: 339,   # Venezuela Primera División (VERIFIED 2026-02-12, NO xG)
+    344: 144,   # Bolivia Primera División (VERIFIED 2026-02-12, NO xG)
+    # Europe Secondary — xG confirmed
+    88: 57,     # Eredivisie (CONFIRMED 2026-02-12, xG YES)
+    94: 61,     # Primeira Liga (CONFIRMED 2026-02-12, xG YES)
+    144: 40,    # Belgian Pro League (CONFIRMED 2026-02-12, xG YES)
+    203: 71,    # Süper Lig (CONFIRMED 2026-02-12, xG YES)
+    40: 48,     # EFL Championship (CONFIRMED 2026-02-12, xG YES)
+    # Middle East
+    307: 536,   # Saudi Pro League (CONFIRMED 2026-02-12, xG YES)
+    # UEFA (TBD: verify)
+    2: 42,      # Champions League (TBD)
+    3: 73,      # Europa League (TBD)
+    848: 10216, # Conference League (TBD)
 }
 
 # P0-8: Only confirmed leagues are eligible for FotMob jobs.
 # Jobs enforce: eligible = parsed_config ∩ FOTMOB_CONFIRMED_XG_LEAGUES
 FOTMOB_CONFIRMED_XG_LEAGUES: set[int] = {
+    # LATAM
     128,  # Argentina Primera División (CONFIRMED 2026-02-08)
-    239,  # Colombia Primera A (CONFIRMED 2026-02-09)
+    239,  # Colombia Primera A (CONFIRMED 2026-02-09, 2025+ only)
     71,   # Brazil Serie A (CONFIRMED 2026-02-11)
+    253,  # MLS (CONFIRMED 2026-02-12)
+    262,  # Mexico Liga MX (CONFIRMED 2026-02-12)
+    # Europe Secondary
+    88,   # Eredivisie (CONFIRMED 2026-02-12)
+    94,   # Primeira Liga (CONFIRMED 2026-02-12)
+    144,  # Belgian Pro League (CONFIRMED 2026-02-12)
+    203,  # Süper Lig (CONFIRMED 2026-02-12)
+    40,   # EFL Championship (CONFIRMED 2026-02-12)
+    # Middle East
+    307,  # Saudi Pro League (CONFIRMED 2026-02-12)
+}
+
+# FotMob cross-year season leagues: FotMob API requires "YYYY/YYYY" format
+# (e.g. season=2024/2025 instead of season=2024).
+# Single-year leagues (Argentina, Brazil, MLS, etc.) use plain int.
+FOTMOB_CROSS_YEAR_SEASON_LEAGUES: set[int] = {
+    88,   # Eredivisie
+    94,   # Primeira Liga
+    144,  # Belgian Pro League
+    203,  # Süper Lig
+    40,   # EFL Championship
+    307,  # Saudi Pro League
 }
 
 # FotMob split-season leagues: season param requires string like "2024 - Clausura"
@@ -135,3 +163,15 @@ FOTMOB_CONFIRMED_XG_LEAGUES: set[int] = {
 FOTMOB_SPLIT_SEASON_LEAGUES: dict[int, list[str]] = {
     239: ["Apertura", "Clausura"],  # Colombia
 }
+
+
+def fotmob_season_param(our_league_id: int, season: int):
+    """Convert our season int to FotMob-compatible season parameter.
+
+    - Cross-year leagues (Eredivisie, etc.): 2024 → "2024/2025"
+    - Split-season leagues (Colombia): handled by callers (Apertura/Clausura strings)
+    - Single-year leagues (Argentina, Brazil): 2024 → 2024 (pass-through)
+    """
+    if our_league_id in FOTMOB_CROSS_YEAR_SEASON_LEAGUES:
+        return f"{season}/{season + 1}"
+    return season

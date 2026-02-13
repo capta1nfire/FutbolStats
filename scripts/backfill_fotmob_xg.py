@@ -28,7 +28,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 # League mapping from sota_constants
-from app.etl.sota_constants import LEAGUE_ID_TO_FOTMOB
+from app.etl.sota_constants import LEAGUE_ID_TO_FOTMOB, fotmob_season_param
 
 
 def parse_args():
@@ -65,7 +65,8 @@ async def backfill_season(session, provider, alias_index, season: int,
 
     # --- Phase A: Link ---
     logger.info("[%d] Phase A: fetching FotMob fixtures...", season)
-    fm_fixtures, error = await provider.get_league_fixtures(fotmob_league_id, season=season)
+    fm_season = fotmob_season_param(our_league_id, season)
+    fm_fixtures, error = await provider.get_league_fixtures(fotmob_league_id, season=fm_season)
     if error:
         logger.error("[%d] Failed to fetch fixtures: %s", season, error)
         return metrics

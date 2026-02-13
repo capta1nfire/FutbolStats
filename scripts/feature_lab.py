@@ -91,6 +91,23 @@ PROD_HYPERPARAMS = {
     "verbosity": 0,
 }
 
+# ─── Residual model hyperparams (low capacity, strong regularization) ────
+RESIDUAL_HYPERPARAMS = {
+    "objective": "multi:softprob",
+    "num_class": 3,
+    "max_depth": 2,
+    "learning_rate": 0.01,
+    "n_estimators": 200,
+    "min_child_weight": 15,
+    "subsample": 0.6,
+    "colsample_bytree": 0.6,
+    "reg_alpha": 0.1,
+    "reg_lambda": 1.0,
+    "use_label_encoder": False,
+    "eval_metric": "mlogloss",
+    "verbosity": 0,
+}
+
 # Feature sets
 BASELINE_FEATURES = [
     "home_goals_scored_avg", "home_goals_conceded_avg",
@@ -376,6 +393,25 @@ TESTS = {
     "Q5_xi_elo_odds":       XI_CONTINUITY_FEATURES + ELO_FEATURES + ODDS_FEATURES,
     "Q6_xi_full":           XI_CONTINUITY_FEATURES + DEFENSE_PAIR + ELO_FEATURES + FORM_CORE + ODDS_FEATURES,
     "Q7_xi_xg_elo_odds":    XI_CONTINUITY_FEATURES + XG_CORE + ELO_FEATURES + ODDS_FEATURES,
+    # Q8: incremental test — does xi improve M2 (best base test)?
+    "Q8_m2_plus_xi":        ARG_SIGNAL + ELO_FEATURES + INTERACTION_FEATURES + XI_CONTINUITY_FEATURES,
+}
+
+# ═══════════════════════════════════════════════════════════════
+# SECTION R: MARKET RESIDUAL (correction over market prior)
+# Same features as best tests, but model starts from market odds
+# and learns only a small residual correction g(x).
+# All R tests require odds → minimum universe = "odds"
+# NOTE: odds are NOT included as features — they enter via base_margin
+# ═══════════════════════════════════════════════════════════════
+RESIDUAL_TESTS = {
+    "R0_residual_baseline":     NO_REST_FEATURES + ELO_FEATURES,
+    "R1_residual_form":         NO_REST_FEATURES + ELO_FEATURES + FORM_CORE,
+    "R2_residual_interactions": ARG_SIGNAL + ELO_FEATURES + INTERACTION_FEATURES,
+    "R3_residual_defense":      NO_REST_FEATURES + ELO_FEATURES + DEFENSE_PAIR,
+    "R4_residual_full":         NO_REST_FEATURES + ELO_FEATURES + DEFENSE_PAIR + FORM_CORE + OPP_ADJ_FEATURES,
+    "R5_residual_xg":           NO_REST_FEATURES + ELO_FEATURES + XG_CORE,
+    "R6_residual_kitchen_sink": NO_REST_FEATURES + ELO_FEATURES + DEFENSE_PAIR + FORM_CORE + OPP_ADJ_FEATURES + XG_CORE + XG_DEFENSE,
 }
 
 # ─── Section O: Optuna candidates (top performers to re-tune) ────
@@ -670,7 +706,9 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
 
     # Build final dataset
     df = matches[["match_id", "date", "league_id", "home_team_id", "away_team_id",
-                   "home_goals", "away_goals", "odds_home", "odds_draw", "odds_away"]].copy()
+                   "home_goals", "away_goals", "odds_home", "odds_draw", "odds_away",
+                   "odds_home_open", "odds_draw_open", "odds_away_open",
+                   "odds_snapshot"]].copy()
     df = df.merge(home_feats, on="match_id", how="left")
     df = df.merge(away_feats, on="match_id", how="left")
 
@@ -1743,6 +1781,46 @@ def train_xgb(X_train, y_train, seed=42):
     return model
 
 
+# ─── Market Residual helpers ─────────────────────────────────
+
+def compute_market_logits(df, odds_cols=("odds_home", "odds_draw", "odds_away")):
+    """Convert de-vigged odds to log-probabilities for base_margin."""
+    inv = np.column_stack([1.0 / df[c].astype(np.float64).values for c in odds_cols])
+    probs = inv / inv.sum(axis=1, keepdims=True)
+    probs = np.clip(probs, 1e-6, 1 - 1e-6)
+    return np.log(probs)
+
+
+def train_xgb_residual(X_train, y_train, market_logits_train, seed=42):
+    """Train XGBoost with market priors via base_margin.
+
+    The model starts from market probabilities and learns only
+    a small correction g(x). With strong regularization, g(x) → 0
+    if no systematic bias exists.
+    """
+    params = {**RESIDUAL_HYPERPARAMS, "random_state": seed}
+    model = xgb.XGBClassifier(**params)
+    sample_weight = np.ones(len(y_train), dtype=np.float32)
+    sample_weight[y_train == 1] = DRAW_WEIGHT
+    model.fit(X_train, y_train,
+              sample_weight=sample_weight,
+              base_margin=market_logits_train.flatten(),
+              verbose=False)
+    return model
+
+
+def predict_with_base_margin(model, X_test, market_logits_test):
+    """Predict probabilities with base_margin via DMatrix.
+
+    Using DMatrix directly is the most reliable path across xgboost versions.
+    predict_proba's inplace_predict expects (N,3) but fit() expects (N*3,),
+    so we bypass predict_proba entirely.
+    """
+    dtest = xgb.DMatrix(X_test, base_margin=market_logits_test.flatten())
+    raw = model.get_booster().predict(dtest)
+    return raw.reshape(-1, 3)
+
+
 def bootstrap_ci(y_true, y_prob, n_bootstrap=N_BOOTSTRAP, seed=42):
     """Bootstrap 95% CI for Brier score."""
     rng = np.random.RandomState(seed)
@@ -1973,6 +2051,77 @@ def evaluate_feature_set(df_universe: pd.DataFrame, feature_names: list,
     }
 
 
+def evaluate_feature_set_residual(df_universe, feature_names, test_name,
+                                  lockbox_mode=False):
+    """Train & evaluate a residual model (base_margin from market odds).
+
+    Same pattern as evaluate_feature_set but uses train_xgb_residual()
+    and reports delta vs market baseline.
+    """
+    prep = _prepare_dataset(df_universe, feature_names, test_name,
+                            lockbox_mode=lockbox_mode)
+    if "error" in prep:
+        return {"test": test_name, **prep}
+
+    df_train, df_test, df_sorted = prep["df_train"], prep["df_test"], prep["df_sorted"]
+    X_tr, y_tr, X_te, y_te = prep["X_tr"], prep["y_tr"], prep["X_te"], prep["y_te"]
+
+    # Compute market logits for train and test
+    logits_train = compute_market_logits(df_train)
+    logits_test = compute_market_logits(df_test)
+
+    # Market baseline on same test set
+    inv_h = 1.0 / df_test["odds_home"].values
+    inv_d = 1.0 / df_test["odds_draw"].values
+    inv_a = 1.0 / df_test["odds_away"].values
+    total = inv_h + inv_d + inv_a
+    market_probs = np.column_stack([inv_h / total, inv_d / total, inv_a / total])
+    brier_market = multiclass_brier(y_te, market_probs)
+
+    # Multi-seed evaluation with residual model
+    all_briers, all_logloss, all_accuracy = [], [], []
+    all_y_probs = []
+
+    for seed_i in range(N_SEEDS):
+        seed = seed_i * 42 + 7
+        model = train_xgb_residual(X_tr, y_tr, logits_train, seed=seed)
+        y_prob = predict_with_base_margin(model, X_te, logits_test)
+
+        all_briers.append(multiclass_brier(y_te, y_prob))
+        all_logloss.append(log_loss(y_te, y_prob, labels=[0, 1, 2]))
+        all_accuracy.append(float(np.mean(np.argmax(y_prob, axis=1) == y_te)))
+        all_y_probs.append(y_prob)
+
+    # Ensemble
+    ensemble_prob = np.mean(all_y_probs, axis=0)
+    brier_ensemble = multiclass_brier(y_te, ensemble_prob)
+    ci_lo, ci_hi = bootstrap_ci(y_te, ensemble_prob)
+
+    # Paired delta CI: ensemble vs market
+    delta = brier_ensemble - brier_market
+    delta_ci_lo, delta_ci_hi = bootstrap_paired_delta(
+        y_te, ensemble_prob, market_probs)
+
+    return {
+        "test": test_name,
+        "universe": "residual",
+        "n_features": len(feature_names),
+        "features": feature_names,
+        "n_train": len(df_train),
+        "n_test": len(df_test),
+        "split_date": str(df_test["date"].min()),
+        "brier_ensemble": round(brier_ensemble, 5),
+        "brier_ci95": [round(ci_lo, 5), round(ci_hi, 5)],
+        "brier_seed_mean": round(float(np.mean(all_briers)), 5),
+        "brier_seed_std": round(float(np.std(all_briers)), 5),
+        "brier_market": round(brier_market, 5),
+        "delta_vs_market": round(delta, 5),
+        "delta_ci95": [round(delta_ci_lo, 5), round(delta_ci_hi, 5)],
+        "logloss_mean": round(float(np.mean(all_logloss)), 5),
+        "accuracy_mean": round(float(np.mean(all_accuracy)), 4),
+    }
+
+
 # ─── Market Baseline ─────────────────────────────────────────
 
 def market_brier(df_odds_universe: pd.DataFrame,
@@ -2108,7 +2257,8 @@ def fair_model_vs_market(df_odds_universe: pd.DataFrame, feature_names: list,
 # ─── Run All Tests for One League ────────────────────────────
 
 def run_league_tests(df: pd.DataFrame, league_id: int,
-                     lockbox_mode: bool = False) -> dict:
+                     lockbox_mode: bool = False,
+                     run_residual: bool = False) -> dict:
     """Run all feature set tests for one league using fixed universes."""
     league_name = LEAGUE_NAMES.get(league_id, f"league_{league_id}")
 
@@ -2235,6 +2385,59 @@ def run_league_tests(df: pd.DataFrame, league_id: int,
                   f"CI95[{lock_ci[0]:.5f}, {lock_ci[1]:.5f}] "
                   f"(N={len(prep['df_lockbox'])})")
 
+    # ─── Section R: Market Residual tests ────────────────────
+    residual_results = []
+    if run_residual:
+        print(f"\n  {'─' * 60}")
+        print(f"  SECTION R: Market Residual (correction over market prior)")
+        print(f"  {'─' * 60}")
+
+        for test_name, features in RESIDUAL_TESTS.items():
+            # Determine universe: needs odds always, check if also needs xG
+            feats_set = set(features)
+            needs_xg = bool(feats_set & _XG_SET)
+            uid = "odds_xg" if needs_xg else "odds"
+            udf = universes.get(uid, pd.DataFrame())
+
+            print(f"\n  [{test_name}] {len(features)} features (universe={uid})...")
+            if udf.empty:
+                res = {"test": test_name, "universe": uid,
+                       "error": f"empty_universe:{uid}"}
+                print(f"    SKIP: {res['error']}")
+                residual_results.append(res)
+                continue
+
+            res = evaluate_feature_set_residual(udf, features, test_name,
+                                                lockbox_mode=lockbox_mode)
+            if res and "error" not in res:
+                print(f"    Brier: {res['brier_ensemble']:.5f} "
+                      f"(seeds: {res['brier_seed_mean']:.5f} ± {res['brier_seed_std']:.5f}) "
+                      f"CI95[{res['brier_ci95'][0]:.5f}, {res['brier_ci95'][1]:.5f}] "
+                      f"Acc: {res['accuracy_mean']:.3f} "
+                      f"(N_train={res['n_train']}, N_test={res['n_test']})")
+                print(f"    vs Market: {res['brier_market']:.5f} | "
+                      f"Δ={res['delta_vs_market']:+.5f} "
+                      f"CI95[{res['delta_ci95'][0]:+.5f}, {res['delta_ci95'][1]:+.5f}]")
+            elif res:
+                print(f"    SKIP: {res['error']}")
+            residual_results.append(res)
+
+        # Summary table
+        valid_r = [r for r in residual_results if r and "error" not in r]
+        if valid_r:
+            print(f"\n  {'─' * 70}")
+            print(f"  SECTION R SUMMARY — Market Residual vs Market Baseline")
+            print(f"  {'─' * 70}")
+            print(f"  {'Test':<28} {'Brier_Res':>10} {'Brier_Mkt':>10} "
+                  f"{'Delta':>8} {'CI95':>22}")
+            for r in valid_r:
+                dci = r["delta_ci95"]
+                sig = "*" if dci[1] < 0 else (" " if dci[0] > 0 else " ")
+                print(f"  {r['test']:<28} {r['brier_ensemble']:>10.5f} "
+                      f"{r['brier_market']:>10.5f} "
+                      f"{r['delta_vs_market']:>+8.5f}{sig} "
+                      f"[{dci[0]:+.5f}, {dci[1]:+.5f}]")
+
     return {
         "league_id": league_id,
         "league_name": league_name,
@@ -2245,6 +2448,7 @@ def run_league_tests(df: pd.DataFrame, league_id: int,
         "market_baseline": mkt,
         "fair_comparisons": fair_comparisons,
         "lockbox": lockbox_results if lockbox_mode else None,
+        "residual_tests": residual_results if run_residual else None,
     }
 
 
@@ -2682,6 +2886,8 @@ def main():
                         help="Run SHAP explainability analysis on key feature sets")
     parser.add_argument("--lockbox", action="store_true",
                         help="Lockbox mode: 70/15/15 split, one-shot champion eval")
+    parser.add_argument("--residual", action="store_true",
+                        help="Run Section R: Market Residual tests")
     parser.add_argument("--min-date", type=str, default=None,
                         help="Min date filter YYYY-MM-DD (applied after load)")
     args = parser.parse_args()
@@ -2691,6 +2897,7 @@ def main():
     run_optuna = args.optuna
     run_shap = args.shap
     lockbox_mode = args.lockbox
+    run_residual = args.residual
 
     if run_optuna and not HAS_OPTUNA:
         print("  ERROR: optuna not installed. Run: pip install optuna")
@@ -2708,6 +2915,8 @@ def main():
         mode_label = "LOCKBOX"
     else:
         mode_label = "STANDARD"
+    if run_residual:
+        mode_label += "+RESIDUAL"
 
     print(f"\n  FEATURE LAB ({mode_label})")
     print(f"  {'=' * 50}")
@@ -2719,6 +2928,8 @@ def main():
         print(f"  Optuna: {OPTUNA_N_TRIALS} trials × {OPTUNA_CV_FOLDS}-fold temporal CV")
     else:
         print(f"  Tests: {len(TESTS)} feature sets + market baseline")
+    if run_residual:
+        print(f"  Residual: {len(RESIDUAL_TESTS)} market-residual tests (Section R)")
     print(f"  Seeds: {N_SEEDS} | Bootstrap: {N_BOOTSTRAP}")
 
     all_results = []
@@ -2751,7 +2962,8 @@ def main():
         elif run_optuna:
             result = run_optuna_tests(df, league_id)
         else:
-            result = run_league_tests(df, league_id, lockbox_mode=lockbox_mode)
+            result = run_league_tests(df, league_id, lockbox_mode=lockbox_mode,
+                                      run_residual=run_residual)
         all_results.append(result)
 
     # Cross-league comparison (standard/optuna modes only)

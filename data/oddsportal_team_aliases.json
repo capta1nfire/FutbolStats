@@ -4,7 +4,7 @@
     "description": "OddsPortal team name -> internal team_id mapping (league-scoped)",
     "source": "oddsportal.com via OddsHarvester",
     "total_entries": 0,
-    "leagues_covered": ["ColombiaPrimeraA", "EcuadorLigaPro", "VenezuelaPrimeraDivision", "PeruLiga1", "BoliviaDivisionProfesional", "ChilePrimeraDivision"]
+    "leagues_covered": ["ColombiaPrimeraA", "EcuadorLigaPro", "VenezuelaPrimeraDivision", "PeruLiga1", "BoliviaDivisionProfesional", "ChilePrimeraDivision", "ParaguayPrimeraDivision", "UruguayPrimeraDivision", "SaudiProLeague"]
   },
   "ColombiaPrimeraA": {
     "_comment": "league_ids: [239]. 26 teams in DB (2020-2026). Verified via smoke_colombia_2024.json",
@@ -522,5 +522,259 @@
     "Unión Española": 4184,
 
     "Union La Calera": 4182
+  },
+
+  "ParaguayPrimeraDivision": {
+    "_comment": "league_ids: [250, 252]. 23 teams in DB (2019-2026). OddsPortal names verified via Playwright scrape 2019-2025.",
+
+    "12 de Octubre": 4333,
+    "Doce de Octubre": 4333,
+
+    "2 de Mayo": 4347,
+    "Dos de Mayo": 4347,
+
+    "Ameliano": 4339,
+    "Sportivo Ameliano": 4339,
+    "Sp. Ameliano": 4339,
+
+    "Atl. Tembetary": 6145,
+    "Atletico Tembetary": 6145,
+    "Atlético Tembetary": 6145,
+    "Tembetary": 6145,
+
+    "Cerro Porteno": 4233,
+    "Cerro Porteño": 4233,
+
+    "Dep. Capiata": 4344,
+    "Deportivo Capiata": 4344,
+    "Capiatá": 4344,
+    "Capiata": 4344,
+
+    "Deportivo Santani": 4321,
+    "Dep. Santani": 4321,
+    "Santaní": 4321,
+
+    "Diaz": 4345,
+    "General Diaz": 4345,
+    "General Díaz": 4345,
+
+    "General Caballero JLM": 4336,
+    "General Caballero": 4336,
+    "Gral. Caballero JLM": 4336,
+
+    "Guairena": 4335,
+    "Guaireña": 4335,
+    "Guairena FC": 4335,
+
+    "Guarani": 4244,
+    "Guaraní": 4244,
+    "Club Guarani": 4244,
+
+    "Libertad Asuncion": 4227,
+    "Libertad": 4227,
+
+    "Nacional Asuncion": 4219,
+    "Nacional": 4219,
+
+    "Olimpia Asuncion": 4230,
+    "Olimpia": 4230,
+
+    "Recoleta": 6146,
+    "Deportivo Recoleta": 6146,
+
+    "Resistencia": 4346,
+    "Resistencia SC": 4346,
+
+    "River Plate": 4331,
+    "Club River Plate": 4331,
+    "River Plate Asuncion": 4331,
+
+    "Rubio Nu": 6156,
+    "Rubio Ñu": 6156,
+
+    "San Lorenzo": 4343,
+    "Sp. San Lorenzo": 4343,
+    "Sportivo San Lorenzo": 4343,
+    "Club Sp. San Lorenzo": 4343,
+
+    "Sol de America": 4327,
+    "Sol de América": 4327,
+
+    "Sp. Luqueno": 4329,
+    "Sportivo Luqueno": 4329,
+    "Sportivo Luqueño": 4329,
+
+    "Sportivo Trinidense": 4274,
+    "Trinidense": 4274,
+
+    "Tacuary": 4338
+  },
+
+  "UruguayPrimeraDivision": {
+    "_comment": "league_ids: [268, 270]. 26 teams in DB (2019-2026). OddsPortal names verified via Playwright scrape 2019-2025.",
+
+    "Albion": 4318,
+    "Albion FC": 4318,
+
+    "Boston River": 4267,
+
+    "CA Cerro": 4314,
+    "Cerro": 4314,
+
+    "Central Espanol": 6190,
+    "Central Español": 6190,
+
+    "Cerrito": 4317,
+
+    "Cerro Largo": 4248,
+
+    "Danubio": 4224,
+    "Danubio FC": 4224,
+
+    "Defensor Sp.": 4223,
+    "Defensor Sporting": 4223,
+
+    "Fenix": 4310,
+    "Fénix": 4310,
+
+    "Juventud": 4309,
+
+    "La Luz": 4319,
+
+    "Liverpool M.": 4252,
+    "Liverpool Montevideo": 4252,
+    "Liverpool": 4252,
+
+    "Maldonado": 4268,
+    "Deportivo Maldonado": 4268,
+    "Dep. Maldonado": 4268,
+
+    "Miramar": 4320,
+    "Miramar Misiones": 4320,
+
+    "Montevideo City": 4260,
+    "Montevideo City Torque": 4260,
+    "Atletico Torque": 4260,
+    "Atl. Torque": 4260,
+    "City Torque": 4260,
+
+    "Nacional": 4237,
+    "Club Nacional": 4237,
+    "Nacional Montevideo": 4237,
+
+    "Penarol": 4239,
+    "Peñarol": 4239,
+
+    "Plaza Colonia": 4262,
+
+    "Progreso": 4245,
+
+    "Racing Montevideo": 4313,
+    "Racing": 4313,
+    "Racing Club": 4313,
+
+    "Rampla Juniors": 4311,
+
+    "Rentistas": 4259,
+
+    "River Plate": 4312,
+    "CA River Plate": 4312,
+    "River Plate Montevideo": 4312,
+
+    "Sud America": 4316,
+    "Sud América": 4316,
+
+    "Villa Espanola": 4315,
+    "Villa Española": 4315,
+
+    "Wanderers": 4256,
+    "Montevideo Wanderers": 4256
+  },
+
+  "SaudiProLeague": {
+    "_comment": "league_ids: [307]. 27 teams in DB (2019-2026). OddsPortal names verified via Playwright scrape 2020-2026.",
+
+    "Abha": 6203,
+    "Abha Club": 6203,
+
+    "Al Adalah": 6202,
+    "Al-Adalah": 6202,
+
+    "Al Ahli SC": 6174,
+    "Al Ahli": 6174,
+    "Al-Ahli": 6174,
+
+    "Al Ain": 6207,
+    "Al-Ain": 6207,
+
+    "Al Baten": 6208,
+    "Al Batin": 6208,
+    "Al-Batin": 6208,
+
+    "Al Ettifaq": 6164,
+    "Al-Ettifaq": 6164,
+    "Ettifaq": 6164,
+
+    "Al Faisaly": 6205,
+    "Al-Faisaly": 6205,
+    "Al Faisaly FC": 6205,
+
+    "Al Fateh": 6160,
+    "Al-Fateh": 6160,
+
+    "Al Fayha": 6173,
+    "Al-Fayha": 6173,
+
+    "Al Hazem": 6175,
+    "Al Hazm": 6175,
+    "Al-Hazm": 6175,
+
+    "Al Hilal": 6176,
+    "Al-Hilal": 6176,
+
+    "Al Ittihad": 6163,
+    "Al-Ittihad": 6163,
+
+    "Al Khaleej": 6161,
+    "Al-Khaleej": 6161,
+
+    "Al Kholood": 6170,
+
+    "Al Najma": 6159,
+
+    "Al Nassr": 6177,
+    "Al-Nassr": 6177,
+
+    "Al Okhdood": 6162,
+
+    "Al Orubah": 6210,
+
+    "Al Qadsiah": 6178,
+    "Al Qadisiyah": 6178,
+    "Al-Qadisiyah": 6178,
+
+    "Al Raed": 6204,
+    "Al-Raed": 6204,
+
+    "Al Riyadh": 6172,
+
+    "Al Shabab": 6169,
+    "Al-Shabab": 6169,
+
+    "Al Taawon": 6168,
+    "Al-Taawon": 6168,
+    "Al Taawoun": 6168,
+
+    "Al Taee": 6209,
+    "Al-Taee": 6209,
+
+    "Al Wehda": 6206,
+    "Al-Wehda": 6206,
+
+    "Damac": 6167,
+    "Damac FC": 6167,
+
+    "Neom SC": 6171,
+    "NEOM": 6171
   }
 }

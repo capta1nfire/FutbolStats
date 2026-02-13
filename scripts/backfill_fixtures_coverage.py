@@ -50,10 +50,8 @@ logger = logging.getLogger(__name__)
 
 # League configurations
 BACKFILL_CONFIG = {
-    61: {"name": "Ligue 1", "seasons": [2024]},
-    94: {"name": "Primeira Liga", "seasons": [2016, 2017, 2018, 2019]},
-    88: {"name": "Eredivisie", "seasons": [2016, 2017, 2018, 2019]},
-    203: {"name": "Super Lig", "seasons": [2016, 2017, 2018, 2019]},
+    40: {"name": "EFL Championship", "seasons": [2019, 2020, 2021, 2022, 2023, 2024]},
+    307: {"name": "Saudi Pro League", "seasons": [2019, 2020, 2021, 2022, 2023, 2024]},
 }
 
 
