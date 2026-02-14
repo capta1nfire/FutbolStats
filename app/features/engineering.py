@@ -487,6 +487,760 @@ def calculate_xi_features(
     return features
 
 
+# ============================================================================
+# Phase 2: Expected XI + lineup microstructure (MTV proxy groundwork)
+# ============================================================================
+
+async def load_recent_team_starting_xis(
+    session: AsyncSession,
+    team_id: int,
+    match_date: datetime,
+    window: int = 15,
+    min_xi_len: int = 7,
+) -> list[list[int]]:
+    """
+    Load a team's recent starting XIs (API-Football player IDs) from match_lineups.
+
+    PIT-safe: only uses matches with m.date < match_date.
+
+    Notes:
+      - match_lineups.starting_xi_ids is stored as INTEGER[] in DB.
+      - We allow partial lineups (>=7) to maximize coverage; callers can tighten.
+    """
+    result = await session.execute(
+        text("""
+            SELECT ml.starting_xi_ids
+            FROM match_lineups ml
+            JOIN matches m ON m.id = ml.match_id
+            WHERE ml.team_id = :team_id
+              AND m.date < :match_date
+              AND m.status IN ('FT', 'AET', 'PEN')
+              AND ml.starting_xi_ids IS NOT NULL
+              AND array_length(ml.starting_xi_ids, 1) >= :min_len
+            ORDER BY m.date DESC
+            LIMIT :window
+        """),
+        {
+            "team_id": team_id,
+            "match_date": match_date,
+            "window": window,
+            "min_len": min_xi_len,
+        },
+    )
+    rows = result.fetchall()
+    xis: list[list[int]] = []
+    for row in rows:
+        xi = row.starting_xi_ids
+        if isinstance(xi, list) and xi:
+            # Defensive filter: skip None IDs (data quality)
+            xis.append([pid for pid in xi if pid is not None])
+    return xis
+
+
+def _compute_start_counts(xis: list[list[int]]) -> tuple[dict[int, int], int]:
+    """Compute start counts from a list of starting XIs."""
+    counts: dict[int, int] = {}
+    for xi in xis:
+        for pid in xi:
+            if pid is None:
+                continue
+            counts[pid] = counts.get(pid, 0) + 1
+    return counts, len(xis)
+
+
+async def load_injury_excluded_player_ids(
+    session: AsyncSession,
+    team_id: int,
+    fixture_external_id: Optional[int],
+    match_kickoff: datetime,
+    include_doubtful: bool = False,
+) -> set[int]:
+    """
+    Load API-Football player IDs that should be excluded due to injuries/suspensions.
+
+    This is a lightweight, PIT-strict wrapper over player_injuries (Phase 1 MVP).
+    It uses the per-fixture injury feed (fixture_external_id) rather than trying
+    to infer long-running injuries across dates.
+    """
+    if not fixture_external_id:
+        return set()
+
+    # Keep conservative by default: only hard-missing players are excluded.
+    types = ["Missing Fixture"]
+    if include_doubtful:
+        types += ["Questionable", "Doubtful"]
+
+    result = await session.execute(
+        text("""
+            SELECT DISTINCT player_external_id
+            FROM player_injuries
+            WHERE team_id = :team_id
+              AND fixture_external_id = :fixture_ext_id
+              AND captured_at < :kickoff
+              AND injury_type = ANY(:types)
+        """),
+        {
+            "team_id": team_id,
+            "fixture_ext_id": fixture_external_id,
+            "kickoff": match_kickoff,
+            "types": types,
+        },
+    )
+    return {int(row.player_external_id) for row in result.fetchall() if row.player_external_id is not None}
+
+
+async def predict_expected_xi(
+    session: AsyncSession,
+    team_id: int,
+    match_date: datetime,
+    window: int = 15,
+    top_k: int = 18,
+    min_history_matches: int = 3,
+    exclude_player_ids: Optional[set[int]] = None,
+) -> Optional[dict]:
+    """
+    Predict the "expected XI" for a team using start_frequency over recent matches.
+
+    Output is a ranked candidate list with start_rate; the expected XI is the top-11.
+
+    PIT-safe: only uses matches before match_date.
+
+    Args:
+        team_id: internal team ID
+        match_date: kickoff datetime (PIT boundary)
+        window: number of recent matches to use for start_frequency
+        top_k: number of candidates to return (11 starters + 4-7 bench)
+        min_history_matches: require at least this many historical matches
+        exclude_player_ids: optional set of API-Football player IDs to skip (e.g., injuries)
+    """
+    xis = await load_recent_team_starting_xis(
+        session, team_id=team_id, match_date=match_date, window=window
+    )
+    if len(xis) < min_history_matches:
+        return None
+
+    counts, n_matches = _compute_start_counts(xis)
+    if n_matches <= 0 or not counts:
+        return None
+
+    excluded = exclude_player_ids or set()
+
+    candidates = []
+    for pid, c in sorted(counts.items(), key=lambda kv: (kv[1], kv[0]), reverse=True):
+        if pid in excluded:
+            continue
+        candidates.append(
+            {
+                "player_id": int(pid),
+                "starts": int(c),
+                "start_rate": round(c / n_matches, 4),
+            }
+        )
+        if len(candidates) >= top_k:
+            break
+
+    expected_xi_ids = [c["player_id"] for c in candidates[:11]] if len(candidates) >= 11 else []
+
+    return {
+        "team_id": team_id,
+        "match_date": match_date,
+        "window": window,
+        "n_history_matches": n_matches,
+        "excluded_count": len(excluded),
+        "expected_xi_ids": expected_xi_ids,
+        "candidates": candidates,
+    }
+
+
+async def predict_expected_xi_injury_aware(
+    session: AsyncSession,
+    team_id: int,
+    fixture_external_id: Optional[int],
+    match_date: datetime,
+    window: int = 15,
+    top_k: int = 18,
+    min_history_matches: int = 3,
+    include_doubtful: bool = False,
+) -> Optional[dict]:
+    """
+    Convenience wrapper: expected XI prediction excluding known missing players.
+
+    Uses player_injuries (per-fixture) to exclude injury_type='Missing Fixture'
+    (optionally also Questionable/Doubtful) captured before kickoff.
+    """
+    excluded = await load_injury_excluded_player_ids(
+        session,
+        team_id=team_id,
+        fixture_external_id=fixture_external_id,
+        match_kickoff=match_date,
+        include_doubtful=include_doubtful,
+    )
+    return await predict_expected_xi(
+        session,
+        team_id=team_id,
+        match_date=match_date,
+        window=window,
+        top_k=top_k,
+        min_history_matches=min_history_matches,
+        exclude_player_ids=excluded,
+    )
+
+
+# ============================================================================
+# Phase 2: Player Talent Score (PTS) + VORP priors (MTV groundwork)
+# ============================================================================
+
+def _bucketize_position_api_football(pos: Optional[str]) -> str:
+    """Map API-Football single-letter positions to GK/DEF/MID/FWD buckets."""
+    if not pos:
+        return "MID"
+    p = str(pos).strip().upper()
+    if p == "G":
+        return "GK"
+    if p == "D":
+        return "DEF"
+    if p == "M":
+        return "MID"
+    if p == "F":
+        return "FWD"
+    return "MID"
+
+
+def _bucketize_position_roster(pos: Optional[str]) -> str:
+    """Map Player.position strings to GK/DEF/MID/FWD buckets."""
+    if not pos:
+        return "MID"
+    p = str(pos).strip().lower()
+    if "goal" in p or p in ("gk", "goalkeeper"):
+        return "GK"
+    if "def" in p or "back" in p:
+        return "DEF"
+    if "mid" in p:
+        return "MID"
+    if "attack" in p or "forward" in p or "striker" in p or "wing" in p:
+        return "FWD"
+    # Default: midfield (most common ambiguous bucket)
+    return "MID"
+
+
+async def load_player_id_mapping_api_to_sofascore(
+    session: AsyncSession,
+    api_player_ids: list[int],
+    min_confidence: float = 0.60,
+    status: str = "active",
+) -> dict[int, str]:
+    """
+    Load best Sofascore mapping for API-Football player IDs (batch).
+
+    Uses player_id_mapping (Phase 2 Sprint 1) and selects the highest-confidence
+    mapping per api_football_id.
+    """
+    if not api_player_ids:
+        return {}
+
+    result = await session.execute(
+        text("""
+            SELECT DISTINCT ON (api_football_id)
+                api_football_id, sofascore_id
+            FROM player_id_mapping
+            WHERE api_football_id = ANY(:api_ids)
+              AND status = :status
+              AND confidence >= :min_conf
+              AND sofascore_id IS NOT NULL
+            ORDER BY api_football_id, confidence DESC
+        """),
+        {
+            "api_ids": api_player_ids,
+            "status": status,
+            "min_conf": min_confidence,
+        },
+    )
+    mapping: dict[int, str] = {}
+    for row in result.fetchall():
+        try:
+            mapping[int(row.api_football_id)] = str(row.sofascore_id)
+        except Exception:
+            continue
+    return mapping
+
+
+async def load_batch_pts_from_sofascore_history(
+    session: AsyncSession,
+    sofascore_player_ids: list[str],
+    before_date: datetime,
+    exclude_match_id: Optional[int] = None,
+    limit: int = 10,
+) -> dict[str, dict]:
+    """
+    Compute PTS (Player Talent Score) from sofascore_player_rating_history (batch).
+
+    PIT-safe: only uses match_date < before_date and excludes current match_id.
+    If minutes_played is present, uses minutes-weighted average; otherwise falls
+    back to simple average rating over the last `limit` matches.
+    """
+    if not sofascore_player_ids:
+        return {}
+
+    result = await session.execute(
+        text("""
+            WITH ranked AS (
+                SELECT
+                    player_id_ext,
+                    rating,
+                    minutes_played,
+                    match_date,
+                    match_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY player_id_ext
+                        ORDER BY match_date DESC
+                    ) AS rn
+                FROM sofascore_player_rating_history
+                WHERE player_id_ext = ANY(:player_ids)
+                  AND match_date < :before_date
+                  AND rating IS NOT NULL
+                  AND (:exclude_match_id IS NULL OR match_id != :exclude_match_id)
+            )
+            SELECT
+                player_id_ext,
+                COUNT(*) AS n_ratings,
+                AVG(rating) AS avg_rating,
+                SUM(COALESCE(minutes_played, 0)) AS sum_minutes,
+                CASE
+                    WHEN SUM(COALESCE(minutes_played, 0)) > 0 THEN
+                        SUM(rating * COALESCE(minutes_played, 0)) / NULLIF(SUM(COALESCE(minutes_played, 0)), 0)
+                    ELSE
+                        AVG(rating)
+                END AS pts
+            FROM ranked
+            WHERE rn <= :limit
+            GROUP BY player_id_ext
+        """),
+        {
+            "player_ids": sofascore_player_ids,
+            "before_date": before_date,
+            "exclude_match_id": exclude_match_id,
+            "limit": limit,
+        },
+    )
+
+    out: dict[str, dict] = {}
+    for row in result.fetchall():
+        pid = str(row.player_id_ext)
+        out[pid] = {
+            "pts": float(row.pts) if row.pts is not None else None,
+            "avg_rating": float(row.avg_rating) if row.avg_rating is not None else None,
+            "n_ratings": int(row.n_ratings or 0),
+            "sum_minutes": int(row.sum_minutes or 0),
+        }
+    return out
+
+
+async def compute_team_vorp_priors(
+    session: AsyncSession,
+    team_id: int,
+    before_date: datetime,
+    exclude_match_id: Optional[int] = None,
+    limit_matches: int = 10,
+    min_peer_ratings: int = 3,
+    min_mapping_confidence: float = 0.60,
+) -> dict:
+    """
+    Compute VORP-style priors (P25) for a team using available Sofascore PTS.
+
+    Returns:
+        {
+          "p25_team": float | None,
+          "p25_by_bucket": { "GK": float|None, "DEF":..., ... },
+          "n_team": int,
+          "n_by_bucket": { ... },
+        }
+    """
+    # Load roster from players table (API-Football catalog)
+    roster_res = await session.execute(
+        text("""
+            SELECT external_id, position
+            FROM players
+            WHERE team_id = :team_id
+              AND external_id IS NOT NULL
+        """),
+        {"team_id": team_id},
+    )
+    roster = roster_res.fetchall()
+    if not roster:
+        return {"p25_team": None, "p25_by_bucket": {}, "n_team": 0, "n_by_bucket": {}}
+
+    api_ids = [int(r.external_id) for r in roster if r.external_id is not None]
+    api_to_bucket = {
+        int(r.external_id): _bucketize_position_roster(r.position)
+        for r in roster
+        if r.external_id is not None
+    }
+
+    api_to_sc = await load_player_id_mapping_api_to_sofascore(
+        session,
+        api_player_ids=api_ids,
+        min_confidence=min_mapping_confidence,
+        status="active",
+    )
+    sc_ids = list({sid for sid in api_to_sc.values() if sid})
+    pts_stats = await load_batch_pts_from_sofascore_history(
+        session,
+        sofascore_player_ids=sc_ids,
+        before_date=before_date,
+        exclude_match_id=exclude_match_id,
+        limit=limit_matches,
+    )
+
+    by_bucket: dict[str, list[float]] = {"GK": [], "DEF": [], "MID": [], "FWD": []}
+    all_pts: list[float] = []
+
+    for api_id, sc_id in api_to_sc.items():
+        stats = pts_stats.get(sc_id)
+        if not stats:
+            continue
+        pts = stats.get("pts")
+        n = stats.get("n_ratings") or 0
+        if pts is None or n < min_peer_ratings:
+            continue
+        bucket = api_to_bucket.get(api_id, "MID")
+        by_bucket.setdefault(bucket, []).append(float(pts))
+        all_pts.append(float(pts))
+
+    p25_by_bucket = {}
+    n_by_bucket = {}
+    for b, vals in by_bucket.items():
+        n_by_bucket[b] = len(vals)
+        p25_by_bucket[b] = float(np.percentile(vals, 25)) if vals else None
+
+    p25_team = float(np.percentile(all_pts, 25)) if all_pts else None
+    return {
+        "p25_team": p25_team,
+        "p25_by_bucket": p25_by_bucket,
+        "n_team": len(all_pts),
+        "n_by_bucket": n_by_bucket,
+    }
+
+
+async def compute_player_talent_scores_for_api_ids(
+    session: AsyncSession,
+    api_player_ids: list[int],
+    team_id: Optional[int],
+    before_date: datetime,
+    exclude_match_id: Optional[int] = None,
+    limit_matches: int = 10,
+    min_mapping_confidence: float = 0.60,
+    min_peer_ratings: int = 3,
+    api_positions: Optional[dict[int, str]] = None,
+) -> dict[int, dict]:
+    """
+    Compute PTS per API-Football player ID (batch), with VORP priors.
+
+    Returns:
+        { api_id: { "pts": float, "source": str, "n_ratings": int } }
+    """
+    if not api_player_ids:
+        return {}
+
+    # Mapping API -> Sofascore
+    api_to_sc = await load_player_id_mapping_api_to_sofascore(
+        session,
+        api_player_ids=api_player_ids,
+        min_confidence=min_mapping_confidence,
+        status="active",
+    )
+    sc_ids = list({sid for sid in api_to_sc.values() if sid})
+    pts_stats = await load_batch_pts_from_sofascore_history(
+        session,
+        sofascore_player_ids=sc_ids,
+        before_date=before_date,
+        exclude_match_id=exclude_match_id,
+        limit=limit_matches,
+    )
+
+    # Team VORP priors (optional if team_id provided)
+    vorp = None
+    if team_id is not None:
+        try:
+            vorp = await compute_team_vorp_priors(
+                session,
+                team_id=team_id,
+                before_date=before_date,
+                exclude_match_id=exclude_match_id,
+                limit_matches=limit_matches,
+                min_peer_ratings=min_peer_ratings,
+                min_mapping_confidence=min_mapping_confidence,
+            )
+        except Exception:
+            # Fail-soft: do not break feature computation on missing tables
+            vorp = None
+
+    p25_team = vorp.get("p25_team") if vorp else None
+    p25_by_bucket = vorp.get("p25_by_bucket", {}) if vorp else {}
+
+    out: dict[int, dict] = {}
+    for api_id in api_player_ids:
+        sc_id = api_to_sc.get(api_id)
+        stats = pts_stats.get(sc_id) if sc_id else None
+        if stats and stats.get("pts") is not None:
+            out[api_id] = {
+                "pts": float(stats["pts"]),
+                "source": "sofascore_rolling",
+                "n_ratings": int(stats.get("n_ratings") or 0),
+            }
+            continue
+
+        # Fallback: VORP priors
+        bucket = None
+        if api_positions and api_id in api_positions:
+            bucket = _bucketize_position_api_football(api_positions.get(api_id))
+        if not bucket:
+            bucket = "MID"
+
+        prior_pos = p25_by_bucket.get(bucket) if p25_by_bucket else None
+        if prior_pos is not None:
+            out[api_id] = {"pts": float(prior_pos), "source": "vorp_p25_pos", "n_ratings": 0}
+        elif p25_team is not None:
+            out[api_id] = {"pts": float(p25_team), "source": "vorp_p25_team", "n_ratings": 0}
+        else:
+            out[api_id] = {"pts": 6.5, "source": "default_league_avg", "n_ratings": 0}
+
+    return out
+
+
+async def compute_player_talent_score(
+    session: AsyncSession,
+    api_player_id: int,
+    team_id: Optional[int],
+    before_date: datetime,
+    exclude_match_id: Optional[int] = None,
+    limit_matches: int = 10,
+) -> Optional[float]:
+    """Single-player convenience wrapper over compute_player_talent_scores_for_api_ids()."""
+    scores = await compute_player_talent_scores_for_api_ids(
+        session,
+        api_player_ids=[api_player_id],
+        team_id=team_id,
+        before_date=before_date,
+        exclude_match_id=exclude_match_id,
+        limit_matches=limit_matches,
+    )
+    s = scores.get(api_player_id)
+    return float(s["pts"]) if s and s.get("pts") is not None else None
+
+
+async def load_match_starting_xi(
+    session: AsyncSession,
+    match_id: int,
+    team_id: int,
+) -> Optional[dict]:
+    """Load starting XI IDs + position codes for a match/team (from match_lineups)."""
+    result = await session.execute(
+        text("""
+            SELECT starting_xi_ids, starting_xi_positions
+            FROM match_lineups
+            WHERE match_id = :match_id
+              AND team_id = :team_id
+            LIMIT 1
+        """),
+        {"match_id": match_id, "team_id": team_id},
+    )
+    row = result.fetchone()
+    if not row:
+        return None
+
+    xi_ids = row.starting_xi_ids
+    xi_pos = row.starting_xi_positions
+
+    if not isinstance(xi_ids, list) or not xi_ids:
+        return None
+
+    # Defensive filter for None IDs
+    xi_ids = [pid for pid in xi_ids if pid is not None]
+
+    api_pos_map: dict[int, str] = {}
+    if isinstance(xi_pos, list) and len(xi_pos) == len(row.starting_xi_ids):
+        for pid, pos in zip(row.starting_xi_ids, xi_pos):
+            if pid is None:
+                continue
+            api_pos_map[int(pid)] = pos
+
+    return {"xi_ids": [int(pid) for pid in xi_ids], "api_pos_map": api_pos_map}
+
+
+async def compute_team_talent_delta(
+    session: AsyncSession,
+    match_id: int,
+    fixture_external_id: Optional[int],
+    team_id: int,
+    match_date: datetime,
+    window: int = 15,
+    limit_matches: int = 10,
+    include_doubtful: bool = False,
+) -> dict:
+    """
+    Compute talent delta for one team in a match:
+        talent_delta = PTS(XI_real) - PTS(XI_expected)
+
+    Also computes per-bucket deltas (GK/DEF/MID/FWD) when possible.
+    """
+    # Load realized XI (needs lineup for this match)
+    lineup = await load_match_starting_xi(session, match_id=match_id, team_id=team_id)
+    if not lineup:
+        return {"talent_delta": None, "talent_missing": 1}
+
+    xi_real = lineup["xi_ids"]
+    api_pos_real = lineup.get("api_pos_map") or {}
+
+    if len(xi_real) < 7:
+        return {"talent_delta": None, "talent_missing": 1}
+
+    # Expected XI (injury-aware)
+    expected = await predict_expected_xi_injury_aware(
+        session,
+        team_id=team_id,
+        fixture_external_id=fixture_external_id,
+        match_date=match_date,
+        window=window,
+        top_k=18,
+        min_history_matches=3,
+        include_doubtful=include_doubtful,
+    )
+    xi_expected = expected.get("expected_xi_ids") if expected else None
+    if not xi_expected or len(xi_expected) < 7:
+        return {"talent_delta": None, "talent_missing": 1}
+
+    # Build API position map for expected XI from roster (players table)
+    bucket_to_letter = {"GK": "G", "DEF": "D", "MID": "M", "FWD": "F"}
+    pos_res = await session.execute(
+        text("""
+            SELECT external_id, position
+            FROM players
+            WHERE external_id = ANY(:ids)
+        """),
+        {"ids": xi_expected},
+    )
+    api_pos_expected: dict[int, str] = {}
+    for r in pos_res.fetchall():
+        if r.external_id is None:
+            continue
+        bucket = _bucketize_position_roster(r.position)
+        api_pos_expected[int(r.external_id)] = bucket_to_letter.get(bucket, "M")
+
+    # Compute PTS for both lineups (VORP priors require team_id)
+    scores_real = await compute_player_talent_scores_for_api_ids(
+        session,
+        api_player_ids=xi_real,
+        team_id=team_id,
+        before_date=match_date,
+        exclude_match_id=match_id,
+        limit_matches=limit_matches,
+        api_positions=api_pos_real,
+    )
+    scores_exp = await compute_player_talent_scores_for_api_ids(
+        session,
+        api_player_ids=xi_expected,
+        team_id=team_id,
+        before_date=match_date,
+        exclude_match_id=match_id,
+        limit_matches=limit_matches,
+        api_positions=api_pos_expected,
+    )
+
+    # Aggregate means (use mean, not sum, to normalize for partial lineups)
+    pts_real = [float(scores_real[pid]["pts"]) for pid in xi_real if pid in scores_real]
+    pts_exp = [float(scores_exp[pid]["pts"]) for pid in xi_expected if pid in scores_exp]
+    mean_real = sum(pts_real) / len(pts_real) if pts_real else 0.0
+    mean_exp = sum(pts_exp) / len(pts_exp) if pts_exp else 0.0
+    delta = round(mean_real - mean_exp, 4)
+
+    # Per-bucket means
+    def _mean_by_bucket(xi_ids: list[int], scores: dict[int, dict], api_pos_map: dict[int, str]) -> dict[str, float]:
+        buckets: dict[str, list[float]] = {"GK": [], "DEF": [], "MID": [], "FWD": []}
+        for pid in xi_ids:
+            if pid not in scores:
+                continue
+            bucket = _bucketize_position_api_football(api_pos_map.get(pid))
+            buckets.setdefault(bucket, []).append(float(scores[pid]["pts"]))
+        return {k: (sum(v) / len(v) if v else 0.0) for k, v in buckets.items()}
+
+    real_by = _mean_by_bucket(xi_real, scores_real, api_pos_real)
+    exp_by = _mean_by_bucket(xi_expected, scores_exp, api_pos_expected)
+    delta_by = {k: round(real_by.get(k, 0.0) - exp_by.get(k, 0.0), 4) for k in ("GK", "DEF", "MID", "FWD")}
+
+    return {
+        "talent_delta": delta,
+        "talent_real_mean": round(mean_real, 4),
+        "talent_expected_mean": round(mean_exp, 4),
+        "talent_delta_gk": delta_by["GK"],
+        "talent_delta_def": delta_by["DEF"],
+        "talent_delta_mid": delta_by["MID"],
+        "talent_delta_fwd": delta_by["FWD"],
+        "talent_missing": 0,
+        "expected_history_matches": expected.get("n_history_matches") if expected else None,
+        "expected_excluded_count": expected.get("excluded_count") if expected else None,
+    }
+
+
+async def compute_match_talent_delta_features(
+    session: AsyncSession,
+    match: Match,
+    window: int = 15,
+    limit_matches: int = 10,
+    include_doubtful: bool = False,
+) -> dict:
+    """
+    Compute home/away talent delta features for a match (Phase 2 MTV).
+
+    Outputs:
+      - home_talent_delta, away_talent_delta
+      - talent_delta_diff = home - away
+      - *_missing flags
+    """
+    home = await compute_team_talent_delta(
+        session,
+        match_id=match.id,
+        fixture_external_id=match.external_id,
+        team_id=match.home_team_id,
+        match_date=match.date,
+        window=window,
+        limit_matches=limit_matches,
+        include_doubtful=include_doubtful,
+    )
+    away = await compute_team_talent_delta(
+        session,
+        match_id=match.id,
+        fixture_external_id=match.external_id,
+        team_id=match.away_team_id,
+        match_date=match.date,
+        window=window,
+        limit_matches=limit_matches,
+        include_doubtful=include_doubtful,
+    )
+
+    home_delta = home.get("talent_delta")
+    away_delta = away.get("talent_delta")
+
+    # shock_magnitude = max(|home_delta|, |away_delta|) — signals unusual lineup event
+    if home_delta is not None and away_delta is not None:
+        shock_magnitude = round(max(abs(home_delta), abs(away_delta)), 4)
+    else:
+        shock_magnitude = None
+
+    out = {
+        "home_talent_delta": home_delta,
+        "away_talent_delta": away_delta,
+        "talent_delta_diff": (home_delta - away_delta) if (home_delta is not None and away_delta is not None) else None,
+        "shock_magnitude": shock_magnitude,
+        "talent_delta_missing": 1 if (home.get("talent_missing") or away.get("talent_missing")) else 0,
+        # Optional diagnostics
+        "home_expected_history_matches": home.get("expected_history_matches"),
+        "away_expected_history_matches": away.get("expected_history_matches"),
+        "home_expected_excluded_count": home.get("expected_excluded_count"),
+        "away_expected_excluded_count": away.get("expected_excluded_count"),
+    }
+    return out
+
+
 async def compute_xi_continuity(
     session: AsyncSession,
     team_id: int,

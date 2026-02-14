@@ -212,6 +212,11 @@ EFFICIENCY_FEATURES = ["finish_eff_home", "finish_eff_away",
 # ─── Wave 10: XI Continuity (ATI) ─────────────────────────────
 XI_CONTINUITY_FEATURES = ["xi_continuity_home", "xi_continuity_away", "xi_continuity_diff"]
 
+# ─── Wave 10b: XI Frequency Proxy (Phase 2) ───────────────────
+# Proxy for lineup shock: how far the realized XI is from the "expected XI"
+# (most frequent starters in recent matches). Backtesteable with match_lineups only.
+XI_FREQ_PROXY_FEATURES = ["xi_freq_delta_home", "xi_freq_delta_away", "xi_freq_delta_diff"]
+
 # ─── Wave 11: Geographic Features (FS-09) ────────────────────
 GEO_FEATURES = [
     "altitude_home_m",
@@ -419,6 +424,13 @@ TESTS = {
     "Q7_xi_xg_elo_odds":    XI_CONTINUITY_FEATURES + XG_CORE + ELO_FEATURES + ODDS_FEATURES,
     # Q8: incremental test — does xi improve M2 (best base test)?
     "Q8_m2_plus_xi":        ARG_SIGNAL + ELO_FEATURES + INTERACTION_FEATURES + XI_CONTINUITY_FEATURES,
+
+    # ═══════════════════════════════════════════════════════════
+    # SECTION Q2: XI FREQUENCY PROXY (Phase 2 — expected vs realized starters)
+    # ═══════════════════════════════════════════════════════════
+    "Q9_xi_freq_only":      XI_FREQ_PROXY_FEATURES,
+    "Q10_m2_plus_xi_freq":  ARG_SIGNAL + ELO_FEATURES + INTERACTION_FEATURES + XI_FREQ_PROXY_FEATURES,
+    "Q11_xi_plus_xi_freq":  XI_CONTINUITY_FEATURES + XI_FREQ_PROXY_FEATURES,
 
     # ═══════════════════════════════════════════════════════════
     # SECTION U: GEOGRAPHIC FEATURES (FS-09 — travel distance, altitude)
@@ -822,6 +834,10 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
         df = df.sort_values("date").reset_index(drop=True)
         xi_home_col: list[float | None] = []
         xi_away_col: list[float | None] = []
+        xi_expected_home_col: list[float | None] = []
+        xi_expected_away_col: list[float | None] = []
+        xi_freq_delta_home_col: list[float | None] = []
+        xi_freq_delta_away_col: list[float | None] = []
         team_xi_history: dict[int, list[list[int]]] = {}
 
         for _, row in df.iterrows():
@@ -843,9 +859,22 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
                     for pid in past_xi:
                         pcounts[pid] = pcounts.get(pid, 0) + 1
                 rates = [pcounts.get(pid, 0) / n for pid in h_xi]
-                xi_home_col.append(round(sum(rates) / len(rates), 4))
+                actual_mean = sum(rates) / len(rates)
+                xi_home_col.append(round(actual_mean, 4))
+
+                # Expected XI proxy: top-11 most frequent starters in recent window
+                top11 = sorted(pcounts.items(), key=lambda kv: kv[1], reverse=True)[:11]
+                if len(top11) == 11:
+                    expected_mean = sum(c for _, c in top11) / (11 * n)
+                    xi_expected_home_col.append(round(expected_mean, 4))
+                    xi_freq_delta_home_col.append(round(actual_mean - expected_mean, 4))
+                else:
+                    xi_expected_home_col.append(None)
+                    xi_freq_delta_home_col.append(None)
             else:
                 xi_home_col.append(None)
+                xi_expected_home_col.append(None)
+                xi_freq_delta_home_col.append(None)
 
             # Away xi_continuity
             a_hist = team_xi_history.get(a_id, [])
@@ -857,9 +886,21 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
                     for pid in past_xi:
                         pcounts2[pid] = pcounts2.get(pid, 0) + 1
                 rates = [pcounts2.get(pid, 0) / n for pid in a_xi]
-                xi_away_col.append(round(sum(rates) / len(rates), 4))
+                actual_mean = sum(rates) / len(rates)
+                xi_away_col.append(round(actual_mean, 4))
+
+                top11 = sorted(pcounts2.items(), key=lambda kv: kv[1], reverse=True)[:11]
+                if len(top11) == 11:
+                    expected_mean = sum(c for _, c in top11) / (11 * n)
+                    xi_expected_away_col.append(round(expected_mean, 4))
+                    xi_freq_delta_away_col.append(round(actual_mean - expected_mean, 4))
+                else:
+                    xi_expected_away_col.append(None)
+                    xi_freq_delta_away_col.append(None)
             else:
                 xi_away_col.append(None)
+                xi_expected_away_col.append(None)
+                xi_freq_delta_away_col.append(None)
 
             # Update histories AFTER computing (PIT-safe)
             if h_xi:
@@ -870,10 +911,20 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
         df["xi_continuity_home"] = xi_home_col
         df["xi_continuity_away"] = xi_away_col
         df["xi_continuity_diff"] = df["xi_continuity_home"] - df["xi_continuity_away"]
+        df["xi_expected_mean_home"] = xi_expected_home_col
+        df["xi_expected_mean_away"] = xi_expected_away_col
+        df["xi_freq_delta_home"] = xi_freq_delta_home_col
+        df["xi_freq_delta_away"] = xi_freq_delta_away_col
+        df["xi_freq_delta_diff"] = df["xi_freq_delta_home"] - df["xi_freq_delta_away"]
     else:
         df["xi_continuity_home"] = None
         df["xi_continuity_away"] = None
         df["xi_continuity_diff"] = None
+        df["xi_expected_mean_home"] = None
+        df["xi_expected_mean_away"] = None
+        df["xi_freq_delta_home"] = None
+        df["xi_freq_delta_away"] = None
+        df["xi_freq_delta_diff"] = None
 
     # ── Geographic Features (Wave 11 — FS-09) ──────────────────
     print("  Computing geographic features...")
@@ -984,10 +1035,12 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
     n_elo = df["elo_home"].notna().sum()
     n_xg = df["home_xg_for_avg"].notna().sum()
     n_xi = df["xi_continuity_home"].notna().sum()
+    n_xi_freq = df["xi_freq_delta_home"].notna().sum()
     print(f"  Final: {n_total} matches | Odds: {n_odds}/{n_total} ({100*n_odds/n_total:.0f}%) "
           f"| Elo: {n_elo}/{n_total} ({100*n_elo/n_total:.0f}%) "
           f"| xG: {n_xg}/{n_total} ({100*n_xg/n_total:.0f}%) "
-          f"| XI: {n_xi}/{n_total} ({100*n_xi/n_total:.0f}%)")
+          f"| XI: {n_xi}/{n_total} ({100*n_xi/n_total:.0f}%) "
+          f"| XI_freq: {n_xi_freq}/{n_total} ({100*n_xi_freq/n_total:.0f}%)")
 
     # Save
     out_path = Path(output_dir) / f"lab_data_{league_id}.csv"
@@ -1756,7 +1809,7 @@ def compute_all_experimental_features(df: pd.DataFrame) -> pd.DataFrame:
 # All optional feature groups that define universe boundaries
 _ODDS_SET = set(ODDS_FEATURES)
 _XG_SET = set(XG_ALL)  # XG_CORE + XG_DEFENSE + XG_OVERPERF
-_XI_SET = set(XI_CONTINUITY_FEATURES)
+_XI_SET = set(XI_CONTINUITY_FEATURES + XI_FREQ_PROXY_FEATURES)
 
 
 def classify_test_universe(feature_names: list) -> str:
@@ -1825,7 +1878,7 @@ def compute_universes(df: pd.DataFrame, tests_dict: dict) -> dict:
     xg_cols = [c for c in XG_CORE if c in df_base.columns]
     xg_mask = df_base[xg_cols].notna().all(axis=1) if xg_cols else pd.Series(False, index=df_base.index)
 
-    xi_cols = [c for c in XI_CONTINUITY_FEATURES if c in df_base.columns]
+    xi_cols = [c for c in (XI_CONTINUITY_FEATURES + XI_FREQ_PROXY_FEATURES) if c in df_base.columns]
     xi_mask = df_base[xi_cols].notna().all(axis=1) if xi_cols else pd.Series(False, index=df_base.index)
 
     # Build universes

@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS prediction_clv (
     prob_close_draw     NUMERIC,
     prob_close_away     NUMERIC,
 
-    -- CLV per outcome (prob_asof - prob_close; positive = favorable)
+    -- CLV per outcome: ln(odds_asof / odds_close) in log-odds; positive = favorable
     clv_home            NUMERIC,
     clv_draw            NUMERIC,
     clv_away            NUMERIC,
