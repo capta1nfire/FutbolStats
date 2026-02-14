@@ -5294,7 +5294,7 @@ def _render_coverage_map_page() -> str:
       renderTable();
     } catch(err) {
       loadingEl.innerHTML = '<div class="error-box">Failed to load data: ' +
-        err.message + '<br><button onclick="loadData(document.getElementById(\'window-select\').value)">Retry</button></div>';
+        err.message + '<br><button onclick="retryLoad()">Retry</button></div>';
     }
   }
 
@@ -5481,6 +5481,11 @@ def _render_coverage_map_page() -> str:
     var show = rows.length > 0 && rows[0].style.display !== 'table-row';
     rows.forEach(function(r){ r.style.display = show ? 'table-row' : 'none'; });
     if (icon) icon.classList.toggle('open', show);
+  };
+
+  // --- Retry (for error button) ---
+  window.retryLoad = function() {
+    loadData(document.getElementById('window-select').value);
   };
 
   // --- Clear filter ---
