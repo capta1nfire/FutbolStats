@@ -2117,9 +2117,13 @@ async def get_predictions(
     # ═══════════════════════════════════════════════════════════════
 
     # Save predictions to database if requested
+    # asof_timestamp = NOW() captures the PIT boundary for this prediction batch
     if save:
-        saved_count = await _save_predictions_to_db(session, predictions, ml_engine.model_version)
-        logger.info(f"Saved {saved_count} predictions to database")
+        asof_ts = datetime.utcnow()
+        saved_count = await _save_predictions_to_db(
+            session, predictions, ml_engine.model_version, asof_timestamp=asof_ts
+        )
+        logger.info(f"Saved {saved_count} predictions to database (asof={asof_ts.isoformat()})")
 
     # Convert to response model
     prediction_items = []
@@ -2217,9 +2221,18 @@ async def _save_predictions_to_db(
     session: AsyncSession,
     predictions: list[dict],
     model_version: str,
+    asof_timestamp: datetime = None,
 ) -> int:
-    """Save predictions to database for later auditing."""
+    """Save predictions to database for later auditing.
+
+    Args:
+        asof_timestamp: PIT anchor — the temporal boundary of all information
+            used to generate these predictions. If None, uses current UTC time.
+    """
     from app.db_utils import upsert
+
+    if asof_timestamp is None:
+        asof_timestamp = datetime.utcnow()
 
     saved = 0
     for pred in predictions:
@@ -2240,9 +2253,10 @@ async def _save_predictions_to_db(
                     "home_prob": probs["home"],
                     "draw_prob": probs["draw"],
                     "away_prob": probs["away"],
+                    "asof_timestamp": asof_timestamp,
                 },
                 conflict_columns=["match_id", "model_version"],
-                update_columns=["home_prob", "draw_prob", "away_prob"],
+                update_columns=["home_prob", "draw_prob", "away_prob", "asof_timestamp"],
             )
             saved += 1
         except Exception as e:

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import JSON, Column, LargeBinary, UniqueConstraint
+from sqlalchemy import JSON, Column, DateTime, LargeBinary, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -184,6 +184,15 @@ class Prediction(SQLModel, table=True):
     away_prob: float = Field(description="Probability of away win")
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Phase 2: Point-in-Time anchor — defines the temporal boundary of ALL
+    # information used to generate this prediction (odds, lineup, ratings).
+    # Compare model vs market at the SAME asof_timestamp for CLV auditing.
+    asof_timestamp: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+        description="PIT anchor: all inputs recorded_at <= this timestamp"
+    )
 
     # Rerun tracking (nullable for legacy predictions)
     run_id: Optional[UUID] = Field(

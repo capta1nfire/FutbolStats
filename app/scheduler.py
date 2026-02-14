@@ -1274,12 +1274,19 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                                 f"bookmaker={source}"
                             )
 
-                        # Also update match_lineups with lineup_confirmed_at if not already set
+                        # Also update match_lineups with lineup timestamps
+                        # lineup_confirmed_at: provider timestamp (legacy, COALESCE preserves)
+                        # lineup_detected_at: OUR detection timestamp (Phase 2 PIT anchor)
                         await session.execute(text("""
                             UPDATE match_lineups
-                            SET lineup_confirmed_at = COALESCE(lineup_confirmed_at, :confirmed_at)
+                            SET lineup_confirmed_at = COALESCE(lineup_confirmed_at, :confirmed_at),
+                                lineup_detected_at = COALESCE(lineup_detected_at, :detected_at)
                             WHERE match_id = :match_id
-                        """), {"match_id": match_id, "confirmed_at": snapshot_at})
+                        """), {
+                            "match_id": match_id,
+                            "confirmed_at": snapshot_at,
+                            "detected_at": datetime.utcnow(),
+                        })
 
                         captured_count += 1
 
@@ -4599,6 +4606,56 @@ async def refresh_recent_ft_stats(lookback_hours: int = 6, max_calls: int = 50) 
 
 
 # =============================================================================
+# CLV SCORING JOB (Phase 2: P2-04)
+# =============================================================================
+# Scores CLV for predictions of recently finished matches.
+# Uses canonical bookmaker (Bet365 > Pinnacle > 1xBet) from odds_history.
+# CLV_k = ln(odds_asof / odds_close) per outcome. Positive = timing edge.
+
+
+async def score_clv_post_match() -> dict:
+    """
+    Score CLV for predictions of recently finished matches.
+
+    Runs every 2 hours. For each prediction with asof_timestamp where
+    the match is now FT/AET/PEN and no CLV exists yet:
+    1. Find canonical bookmaker with odds at asof and close
+    2. De-vig both, compute log-odds CLV per outcome
+    3. Insert into prediction_clv
+
+    Returns metrics dict.
+    """
+    import time
+
+    from app.telemetry.metrics import record_job_run
+
+    start_time = time.time()
+
+    try:
+        from app.ml.clv import score_clv_batch
+
+        async with AsyncSessionLocal() as session:
+            metrics = await score_clv_batch(session, lookback_hours=72, limit=200)
+
+        duration_ms = (time.time() - start_time) * 1000
+        logger.info(
+            f"CLV scoring: scanned={metrics['scanned']}, "
+            f"scored={metrics['scored']}, "
+            f"skipped_no_odds={metrics['skipped_no_odds']}, "
+            f"errors={metrics['errors']} ({duration_ms:.0f}ms)"
+        )
+        record_job_run(job="clv_scoring", status="ok", duration_ms=duration_ms)
+        return metrics
+
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(f"CLV scoring failed: {e}")
+        sentry_capture_exception(e, job_id="clv_scoring")
+        record_job_run(job="clv_scoring", status="error", duration_ms=duration_ms)
+        return {"status": "error", "error": str(e)}
+
+
+# =============================================================================
 # ODDS SYNC JOB (Auditor Decision 2026-01-16)
 # =============================================================================
 # Dedicated job to sync 1X2 odds for upcoming matches.
@@ -7914,6 +7971,21 @@ def start_scheduler(ml_engine):
         misfire_grace_time=2 * 3600,  # 2h grace for 2h interval
     )
 
+    # CLV Scoring: Every 2 hours (Phase 2: P2-04)
+    # Scores CLV for predictions of recently finished matches
+    # Uses canonical bookmaker from odds_history, log-odds CLV per outcome
+    scheduler.add_job(
+        score_clv_post_match,
+        trigger=IntervalTrigger(hours=2),
+        id="clv_scoring_post_match",
+        name="CLV Scoring Post-Match (every 2h)",
+        replace_existing=True,
+        next_run_time=datetime.utcnow() + timedelta(seconds=95),
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=2 * 3600,
+    )
+
     # Odds Sync: Every 6 hours (configurable via ODDS_SYNC_INTERVAL_HOURS)
     # Fetches 1X2 odds for upcoming NS matches in 48h window
     # Guardrails: ODDS_SYNC_ENABLED, ODDS_SYNC_MAX_FIXTURES (100), freshness 6h
@@ -8322,6 +8394,7 @@ def start_scheduler(ml_engine):
         f"  - Market movement tracking: Every 5 min (T-60/T-30/T-15/T-5 pre-kickoff)\n"
         f"  - Lineup-relative movement: Every 3 min (L-30 to L+10 around lineup)\n"
         f"  - Finished match stats backfill: Every 60 min\n"
+        f"  - CLV scoring post-match: Every 2h (canonical bookmaker, log-odds)\n"
         f"  - Odds sync: Every {_odds_settings.ODDS_SYNC_INTERVAL_HOURS}h (1X2 for NS matches)\n"
         f"  - Fast-path narratives: Every {_fp_settings.FASTPATH_INTERVAL_SECONDS}s (post-match LLM)\n"
         f"  - Daily results sync: 6:00 AM UTC\n"

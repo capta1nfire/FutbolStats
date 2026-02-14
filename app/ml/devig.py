@@ -182,3 +182,30 @@ def get_devig_function(method: str = "proportional"):
         return devig_shin
     else:
         return devig_proportional
+
+
+# ─── Canonical Bookmaker (Phase 2: CLV auditing) ─────────────────────
+# Same priority as PRIORITY_BOOKMAKERS in app/etl/base.py.
+# Used to ensure CLV comparisons always use the same bookmaker source.
+
+CANONICAL_BOOKMAKER_PRIORITY = [
+    "Bet365", "Pinnacle", "1xBet", "Unibet",
+    "William Hill", "Betfair", "Bwin", "888sport",
+]
+
+
+def select_canonical_bookmaker(available_bookmakers):
+    """Select the canonical bookmaker from available options.
+
+    Args:
+        available_bookmakers: iterable of bookmaker names (str)
+
+    Returns:
+        str: canonical bookmaker name, or first available if no priority match
+    """
+    available_lower = {b.lower(): b for b in available_bookmakers}
+    for priority in CANONICAL_BOOKMAKER_PRIORITY:
+        if priority.lower() in available_lower:
+            return available_lower[priority.lower()]
+    # Fallback: return first available
+    return next(iter(available_bookmakers), None)
