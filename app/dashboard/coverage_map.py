@@ -169,8 +169,8 @@ WITH eligible AS (
   FROM matches m
   JOIN admin_leagues al ON m.league_id = al.league_id AND al.is_active = true
   WHERE m.status IN ('FT','AET','PEN')
-    AND m.date >= CAST(:date_from AS timestamp)
-    AND m.date < CAST(:date_to AS timestamp){extra_where}
+    AND m.date >= :date_from
+    AND m.date < :date_to{extra_where}
 ),
 
 -- ========== P0 ==========
@@ -663,8 +663,8 @@ async def build_coverage_map(
 
     # Build and execute SQL
     sql, params = _build_coverage_sql(league_ids=league_ids, country_names=country_names)
-    params["date_from"] = resolved_from
-    params["date_to"] = resolved_to
+    params["date_from"] = datetime.strptime(resolved_from, "%Y-%m-%d")
+    params["date_to"] = datetime.strptime(resolved_to, "%Y-%m-%d")
 
     logger.info(
         "coverage_map | window=%s from=%s to=%s leagues=%s countries=%s",
