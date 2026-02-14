@@ -34,6 +34,8 @@ import {
   Settings,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useCoverageMap } from "@/lib/hooks/use-coverage-map";
+import { CoverageDetailContent } from "@/components/coverage-map/CoverageDetail";
 import { FeatureCoverageSection } from "./FeatureCoverageSection";
 
 const LEAGUE_DETAIL_TABS = [
@@ -98,6 +100,7 @@ interface LeagueDetailProps {
   onBack: () => void;
   onTeamSelect: (teamId: number) => void;
   onSettingsClick?: () => void;
+  onCoverageClick?: () => void;
   /** Initial team to show in details panel (from URL param) */
   initialTeamId?: number | null;
   /** Other leagues from the same country (sorted by priority) */
@@ -540,6 +543,61 @@ function DescensoTable({
   );
 }
 
+/** Coverage ring — SVG donut showing a percentage */
+function CoverageRing({ pct, size = 72 }: { pct: number; size?: number }) {
+  const stroke = 5;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference * (1 - Math.min(pct, 100) / 100);
+
+  // Color based on percentage
+  const color =
+    pct >= 85 ? "var(--status-success-text)"
+    : pct >= 50 ? "var(--status-info-text)"
+    : pct >= 25 ? "var(--status-warning-text)"
+    : "var(--status-error-text)";
+
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle
+          cx={size / 2} cy={size / 2} r={radius}
+          fill="none" stroke="var(--border)" strokeWidth={stroke}
+        />
+        <circle
+          cx={size / 2} cy={size / 2} r={radius}
+          fill="none" stroke={color} strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-sm font-semibold text-foreground">{pct.toFixed(0)}%</span>
+        <span className="text-[9px] text-muted-foreground leading-tight">coverage</span>
+      </div>
+    </div>
+  );
+}
+
+/** Coverage detail content — fetches coverage map data for a specific league */
+export function CoverageDrawerContent({ leagueId }: { leagueId: number }) {
+  const { data } = useCoverageMap("current_season");
+  const leagueCoverage = useMemo(() => {
+    if (!data?.leagues) return [];
+    return data.leagues.filter((l) => l.league_id === leagueId);
+  }, [data, leagueId]);
+
+  if (!leagueCoverage.length) {
+    return (
+      <p className="text-sm text-muted-foreground text-center py-8">
+        No coverage data available
+      </p>
+    );
+  }
+  return <CoverageDetailContent leagues={leagueCoverage} />;
+}
+
 /**
  * LeagueDetail Component
  *
@@ -551,7 +609,7 @@ function DescensoTable({
  * - Recent matches
  * - Standings (with sub-tabs for reclasificación/descenso)
  */
-export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, initialTeamId, siblingLeagues, onLeagueChange }: LeagueDetailProps) {
+export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, onCoverageClick, initialTeamId, siblingLeagues, onLeagueChange }: LeagueDetailProps) {
   const [activeTab, setActiveTab] = useState<LeagueDetailTabId>("standings");
   const [standingsSubTab, setStandingsSubTab] = useState<string>("standings");
   const [selectedGroup, setSelectedGroup] = useState<string | undefined>(undefined);
@@ -670,76 +728,57 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
 
   return (
     <ScrollArea className="h-full">
-      <div className="p-6 space-y-6">
-        <div className="w-full flex flex-col lg:flex-row gap-4 lg:items-start min-w-0">
-          {/* League container: header + tabs + tab content */}
-          <div
-            className={cn(
-              "rounded-lg border border-border overflow-hidden w-full min-w-0",
-              selectedTeamId !== null ? "lg:w-[40%]" : "lg:max-w-[40%] lg:mr-auto"
-            )}
-          >
-            {/* League header */}
-            <div className="px-4 py-3 border-b border-border flex items-start gap-4">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <Trophy className="h-5 w-5 text-primary shrink-0" />
-                  {siblingLeagues && siblingLeagues.length > 1 && onLeagueChange ? (
-                    <Select
-                      value={leagueId.toString()}
-                      onValueChange={(v) => onLeagueChange(parseInt(v, 10))}
-                    >
-                      <SelectTrigger className="text-lg font-semibold text-foreground border-none shadow-none px-1 h-auto py-0 gap-1">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {siblingLeagues.map((sl) => (
-                          <SelectItem key={sl.league_id} value={sl.league_id.toString()}>
-                            {sl.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <h1 className="text-lg font-semibold text-foreground cursor-help truncate">
-                          {league.name}
-                        </h1>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom" sideOffset={6}>
-                        <div className="space-y-1">
-                          <div className="text-foreground">
-                            <span className="text-muted-foreground">Match Weight:</span>{" "}
-                            <span className="font-medium text-foreground">
-                              {league.match_weight ?? 1}
-                            </span>
-                          </div>
-                          <div className="text-muted-foreground">
-                            1 = peso estándar. Valores mayores aumentan la influencia de esta liga
-                            en cálculos internos; menores la reducen.
-                          </div>
-                        </div>
-                      </TooltipContent>
-                    </Tooltip>
-                  )}
-                </div>
-                <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground flex-wrap">
-                  <span className="flex items-center gap-1">
-                    <CountryFlag country={league.country} size={14} />
-                    {league.country}
-                  </span>
-                  {league.kind && <span className="capitalize">{league.kind}</span>}
-                  {league.priority && (
-                    <span className="px-1.5 py-0.5 bg-muted rounded text-xs">
-                      {league.priority}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <Button variant="ghost" size="sm" onClick={() => refetch()} className="shrink-0">
-                <RefreshCw className="h-4 w-4" />
-              </Button>
+      <div className="p-6 space-y-4">
+        {/* League header — full width */}
+        <div className="rounded-lg border border-border px-4 py-3 flex items-center gap-4">
+          {league.logo_url && (
+            <img
+              src={league.logo_url}
+              alt=""
+              className="h-24 w-24 object-contain shrink-0"
+            />
+          )}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              {siblingLeagues && siblingLeagues.length > 1 && onLeagueChange ? (
+                <Select
+                  value={leagueId.toString()}
+                  onValueChange={(v) => onLeagueChange(parseInt(v, 10))}
+                >
+                  <SelectTrigger className="text-2xl font-semibold text-foreground border-none shadow-none px-1 h-auto py-0 gap-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {siblingLeagues.map((sl) => (
+                      <SelectItem key={sl.league_id} value={sl.league_id.toString()}>
+                        {sl.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <h1 className="text-2xl font-semibold text-foreground cursor-help truncate">
+                      {league.name}
+                    </h1>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" sideOffset={6}>
+                    <div className="space-y-1">
+                      <div className="text-foreground">
+                        <span className="text-muted-foreground">Match Weight:</span>{" "}
+                        <span className="font-medium text-foreground">
+                          {league.match_weight ?? 1}
+                        </span>
+                      </div>
+                      <div className="text-muted-foreground">
+                        1 = peso estándar. Valores mayores aumentan la influencia de esta liga
+                        en cálculos internos; menores la reducen.
+                      </div>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              )}
               {onSettingsClick && (
                 <Button
                   variant="ghost"
@@ -752,7 +791,47 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                 </Button>
               )}
             </div>
+            <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground flex-wrap">
+              <span className="flex items-center gap-1">
+                <CountryFlag country={league.country} size={14} />
+                {league.country}
+              </span>
+              {league.kind && <span className="capitalize">{league.kind}</span>}
+              {league.priority && (
+                <span className="px-1.5 py-0.5 bg-muted rounded text-xs">
+                  {league.priority}
+                </span>
+              )}
+            </div>
+          </div>
+          {(() => {
+            const current = stats_by_season?.[0];
+            if (!current) return null;
+            const stats = current.with_stats_pct ?? 0;
+            const odds = current.with_odds_pct ?? 0;
+            const pct = (stats + odds) / 2;
+            return onCoverageClick ? (
+              <button
+                onClick={onCoverageClick}
+                className="cursor-pointer hover:opacity-80 transition-opacity"
+              >
+                <CoverageRing pct={pct} />
+              </button>
+            ) : (
+              <CoverageRing pct={pct} />
+            );
+          })()}
+        </div>
 
+        {/* Two-column content: standings/tabs + team details */}
+        <div className="w-full flex flex-col lg:flex-row gap-4 lg:items-start min-w-0">
+          {/* League container: tabs + tab content */}
+          <div
+            className={cn(
+              "rounded-lg border border-border overflow-hidden w-full min-w-0",
+              selectedTeamId !== null ? "lg:w-[50%]" : "lg:max-w-[50%] lg:mr-auto"
+            )}
+          >
             {/* Tabs */}
             <div className="px-4 py-3 border-b border-border">
               <IconTabs
@@ -936,7 +1015,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
 
           {/* Club container (only when selected) */}
           {selectedTeamId !== null && (
-            <div className="flex flex-col gap-4 w-full lg:w-[40%] min-w-0">
+            <div className="flex flex-col gap-4 w-full lg:w-[50%] min-w-0">
               {/* Team Header */}
               <div className="rounded-lg border border-border px-4 py-3 flex items-center gap-3">
                 {selectedTeam.data?.team?.logo_url ? (
@@ -1321,5 +1400,6 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
 
       </div>
     </ScrollArea>
+
   );
 }

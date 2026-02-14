@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useFootballTeam, useTeamSquad, useTeamEnrichmentDeleteMutation } from "@/lib/hooks";
 import { DetailDrawer } from "@/components/shell";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
 import { IconTabs } from "@/components/ui/icon-tabs";
@@ -233,15 +234,10 @@ const TEAM_TABS = [
 ];
 
 /**
- * TeamDrawer Component
- *
- * Displays Team 360 information:
- * - Team info (name, country, founded, venue)
- * - Stats summary
- * - Competitions
- * - Recent form
+ * Team Panel Content — standalone content for the right panel.
+ * Contains header, scroll area, and all team detail logic.
  */
-export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDrawerProps) {
+export function TeamPanelContent({ teamId }: { teamId: number | null }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [enrichmentNotes, setEnrichmentNotes] = useState("");
   const [enrichmentForm, setEnrichmentForm] = useState<EnrichmentFormState>({ isDirty: false, canSave: false, isPending: false });
@@ -254,10 +250,37 @@ export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDr
     setEnrichmentNotes(data?.wikidata_enrichment?.override?.notes ?? "");
   }, [data?.wikidata_enrichment?.override?.notes]);
 
+  const handleCopyId = () => {
+    if (teamId) {
+      navigator.clipboard.writeText(String(teamId));
+      toast.success(`Team ID ${teamId} copied`);
+    }
+  };
+
+  const displayName = data?.wikidata_enrichment?.short_name ?? data?.team?.name;
+
+  // Header title
+  const titleContent = teamId ? (
+    displayName ? (
+      <button
+        onClick={handleCopyId}
+        className="text-foreground hover:text-primary transition-colors cursor-pointer"
+        title={`Click to copy ID: ${teamId}`}
+      >
+        {displayName}
+      </button>
+    ) : isLoading ? (
+      <span className="text-muted-foreground">Loading...</span>
+    ) : (
+      <span>Team {teamId}</span>
+    )
+  ) : (
+    "Team 360"
+  );
+
   // Content based on state
   let content: React.ReactNode;
 
-  // No team selected - show placeholder (only relevant in persistent mode)
   if (!teamId) {
     content = (
       <div className="flex flex-col items-center justify-center h-full py-12 px-4">
@@ -309,16 +332,9 @@ export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDr
         {/* Tab Content */}
         {activeTab === "overview" && (
           <>
-            {/* Stats Summary */}
             {data.stats && <StatsSummarySection stats={data.stats} />}
-
-            {/* Competitions */}
             {data.leagues_played && <LeaguesSection leagues={data.leagues_played} />}
-
-            {/* Recent Form */}
             {data.recent_form && <RecentFormSection form={data.recent_form} />}
-
-            {/* Squad: Manager + Injuries */}
             {data.team?.team_id && (
               <TeamSquadOverview teamId={data.team.team_id} />
             )}
@@ -363,7 +379,6 @@ export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDr
                 teamName={data.team.name}
                 wiki={data.team.wiki}
               />
-              {/* Notes - last field in the card */}
               <div className="space-y-1">
                 <Label htmlFor={`team-${data.team.team_id}-notes`} className="text-xs">
                   Notes <span className="opacity-50">(optional)</span>
@@ -378,7 +393,6 @@ export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDr
                 />
               </div>
 
-              {/* Save/Cancel buttons for enrichment */}
               {enrichmentForm.isDirty && (
                 <div className="flex items-center justify-end gap-3 pt-2">
                   <button
@@ -406,7 +420,6 @@ export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDr
                 </div>
               )}
 
-              {/* Remove override + info */}
               {data.wikidata_enrichment?.has_override && !enrichmentForm.isDirty && (
                 <div className="pt-2 space-y-2">
                   <Button
@@ -446,42 +459,39 @@ export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDr
     );
   }
 
-  const handleCopyId = () => {
-    if (teamId) {
-      navigator.clipboard.writeText(String(teamId));
-      toast.success(`Team ID ${teamId} copied`);
-    }
-  };
-
-  // Title: display name (clickable to copy ID) or fallback
-  const displayName = data?.wikidata_enrichment?.short_name ?? data?.team?.name;
-  const drawerTitle = teamId ? (
-    displayName ? (
-      <button
-        onClick={handleCopyId}
-        className="text-foreground hover:text-primary transition-colors cursor-pointer"
-        title={`Click to copy ID: ${teamId}`}
-      >
-        {displayName}
-      </button>
-    ) : isLoading ? (
-      <span className="text-muted-foreground">Loading...</span>
-    ) : (
-      <span>Team {teamId}</span>
-    )
-  ) : (
-    "Team 360"
+  return (
+    <>
+      {/* Header */}
+      <div className="h-14 flex items-center justify-center px-4 shrink-0">
+        <h2 className="text-sm font-semibold text-foreground truncate">
+          {titleContent}
+        </h2>
+      </div>
+      {/* Scrollable content */}
+      <ScrollArea className="flex-1 min-h-0">
+        <div className="px-3 pt-3 pb-3">
+          {content}
+        </div>
+      </ScrollArea>
+    </>
   );
+}
 
+/**
+ * TeamDrawer Component (backward-compatible wrapper)
+ *
+ * Wraps TeamPanelContent in a DetailDrawer for standalone use.
+ */
+export function TeamDrawer({ teamId, open, onClose, persistent = false }: TeamDrawerProps) {
   return (
     <DetailDrawer
       open={open}
       onClose={onClose}
-      title={drawerTitle}
+      title="Team 360"
       variant={persistent ? "inline" : "overlay"}
       persistent={persistent}
     >
-      {content}
+      <TeamPanelContent teamId={teamId} />
     </DetailDrawer>
   );
 }

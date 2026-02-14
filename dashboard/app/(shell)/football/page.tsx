@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useMemo, useEffect, useRef } from "react";
+import { Suspense, useCallback, useMemo, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useFootballTeam, useFootballLeague, useFootballCountries } from "@/lib/hooks";
 import { Loader } from "@/components/ui/loader";
@@ -10,7 +10,6 @@ import {
   FootballOverview,
   LeagueDetail,
   GroupDetail,
-  TeamDrawer,
   TournamentsList,
   WorldCup2026Overview,
   WorldCup2026Groups,
@@ -19,7 +18,8 @@ import {
   PlayersView,
   ManagersView,
 } from "@/components/football";
-import { LeagueSettingsDrawer } from "@/components/football/LeagueSettingsDrawer";
+import { RightPanel } from "@/components/football/RightPanel";
+import type { PanelTabId } from "@/components/football/RightPanel";
 
 /**
  * Parse numeric ID from URL param
@@ -41,7 +41,6 @@ function buildFootballUrl(params: {
   team?: number | null;
   worldCupTab?: string | null;
   worldCupGroup?: string | null;
-  leagueSettings?: boolean | null;
 }): string {
   const searchParams = new URLSearchParams();
 
@@ -65,9 +64,6 @@ function buildFootballUrl(params: {
   }
   if (params.worldCupGroup) {
     searchParams.set("wcGroup", params.worldCupGroup);
-  }
-  if (params.leagueSettings) {
-    searchParams.set("leagueSettings", "true");
   }
 
   const search = searchParams.toString();
@@ -97,12 +93,11 @@ function FootballPageContent() {
   const teamId = parseNumericId(searchParams.get("team"));
   const worldCupTab = searchParams.get("wcTab") || "overview";
   const worldCupGroup = searchParams.get("wcGroup");
-  const leagueSettingsOpen = searchParams.get("leagueSettings") === "true";
 
   // Fetch team data to auto-select primary league
   const { data: teamData } = useFootballTeam(teamId);
 
-  // Fetch league data for settings drawer
+  // Fetch league data for settings panel
   const { data: leagueData } = useFootballLeague(leagueId);
 
   // Fetch countries data (cached via react-query) for sibling leagues resolution
@@ -110,6 +105,26 @@ function FootballPageContent() {
 
   // Track if we've already auto-selected the league for this team
   const autoSelectedLeagueRef = useRef<number | null>(null);
+
+  // Right panel tab state (local, not URL)
+  const [panelTabs, setPanelTabs] = useState<PanelTabId[]>(["team"]);
+  const [activePanel, setActivePanel] = useState<PanelTabId>("team");
+
+  const handleOpenPanel = useCallback((tabId: PanelTabId) => {
+    setPanelTabs(prev => prev.includes(tabId) ? prev : [...prev, tabId]);
+    setActivePanel(tabId);
+  }, []);
+
+  const handleClosePanel = useCallback((tabId: PanelTabId) => {
+    setPanelTabs(prev => prev.filter(t => t !== tabId));
+    setActivePanel("team");
+  }, []);
+
+  // Reset extra tabs when league changes
+  useEffect(() => {
+    setPanelTabs(["team"]);
+    setActivePanel("team");
+  }, [leagueId]);
 
   // Auto-select primary league when team is selected from search
   // Only runs when: teamId exists, no leagueId selected, team data loaded with leagues
@@ -304,35 +319,6 @@ function FootballPageContent() {
     );
   }, [router, teamId]);
 
-  // League Settings handlers
-  const handleSettingsOpen = useCallback(() => {
-    router.replace(
-      buildFootballUrl({
-        category,
-        country,
-        league: leagueId,
-        group: groupId,
-        team: teamId,
-        leagueSettings: true,
-      }),
-      { scroll: false }
-    );
-  }, [router, category, country, leagueId, groupId, teamId]);
-
-  const handleSettingsClose = useCallback(() => {
-    router.replace(
-      buildFootballUrl({
-        category,
-        country,
-        league: leagueId,
-        group: groupId,
-        team: teamId,
-        leagueSettings: null,
-      }),
-      { scroll: false }
-    );
-  }, [router, category, country, leagueId, groupId, teamId]);
-
   // World Cup navigation handlers
   const handleWorldCupGroupsClick = useCallback(() => {
     router.replace(
@@ -434,7 +420,8 @@ function FootballPageContent() {
             leagueId={leagueId}
             onBack={category === "tournaments_competitions" ? handleBackToTournaments : handleBackToCountry}
             onTeamSelect={handleTeamSelect}
-            onSettingsClick={handleSettingsOpen}
+            onSettingsClick={() => handleOpenPanel("settings")}
+            onCoverageClick={() => handleOpenPanel("coverage")}
             initialTeamId={teamId}
             siblingLeagues={siblingLeagues}
             onLeagueChange={handleLeagueSelect}
@@ -492,21 +479,15 @@ function FootballPageContent() {
         )}
       </div>
 
-      {/* League Settings Drawer (overlay) */}
-      {leagueData?.league && (
-        <LeagueSettingsDrawer
-          open={leagueSettingsOpen}
-          onClose={handleSettingsClose}
-          league={leagueData.league}
-        />
-      )}
-
-      {/* Col 5: Team Drawer (persistent/fixed) - hidden when LeagueSettings is open */}
-      <TeamDrawer
+      {/* Right Panel — tabbed sidebar (Team + Settings + Coverage) */}
+      <RightPanel
+        tabs={panelTabs}
+        activeTab={activePanel}
+        onTabChange={setActivePanel}
+        onTabClose={handleClosePanel}
         teamId={teamId}
-        open={!leagueSettingsOpen}
-        onClose={handleTeamDrawerClose}
-        persistent
+        league={leagueData?.league}
+        leagueId={leagueId}
       />
     </div>
   );

@@ -3,6 +3,7 @@ export * from "./FootballOverview";
 export * from "./LeagueDetail";
 export * from "./GroupDetail";
 export * from "./TeamDrawer";
+export * from "./RightPanel";
 export * from "./TournamentsList";
 export * from "./WorldCup2026Overview";
 export * from "./WorldCup2026Groups";

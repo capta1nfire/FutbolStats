@@ -258,17 +258,11 @@ export function FootballOverview() {
     <ScrollArea className="h-full">
       <div className="p-6 space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-semibold text-foreground">Football Overview</h1>
-            <p className="text-sm text-muted-foreground">
-              Summary of football data and upcoming matches
-            </p>
-          </div>
-          <Button variant="ghost" size="sm" onClick={() => refetch()}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
-          </Button>
+        <div>
+          <h1 className="text-lg font-semibold text-foreground">Football Overview</h1>
+          <p className="text-sm text-muted-foreground">
+            Summary of football data and upcoming matches
+          </p>
         </div>
 
         {/* Summary Cards */}
