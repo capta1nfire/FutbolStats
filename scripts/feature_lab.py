@@ -108,6 +108,10 @@ RESIDUAL_HYPERPARAMS = {
     "verbosity": 0,
 }
 
+# ─── Diagnostic flags (set from CLI in main()) ──────────────
+_DECOMPOSE = False
+_DEVIG_SENSITIVITY = False
+
 # Feature sets
 BASELINE_FEATURES = [
     "home_goals_scored_avg", "home_goals_conceded_avg",
@@ -207,6 +211,26 @@ EFFICIENCY_FEATURES = ["finish_eff_home", "finish_eff_away",
 
 # ─── Wave 10: XI Continuity (ATI) ─────────────────────────────
 XI_CONTINUITY_FEATURES = ["xi_continuity_home", "xi_continuity_away", "xi_continuity_diff"]
+
+# ─── Wave 11: Geographic Features (FS-09) ────────────────────
+GEO_FEATURES = [
+    "altitude_home_m",
+    "altitude_diff_m",
+    "altitude_high",         # binary: home altitude > 2000m
+    "travel_distance_km",
+    "travel_distance_log",   # log(1 + distance_km)
+]
+
+# ─── Wave 12: Standings Urgency Features (FS-08) ─────────────
+# Derived from accumulated results (PIT-safe: only uses matches before current date)
+STANDINGS_FEATURES = [
+    "home_position",           # Position in table (1-N)
+    "away_position",
+    "position_diff",           # home_pos - away_pos (negative = home higher)
+    "home_points_per_game",    # PPG in current season
+    "away_points_per_game",
+    "season_progress",         # matches_played / expected_total (0.0-1.0)
+]
 
 TESTS = {
     # ═══════════════════════════════════════════════════════
@@ -395,6 +419,34 @@ TESTS = {
     "Q7_xi_xg_elo_odds":    XI_CONTINUITY_FEATURES + XG_CORE + ELO_FEATURES + ODDS_FEATURES,
     # Q8: incremental test — does xi improve M2 (best base test)?
     "Q8_m2_plus_xi":        ARG_SIGNAL + ELO_FEATURES + INTERACTION_FEATURES + XI_CONTINUITY_FEATURES,
+
+    # ═══════════════════════════════════════════════════════════
+    # SECTION U: GEOGRAPHIC FEATURES (FS-09 — travel distance, altitude)
+    # XGBoost handles NaN natively for teams without geo data
+    # ═══════════════════════════════════════════════════════════
+    "U0_geo_only":          GEO_FEATURES,
+    "U1_geo_elo":           GEO_FEATURES + ELO_FEATURES,
+    "U2_geo_defense_elo":   GEO_FEATURES + DEFENSE_PAIR + ELO_FEATURES,
+    "U3_geo_odds":          GEO_FEATURES + ODDS_FEATURES,
+    "U4_geo_elo_odds":      GEO_FEATURES + ELO_FEATURES + ODDS_FEATURES,
+    "U5_geo_full":          GEO_FEATURES + DEFENSE_PAIR + ELO_FEATURES + ODDS_FEATURES,
+
+    # ═══════════════════════════════════════════════════════════
+    # SECTION T: STANDINGS URGENCY (FS-08 — derived from results)
+    # PIT-safe: only uses matches played before each match date
+    # ═══════════════════════════════════════════════════════════
+    "T0_standings_only":    STANDINGS_FEATURES,
+    "T1_standings_elo":     STANDINGS_FEATURES + ELO_FEATURES,
+    "T2_standings_odds":    STANDINGS_FEATURES + ODDS_FEATURES,
+    "T3_standings_elo_odds": STANDINGS_FEATURES + ELO_FEATURES + ODDS_FEATURES,
+    "T4_standings_full":    STANDINGS_FEATURES + DEFENSE_PAIR + ELO_FEATURES + ODDS_FEATURES,
+
+    # ═══════════════════════════════════════════════════════════
+    # SECTION V: COMBINED (geo + standings + core)
+    # ═══════════════════════════════════════════════════════════
+    "V0_geo_standings":     GEO_FEATURES + STANDINGS_FEATURES,
+    "V1_geo_standings_elo": GEO_FEATURES + STANDINGS_FEATURES + ELO_FEATURES,
+    "V2_geo_standings_full": GEO_FEATURES + STANDINGS_FEATURES + DEFENSE_PAIR + ELO_FEATURES + ODDS_FEATURES,
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -504,11 +556,18 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
                m.opening_odds_home AS odds_home_open,
                m.opening_odds_draw AS odds_draw_open,
                m.opening_odds_away AS odds_away_open,
+               m.opening_odds_kind,
                COALESCE(u.xg_home, f.xg_home) AS xg_home_raw,
-               COALESCE(u.xg_away, f.xg_away) AS xg_away_raw
+               COALESCE(u.xg_away, f.xg_away) AS xg_away_raw,
+               wh.lat AS home_lat_raw, wh.lon AS home_lon_raw,
+               wh.stadium_altitude_m AS home_altitude_raw,
+               wa.lat AS away_lat_raw, wa.lon AS away_lon_raw,
+               wa.stadium_altitude_m AS away_altitude_raw
         FROM matches m
         LEFT JOIN match_understat_team u ON m.id = u.match_id
         LEFT JOIN match_fotmob_stats f ON m.id = f.match_id
+        LEFT JOIN team_wikidata_enrichment wh ON m.home_team_id = wh.team_id
+        LEFT JOIN team_wikidata_enrichment wa ON m.away_team_id = wa.team_id
         WHERE m.status = 'FT'
           AND m.home_goals IS NOT NULL
           AND m.away_goals IS NOT NULL
@@ -705,10 +764,17 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
     })
 
     # Build final dataset
-    df = matches[["match_id", "date", "league_id", "home_team_id", "away_team_id",
+    _build_cols = ["match_id", "date", "league_id", "home_team_id", "away_team_id",
                    "home_goals", "away_goals", "odds_home", "odds_draw", "odds_away",
                    "odds_home_open", "odds_draw_open", "odds_away_open",
-                   "odds_snapshot"]].copy()
+                   "odds_home_close", "odds_draw_close", "odds_away_close",
+                   "opening_odds_kind", "odds_snapshot"]
+    # Geo raw columns (Wave 11)
+    for gc in ["home_lat_raw", "home_lon_raw", "home_altitude_raw",
+               "away_lat_raw", "away_lon_raw", "away_altitude_raw"]:
+        if gc in matches.columns:
+            _build_cols.append(gc)
+    df = matches[_build_cols].copy()
     df = df.merge(home_feats, on="match_id", how="left")
     df = df.merge(away_feats, on="match_id", how="left")
 
@@ -808,6 +874,109 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
         df["xi_continuity_home"] = None
         df["xi_continuity_away"] = None
         df["xi_continuity_diff"] = None
+
+    # ── Geographic Features (Wave 11 — FS-09) ──────────────────
+    print("  Computing geographic features...")
+    _R = 6371.0  # Earth radius in km
+    h_lat = np.radians(df["home_lat_raw"].astype(float))
+    h_lon = np.radians(df["home_lon_raw"].astype(float))
+    a_lat = np.radians(df["away_lat_raw"].astype(float))
+    a_lon = np.radians(df["away_lon_raw"].astype(float))
+    dlat = a_lat - h_lat
+    dlon = a_lon - h_lon
+    a_hav = np.sin(dlat / 2) ** 2 + np.cos(h_lat) * np.cos(a_lat) * np.sin(dlon / 2) ** 2
+    dist_km = _R * 2 * np.arcsin(np.sqrt(a_hav))
+
+    df["altitude_home_m"] = df["home_altitude_raw"].astype(float)
+    df["altitude_diff_m"] = df["home_altitude_raw"].astype(float) - df["away_altitude_raw"].astype(float)
+    df["altitude_high"] = (df["home_altitude_raw"].astype(float) > 2000).astype(float)
+    df.loc[df["home_altitude_raw"].isna(), "altitude_high"] = np.nan
+    df["travel_distance_km"] = dist_km
+    df["travel_distance_log"] = np.log1p(dist_km)
+
+    n_geo = df["travel_distance_km"].notna().sum()
+    n_alt = df["altitude_home_m"].notna().sum()
+    print(f"  Geo: distance {n_geo}/{len(df)} ({100*n_geo/len(df):.0f}%), "
+          f"altitude {n_alt}/{len(df)} ({100*n_alt/len(df):.0f}%)")
+
+    # ── Standings Features (Wave 12 — FS-08) ─────────────────
+    # Derive standings from accumulated results (PIT-safe)
+    print("  Computing standings features...")
+    df = df.sort_values(["date", "match_id"]).reset_index(drop=True)
+
+    # Season key: cross-year leagues (Aug-May) use year of August start
+    df["_season_key"] = df["date"].apply(
+        lambda d: d.year if d.month >= 7 else d.year - 1)
+
+    # Use index-keyed dict to avoid groupby ordering issues
+    st_vals = {}
+
+    for (lid, skey), grp in df.groupby(["league_id", "_season_key"]):
+        grp = grp.sort_values(["date", "match_id"])
+        team_pts = {}
+        team_gd = {}
+        team_mp = {}
+        all_teams = set()
+
+        for idx in grp.index:
+            row = df.loc[idx]
+            h_id = row["home_team_id"]
+            a_id = row["away_team_id"]
+            all_teams.add(h_id)
+            all_teams.add(a_id)
+
+            if team_mp:
+                table = sorted(all_teams,
+                               key=lambda t: (team_pts.get(t, 0), team_gd.get(t, 0)),
+                               reverse=True)
+                pos_map = {t: i + 1 for i, t in enumerate(table)}
+                n_teams = len(table)
+                h_pos = pos_map.get(h_id, n_teams)
+                a_pos = pos_map.get(a_id, n_teams)
+                h_mp_val = team_mp.get(h_id, 0)
+                a_mp_val = team_mp.get(a_id, 0)
+                avg_mp = sum(team_mp.values()) / max(len(team_mp), 1)
+                expected = max((n_teams - 1) * 2, 1)
+
+                st_vals[idx] = {
+                    "home_position": h_pos,
+                    "away_position": a_pos,
+                    "position_diff": h_pos - a_pos,
+                    "home_points_per_game": round(team_pts.get(h_id, 0) / max(h_mp_val, 1), 3),
+                    "away_points_per_game": round(team_pts.get(a_id, 0) / max(a_mp_val, 1), 3),
+                    "season_progress": round(min(avg_mp / expected, 1.0), 3),
+                }
+            else:
+                st_vals[idx] = {
+                    "home_position": None, "away_position": None,
+                    "position_diff": None, "home_points_per_game": None,
+                    "away_points_per_game": None, "season_progress": 0.0,
+                }
+
+            # Update AFTER use (PIT-safe)
+            hg, ag = row["home_goals"], row["away_goals"]
+            if hg > ag:
+                team_pts[h_id] = team_pts.get(h_id, 0) + 3
+            elif hg == ag:
+                team_pts[h_id] = team_pts.get(h_id, 0) + 1
+                team_pts[a_id] = team_pts.get(a_id, 0) + 1
+            else:
+                team_pts[a_id] = team_pts.get(a_id, 0) + 3
+            team_gd[h_id] = team_gd.get(h_id, 0) + (hg - ag)
+            team_gd[a_id] = team_gd.get(a_id, 0) + (ag - hg)
+            team_mp[h_id] = team_mp.get(h_id, 0) + 1
+            team_mp[a_id] = team_mp.get(a_id, 0) + 1
+
+    for col in STANDINGS_FEATURES:
+        df[col] = df.index.map(lambda i, c=col: st_vals.get(i, {}).get(c))
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Convert to numeric
+    for col in STANDINGS_FEATURES:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    n_standings = df["home_position"].notna().sum()
+    print(f"  Standings: {n_standings}/{len(df)} ({100*n_standings/len(df):.0f}%)")
 
     # Coverage report
     n_total = len(df)
@@ -1697,6 +1866,112 @@ def multiclass_brier(y_true, y_prob):
     return float(np.mean(np.sum((y_prob - y_onehot) ** 2, axis=1)))
 
 
+def brier_decomposition(y_true, y_prob, n_bins=10):
+    """Murphy (1973) multiclass Brier decomposition.
+
+    Brier = Reliability - Resolution + Uncertainty
+    - Reliability (REL): penalizes miscalibration (lower = better)
+    - Resolution (RES): rewards discrimination (higher = better)
+    - Uncertainty (UNC): irreducible, depends on class distribution
+
+    Returns dict with reliability, resolution, uncertainty,
+    brier_reconstructed (REL - RES + UNC, approx equals Brier).
+    Note: binned approximation — reconstruction error grows with few bins
+    or skewed distributions. Tolerance < 0.01 is expected.
+    """
+    n = len(y_true)
+    n_classes = y_prob.shape[1]
+    y_onehot = np.eye(n_classes)[y_true.astype(int)]
+
+    # Uncertainty (base rate)
+    base_rates = y_onehot.mean(axis=0)
+    unc = float(np.sum(base_rates * (1 - base_rates)))
+
+    # Bin by predicted probability per class
+    rel_total, res_total = 0.0, 0.0
+    empty_bins = 0
+    total_bins = n_classes * n_bins
+    for k in range(n_classes):
+        probs_k = y_prob[:, k]
+        bins = np.linspace(0, 1, n_bins + 1)
+        bin_indices = np.digitize(probs_k, bins) - 1
+        bin_indices = np.clip(bin_indices, 0, n_bins - 1)
+
+        for b in range(n_bins):
+            mask = bin_indices == b
+            n_b = mask.sum()
+            if n_b == 0:
+                empty_bins += 1
+                continue
+            avg_pred = float(probs_k[mask].mean())
+            avg_obs = float(y_onehot[mask, k].mean())
+            rel_total += n_b * (avg_pred - avg_obs) ** 2
+            res_total += n_b * (avg_obs - base_rates[k]) ** 2
+
+    rel_total /= n
+    res_total /= n
+    reconstructed = rel_total - res_total + unc
+
+    return {
+        "reliability": round(rel_total, 6),
+        "resolution": round(res_total, 6),
+        "uncertainty": round(unc, 6),
+        "brier_reconstructed": round(reconstructed, 6),
+        "n_bins": n_bins,
+        "empty_bins": empty_bins,
+        "total_bins": total_bins,
+    }
+
+
+def multiclass_ece(y_true, y_prob, n_bins=15):
+    """Per-class Expected Calibration Error (ECE).
+
+    Returns dict: {ece_home, ece_draw, ece_away, ece_avg, curve_data}
+    """
+    n_classes = y_prob.shape[1]
+    y_onehot = np.eye(n_classes)[y_true.astype(int)]
+    class_names = ["home", "draw", "away"]
+    result = {}
+    curve_data = []
+
+    for k, name in enumerate(class_names):
+        probs_k = y_prob[:, k]
+        true_k = y_onehot[:, k]
+        bins = np.linspace(0, 1, n_bins + 1)
+        ece = 0.0
+        for i in range(n_bins):
+            mask = (probs_k >= bins[i]) & (probs_k < bins[i + 1])
+            n_b = mask.sum()
+            if n_b == 0:
+                continue
+            avg_pred = float(probs_k[mask].mean())
+            avg_obs = float(true_k[mask].mean())
+            ece += (n_b / len(probs_k)) * abs(avg_pred - avg_obs)
+            curve_data.append({
+                "class": name,
+                "bin_mid": round((bins[i] + bins[i + 1]) / 2, 4),
+                "avg_predicted": round(avg_pred, 5),
+                "avg_observed": round(avg_obs, 5),
+                "n": int(n_b),
+            })
+        result["ece_%s" % name] = round(ece, 5)
+
+    result["ece_avg"] = round(
+        np.mean([result["ece_%s" % n] for n in class_names]), 5)
+    result["curve_data"] = curve_data
+    return result
+
+
+def _diagnose_cal_vs_res(decomp, ece_result):
+    """Classify model weakness as CALIBRATION_ISSUE or RESOLUTION_ISSUE."""
+    rel = decomp["reliability"]
+    res = decomp["resolution"]
+    ece_avg = ece_result["ece_avg"]
+    if ece_avg > 0.05 and rel > res:
+        return "CALIBRATION_ISSUE"
+    return "RESOLUTION_ISSUE"
+
+
 def _prepare_dataset(df_universe: pd.DataFrame, feature_names: list,
                      test_name: str, min_total: int = 100,
                      min_test: int = 50,
@@ -1968,7 +2243,20 @@ def evaluate_feature_set_optuna(df_universe: pd.DataFrame, feature_names: list,
     brier_ensemble = multiclass_brier(y_te, ensemble_prob)
     ci_lo, ci_hi = bootstrap_ci(y_te, ensemble_prob)
 
-    return {
+    # Diagnostic decomposition (FS-01 / FS-02)
+    diag = {}
+    if _DECOMPOSE:
+        decomp_10 = brier_decomposition(y_te, ensemble_prob, n_bins=10)
+        decomp_20 = brier_decomposition(y_te, ensemble_prob, n_bins=20)
+        ece = multiclass_ece(y_te, ensemble_prob, n_bins=15)
+        diag = {
+            "brier_decomposition_10": decomp_10,
+            "brier_decomposition_20": decomp_20,
+            "ece": {k: v for k, v in ece.items() if k != "curve_data"},
+            "diagnosis": _diagnose_cal_vs_res(decomp_10, ece),
+        }
+
+    result = {
         "test": test_name,
         "universe": classify_test_universe(feature_names),
         "n_features": len(feature_names),
@@ -1990,6 +2278,8 @@ def evaluate_feature_set_optuna(df_universe: pd.DataFrame, feature_names: list,
         "optuna_cv_brier": round(cv_brier, 5),
         "optuna_n_trials": OPTUNA_N_TRIALS,
     }
+    result.update(diag)
+    return result
 
 
 def evaluate_feature_set(df_universe: pd.DataFrame, feature_names: list,
@@ -2023,11 +2313,24 @@ def evaluate_feature_set(df_universe: pd.DataFrame, feature_names: list,
     brier_ensemble = multiclass_brier(y_te, ensemble_prob)
     ci_lo, ci_hi = bootstrap_ci(y_te, ensemble_prob)
 
+    # Diagnostic decomposition (FS-01 / FS-02)
+    diag = {}
+    if _DECOMPOSE:
+        decomp_10 = brier_decomposition(y_te, ensemble_prob, n_bins=10)
+        decomp_20 = brier_decomposition(y_te, ensemble_prob, n_bins=20)
+        ece = multiclass_ece(y_te, ensemble_prob, n_bins=15)
+        diag = {
+            "brier_decomposition_10": decomp_10,
+            "brier_decomposition_20": decomp_20,
+            "ece": {k: v for k, v in ece.items() if k != "curve_data"},
+            "diagnosis": _diagnose_cal_vs_res(decomp_10, ece),
+        }
+
     # Label distribution in test
     test_dist = df_test["result"].value_counts().sort_index()
     test_pct = (test_dist / len(df_test) * 100).round(1).to_dict()
 
-    return {
+    result = {
         "test": test_name,
         "universe": classify_test_universe(feature_names),
         "n_features": len(feature_names),
@@ -2049,6 +2352,8 @@ def evaluate_feature_set(df_universe: pd.DataFrame, feature_names: list,
             "A": test_pct.get(2, 0),
         },
     }
+    result.update(diag)
+    return result
 
 
 def evaluate_feature_set_residual(df_universe, feature_names, test_name,
@@ -2102,7 +2407,20 @@ def evaluate_feature_set_residual(df_universe, feature_names, test_name,
     delta_ci_lo, delta_ci_hi = bootstrap_paired_delta(
         y_te, ensemble_prob, market_probs)
 
-    return {
+    # Diagnostic decomposition (FS-01 / FS-02)
+    diag = {}
+    if _DECOMPOSE:
+        decomp_10 = brier_decomposition(y_te, ensemble_prob, n_bins=10)
+        decomp_20 = brier_decomposition(y_te, ensemble_prob, n_bins=20)
+        ece = multiclass_ece(y_te, ensemble_prob, n_bins=15)
+        diag = {
+            "brier_decomposition_10": decomp_10,
+            "brier_decomposition_20": decomp_20,
+            "ece": {k: v for k, v in ece.items() if k != "curve_data"},
+            "diagnosis": _diagnose_cal_vs_res(decomp_10, ece),
+        }
+
+    result = {
         "test": test_name,
         "universe": "residual",
         "n_features": len(feature_names),
@@ -2120,9 +2438,504 @@ def evaluate_feature_set_residual(df_universe, feature_names, test_name,
         "logloss_mean": round(float(np.mean(all_logloss)), 5),
         "accuracy_mean": round(float(np.mean(all_accuracy)), 4),
     }
+    result.update(diag)
+    return result
+
+
+# ─── Walk-Forward Multi-Window (FS-04) ──────────────────────
+
+_WALK_FORWARD = False
+
+
+def walk_forward_evaluate(df_universe, feature_names, test_name,
+                          params=None, test_window_months=6,
+                          min_train_months=12, min_test=30):
+    """Expanding window walk-forward evaluation (FS-04).
+
+    Instead of a single 80/20 split, uses multiple temporal windows:
+      Window 1: Train [min_date → min_date+12m] → Test [next 6m]
+      Window 2: Train [min_date → min_date+18m] → Test [next 6m]
+      ...
+    Expanding window: train grows, test is always ~6 months.
+
+    Args:
+        df_universe: Pre-filtered universe DataFrame, sorted by date.
+        feature_names: Feature columns for model training.
+        test_name: Label for the champion being evaluated.
+        params: Optional Optuna best_params. If None, uses PROD_HYPERPARAMS.
+        test_window_months: Length of each test window in months (default 6).
+        min_train_months: Minimum training period in months (default 12).
+        min_test: Minimum test samples per window.
+
+    Returns dict with per-window results + aggregated stats, or None.
+    """
+    missing = [f for f in feature_names if f not in df_universe.columns]
+    if missing:
+        return {"status": "ERROR", "error": "missing_features", "detail": missing}
+
+    nan_rows = df_universe[feature_names].isna().any(axis=1).sum()
+    if nan_rows > 0:
+        return {"status": "ERROR", "error": "nan_in_features", "count": int(nan_rows)}
+
+    if len(df_universe) < 100:
+        return {"status": "INSUFFICIENT_DATA", "n": len(df_universe)}
+
+    dates = df_universe["date"]
+    min_date = dates.min()
+    max_date = dates.max()
+
+    # Generate window boundaries (expanding train, fixed test length)
+    windows = []
+    current_test_start = min_date + pd.DateOffset(months=min_train_months)
+    while current_test_start + pd.DateOffset(months=test_window_months) <= max_date + pd.Timedelta(days=1):
+        test_end = current_test_start + pd.DateOffset(months=test_window_months)
+        windows.append((min_date, current_test_start, test_end))
+        current_test_start = test_end
+
+    if len(windows) < 2:
+        return {
+            "status": "INSUFFICIENT_WINDOWS",
+            "n_windows": len(windows),
+            "date_range": [str(min_date.date()), str(max_date.date())],
+            "months_span": round((max_date - min_date).days / 30.4, 1),
+        }
+
+    results_per_window = []
+    for train_start, test_start, test_end in windows:
+        df_train = df_universe[(dates >= train_start) & (dates < test_start)]
+        df_test = df_universe[(dates >= test_start) & (dates < test_end)]
+
+        if len(df_test) < min_test:
+            continue
+
+        X_tr = df_train[feature_names].values.astype(np.float32)
+        y_tr = df_train["result"].values.astype(int)
+        X_te = df_test[feature_names].values.astype(np.float32)
+        y_te = df_test["result"].values.astype(int)
+
+        # Train model (single seed per window for speed)
+        if params:
+            merged = {**PROD_HYPERPARAMS, **params, "random_state": 42}
+            model = xgb.XGBClassifier(**merged)
+            sw = np.ones(len(y_tr), dtype=np.float32)
+            sw[y_tr == 1] = DRAW_WEIGHT
+            model.fit(X_tr, y_tr, sample_weight=sw, verbose=False)
+        else:
+            model = train_xgb(X_tr, y_tr, seed=42)
+
+        y_prob = model.predict_proba(X_te)
+        brier_val = multiclass_brier(y_te, y_prob)
+
+        # Market baseline on same window (if odds available)
+        mkt_brier = None
+        delta = None
+        if all(c in df_test.columns for c in ("odds_home", "odds_draw", "odds_away")):
+            odds_valid = (df_test["odds_home"].notna() &
+                          (df_test["odds_home"] > 1.0))
+            if odds_valid.sum() >= min_test:
+                df_mkt = df_test[odds_valid]
+                y_mkt = df_mkt["result"].values.astype(int)
+                inv_h = 1.0 / df_mkt["odds_home"].values
+                inv_d = 1.0 / df_mkt["odds_draw"].values
+                inv_a = 1.0 / df_mkt["odds_away"].values
+                total = inv_h + inv_d + inv_a
+                mkt_probs = np.column_stack([inv_h/total, inv_d/total, inv_a/total])
+                mkt_brier = round(multiclass_brier(y_mkt, mkt_probs), 5)
+                # Model brier on same subset for fair comparison
+                y_prob_subset = model.predict_proba(
+                    df_mkt[feature_names].values.astype(np.float32))
+                model_brier_fair = multiclass_brier(y_mkt, y_prob_subset)
+                delta = round(model_brier_fair - mkt_brier, 5)
+
+        results_per_window.append({
+            "window": "%s \u2192 %s" % (test_start.date(), test_end.date()),
+            "n_train": len(df_train),
+            "n_test": len(df_test),
+            "brier": round(brier_val, 5),
+            "market_brier": mkt_brier,
+            "delta": delta,
+        })
+
+    if len(results_per_window) < 2:
+        return {
+            "status": "INSUFFICIENT_WINDOWS",
+            "n_windows": len(results_per_window),
+            "date_range": [str(min_date.date()), str(max_date.date())],
+        }
+
+    briers = [r["brier"] for r in results_per_window]
+    deltas = [r["delta"] for r in results_per_window if r["delta"] is not None]
+
+    # Stability assessment
+    brier_std = float(np.std(briers))
+    if brier_std < 0.03:
+        stability = "STABLE"
+    elif brier_std < 0.05:
+        stability = "MODERATE"
+    else:
+        stability = "UNSTABLE"
+
+    # Direction consistency: how many windows agree on sign of delta?
+    direction = None
+    if deltas:
+        n_positive = sum(1 for d in deltas if d > 0)
+        n_negative = sum(1 for d in deltas if d < 0)
+        direction = {
+            "model_worse": n_positive,
+            "model_better": n_negative,
+            "consistent": n_positive == 0 or n_negative == 0,
+        }
+
+    return {
+        "status": "OK",
+        "test": test_name,
+        "n_windows": len(results_per_window),
+        "windows": results_per_window,
+        "brier_mean": round(float(np.mean(briers)), 5),
+        "brier_std": round(brier_std, 5),
+        "brier_min": round(min(briers), 5),
+        "brier_max": round(max(briers), 5),
+        "delta_mean": round(float(np.mean(deltas)), 5) if deltas else None,
+        "delta_std": round(float(np.std(deltas)), 5) if deltas else None,
+        "stability": stability,
+        "direction": direction,
+    }
+
+
+# ─── Calibration Test (FS-03) ────────────────────────────────
+
+_CALIBRATE = False
+
+
+def calibration_test(df_universe, feature_names, test_name,
+                     params=None, method="isotonic"):
+    """Evaluate model with optional post-hoc calibration (FS-03).
+
+    Compares 'none' (raw XGBoost) vs 'isotonic' (or 'platt') calibration.
+    CRITICAL: Calibration uses a held-out slice of TRAIN data (80/20 inner
+    split), NEVER touches the test set. This prevents information leakage.
+
+    Args:
+        df_universe: Pre-filtered universe DataFrame.
+        feature_names: Feature columns.
+        test_name: Label for the test.
+        params: Optional Optuna hyperparams.
+        method: 'isotonic' or 'platt' (sigmoid).
+
+    Returns dict comparing none vs calibrated model on same test set.
+    """
+    from sklearn.calibration import CalibratedClassifierCV
+
+    missing = [f for f in feature_names if f not in df_universe.columns]
+    if missing:
+        return {"status": "ERROR", "error": "missing_features", "detail": missing}
+
+    if len(df_universe) < 150:
+        return {"status": "INSUFFICIENT_DATA", "n": len(df_universe)}
+
+    # Standard 80/20 split
+    split_idx = int(len(df_universe) * (1 - TEST_FRACTION))
+    df_train = df_universe.iloc[:split_idx]
+    df_test = df_universe.iloc[split_idx:]
+
+    if len(df_test) < 50:
+        return {"status": "INSUFFICIENT_DATA", "n_test": len(df_test)}
+
+    X_te = df_test[feature_names].values.astype(np.float32)
+    y_te = df_test["result"].values.astype(int)
+
+    # Inner split of train: 80% for model, 20% for calibration
+    cal_split = int(len(df_train) * 0.80)
+    df_tr_inner = df_train.iloc[:cal_split]
+    df_cal = df_train.iloc[cal_split:]
+
+    if len(df_cal) < 30:
+        return {"status": "INSUFFICIENT_CAL_DATA", "n_cal": len(df_cal)}
+
+    X_tr_inner = df_tr_inner[feature_names].values.astype(np.float32)
+    y_tr_inner = df_tr_inner["result"].values.astype(int)
+    X_cal = df_cal[feature_names].values.astype(np.float32)
+    y_cal = df_cal["result"].values.astype(int)
+    X_tr_full = df_train[feature_names].values.astype(np.float32)
+    y_tr_full = df_train["result"].values.astype(int)
+
+    # === None (raw XGBoost, trained on full train) ===
+    if params:
+        merged = {**PROD_HYPERPARAMS, **params, "random_state": 42}
+        model_none = xgb.XGBClassifier(**merged)
+        sw = np.ones(len(y_tr_full), dtype=np.float32)
+        sw[y_tr_full == 1] = DRAW_WEIGHT
+        model_none.fit(X_tr_full, y_tr_full, sample_weight=sw, verbose=False)
+    else:
+        model_none = train_xgb(X_tr_full, y_tr_full, seed=42)
+    y_prob_none = model_none.predict_proba(X_te)
+    brier_none = multiclass_brier(y_te, y_prob_none)
+    ece_none = multiclass_ece(y_te, y_prob_none, n_bins=15)
+
+    # === Calibrated (trained on inner, calibrated on cal, predict on test) ===
+    if params:
+        merged_inner = {**PROD_HYPERPARAMS, **params, "random_state": 42}
+        model_inner = xgb.XGBClassifier(**merged_inner)
+        sw_inner = np.ones(len(y_tr_inner), dtype=np.float32)
+        sw_inner[y_tr_inner == 1] = DRAW_WEIGHT
+        model_inner.fit(X_tr_inner, y_tr_inner, sample_weight=sw_inner,
+                        verbose=False)
+    else:
+        model_inner = train_xgb(X_tr_inner, y_tr_inner, seed=42)
+
+    cal_model = CalibratedClassifierCV(model_inner, method=method, cv="prefit")
+    cal_model.fit(X_cal, y_cal)
+    y_prob_cal = cal_model.predict_proba(X_te)
+    brier_cal = multiclass_brier(y_te, y_prob_cal)
+    ece_cal = multiclass_ece(y_te, y_prob_cal, n_bins=15)
+
+    # Paired delta
+    ci_lo, ci_hi = bootstrap_paired_delta(y_te, y_prob_cal, y_prob_none)
+
+    # Diagnosis
+    ece_improved = ece_cal["ece_avg"] < ece_none["ece_avg"]
+    brier_improved = brier_cal < brier_none
+
+    if ece_improved and not brier_improved:
+        conclusion = "CALIBRATION_ISSUE_CONFIRMED"
+    elif brier_improved and ece_improved:
+        conclusion = "CALIBRATION_HELPS"
+    elif not ece_improved and not brier_improved:
+        conclusion = "RESOLUTION_ISSUE_CONFIRMED"
+    else:
+        conclusion = "MIXED"
+
+    return {
+        "status": "OK",
+        "test": test_name,
+        "method": method,
+        "n_train_inner": len(df_tr_inner),
+        "n_cal": len(df_cal),
+        "n_test": len(df_test),
+        "none": {
+            "brier": round(brier_none, 5),
+            "ece_avg": ece_none["ece_avg"],
+            "ece_home": ece_none["ece_home"],
+            "ece_draw": ece_none["ece_draw"],
+            "ece_away": ece_none["ece_away"],
+        },
+        "calibrated": {
+            "brier": round(brier_cal, 5),
+            "ece_avg": ece_cal["ece_avg"],
+            "ece_home": ece_cal["ece_home"],
+            "ece_draw": ece_cal["ece_draw"],
+            "ece_away": ece_cal["ece_away"],
+        },
+        "delta_brier": round(brier_cal - brier_none, 5),
+        "delta_ci95": [round(ci_lo, 5), round(ci_hi, 5)],
+        "ece_improved": ece_improved,
+        "brier_improved": brier_improved,
+        "conclusion": conclusion,
+    }
+
+
+# ─── Opening vs Closing Test (FS-07) ────────────────────────
+
+_OPENING_TEST = False
+
+
+def opening_vs_closing_test(df_universe, feature_names, test_name,
+                            params=None, lockbox_mode=False):
+    """Compare model vs TRUE opening odds AND closing odds (FS-07).
+
+    CRITICAL: Filters by opening_odds_kind to separate real openings from
+    closing proxies. Only rows where opening != closing AND opening_odds_kind
+    is a true opening type are included.
+
+    Args:
+        df_universe: Pre-filtered universe DataFrame with odds columns.
+        feature_names: Champion feature columns.
+        test_name: Label for the champion.
+        params: Optional Optuna hyperparams.
+        lockbox_mode: If True, use 70/15/15 split.
+
+    Returns dict with model vs opening, model vs closing, line movement value.
+    """
+    from app.ml.devig import devig_proportional
+
+    # Check required columns exist
+    required = ["odds_home_close", "odds_draw_close", "odds_away_close",
+                "odds_home_open", "odds_draw_open", "odds_away_open",
+                "opening_odds_kind"]
+    missing_cols = [c for c in required if c not in df_universe.columns]
+    if missing_cols:
+        return {
+            "status": "MISSING_COLUMNS",
+            "missing": missing_cols,
+            "hint": "Re-extract with --extract to include opening_odds columns",
+        }
+
+    # Step 0: Report opening_odds_kind distribution
+    kind_dist = df_universe["opening_odds_kind"].value_counts(dropna=False).to_dict()
+
+    # Split train/test
+    if len(df_universe) < 100:
+        return {"status": "INSUFFICIENT_DATA", "n": len(df_universe)}
+
+    if lockbox_mode:
+        n = len(df_universe)
+        train_end = int(n * 0.70)
+        val_end = int(n * 0.85)
+        df_train = df_universe.iloc[:train_end]
+        df_test = df_universe.iloc[train_end:val_end]
+    else:
+        split_idx = int(len(df_universe) * (1 - TEST_FRACTION))
+        df_train = df_universe.iloc[:split_idx]
+        df_test = df_universe.iloc[split_idx:]
+
+    if len(df_test) < 30:
+        return {"status": "INSUFFICIENT_DATA", "n_test": len(df_test)}
+
+    # TRUE OPENINGS: only rows where opening_odds_kind is a real opening
+    true_opening_kinds = {"opening", "true_opening", "earliest_available"}
+
+    is_true_opening = df_test["opening_odds_kind"].isin(true_opening_kinds)
+    has_closing = (df_test["odds_home_close"].notna() &
+                   (df_test["odds_home_close"] > 1.0))
+    has_true_opening = (df_test["odds_home_open"].notna() &
+                        (df_test["odds_home_open"] > 1.0) &
+                        is_true_opening)
+
+    # Odds must differ (if identical, no line movement information)
+    odds_differ = (
+        (df_test["odds_home_open"] != df_test["odds_home_close"]) |
+        (df_test["odds_draw_open"] != df_test["odds_draw_close"]) |
+        (df_test["odds_away_open"] != df_test["odds_away_close"])
+    )
+
+    has_both = has_closing & has_true_opening & odds_differ
+    n_both = int(has_both.sum())
+
+    if n_both < 50:
+        return {
+            "status": "INSUFFICIENT_DATA",
+            "n_both": n_both,
+            "opening_odds_kind_distribution": kind_dist,
+            "reason": "Only %d matches with true opening + closing + different" % n_both,
+        }
+
+    df_both = df_test[has_both]
+    y_true = df_both["result"].values.astype(int)
+
+    # De-vig closing and opening odds
+    oh_c = df_both["odds_home_close"].values
+    od_c = df_both["odds_draw_close"].values
+    oa_c = df_both["odds_away_close"].values
+    closing_probs = np.array([devig_proportional(h, d, a)
+                              for h, d, a in zip(oh_c, od_c, oa_c)])
+
+    oh_o = df_both["odds_home_open"].values
+    od_o = df_both["odds_draw_open"].values
+    oa_o = df_both["odds_away_open"].values
+    opening_probs = np.array([devig_proportional(h, d, a)
+                              for h, d, a in zip(oh_o, od_o, oa_o)])
+
+    # Train model on full training set
+    fmissing = [f for f in feature_names if f not in df_train.columns]
+    if fmissing:
+        return {"status": "ERROR", "error": "missing_features", "detail": fmissing}
+
+    X_tr = df_train[feature_names].values.astype(np.float32)
+    y_tr = df_train["result"].values.astype(int)
+
+    if params:
+        merged = {**PROD_HYPERPARAMS, **params, "random_state": 42}
+        model = xgb.XGBClassifier(**merged)
+        sw = np.ones(len(y_tr), dtype=np.float32)
+        sw[y_tr == 1] = DRAW_WEIGHT
+        model.fit(X_tr, y_tr, sample_weight=sw, verbose=False)
+    else:
+        model = train_xgb(X_tr, y_tr, seed=42)
+
+    X_both = df_both[feature_names].values.astype(np.float32)
+    y_prob_model = model.predict_proba(X_both)
+
+    # Brier scores
+    brier_model = multiclass_brier(y_true, y_prob_model)
+    brier_closing = multiclass_brier(y_true, closing_probs)
+    brier_opening = multiclass_brier(y_true, opening_probs)
+
+    # Paired delta CIs
+    ci_vs_closing = bootstrap_paired_delta(y_true, y_prob_model, closing_probs)
+    ci_vs_opening = bootstrap_paired_delta(y_true, y_prob_model, opening_probs)
+
+    return {
+        "status": "OK",
+        "test": test_name,
+        "n_both": n_both,
+        "n_test_total": len(df_test),
+        "opening_odds_kind_distribution": kind_dist,
+        "brier_model": round(brier_model, 5),
+        "brier_closing": round(brier_closing, 5),
+        "brier_opening": round(brier_opening, 5),
+        "delta_vs_closing": round(brier_model - brier_closing, 5),
+        "delta_vs_opening": round(brier_model - brier_opening, 5),
+        "line_movement_value": round(brier_opening - brier_closing, 5),
+        "ci_vs_closing": [round(ci_vs_closing[0], 5), round(ci_vs_closing[1], 5)],
+        "ci_vs_opening": [round(ci_vs_opening[0], 5), round(ci_vs_opening[1], 5)],
+    }
 
 
 # ─── Market Baseline ─────────────────────────────────────────
+
+def devig_sensitivity_test(df_odds_universe, lockbox_mode=False):
+    """Compare market Brier under different de-vig methods (FS-06).
+
+    Tests proportional, power, and Shin methods on the same odds universe.
+    Returns a dict with per-method Brier and deltas.
+    """
+    from app.ml.devig import devig_proportional, devig_power, devig_shin
+
+    if len(df_odds_universe) < 50:
+        return None
+
+    if lockbox_mode:
+        n = len(df_odds_universe)
+        train_end = int(n * 0.70)
+        val_end = int(n * 0.85)
+        df_test = df_odds_universe.iloc[train_end:val_end]
+    else:
+        split_idx = int(len(df_odds_universe) * (1 - TEST_FRACTION))
+        df_test = df_odds_universe.iloc[split_idx:]
+
+    if len(df_test) < 30:
+        return None
+
+    y_true = df_test["result"].values.astype(int)
+    oh = df_test["odds_home"].values
+    od = df_test["odds_draw"].values
+    oa = df_test["odds_away"].values
+
+    methods = {
+        "proportional": devig_proportional,
+        "power": devig_power,
+        "shin": devig_shin,
+    }
+
+    results = {}
+    for name, fn in methods.items():
+        probs = np.array([fn(h, d, a) for h, d, a in zip(oh, od, oa)])
+        brier = multiclass_brier(y_true, probs)
+        ci_lo, ci_hi = bootstrap_ci(y_true, probs)
+        results[name] = {
+            "brier": round(brier, 6),
+            "ci95": [round(ci_lo, 5), round(ci_hi, 5)],
+        }
+
+    # Deltas (relative to proportional baseline)
+    base = results["proportional"]["brier"]
+    for name in ("power", "shin"):
+        results[name]["delta_vs_prop"] = round(
+            results[name]["brier"] - base, 6)
+
+    results["n_test"] = len(df_test)
+    return results
+
 
 def market_brier(df_odds_universe: pd.DataFrame,
                  lockbox_mode: bool = False) -> Optional[dict]:
@@ -2161,13 +2974,27 @@ def market_brier(df_odds_universe: pd.DataFrame,
     brier = multiclass_brier(y_true, market_probs)
     ci_lo, ci_hi = bootstrap_ci(y_true, market_probs)
 
-    return {
+    # Diagnostic decomposition (FS-01 / FS-02) — market baseline
+    diag = {}
+    if _DECOMPOSE:
+        decomp_10 = brier_decomposition(y_true, market_probs, n_bins=10)
+        decomp_20 = brier_decomposition(y_true, market_probs, n_bins=20)
+        ece = multiclass_ece(y_true, market_probs, n_bins=15)
+        diag = {
+            "brier_decomposition_10": decomp_10,
+            "brier_decomposition_20": decomp_20,
+            "ece": {k: v for k, v in ece.items() if k != "curve_data"},
+        }
+
+    result = {
         "test": "MKT_market",
         "universe": "odds",
         "n_test": len(df_test),
         "brier_ensemble": round(brier, 5),
         "brier_ci95": [round(ci_lo, 5), round(ci_hi, 5)],
     }
+    result.update(diag)
+    return result
 
 
 def fair_model_vs_market(df_odds_universe: pd.DataFrame, feature_names: list,
@@ -2243,6 +3070,17 @@ def fair_model_vs_market(df_odds_universe: pd.DataFrame, feature_names: list,
     # Fix 2: paired bootstrap CI for delta
     delta_ci_lo, delta_ci_hi = bootstrap_paired_delta(y_te, y_prob_model, market_probs)
 
+    # FS-05: alignment check — model and market use identical test matches
+    alignment = {
+        "n_model": len(y_te),
+        "n_market": len(market_probs),
+        "match_ids_n": len(df_test),
+        "date_min": str(df_test["date"].min()),
+        "date_max": str(df_test["date"].max()),
+    }
+    if "match_id" in df_test.columns:
+        alignment["test_match_ids"] = sorted(df_test["match_id"].tolist())
+
     return {
         "test": test_name,
         "n_test_fair": len(df_test),
@@ -2251,6 +3089,7 @@ def fair_model_vs_market(df_odds_universe: pd.DataFrame, feature_names: list,
         "delta": round(model_brier - market_brier_val, 5),
         "delta_ci95": [round(delta_ci_lo, 5), round(delta_ci_hi, 5)],
         "market_wins": model_brier > market_brier_val,
+        "alignment_check": alignment,
     }
 
 
@@ -2342,6 +3181,31 @@ def run_league_tests(df: pd.DataFrame, league_id: int,
                       f"market={fair['market_brier_fair']:.5f} "
                       f"Δ={fair['delta']:+.5f} "
                       f"CI95[{delta_ci[0]:+.5f}, {delta_ci[1]:+.5f}]")
+
+    # FS-05: Cross-check alignment between FAIR, market, and model test sets
+    alignment_report = []
+    if mkt and fair_comparisons:
+        for test_name, fair in fair_comparisons.items():
+            ac = fair.get("alignment_check", {})
+            fair_ids = set(ac.get("test_match_ids", []))
+            n_fair = ac.get("n_model", 0)
+            n_market = mkt.get("n_test", 0)
+
+            # FAIR must have model_N == market_N within same universe
+            ids_aligned = n_fair == ac.get("n_market", -1)
+            check = {
+                "test": test_name,
+                "n_fair_model": n_fair,
+                "n_fair_market": ac.get("n_market", 0),
+                "n_market_baseline": n_market,
+                "model_market_aligned": ids_aligned,
+                "date_min": ac.get("date_min"),
+                "date_max": ac.get("date_max"),
+            }
+            if not ids_aligned:
+                print(f"  [FS-05 WARNING] Alignment mismatch for {test_name}: "
+                      f"model={n_fair}, market={ac.get('n_market', '?')}")
+            alignment_report.append(check)
 
     # Lockbox evaluation (Fix 4) — champion selected PER UNIVERSE
     lockbox_results = []
@@ -2438,6 +3302,211 @@ def run_league_tests(df: pd.DataFrame, league_id: int,
                       f"{r['delta_vs_market']:>+8.5f}{sig} "
                       f"[{dci[0]:+.5f}, {dci[1]:+.5f}]")
 
+    # ─── Devig sensitivity (FS-06) ────────────────────────────
+    devig_sensitivity = None
+    if _DEVIG_SENSITIVITY and universes.get("odds") is not None:
+        devig_sensitivity = devig_sensitivity_test(
+            universes["odds"], lockbox_mode=lockbox_mode)
+        if devig_sensitivity:
+            print(f"\n  {'─' * 70}")
+            print(f"  DEVIG SENSITIVITY — Market Brier by de-vig method")
+            print(f"  {'─' * 70}")
+            for method in ("proportional", "power", "shin"):
+                m = devig_sensitivity[method]
+                delta_str = ""
+                if "delta_vs_prop" in m:
+                    delta_str = f"  Δ_vs_prop={m['delta_vs_prop']:+.6f}"
+                print(f"  {method:<15} Brier={m['brier']:.6f}  "
+                      f"CI95[{m['ci95'][0]:.5f}, {m['ci95'][1]:.5f}]"
+                      f"{delta_str}")
+
+    # ─── Walk-forward multi-window (FS-04) ────────────────────
+    walk_forward_results = []
+    if _WALK_FORWARD:
+        print(f"\n  {'─' * 70}")
+        print(f"  WALK-FORWARD — Expanding window evaluation")
+        print(f"  {'─' * 70}")
+
+        # Collect candidates: best per universe + fixed baseline
+        wf_candidates = []
+
+        # Fixed baseline (base universe)
+        wf_candidates.append({
+            "test": "FIXED_baseline",
+            "features": BASELINE_FEATURES,
+            "universe": "base",
+            "params": None,
+        })
+
+        # Best test per universe (from standard results)
+        for uid in universes:
+            valid_in_uid = [r for r in results
+                           if r and "error" not in r
+                           and r.get("universe") == uid]
+            if not valid_in_uid:
+                continue
+            best = min(valid_in_uid, key=lambda r: r["brier_ensemble"])
+            # Skip if same as fixed baseline
+            if best["test"] == "FIXED_baseline" or best["test"].startswith("A0_"):
+                continue
+            wf_candidates.append({
+                "test": best["test"],
+                "features": best["features"],
+                "universe": uid,
+                "params": best.get("optuna_params"),
+            })
+
+        for cand in wf_candidates:
+            uid = cand["universe"]
+            udf = universes.get(uid, pd.DataFrame())
+            if udf.empty:
+                continue
+            print(f"\n  [WF] {cand['test']} (universe={uid})...")
+            wf = walk_forward_evaluate(
+                udf, cand["features"], cand["test"],
+                params=cand["params"])
+
+            if wf and wf.get("status") == "OK":
+                wf["universe"] = uid
+                walk_forward_results.append(wf)
+                # Print per-window results
+                for w in wf["windows"]:
+                    delta_str = f"  Δ={w['delta']:+.5f}" if w["delta"] is not None else ""
+                    mkt_str = f"  mkt={w['market_brier']:.5f}" if w["market_brier"] is not None else ""
+                    print(f"    {w['window']}  N={w['n_test']:>4}  "
+                          f"Brier={w['brier']:.5f}{mkt_str}{delta_str}")
+                # Aggregate
+                d = wf.get("direction", {})
+                dir_str = ""
+                if d:
+                    dir_str = (f"  direction: model_worse={d['model_worse']}"
+                               f" model_better={d['model_better']}")
+                print(f"    SUMMARY: mean={wf['brier_mean']:.5f} "
+                      f"std={wf['brier_std']:.5f} [{wf['stability']}] "
+                      f"n_windows={wf['n_windows']}"
+                      f"{dir_str}")
+                if wf.get("delta_mean") is not None:
+                    print(f"    Δ_mean={wf['delta_mean']:+.5f} "
+                          f"Δ_std={wf['delta_std']:.5f}")
+            elif wf:
+                print(f"    {wf.get('status', 'ERROR')}: "
+                      f"{wf.get('error', wf.get('n_windows', ''))}")
+
+    # ─── Opening vs Closing test (FS-07) ──────────────────────
+    opening_test_result = None
+    if _OPENING_TEST:
+        print(f"\n  {'─' * 70}")
+        print(f"  OPENING vs CLOSING — Commercial edge test")
+        print(f"  {'─' * 70}")
+
+        # Use best test from odds universe
+        valid_odds = [r for r in results
+                      if r and "error" not in r
+                      and r.get("universe") in ("odds", "odds_xg")]
+        if valid_odds:
+            best = min(valid_odds, key=lambda r: r["brier_ensemble"])
+            uid = best.get("universe", "odds")
+            udf = universes.get(uid, pd.DataFrame())
+            if not udf.empty:
+                print(f"  Champion: {best['test']} (universe={uid})")
+                opening_test_result = opening_vs_closing_test(
+                    udf, best["features"], best["test"],
+                    params=best.get("optuna_params"),
+                    lockbox_mode=lockbox_mode)
+
+                if opening_test_result.get("status") == "OK":
+                    ot = opening_test_result
+                    print(f"  N_both={ot['n_both']} (of {ot['n_test_total']} test)")
+                    print(f"  Brier model:   {ot['brier_model']:.5f}")
+                    print(f"  Brier closing: {ot['brier_closing']:.5f}")
+                    print(f"  Brier opening: {ot['brier_opening']:.5f}")
+                    print(f"  Δ_vs_closing:  {ot['delta_vs_closing']:+.5f}  "
+                          f"CI95[{ot['ci_vs_closing'][0]:+.5f}, "
+                          f"{ot['ci_vs_closing'][1]:+.5f}]")
+                    print(f"  Δ_vs_opening:  {ot['delta_vs_opening']:+.5f}  "
+                          f"CI95[{ot['ci_vs_opening'][0]:+.5f}, "
+                          f"{ot['ci_vs_opening'][1]:+.5f}]")
+                    print(f"  Line movement: {ot['line_movement_value']:+.5f} "
+                          f"(opening - closing)")
+                    if ot["delta_vs_opening"] < 0 and ot["ci_vs_opening"][1] < 0:
+                        print(f"  >>> COMMERCIAL EDGE CANDIDATE (model beats opening)")
+                else:
+                    print(f"  {opening_test_result.get('status')}: "
+                          f"{opening_test_result.get('reason', opening_test_result.get('error', ''))}")
+                    kind_dist = opening_test_result.get("opening_odds_kind_distribution")
+                    if kind_dist:
+                        print(f"  opening_odds_kind dist: {kind_dist}")
+
+    # ─── Calibration test (FS-03) ──────────────────────────────
+    calibration_result = None
+    if _CALIBRATE:
+        print(f"\n  {'─' * 70}")
+        print(f"  CALIBRATION TEST — none vs {_CALIBRATE}")
+        print(f"  {'─' * 70}")
+
+        # Use best test per universe
+        for uid in universes:
+            valid_in_uid = [r for r in results
+                           if r and "error" not in r
+                           and r.get("universe") == uid]
+            if not valid_in_uid:
+                continue
+            best = min(valid_in_uid, key=lambda r: r["brier_ensemble"])
+            udf = universes.get(uid, pd.DataFrame())
+            if udf.empty:
+                continue
+            print(f"\n  [CAL] {best['test']} (universe={uid})...")
+            cal = calibration_test(
+                udf, best["features"], best["test"],
+                params=best.get("optuna_params"),
+                method=_CALIBRATE)
+
+            if cal and cal.get("status") == "OK":
+                calibration_result = cal
+                n_ = cal["none"]
+                c_ = cal["calibrated"]
+                print(f"    None:       Brier={n_['brier']:.5f}  "
+                      f"ECE_avg={n_['ece_avg']:.5f}")
+                print(f"    {_CALIBRATE.title():10s}: Brier={c_['brier']:.5f}  "
+                      f"ECE_avg={c_['ece_avg']:.5f}")
+                print(f"    Δ_Brier={cal['delta_brier']:+.5f}  "
+                      f"CI95[{cal['delta_ci95'][0]:+.5f}, "
+                      f"{cal['delta_ci95'][1]:+.5f}]")
+                print(f"    Conclusion: {cal['conclusion']}")
+            elif cal:
+                print(f"    {cal.get('status')}: "
+                      f"{cal.get('error', cal.get('n', ''))}")
+
+    # ─── Decomposition summary (FS-01/FS-02) ─────────────────
+    if _DECOMPOSE:
+        print(f"\n  {'─' * 70}")
+        print(f"  DECOMPOSITION SUMMARY — Brier = REL - RES + UNC")
+        print(f"  {'─' * 70}")
+
+        # Market baseline
+        if mkt and "brier_decomposition_10" in mkt:
+            md = mkt["brier_decomposition_10"]
+            me = mkt.get("ece", {})
+            recon_err = abs(md["brier_reconstructed"] - mkt["brier_ensemble"])
+            print(f"  MKT_market  REL={md['reliability']:.5f}  "
+                  f"RES={md['resolution']:.5f}  UNC={md['uncertainty']:.5f}  "
+                  f"recon_err={recon_err:.5f}  "
+                  f"ECE_avg={me.get('ece_avg', 'N/A')}")
+
+        # Top-5 tests by Brier
+        valid = [r for r in results
+                 if r and "error" not in r and "brier_decomposition_10" in r]
+        valid.sort(key=lambda r: r["brier_ensemble"])
+        for r in valid[:5]:
+            d = r["brier_decomposition_10"]
+            e = r.get("ece", {})
+            recon_err = abs(d["brier_reconstructed"] - r["brier_ensemble"])
+            print(f"  {r['test']:<25} REL={d['reliability']:.5f}  "
+                  f"RES={d['resolution']:.5f}  UNC={d['uncertainty']:.5f}  "
+                  f"recon_err={recon_err:.5f}  "
+                  f"ECE_avg={e.get('ece_avg', 'N/A')}  "
+                  f"dx={r.get('diagnosis', '-')}")
+
     return {
         "league_id": league_id,
         "league_name": league_name,
@@ -2446,9 +3515,16 @@ def run_league_tests(df: pd.DataFrame, league_id: int,
         "anchors_by_universe": anchors_by_universe,
         "tests": [r for r in results if r is not None],
         "market_baseline": mkt,
-        "fair_comparisons": fair_comparisons,
+        "fair_comparisons": {k: {kk: vv for kk, vv in v.items()
+                                  if kk != "alignment_check"}
+                              for k, v in fair_comparisons.items()},
+        "alignment_checks": alignment_report,
         "lockbox": lockbox_results if lockbox_mode else None,
         "residual_tests": residual_results if run_residual else None,
+        "devig_sensitivity": devig_sensitivity,
+        "walk_forward": walk_forward_results if walk_forward_results else None,
+        "opening_test": opening_test_result,
+        "calibration_test": calibration_result,
     }
 
 
@@ -2890,6 +3966,17 @@ def main():
                         help="Run Section R: Market Residual tests")
     parser.add_argument("--min-date", type=str, default=None,
                         help="Min date filter YYYY-MM-DD (applied after load)")
+    parser.add_argument("--decompose", action="store_true",
+                        help="Add Brier decomposition (cal/res/unc) + ECE per class")
+    parser.add_argument("--devig-sensitivity", action="store_true",
+                        help="Compare market Brier under proportional/power/shin devig")
+    parser.add_argument("--walk-forward", action="store_true",
+                        help="Walk-forward multi-window evaluation on champions")
+    parser.add_argument("--opening-test", action="store_true",
+                        help="Opening vs closing odds test (commercial edge)")
+    parser.add_argument("--calibrate", type=str, default=None,
+                        choices=["isotonic", "platt"],
+                        help="Calibration test: isotonic or platt vs none")
     args = parser.parse_args()
 
     league_ids = args.league or [128, 94]
@@ -2898,6 +3985,19 @@ def main():
     run_shap = args.shap
     lockbox_mode = args.lockbox
     run_residual = args.residual
+
+    # Set diagnostic flags (FS-01/FS-02/FS-03/FS-04/FS-06/FS-07)
+    global _DECOMPOSE, _DEVIG_SENSITIVITY, _WALK_FORWARD, _OPENING_TEST, _CALIBRATE
+    if args.decompose:
+        _DECOMPOSE = True
+    if args.devig_sensitivity:
+        _DEVIG_SENSITIVITY = True
+    if args.walk_forward:
+        _WALK_FORWARD = True
+    if args.opening_test:
+        _OPENING_TEST = True
+    if args.calibrate:
+        _CALIBRATE = args.calibrate
 
     if run_optuna and not HAS_OPTUNA:
         print("  ERROR: optuna not installed. Run: pip install optuna")
@@ -2917,6 +4017,16 @@ def main():
         mode_label = "STANDARD"
     if run_residual:
         mode_label += "+RESIDUAL"
+    if _DECOMPOSE:
+        mode_label += "+DECOMPOSE"
+    if _DEVIG_SENSITIVITY:
+        mode_label += "+DEVIG"
+    if _WALK_FORWARD:
+        mode_label += "+WALKFWD"
+    if _OPENING_TEST:
+        mode_label += "+OPENING"
+    if _CALIBRATE:
+        mode_label += "+CAL_%s" % _CALIBRATE.upper()
 
     print(f"\n  FEATURE LAB ({mode_label})")
     print(f"  {'=' * 50}")

@@ -1523,7 +1523,9 @@ class FeatureEngineer:
             and match.odds_away is not None
         )
         if has_close and match.odds_recorded_at and match.date:
-            if match.odds_recorded_at > match.date:
+            rec_at = match.odds_recorded_at.replace(tzinfo=None) if match.odds_recorded_at.tzinfo else match.odds_recorded_at
+            match_dt = match.date.replace(tzinfo=None) if getattr(match.date, 'tzinfo', None) else match.date
+            if rec_at > match_dt:
                 has_close = False  # PIT violation: odds captured after kickoff
 
         # Check opening triplet
