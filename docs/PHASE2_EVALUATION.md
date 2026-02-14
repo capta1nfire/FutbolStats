@@ -305,7 +305,7 @@ Deep historical coverage for xi_continuity backtest.
 ### 7.2 Medium Term (1-2 Months)
 
 4. **A/B cascade vs daily**: At N≥200 cascade predictions (~mid-March), run formal CLV comparison. Gate: cascade CLV > daily CLV with p<0.05.
-5. **SteamChaser first training**: At ≥30 positives (~late March), run `run_oot_evaluation()`. Report AUC and compare to 0.5 baseline. Gate: AUC > 0.55 for signal.
+5. **SteamChaser first training**: At ≥30 positives (~late March), run `run_oot_evaluation()`. Report PR-AUC and compare to prevalence baseline. Gate: PR-AUC > 2× base rate for signal. ATI mandate: vig/2 threshold is sacred, never relax.
 6. **MTV feature integration**: If talent_delta shows signal in forward shadow data, add to model v2 feature set. Requires retraining on Railway.
 
 ### 7.3 Long Term (3+ Months)
@@ -319,7 +319,7 @@ Deep historical coverage for xi_continuity backtest.
 | Risk | Probability | Mitigation |
 |------|------------|-----------|
 | Cascade latency > 2s at scale | Low | Steel degradation ensures < 5s worst case |
-| SteamChaser never finds signal | Medium | Vig-adjusted threshold is conservative; may relax to overround/3 |
+| SteamChaser never finds signal | Medium | ATI mandate: vig/2 threshold is sacred. Use scale_pos_weight + PR-AUC optimization. Wait for data. |
 | MTV features don't improve model | Medium | xi_freq proxy backtest (58K matches) provides early signal |
 | CLV negative everywhere | Low | League-specific pockets already identified |
 | Sofascore data loss | Medium | Forward-only dependency; backtest uses xi_freq proxy |

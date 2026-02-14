@@ -218,9 +218,11 @@ def evaluate_model(y_true, y_pred_proba) -> Dict:
     """
     Evaluate SteamChaser model with ATI-mandated metrics.
 
-    Returns AUC and LogLoss (NOT accuracy — ATI directive P2-14).
+    Returns PR-AUC and LogLoss (NOT accuracy, NOT ROC-AUC — ATI directive).
+    PR-AUC is mandatory for severe class imbalance (98.5% vs 1.5%).
+    ROC-AUC inflates performance on imbalanced datasets; PR-AUC does not.
     """
-    from sklearn.metrics import roc_auc_score, log_loss
+    from sklearn.metrics import average_precision_score, log_loss
 
     metrics = {}
 
@@ -232,15 +234,15 @@ def evaluate_model(y_true, y_pred_proba) -> Dict:
     metrics["pct_positive"] = round(100.0 * n_pos / len(y_true), 2)
 
     if n_pos == 0 or n_neg == 0:
-        metrics["auc"] = None
+        metrics["pr_auc"] = None
         metrics["logloss"] = None
         metrics["status"] = "INSUFFICIENT_CLASSES"
         return metrics
 
     try:
-        metrics["auc"] = round(float(roc_auc_score(y_true, y_pred_proba)), 5)
+        metrics["pr_auc"] = round(float(average_precision_score(y_true, y_pred_proba)), 5)
     except Exception:
-        metrics["auc"] = None
+        metrics["pr_auc"] = None
 
     try:
         metrics["logloss"] = round(float(log_loss(y_true, y_pred_proba)), 5)
@@ -345,14 +347,15 @@ def run_oot_evaluation(pairs: List[Dict], oot_fraction: float = 0.3) -> Dict:
     baseline_pred = np.full(len(y_test), base_rate)
     report["baseline_metrics"] = evaluate_model(y_test, baseline_pred)
 
-    # Conclusion
-    model_auc = (report.get("model_metrics") or {}).get("auc")
-    base_auc = (report.get("baseline_metrics") or {}).get("auc")
-    if model_auc and base_auc:
-        delta_auc = model_auc - 0.5  # AUC of random = 0.5
+    # Conclusion — PR-AUC baseline = positive rate (random classifier)
+    model_pr_auc = (report.get("model_metrics") or {}).get("pr_auc")
+    baseline_pr_auc = (report.get("baseline_metrics") or {}).get("pr_auc")
+    base_rate = n_pos_train / len(y_train)
+    if model_pr_auc is not None:
+        delta = model_pr_auc - base_rate  # PR-AUC baseline = prevalence
         report["conclusion"] = (
-            f"Model AUC={model_auc:.4f} (baseline=0.5, delta=+{delta_auc:.4f}). "
-            f"{'Signal detected' if model_auc > 0.55 else 'No meaningful signal yet'}. "
+            f"Model PR-AUC={model_pr_auc:.4f} (baseline={base_rate:.4f}, delta={delta:+.4f}). "
+            f"{'Signal detected' if model_pr_auc > base_rate * 2 else 'No meaningful signal yet'}. "
             f"Positive rate: train={100*n_pos_train/len(y_train):.1f}%, test={100*n_pos_test/len(y_test):.1f}%."
         )
     else:
