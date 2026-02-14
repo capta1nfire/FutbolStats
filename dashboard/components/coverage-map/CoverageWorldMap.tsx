@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useCallback } from "react";
-import { geoNaturalEarth1 } from "d3-geo";
+import { geoMercator } from "d3-geo";
 import type { CoverageCountry } from "@/lib/types/coverage-map";
 
 // --- Country name mapping ---
@@ -108,8 +108,8 @@ export function CoverageWorldMap({
         });
       }
 
-      // Natural Earth projection — proper globe-like appearance
-      const projection = geoNaturalEarth1();
+      // Mercator projection — same as Google Maps / MapTiler / UniFi
+      const projection = geoMercator();
 
       // Color bands: [min, max, r, g, b]
       const BANDS: [number, number, number, number, number][] = [
@@ -175,18 +175,21 @@ export function CoverageWorldMap({
               unproject: (point: number[]) => projection.invert!(point as [number, number]) as number[],
             },
             roam: true,
+            layoutCenter: ["50%", "38%"],
+            layoutSize: "189%",
             scaleLimit: { min: 1, max: 8 },
             label: { show: false },
             itemStyle: {
-              areaColor: "rgba(28, 30, 33, 0.4)",
-              borderColor: "rgba(249,250,250,0.07)",
+              areaColor: "#2d3039",
+              borderColor: "rgba(249,250,250,0.12)",
               borderWidth: 0.5,
             },
             emphasis: {
               label: { show: true, color: "#dee0e3", fontSize: 11 },
               itemStyle: {
+                areaColor: "#383d47",
                 borderColor: "rgba(249,250,250,0.25)",
-                borderWidth: 1.5,
+                borderWidth: 1,
               },
             },
             select: {
