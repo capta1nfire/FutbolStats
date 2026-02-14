@@ -19,7 +19,7 @@ async function fetchCoverageMap(
   return json.data ?? json;
 }
 
-export function useCoverageMap(timeWindow: CoverageWindow = "since_2023") {
+export function useCoverageMap(timeWindow: CoverageWindow = "current_season") {
   return useQuery({
     queryKey: ["coverage-map", timeWindow],
     queryFn: () => fetchCoverageMap(timeWindow),

@@ -14,7 +14,7 @@ Contrato formal para `GET /dashboard/coverage-map.json` (choropleth mundial de c
 
 | Param | Tipo | Requerido | Default | Reglas |
 |---|---|---:|---|---|
-| `window` | enum | no | `since_2023` | `since_2023 \| season_to_date \| last_365d \| custom` |
+| `window` | enum | no | `since_2023` | `since_2023 \| season_to_date \| last_365d \| custom \| current_season \| prev_season \| prev_season_2` |
 | `season` | int | condicional | `null` | Requerido cuando `window=season_to_date` |
 | `from` | date (`YYYY-MM-DD`) | condicional | `null` | Requerido cuando `window=custom` |
 | `to` | date (`YYYY-MM-DD`) | condicional | `null` | Requerido cuando `window=custom` y `to > from` |
@@ -27,10 +27,22 @@ Contrato formal para `GET /dashboard/coverage-map.json` (choropleth mundial de c
 
 ### Resolucion de ventana temporal
 
+**Ventanas globales** (rango identico para todas las ligas):
+
 - `since_2023` -> `from=2023-01-01`, `to=now_utc`
-- `season_to_date` -> `from=<season>-07-01`, `to=now_utc`
+- `season_to_date` -> `from=<season>-07-01`, `to=now_utc` (legacy, hardcoded julio)
 - `last_365d` -> `from=now_utc-365d`, `to=now_utc`
 - `custom` -> usa `from/to` del request
+
+**Ventanas per-league** (rango depende de `admin_leagues.season_start_month`):
+
+- `current_season` -> cada liga usa `make_date(base_year, ssm, 1)` a `make_date(base_year+1, ssm, 1)` donde `base_year = year si month >= ssm, else year-1`
+- `prev_season` -> offset 1 (temporada anterior)
+- `prev_season_2` -> offset 2 (hace 2 temporadas)
+
+No requieren parametros adicionales. El SQL computa el rango per-league usando la columna `season_start_month` (INT, 1-12).
+
+**Ejemplo** (2026-02-14): Premier League (ssm=8) current_season = 2025-08-01..2026-08-01; Argentina (ssm=1) = 2026-01-01..2027-01-01. Ambas filtran `status IN ('FT','AET','PEN')` (no incluye futuros).
 
 ## 3) Universo base y PIT guardrails
 

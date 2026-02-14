@@ -32,9 +32,10 @@ const ISO3_TO_ISO2: Record<string, string> = {
 };
 
 const WINDOW_OPTIONS: { value: CoverageWindow; label: string }[] = [
-  { value: "since_2023", label: "Since 2023" },
-  { value: "last_365d", label: "Last 365 days" },
-  { value: "season_to_date", label: "Season to date" },
+  { value: "current_season", label: "Current Season" },
+  { value: "prev_season", label: "Previous Season" },
+  { value: "prev_season_2", label: "2 Seasons Ago" },
+  { value: "since_2023", label: "All (Since 2023)" },
 ];
 
 const LEGEND_BANDS = [
@@ -293,7 +294,7 @@ function CountryDetailContent({ leagues }: { leagues: CoverageLeague[] }) {
 // --- Main Page ---
 
 function CoverageMapContent() {
-  const [timeWindow, setTimeWindow] = useState<CoverageWindow>("since_2023");
+  const [timeWindow, setTimeWindow] = useState<CoverageWindow>("current_season");
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
   const { data, isLoading, error } = useCoverageMap(timeWindow);
   const isDesktop = useIsDesktop();

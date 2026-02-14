@@ -400,7 +400,8 @@ async def build_league_nav_detail(session: AsyncSession, league_id: int) -> Opti
             al.display_name, al.logo_url, al.wikipedia_url,
             al.country, al.kind, al.is_active,
             al.priority, al.match_type, al.match_weight,
-            al.group_id, al.rules_json, al.tags, al.source
+            al.group_id, al.rules_json, al.tags, al.source,
+            al.season_start_month
         FROM admin_leagues al
         WHERE al.league_id = :lid AND al.is_active = true
     """)
@@ -564,6 +565,7 @@ async def build_league_nav_detail(session: AsyncSession, league_id: int) -> Opti
             "match_weight": league_row.match_weight,
             "rules_json": league_row.rules_json if isinstance(league_row.rules_json, dict) else {},
             "tags": league_row.tags if isinstance(league_row.tags, dict) else {},
+            "season_start_month": league_row.season_start_month or 8,
         },
         "group": group_info,
         "stats_by_season": stats_by_season,

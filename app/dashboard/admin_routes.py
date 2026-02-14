@@ -537,6 +537,11 @@ async def dashboard_admin_patch_league(request: Request, league_id: int):
     from app.dashboard.football_routes import invalidate_football_cache
     invalidate_football_cache(f"football_league_{league_id}")
 
+    # Invalidate coverage map cache (season_start_month, display_name changes)
+    from app.dashboard.dashboard_views_routes import _coverage_map_cache
+    _coverage_map_cache["data"] = None
+    _coverage_map_cache["params"] = None
+
     return {
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "data": result,

@@ -140,6 +140,7 @@ export interface LeagueInfo {
   match_weight: number | null;
   rules_json: Record<string, unknown>;
   tags?: LeagueTags;
+  season_start_month?: number;
 }
 
 export interface LeagueGroupInfo {

@@ -45,6 +45,11 @@ export function LeagueSettingsDrawer({
   const [logoUrl, setLogoUrl] = useState(league.logo_url ?? "");
   const [wikipediaUrl, setWikipediaUrl] = useState(league.wikipedia_url ?? "");
 
+  // Season start month
+  const [seasonStartMonth, setSeasonStartMonth] = useState(
+    league.season_start_month ?? 8
+  );
+
   // Track dirty state
   const isDirty =
     displayName !== (league.display_name ?? "") ||
@@ -57,7 +62,8 @@ export function LeagueSettingsDrawer({
     setDisplayName(league.display_name ?? "");
     setLogoUrl(league.logo_url ?? "");
     setWikipediaUrl(league.wikipedia_url ?? "");
-  }, [league.league_id, league.tags?.use_short_names, league.display_name, league.logo_url, league.wikipedia_url]);
+    setSeasonStartMonth(league.season_start_month ?? 8);
+  }, [league.league_id, league.tags?.use_short_names, league.display_name, league.logo_url, league.wikipedia_url, league.season_start_month]);
 
   const handleToggle = useCallback(
     (checked: boolean) => {
@@ -72,6 +78,17 @@ export function LeagueSettingsDrawer({
       });
     },
     [league.league_id, league.tags, mutation]
+  );
+
+  const handleSeasonStartChange = useCallback(
+    (month: number) => {
+      setSeasonStartMonth(month);
+      mutation.mutate({
+        id: league.league_id,
+        body: { season_start_month: month },
+      });
+    },
+    [league.league_id, mutation]
   );
 
   const handleSaveMetadata = useCallback(() => {
@@ -216,6 +233,46 @@ export function LeagueSettingsDrawer({
               onCheckedChange={handleToggle}
               disabled={mutation.isPending}
             />
+          </div>
+        </div>
+
+        {/* Season Configuration Card */}
+        <div className="bg-muted/50 rounded-lg p-3 space-y-3">
+          <div className="text-xs text-muted-foreground">Season</div>
+
+          <div className="space-y-1">
+            <Label htmlFor="season-start" className="text-xs text-muted-foreground">
+              Season start month
+            </Label>
+            <select
+              id="season-start"
+              value={seasonStartMonth}
+              onChange={(e) => handleSeasonStartChange(Number(e.target.value))}
+              disabled={mutation.isPending}
+              className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm"
+            >
+              {[
+                { value: 1, label: "January" },
+                { value: 2, label: "February" },
+                { value: 3, label: "March" },
+                { value: 4, label: "April" },
+                { value: 5, label: "May" },
+                { value: 6, label: "June" },
+                { value: 7, label: "July" },
+                { value: 8, label: "August" },
+                { value: 9, label: "September" },
+                { value: 10, label: "October" },
+                { value: 11, label: "November" },
+                { value: 12, label: "December" },
+              ].map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-muted-foreground">
+              Used by Coverage Map season filters
+            </p>
           </div>
         </div>
 

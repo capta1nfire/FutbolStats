@@ -51,4 +51,10 @@ export interface CoverageMapData {
   weights: Record<string, number>;
 }
 
-export type CoverageWindow = "since_2023" | "last_365d" | "season_to_date";
+export type CoverageWindow =
+  | "current_season"
+  | "prev_season"
+  | "prev_season_2"
+  | "since_2023"
+  | "last_365d"
+  | "season_to_date";

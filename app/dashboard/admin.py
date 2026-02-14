@@ -31,7 +31,8 @@ async def _load_league_cache(session: AsyncSession) -> dict[int, dict]:
             SELECT
                 league_id, name, display_name, logo_url, wikipedia_url,
                 country, kind, is_active,
-                priority, match_type, match_weight, group_id, source, rules_json
+                priority, match_type, match_weight, group_id, source, rules_json,
+                season_start_month
             FROM admin_leagues
         """)
     )
@@ -55,6 +56,7 @@ async def _load_league_cache(session: AsyncSession) -> dict[int, dict]:
             "group_id": r.group_id,
             "source": r.source,
             "rules_json": r.rules_json if isinstance(r.rules_json, dict) else {},
+            "season_start_month": r.season_start_month or 8,
             # configured = source in ('seed', 'override')
             "configured": r.source in ("seed", "override"),
         }
@@ -280,6 +282,7 @@ async def build_leagues_list(session: AsyncSession) -> dict:
                 "priority": db_entry["priority"],
                 "match_type": db_entry["match_type"],
                 "match_weight": db_entry["match_weight"],
+                "season_start_month": db_entry["season_start_month"],
                 "observed": league_id in observed_ids,
             }
             # Add group info if paired (with paired_handling from rules_json)
@@ -521,6 +524,7 @@ async def build_league_detail(session: AsyncSession, league_id: int) -> Optional
             "priority": db_entry["priority"],
             "match_type": db_entry["match_type"],
             "match_weight": db_entry["match_weight"],
+            "season_start_month": db_entry["season_start_month"],
         })
         if group_info:
             league_info["group"] = group_info
@@ -1213,7 +1217,7 @@ async def _build_feature_coverage(session: AsyncSession, team_id: int) -> Option
 PATCH_ALLOWED_FIELDS = {
     "is_active", "country", "kind", "priority", "match_type", "match_weight",
     "display_order", "tags", "rules_json", "group_id", "name",
-    "display_name", "logo_url", "wikipedia_url",
+    "display_name", "logo_url", "wikipedia_url", "season_start_month",
 }
 
 # Valid values for enums
@@ -1561,6 +1565,23 @@ def _validate_patch(patch: dict) -> dict:
                 raise ValidationError("country must be a string")
             sanitized[key] = value.strip() if value else None
 
+        elif key == "season_start_month":
+            if value is not None:
+                try:
+                    month = int(value)
+                    if month < 1 or month > 12:
+                        raise ValidationError("season_start_month must be between 1 and 12")
+                    sanitized[key] = month
+                except (TypeError, ValueError):
+                    raise ValidationError("season_start_month must be an integer")
+            else:
+                sanitized[key] = None
+
+        elif key in ("display_name", "logo_url", "wikipedia_url"):
+            if value is not None and not isinstance(value, str):
+                raise ValidationError(f"{key} must be a string")
+            sanitized[key] = value.strip() if value else None
+
     return sanitized
 
 
@@ -1627,7 +1648,8 @@ async def patch_league(
             league_id, sport, name, display_name, logo_url, wikipedia_url,
             country, kind, is_active,
             priority, match_type, match_weight, display_order,
-            group_id, tags, rules_json, source, created_at, updated_at
+            group_id, tags, rules_json, source, season_start_month,
+            created_at, updated_at
         FROM admin_leagues
         WHERE league_id = :lid
     """)
@@ -1656,6 +1678,7 @@ async def patch_league(
         "tags": row.tags if isinstance(row.tags, dict) else {},
         "rules_json": row.rules_json if isinstance(row.rules_json, dict) else {},
         "source": row.source,
+        "season_start_month": row.season_start_month,
     }
 
     # Build SET clause dynamically
@@ -1685,7 +1708,8 @@ async def patch_league(
             league_id, sport, name, display_name, logo_url, wikipedia_url,
             country, kind, is_active,
             priority, match_type, match_weight, display_order,
-            group_id, tags, rules_json, source, created_at, updated_at
+            group_id, tags, rules_json, source, season_start_month,
+            created_at, updated_at
     """)
 
     result = await session.execute(update_query, params)
@@ -1710,6 +1734,7 @@ async def patch_league(
         "tags": updated_row.tags if isinstance(updated_row.tags, dict) else {},
         "rules_json": updated_row.rules_json if isinstance(updated_row.rules_json, dict) else {},
         "source": updated_row.source,
+        "season_start_month": updated_row.season_start_month,
     }
 
     # Write audit log

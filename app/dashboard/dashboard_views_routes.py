@@ -4995,7 +4995,7 @@ _coverage_map_cache = {
 @router.get("/dashboard/coverage-map.json")
 async def dashboard_coverage_map(
     request: Request,
-    window: str = Query("since_2023", regex=r"^(since_2023|season_to_date|last_365d|custom)$"),
+    window: str = Query("since_2023", regex=r"^(since_2023|season_to_date|last_365d|custom|current_season|prev_season|prev_season_2)$"),
     season: Optional[int] = None,
     date_from: Optional[str] = Query(None, alias="from", regex=r"^\d{4}-\d{2}-\d{2}$"),
     date_to: Optional[str] = Query(None, alias="to", regex=r"^\d{4}-\d{2}-\d{2}$"),

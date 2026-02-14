@@ -120,7 +120,11 @@ def resolve_date_range(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
 ) -> tuple:
-    """Resolve window/season/from/to into (date_from, date_to) strings."""
+    """Resolve window/season/from/to into (date_from, date_to) strings.
+
+    Returns (None, None) for per-league season modes (current_season,
+    prev_season, prev_season_2) — date filtering is done per-league in SQL.
+    """
     now = datetime.utcnow()
     if window == "custom":
         return date_from, date_to
@@ -133,6 +137,8 @@ def resolve_date_range(
         if season is None:
             season = now.year if now.month >= 7 else now.year - 1
         return f"{season}-07-01", now.strftime("%Y-%m-%d")
+    if window in ("current_season", "prev_season", "prev_season_2"):
+        return None, None  # per-league — SQL handles dates
     # fallback
     return "2023-01-01", now.strftime("%Y-%m-%d")
 
@@ -144,11 +150,16 @@ def resolve_date_range(
 def _build_coverage_sql(
     league_ids: Optional[List[int]] = None,
     country_names: Optional[List[str]] = None,
+    per_league_season: bool = False,
+    season_offset: int = 0,
 ) -> tuple:
     """Build coverage query using FILTER + EXISTS (no CTEs, no LEFT JOINs).
 
     Returns (sql_string, params_dict).
     Uses bound parameters for all user-supplied values (no string interpolation).
+
+    When per_league_season=True, the date filter uses al.season_start_month
+    to compute per-league season boundaries instead of global date_from/date_to.
     """
     extra_where = ""
     params: Dict[str, Any] = {}
@@ -159,6 +170,31 @@ def _build_coverage_sql(
     if country_names:
         extra_where += "\n    AND al.country = ANY(:country_names)"
         params["country_names"] = country_names
+
+    # Date filter: per-league season mode vs global date range
+    if per_league_season:
+        # Per-league: season boundaries computed from al.season_start_month.
+        # base_year = year when current season started for this league.
+        # Uses CURRENT_DATE (date, not timestamptz) and make_date (date) to
+        # avoid timestamp/timestamptz coercion with matches.date (timestamp).
+        # No LEAST(…, NOW()) needed: status IN ('FT','AET','PEN') already
+        # excludes future matches.
+        date_filter = """
+  AND m.date >= make_date(
+      (CASE WHEN EXTRACT(MONTH FROM CURRENT_DATE) >= al.season_start_month
+            THEN EXTRACT(YEAR FROM CURRENT_DATE)::int
+            ELSE EXTRACT(YEAR FROM CURRENT_DATE)::int - 1 END) - :season_offset,
+      al.season_start_month, 1)
+  AND m.date < make_date(
+      (CASE WHEN EXTRACT(MONTH FROM CURRENT_DATE) >= al.season_start_month
+            THEN EXTRACT(YEAR FROM CURRENT_DATE)::int
+            ELSE EXTRACT(YEAR FROM CURRENT_DATE)::int - 1 END) - :season_offset + 1,
+      al.season_start_month, 1)"""
+        params["season_offset"] = season_offset
+    else:
+        date_filter = """
+  AND m.date >= :date_from
+  AND m.date < :date_to"""
 
     sql = f"""
 SELECT
@@ -322,9 +358,7 @@ SELECT
 
 FROM matches m
 JOIN admin_leagues al ON m.league_id = al.league_id AND al.is_active = true
-WHERE m.status IN ('FT','AET','PEN')
-  AND m.date >= :date_from
-  AND m.date < :date_to{extra_where}
+WHERE m.status IN ('FT','AET','PEN'){date_filter}{extra_where}
 GROUP BY m.league_id, al.display_name, al.name, al.country, al.logo_url, al.wikipedia_url
 ORDER BY COUNT(*) DESC
 """
@@ -548,7 +582,11 @@ async def build_coverage_map(
     include_quality_flags: bool = True,
 ) -> dict:
     """Build the full coverage map response."""
-    # Resolve dates
+    # Determine per-league season mode
+    per_league_season = window in ("current_season", "prev_season", "prev_season_2")
+    season_offset = {"current_season": 0, "prev_season": 1, "prev_season_2": 2}.get(window, 0)
+
+    # Resolve dates (returns None, None for per-league modes)
     resolved_from, resolved_to = resolve_date_range(window, season, date_from, date_to)
 
     # Map ISO3 codes to country names for SQL filter
@@ -559,13 +597,20 @@ async def build_coverage_map(
             country_names = None
 
     # Build and execute SQL
-    sql, params = _build_coverage_sql(league_ids=league_ids, country_names=country_names)
-    params["date_from"] = datetime.strptime(resolved_from, "%Y-%m-%d")
-    params["date_to"] = datetime.strptime(resolved_to, "%Y-%m-%d")
+    sql, params = _build_coverage_sql(
+        league_ids=league_ids,
+        country_names=country_names,
+        per_league_season=per_league_season,
+        season_offset=season_offset,
+    )
+    if not per_league_season:
+        params["date_from"] = datetime.strptime(resolved_from, "%Y-%m-%d")
+        params["date_to"] = datetime.strptime(resolved_to, "%Y-%m-%d")
 
     logger.info(
-        "coverage_map | window=%s from=%s to=%s leagues=%s countries=%s",
-        window, resolved_from, resolved_to, league_ids, country_iso3,
+        "coverage_map | window=%s from=%s to=%s per_league=%s offset=%s leagues=%s countries=%s",
+        window, resolved_from, resolved_to, per_league_season, season_offset,
+        league_ids, country_iso3,
     )
 
     try:
