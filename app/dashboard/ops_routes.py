@@ -1757,6 +1757,71 @@ async def _calculate_predictions_health(session) -> dict:
     }
 
 
+async def _calculate_clv_summary(session) -> dict:
+    """
+    CLV (Closing Line Value) rolling metrics per league (Phase 2, P2-12).
+
+    Returns mean/median CLV per outcome per league, plus %> 0 (favorable CLV rate).
+    Only uses scored CLV records from prediction_clv table.
+    """
+    result = await session.execute(text("""
+        SELECT
+            m.league_id,
+            COUNT(*) as n,
+            ROUND(AVG(pc.clv_home)::numeric, 5) as mean_clv_home,
+            ROUND(AVG(pc.clv_draw)::numeric, 5) as mean_clv_draw,
+            ROUND(AVG(pc.clv_away)::numeric, 5) as mean_clv_away,
+            ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY pc.clv_home)::numeric, 5) as median_clv_home,
+            ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY pc.clv_draw)::numeric, 5) as median_clv_draw,
+            ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY pc.clv_away)::numeric, 5) as median_clv_away,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE pc.clv_home > 0) / NULLIF(COUNT(*), 0), 1)
+                as pct_positive_home,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE pc.clv_draw > 0) / NULLIF(COUNT(*), 0), 1)
+                as pct_positive_draw,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE pc.clv_away > 0) / NULLIF(COUNT(*), 0), 1)
+                as pct_positive_away
+        FROM prediction_clv pc
+        JOIN matches m ON m.id = pc.match_id
+        WHERE pc.clv_home IS NOT NULL
+        GROUP BY m.league_id
+        ORDER BY n DESC
+    """))
+    by_league = []
+    total_n = 0
+    for row in result.fetchall():
+        total_n += row.n
+        by_league.append({
+            "league_id": row.league_id,
+            "n": row.n,
+            "mean": {"home": float(row.mean_clv_home), "draw": float(row.mean_clv_draw), "away": float(row.mean_clv_away)},
+            "median": {"home": float(row.median_clv_home), "draw": float(row.median_clv_draw), "away": float(row.median_clv_away)},
+            "pct_positive": {"home": float(row.pct_positive_home), "draw": float(row.pct_positive_draw), "away": float(row.pct_positive_away)},
+        })
+
+    # Global summary
+    global_result = await session.execute(text("""
+        SELECT
+            COUNT(*) as n,
+            ROUND(AVG(clv_home)::numeric, 5) as mean_h,
+            ROUND(AVG(clv_draw)::numeric, 5) as mean_d,
+            ROUND(AVG(clv_away)::numeric, 5) as mean_a,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE clv_home > 0) / NULLIF(COUNT(*), 0), 1) as pct_h,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE clv_draw > 0) / NULLIF(COUNT(*), 0), 1) as pct_d,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE clv_away > 0) / NULLIF(COUNT(*), 0), 1) as pct_a
+        FROM prediction_clv
+        WHERE clv_home IS NOT NULL
+    """))
+    g = global_result.fetchone()
+
+    return {
+        "total_scored": g.n if g else 0,
+        "leagues_count": len(by_league),
+        "global_mean": {"home": float(g.mean_h), "draw": float(g.mean_d), "away": float(g.mean_a)} if g and g.n > 0 else None,
+        "global_pct_positive": {"home": float(g.pct_h), "draw": float(g.pct_d), "away": float(g.pct_a)} if g and g.n > 0 else None,
+        "by_league": by_league,
+    }
+
+
 async def _calculate_model_performance(session) -> dict:
     """
     Calculate model performance summary for OPS dashboard card.
@@ -3736,6 +3801,7 @@ async def _load_ops_data() -> dict:
         titan_data,
         llm_cost_data,
         coverage_by_league,
+        clv_data,
     ) = await asyncio.gather(
         _fetch_budget_status(),
         _fetch_sentry_health(),
@@ -3753,6 +3819,7 @@ async def _load_ops_data() -> dict:
         _safe(_calculate_titan_summary(), {"status": "error"}, "titan"),
         _run_llm_cost_queries(),
         _safe(_run_coverage_queries(league_name_by_id), [], "coverage"),
+        _calc(_calculate_clv_summary),
     )
 
     # Post-processing: enrich with league names
@@ -3822,6 +3889,7 @@ async def _load_ops_data() -> dict:
         "sota_enrichment": sota_enrichment_data,
         "titan": titan_data,
         "coverage_by_league": coverage_by_league,
+        "clv": clv_data,
         "ml_model": ml_model_info,
         "live_summary": live_summary_stats,
         "db_pool": get_pool_status(),

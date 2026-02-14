@@ -1020,6 +1020,8 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
             try:
                 lineup_calls = 0
                 odds_calls = 0
+                # Emit events only AFTER DB commit (avoids race: cascade must see fresh odds + timestamps)
+                events_to_emit: list[dict] = []
                 for match in matches:
                     match_id = match.id
                     external_id = match.external_id
@@ -1285,10 +1287,17 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                         """), {
                             "match_id": match_id,
                             "confirmed_at": snapshot_at,
-                            "detected_at": datetime.utcnow(),
+                            "detected_at": lineup_detected_at,
                         })
 
                         captured_count += 1
+
+                        # Phase 2 (P2-10): Emit LINEUP_CONFIRMED post-commit (PIT-correct)
+                        events_to_emit.append({
+                            "match_id": match_id,
+                            "lineup_detected_at": lineup_detected_at,
+                            "source": "lineup_monitoring",
+                        })
 
                         # Track metrics: capture count and latency
                         capture_end_time = datetime.utcnow()
@@ -1312,6 +1321,16 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                         logger.warning(f"Error checking lineup for match {match_id}: {e}")
 
                 await session.commit()
+
+                # Emit events AFTER commit so cascade reads committed DB state
+                if events_to_emit:
+                    try:
+                        from app.events import get_event_bus, LINEUP_CONFIRMED
+                        bus = get_event_bus()
+                        for payload in events_to_emit:
+                            await bus.emit(LINEUP_CONFIRMED, payload)
+                    except Exception as evt_err:
+                        logger.warning(f"Failed to emit LINEUP_CONFIRMED batch: {evt_err}")
 
             finally:
                 await provider.close()
@@ -7660,6 +7679,17 @@ async def lineup_sync() -> dict:
         return {"status": "error", "error": str(e), "duration_ms": duration_ms}
 
 
+async def _run_event_bus_sweeper():
+    """Wrapper for Event Bus Sweeper Queue (Phase 2, P2-09)."""
+    try:
+        from app.events import get_event_bus, run_sweeper
+        result = await run_sweeper(get_event_bus(), AsyncSessionLocal)
+        if result > 0:
+            logger.info(f"[SWEEPER] Emitted {result} LINEUP_CONFIRMED events")
+    except Exception as e:
+        logger.error(f"[SWEEPER] Job failed: {e}", exc_info=True)
+
+
 def start_scheduler(ml_engine):
     """
     Start the background scheduler.
@@ -7916,6 +7946,21 @@ def start_scheduler(ml_engine):
         id="lineup_relative_movement",
         name="Lineup-Relative Movement (every 3 min)",
         replace_existing=True,
+    )
+
+    # Job 5: EVENT BUS SWEEPER (Phase 2, P2-09)
+    # Reconciliation every 2min: finds matches with confirmed lineups but no
+    # post-lineup prediction and emits LINEUP_CONFIRMED for cascade re-prediction.
+    # ATI Directive: FOR UPDATE SKIP LOCKED mandatory for dedupe.
+    scheduler.add_job(
+        _run_event_bus_sweeper,
+        trigger=IntervalTrigger(minutes=2),
+        id="event_bus_sweeper",
+        name="Event Bus Sweeper (every 2min)",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=120,
     )
 
     # Daily PIT Evaluation: 9:00 AM UTC (after audit, saves JSON silently)

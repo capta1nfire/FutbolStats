@@ -1241,6 +1241,76 @@ async def compute_match_talent_delta_features(
     return out
 
 
+async def compute_line_movement_features(
+    session: AsyncSession,
+    match_id: int,
+    asof_timestamp: datetime = None,
+) -> dict:
+    """
+    Compute line movement features from market_movement_snapshots.
+
+    PIT-safe (ATI Sprint 3 directive): Only uses snapshots with
+    captured_at <= asof_timestamp.
+
+    Features:
+      - line_drift_T60_T30_home/draw/away: prob delta (T30 - T60)
+      - line_drift_magnitude: max(|drift|) across outcomes
+      - overround_T60: market overround at T-60 snapshot
+      - overround_delta: overround_T30 - overround_T60
+
+    Returns dict with all features (None if data insufficient).
+    """
+    if asof_timestamp is None:
+        asof_timestamp = datetime.utcnow()
+
+    # Fetch latest T60 and T30 snapshots for this match, PIT-filtered
+    # (DISTINCT ON guards against any duplicate rows per snapshot_type).
+    result = await session.execute(text("""
+        SELECT DISTINCT ON (snapshot_type)
+            snapshot_type, prob_home, prob_draw, prob_away, overround
+        FROM market_movement_snapshots
+        WHERE match_id = :match_id
+          AND snapshot_type IN ('T60', 'T30')
+          AND captured_at <= :asof
+        ORDER BY snapshot_type, captured_at DESC
+    """), {"match_id": match_id, "asof": asof_timestamp})
+    rows = {row.snapshot_type: row for row in result.fetchall()}
+
+    out = {
+        "line_drift_T60_T30_home": None,
+        "line_drift_T60_T30_draw": None,
+        "line_drift_T60_T30_away": None,
+        "line_drift_magnitude": None,
+        "overround_T60": None,
+        "overround_delta": None,
+    }
+
+    t60 = rows.get("T60")
+    t30 = rows.get("T30")
+
+    if t60:
+        out["overround_T60"] = float(t60.overround) if t60.overround is not None else None
+
+    if t60 and t30 and all(
+        getattr(t60, f) is not None and getattr(t30, f) is not None
+        for f in ("prob_home", "prob_draw", "prob_away")
+    ):
+        # Drift is defined as T30 - T60 (movement from 60m pre-KO to 30m pre-KO)
+        drift_h = float(t30.prob_home) - float(t60.prob_home)
+        drift_d = float(t30.prob_draw) - float(t60.prob_draw)
+        drift_a = float(t30.prob_away) - float(t60.prob_away)
+
+        out["line_drift_T60_T30_home"] = round(drift_h, 6)
+        out["line_drift_T60_T30_draw"] = round(drift_d, 6)
+        out["line_drift_T60_T30_away"] = round(drift_a, 6)
+        out["line_drift_magnitude"] = round(max(abs(drift_h), abs(drift_d), abs(drift_a)), 6)
+
+        if t60.overround is not None and t30.overround is not None:
+            out["overround_delta"] = round(float(t30.overround) - float(t60.overround), 6)
+
+    return out
+
+
 async def compute_xi_continuity(
     session: AsyncSession,
     team_id: int,

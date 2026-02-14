@@ -305,6 +305,14 @@ async def lifespan(app: FastAPI):
     # Start background scheduler for weekly sync/train
     start_scheduler(ml_engine)
 
+    # Phase 2: Start Event Bus for lineup cascade
+    from app.events import get_event_bus, LINEUP_CONFIRMED
+    from app.events.handlers import cascade_handler
+    event_bus = get_event_bus()
+    event_bus.subscribe(LINEUP_CONFIRMED, cascade_handler)
+    await event_bus.start()
+    logger.info("Event Bus started (Phase 2 lineup cascade)")
+
     # Warm up standings cache for active leagues (non-blocking)
     asyncio.create_task(_warmup_standings_cache())
 
@@ -317,6 +325,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down...")
+    await get_event_bus().stop()
     stop_scheduler()
     await close_db()
 
