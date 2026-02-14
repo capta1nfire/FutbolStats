@@ -15,10 +15,10 @@ import {
 } from "@/components/ui/sheet";
 import type {
   CoverageWindow,
-  CoverageMapData,
   CoverageLeague,
 } from "@/lib/types/coverage-map";
-import { Globe } from "lucide-react";
+import { Shield, Trophy, Users } from "lucide-react";
+import { IconTabs } from "@/components/ui/icon-tabs";
 import Image from "next/image";
 
 // --- Constants ---
@@ -73,25 +73,39 @@ function pctColor(v: number): string {
 
 // --- Sidebar ---
 
+type ListTab = "leagues" | "tournaments" | "national";
+
+const LIST_TABS = [
+  { id: "leagues", icon: <Shield />, label: "Leagues" },
+  { id: "tournaments", icon: <Trophy />, label: "Tournaments" },
+  { id: "national", icon: <Users />, label: "National Teams", disabled: true },
+];
+
+function filterByTab(leagues: CoverageLeague[], tab: ListTab): CoverageLeague[] {
+  if (tab === "leagues") return leagues.filter((l) => !l.kind || l.kind === "league");
+  if (tab === "tournaments") return leagues.filter((l) => l.kind === "cup" || l.kind === "international");
+  return [];
+}
+
 function MapSidebar({
-  summary,
   leagues,
   timeWindow,
   onWindowChange,
   selectedCountry,
   onCountryClick,
 }: {
-  summary: CoverageMapData["summary"] | undefined;
   leagues: CoverageLeague[];
   timeWindow: CoverageWindow;
   onWindowChange: (w: CoverageWindow) => void;
   selectedCountry: string | null;
   onCountryClick: (iso3: string | null) => void;
 }) {
+  const [activeTab, setActiveTab] = useState<ListTab>("leagues");
+
   const sorted = useMemo(
     () =>
-      [...leagues].sort((a, b) => b.coverage_total_pct - a.coverage_total_pct),
-    [leagues]
+      [...filterByTab(leagues, activeTab)].sort((a, b) => b.coverage_total_pct - a.coverage_total_pct),
+    [leagues, activeTab]
   );
 
   return (
@@ -119,67 +133,68 @@ function MapSidebar({
           </div>
         </div>
 
-        {/* Summary */}
-        {summary && (
-          <div>
-            <h3 className="text-[10px] uppercase tracking-wider font-medium text-muted-foreground mb-2">
-              Summary
-            </h3>
-            <div className="flex flex-col gap-1 text-[12px]">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Countries</span>
-                <span className="text-foreground tabular-nums">
-                  {summary.countries}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Leagues</span>
-                <span className="text-foreground tabular-nums">
-                  {summary.leagues}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Matches</span>
-                <span className="text-foreground tabular-nums">
-                  {summary.eligible_matches.toLocaleString()}
-                </span>
-              </div>
-            </div>
-          </div>
-        )}
-
       </div>
 
-      {/* Leagues list */}
+      {/* Tab bar + list */}
       <div className="flex-1 overflow-auto border-t border-border">
-        <h3 className="text-[10px] uppercase tracking-wider font-medium text-muted-foreground px-3 pt-3 pb-1.5">
-          All Leagues
-        </h3>
-        <div className="flex flex-col">
-          {sorted.map((lg) => (
-            <button
-              key={lg.league_id}
-              onClick={() =>
-                onCountryClick(
-                  selectedCountry === lg.country_iso3 ? null : lg.country_iso3
-                )
-              }
-              className={`text-left px-3 py-1.5 text-[12px] flex justify-between items-center transition-smooth ${
-                selectedCountry === lg.country_iso3
-                  ? "bg-[rgba(71,151,255,0.08)] text-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-[rgba(249,250,250,0.04)]"
-              }`}
-            >
-              <span className="truncate mr-2">{lg.league_name}</span>
-              <span
-                className="tabular-nums flex-shrink-0 text-[11px]"
-                style={{ color: pctColor(lg.coverage_total_pct) }}
-              >
-                {lg.coverage_total_pct}%
-              </span>
-            </button>
-          ))}
+        <div className="px-3 pt-3 pb-1.5">
+          <IconTabs
+            tabs={LIST_TABS}
+            value={activeTab}
+            onValueChange={(v) => setActiveTab(v as ListTab)}
+            className="w-full"
+          />
         </div>
+        {activeTab === "national" ? (
+          <div className="px-3 py-6 text-center text-[11px] text-muted-foreground">
+            Coming soon
+          </div>
+        ) : (
+          <div className="flex flex-col">
+            {sorted.map((lg) => (
+              <button
+                key={lg.league_id}
+                onClick={() =>
+                  onCountryClick(
+                    selectedCountry === lg.country_iso3 ? null : lg.country_iso3
+                  )
+                }
+                className={`text-left px-3 py-1.5 text-[12px] flex justify-between items-center transition-smooth ${
+                  selectedCountry === lg.country_iso3
+                    ? "bg-[rgba(71,151,255,0.08)] text-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-[rgba(249,250,250,0.04)]"
+                }`}
+              >
+                <span className="truncate mr-2 inline-flex items-center gap-1.5">
+                  {lg.country_iso3 && ISO3_TO_ISO2[lg.country_iso3] ? (
+                    <Image
+                      src={`/flags/${ISO3_TO_ISO2[lg.country_iso3]}.svg`}
+                      alt=""
+                      width={14}
+                      height={14}
+                      className="rounded-full object-cover shrink-0"
+                    />
+                  ) : lg.logo_url ? (
+                    <img
+                      src={lg.logo_url}
+                      alt=""
+                      width={14}
+                      height={14}
+                      className="shrink-0"
+                    />
+                  ) : null}
+                  {lg.league_name}
+                </span>
+                <span
+                  className="tabular-nums flex-shrink-0 text-[11px]"
+                  style={{ color: pctColor(lg.coverage_total_pct) }}
+                >
+                  {lg.coverage_total_pct}%
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -342,17 +357,6 @@ function CoverageMapContent() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-background">
-      {/* Header */}
-      <div className="h-12 flex items-center px-6 border-b border-border">
-        <div className="flex items-center gap-2">
-          <Globe className="h-4 w-4 text-muted-foreground" />
-          <h1 className="text-lg font-semibold text-foreground">
-            Coverage Map
-          </h1>
-        </div>
-      </div>
-
-      {/* Content */}
       {isLoading ? (
         <div className="flex-1 flex items-center justify-center">
           <Loader size="md" />
@@ -368,7 +372,6 @@ function CoverageMapContent() {
         <div className="flex-1 flex min-h-0 relative">
           {/* Left sidebar */}
           <MapSidebar
-            summary={data?.summary}
             leagues={data?.leagues ?? []}
             timeWindow={timeWindow}
             onWindowChange={handleWindowChange}
@@ -385,11 +388,24 @@ function CoverageMapContent() {
               selectedCountry={selectedCountry}
             />
 
-            {/* Coverage legend overlay */}
+            {/* Coverage legend + summary overlay */}
             <div className="absolute bottom-4 left-4 bg-[var(--surface-elevated,#232326)] border border-border rounded-lg px-3 py-2.5 pointer-events-none">
-              <h4 className="text-[11px] font-semibold text-foreground mb-2">
-                Coverage
-              </h4>
+              <div className="text-[11px] font-medium text-foreground mb-1.5">
+                {WINDOW_OPTIONS.find((o) => o.value === timeWindow)?.label ?? timeWindow}
+              </div>
+              {data?.summary && (
+                <div className="flex items-center gap-3 text-[11px] mb-2.5">
+                  <span className="text-muted-foreground">
+                    <span className="text-foreground tabular-nums">{data.summary.countries}</span> countries
+                  </span>
+                  <span className="text-muted-foreground">
+                    <span className="text-foreground tabular-nums">{data.summary.leagues}</span> leagues
+                  </span>
+                  <span className="text-muted-foreground">
+                    <span className="text-foreground tabular-nums">{data.summary.eligible_matches.toLocaleString()}</span> matches
+                  </span>
+                </div>
+              )}
               <div className="flex items-center gap-0.5 mb-1.5">
                 {[...LEGEND_BANDS].reverse().map((band) => (
                   <span

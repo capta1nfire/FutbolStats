@@ -4,16 +4,6 @@ import { useRef, useEffect, useCallback } from "react";
 import { geoMercator } from "d3-geo";
 import type { CoverageCountry, CoverageLeague } from "@/lib/types/coverage-map";
 
-// --- ISO3 → ISO2 for flag SVGs ---
-
-const ISO3_TO_ISO2: Record<string, string> = {
-  ARG: "ar", BEL: "be", BOL: "bo", BRA: "br", CHL: "cl",
-  COL: "co", ECU: "ec", GBR: "gb", FRA: "fr", DEU: "de",
-  ITA: "it", MEX: "mx", NLD: "nl", PRY: "py", PER: "pe",
-  PRT: "pt", SAU: "sa", ESP: "es", TUR: "tr", URY: "uy",
-  USA: "us", VEN: "ve",
-};
-
 // --- Country name mapping ---
 
 const ISO3_TO_ECHARTS: Record<string, string> = {
@@ -157,22 +147,18 @@ export function CoverageWorldMap({
             const d = p.data as { _raw?: CoverageCountry; value?: number };
             if (!d?._raw) return `${p.name}<br/>No data`;
             const c = d._raw;
-            const iso2 = ISO3_TO_ISO2[c.country_iso3] || "";
-            const flag = iso2
-              ? `<img src="/flags/${iso2}.svg" width="16" height="16" style="border-radius:50%;vertical-align:middle;margin-right:6px">`
-              : "";
             const countryLeagues = leagues.filter((l) => l.country_iso3 === c.country_iso3);
             const leagueLines = countryLeagues.map((l) => {
               const logo = l.logo_url
-                ? `<img src="${l.logo_url}" width="16" height="16" style="vertical-align:middle;margin-right:4px">`
+                ? `<img src="${l.logo_url}" width="14" height="14" style="vertical-align:middle;margin-right:5px">`
                 : "";
-              return `${logo}${l.league_name}`;
+              return `<div style="display:flex;align-items:center;gap:2px">${logo}<b>${l.league_name}</b></div>`;
             });
-            const leagueHtml = leagueLines.length
-              ? leagueLines.join("<br/>")
-              : c.country_name;
+            const header = leagueLines.length
+              ? leagueLines.join("")
+              : `<b>${c.country_name}</b>`;
             return [
-              `<div style="display:flex;align-items:center;margin-bottom:4px">${flag}<b>${leagueHtml}</b></div>`,
+              `<div style="margin-bottom:4px">${header}</div>`,
               `Coverage: <b>${c.coverage_total_pct}%</b>`,
               `Tier: ${TIER_LABELS[c.universe_tier] || c.universe_tier}`,
               `Matches: ${c.eligible_matches.toLocaleString()}`,

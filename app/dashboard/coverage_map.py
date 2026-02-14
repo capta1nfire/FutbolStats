@@ -203,6 +203,7 @@ SELECT
   al.country,
   al.logo_url,
   al.wikipedia_url,
+  al.kind,
   COUNT(*) AS eligible_matches,
 
   -- ===== P0 =====
@@ -401,7 +402,7 @@ SELECT
 FROM matches m
 JOIN admin_leagues al ON m.league_id = al.league_id AND al.is_active = true
 WHERE m.status IN ('FT','AET','PEN'){date_filter}{extra_where}
-GROUP BY m.league_id, al.display_name, al.name, al.country, al.logo_url, al.wikipedia_url
+GROUP BY m.league_id, al.display_name, al.name, al.country, al.logo_url, al.wikipedia_url, al.kind
 ORDER BY COUNT(*) DESC
 """
     return sql, params
@@ -462,6 +463,7 @@ def _compute_league_data(row) -> dict:
         "country_iso3": COUNTRY_TO_ISO3.get(row.country),
         "logo_url": getattr(row, "logo_url", None),
         "wikipedia_url": getattr(row, "wikipedia_url", None),
+        "kind": getattr(row, "kind", "league") or "league",
         "eligible_matches": total,
         "dimensions": dims,
         "_odds_xg_n": odds_xg_n,
