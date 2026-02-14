@@ -73,3 +73,5 @@ export * from "./use-match-squad";
 export * from "./use-team-squad";
 export * from "./use-players-view";
 export * from "./use-managers-view";
+// Coverage Map
+export * from "./use-coverage-map";
