@@ -247,10 +247,20 @@ FutbolStats/
 - Estados: LEARNING (0) → READY (1) → OVERFITTING_SUSPECTED (2) → ERROR (3)
 - **NO afecta predicciones** - solo monitoreo
 
+### Phase 2: Asymmetry & Microstructure (SEALED 2026-02-14)
+- **CLV**: Closing Line Value 3-way log-odds — mide si predicción capturó valor vs cierre. 849 scored, 25 ligas.
+- **SteamChaser**: Modelo secundario XGBoost binario — predice line movement. Shadow/data collection only (644 pares, 10 positivos).
+- **Event-Driven Cascade**: Re-predicción post-lineup con odds frescos. Event Bus + Sweeper Queue (2min). Steel degradation (5s timeout).
+- **MTV**: Missing Talent Value — player ID mapping (4,613), PTS + VORP prior, expected XI injury-aware, talent delta. Forward data collection.
+- **Code Freeze**: Arquitectura core congelada. Sistema en incubación/shadow mode.
+- Ver `docs/PHASE2_ARCHITECTURE.md` y `docs/PHASE2_EVALUATION.md` para detalles.
+
 ### Métricas Clave
 - `shadow_eval_lag_minutes`: Lag de evaluación Shadow
 - `sensor_eval_lag_minutes`: Lag de evaluación Sensor B
 - `sensor_state`: Estado actual del Sensor B
+- `cascade_ab` (ops.json): A/B cascade vs daily CLV comparison
+- `clv` (ops.json): CLV distribution por liga
 
 ---
 
@@ -263,6 +273,9 @@ FutbolStats/
 | `stats_backfill` | 60 min | Capturar stats de partidos FT | P1 |
 | `odds_sync` | 6 horas | Sync odds para partidos próximos | P1 |
 | `fastpath` | 2 min | Generar narrativas LLM | P1 |
+| `lineup_monitoring` | 60-90 seg | Detectar lineups, capturar odds frescos, emit LINEUP_CONFIRMED | P0 |
+| `event_bus_sweeper` | 2 min | Reconciliar lineups sin cascade prediction | P1 |
+| `lineup_relative_movement` | 3 min | Capturar odds relativos a lineup detection | P2 |
 
 ---
 
@@ -313,6 +326,8 @@ Grafana Alerting → POST /webhook → ops_alerts table → GET /alerts.json →
 | `docs/PIT_EVALUATION_PROTOCOL.md` | Protocolo de evaluación de modelo |
 | `docs/GRAFANA_ALERTS_CHECKLIST.md` | Configuración de alertas |
 | `docs/COMPETITION_ONBOARDING.md` | Agregar nuevas ligas/copas |
+| `docs/PHASE2_ARCHITECTURE.md` | Fase 2: Diseño de cascade, CLV, SteamChaser, MTV |
+| `docs/PHASE2_EVALUATION.md` | Fase 2: Evaluación final con datos de producción |
 
 ---
 
@@ -453,5 +468,5 @@ Comunicación directa. Si necesitas coordinar con Owner para contexto adicional,
 
 ---
 
-*Última actualización: 2026-01-31*
-*Generado por: Master (Claude Opus 4.5)*
+*Última actualización: 2026-02-14*
+*Generado por: Master (Claude Opus 4.6)*

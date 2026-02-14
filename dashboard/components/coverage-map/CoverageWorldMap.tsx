@@ -2,7 +2,17 @@
 
 import { useRef, useEffect, useCallback } from "react";
 import { geoMercator } from "d3-geo";
-import type { CoverageCountry } from "@/lib/types/coverage-map";
+import type { CoverageCountry, CoverageLeague } from "@/lib/types/coverage-map";
+
+// --- ISO3 → ISO2 for flag SVGs ---
+
+const ISO3_TO_ISO2: Record<string, string> = {
+  ARG: "ar", BEL: "be", BOL: "bo", BRA: "br", CHL: "cl",
+  COL: "co", ECU: "ec", GBR: "gb", FRA: "fr", DEU: "de",
+  ITA: "it", MEX: "mx", NLD: "nl", PRY: "py", PER: "pe",
+  PRT: "pt", SAU: "sa", ESP: "es", TUR: "tr", URY: "uy",
+  USA: "us", VEN: "ve",
+};
 
 // --- Country name mapping ---
 
@@ -51,6 +61,7 @@ const TIER_LABELS: Record<string, string> = {
 
 interface CoverageWorldMapProps {
   countries: CoverageCountry[];
+  leagues: CoverageLeague[];
   onCountryClick: (iso3: string | null) => void;
   selectedCountry: string | null;
 }
@@ -61,6 +72,7 @@ let geoRegistered = false;
 
 export function CoverageWorldMap({
   countries,
+  leagues,
   onCountryClick,
   selectedCountry,
 }: CoverageWorldMapProps) {
@@ -130,8 +142,8 @@ export function CoverageWorldMap({
         name: ISO3_TO_ECHARTS[c.country_iso3] || c.country_name,
         value: c.coverage_total_pct,
         _raw: c,
-        itemStyle: { areaColor: bandColor(c.coverage_total_pct, 0.55) },
-        emphasis: { itemStyle: { areaColor: bandColor(c.coverage_total_pct, 0.80) } },
+        itemStyle: { areaColor: bandColor(c.coverage_total_pct, 1.0) },
+        emphasis: { itemStyle: { areaColor: bandColor(c.coverage_total_pct, 1.0) } },
       }));
 
       chartRef.current.setOption({
@@ -145,26 +157,20 @@ export function CoverageWorldMap({
             const d = p.data as { _raw?: CoverageCountry; value?: number };
             if (!d?._raw) return `${p.name}<br/>No data`;
             const c = d._raw;
+            const iso2 = ISO3_TO_ISO2[c.country_iso3] || "";
+            const flag = iso2
+              ? `<img src="/flags/${iso2}.svg" width="16" height="16" style="border-radius:50%;vertical-align:middle;margin-right:6px">`
+              : "";
+            const countryLeagues = leagues.filter((l) => l.country_iso3 === c.country_iso3);
+            const leagueNames = countryLeagues.map((l) => l.league_name).join(", ");
             return [
-              `<b>${c.country_name}</b>`,
+              `<div style="display:flex;align-items:center;margin-bottom:4px">${flag}<b>${leagueNames || c.country_name}</b></div>`,
               `Coverage: <b>${c.coverage_total_pct}%</b>`,
               `Tier: ${TIER_LABELS[c.universe_tier] || c.universe_tier}`,
-              `Leagues: ${c.league_count}`,
               `Matches: ${c.eligible_matches.toLocaleString()}`,
               `<span style="color:#b7bcc2">P0: ${c.p0_pct}% · P1: ${c.p1_pct}% · P2: ${c.p2_pct}%</span>`,
             ].join("<br/>");
           },
-        },
-        visualMap: {
-          show: false,
-          type: "piecewise",
-          pieces: [
-            { min: 85, max: 100, color: "rgba(34, 197, 94, 0.55)" },
-            { min: 70, max: 84.9, color: "rgba(21, 128, 61, 0.55)" },
-            { min: 50, max: 69.9, color: "rgba(3, 105, 161, 0.55)" },
-            { min: 25, max: 49.9, color: "rgba(180, 83, 9, 0.55)" },
-            { min: 0, max: 24.9, color: "rgba(127, 29, 29, 0.55)" },
-          ],
         },
         series: [
           {

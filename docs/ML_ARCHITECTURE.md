@@ -584,3 +584,71 @@ Esto evita “mejoras falsas” por entrenar con resultados incluidos luego en e
 - **Implementación**: `apply_market_anchor()` en `app/ml/policy.py`, feature-flagged
 - **Resultados**: `scripts/output/experiment_market_anchor.json`
 - **Próximo paso**: v1.0.2 con market probs como feature (modelo aprende "ajuste sobre mercado")
+
+---
+
+## Phase 2: Asymmetry & Microstructure (2026-02-14) — SEALED
+
+### Objetivo
+Explotar asimetrías de timing entre lineup confirmation (~T-60m) y kickoff.
+Infraestructura para capturar, medir y eventualmente explotar ventajas informacionales.
+
+**Status**: Code Freeze. Shadow Mode / Data Accumulation. Ver `docs/PHASE2_ARCHITECTURE.md` y `docs/PHASE2_EVALUATION.md`.
+
+### CLV (Closing Line Value)
+Métrica post-hoc que mide si la predicción capturó valor vs el cierre de línea.
+
+```
+CLV_k = ln(odds_asof_k / odds_close_k)   para k ∈ {home, draw, away}
+Positivo = obtuvimos mejor precio que el cierre
+```
+
+- **Tabla**: `prediction_clv` (prediction_id, canonical_bookmaker, prob_asof_*, prob_close_*, clv_*)
+- **Baseline (N=849)**: Home -0.00522, Draw -0.00169, Away +0.00009 — modelo sangra CLV
+- **Bolsillos positivos**: Serie A home +0.0176, Süper Lig away +0.0275, EPL away +0.0190
+- **NO es feature** (sería leakage). Solo métrica de evaluación.
+
+### SteamChaser (Modelo Secundario — Shadow Mode)
+XGBoost binario que predice si la línea colapsará post-lineup.
+
+```
+Target: y = 1 si max(|prob_close_k - prob_T60_k|) > overround_T60 / 2
+```
+
+- **Archivo**: `app/ml/steamchaser.py`
+- **Threshold**: `VIG_DIVISOR = 2` (sagrado — mandato ATI, nunca relajar)
+- **Estado (2026-02-14)**: 644 pares, 10 positivos (1.55%), ACCUMULATING
+- **Metrics**: PR-AUC + LogLoss (ATI mandate: NO ROC-AUC, NO accuracy para imbalanceo severo)
+- **Gate**: MIN_TRAINING_SAMPLES=500, MIN_POSITIVE_SAMPLES=30
+- **Evaluación**: `run_oot_evaluation()` — chronological 70/30 split, baseline = prevalence
+
+### Event-Driven Cascade
+Re-predicción post-lineup con odds frescos.
+
+```
+LINEUP_CONFIRMED(match_id)
+  → validate NS + not frozen
+  → get features + predict (Phase 1 model)
+  → compute_talent_delta (5s timeout — steel degradation)
+  → compute_line_movement (PIT-safe: captured_at ≤ asof_timestamp)
+  → apply_market_anchor (fresh odds)
+  → UPSERT prediction (asof = lineup_detected_at)
+```
+
+- **Event Bus**: `app/events/bus.py` — asyncio.Queue + DB source of truth
+- **Handler**: `app/events/handlers.py` — cascade_handler with steel degradation
+- **Sweeper**: Every 2min, FOR UPDATE SKIP LOCKED, reconciles missed lineups
+- **Idempotent**: Skips if pred_asof >= lineup_detected_at
+
+### MTV (Missing Talent Value)
+Forward data collection — NOT in model yet.
+
+- **Player ID Mapping**: 4,613 (Hungarian bipartite), avg confidence 0.926
+- **PTS + VORP**: Player Talent Score with P25 bayesian prior (zero-division impossible)
+- **Expected XI**: Injury-aware (filters player_injuries)
+- **Talent Delta**: `mean(PTS(XI_real)) - mean(PTS(XI_expected))`
+- **Xi Continuity**: Historical XI overlap (58,924 matches for backtest)
+
+### Phase 2 Compliance
+- ATI #1-4: SteamChaser, VORP P25, steel degradation 5s, Sweeper Queue ✓
+- GDT #1-7: asof_timestamp, lineup_detected_at, bipartite matching, injury-aware XI, CLV 3-way, DB-backed bus, cascade optimized ✓

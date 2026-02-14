@@ -350,6 +350,7 @@ function CoverageMapContent() {
           <div className="flex-1 min-w-0 relative">
             <CoverageWorldMap
               countries={data?.countries ?? []}
+              leagues={data?.leagues ?? []}
               onCountryClick={setSelectedCountry}
               selectedCountry={selectedCountry}
             />

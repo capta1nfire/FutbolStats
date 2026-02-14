@@ -138,7 +138,68 @@ SELECT
   )) AS lineup_movement_pack2;
 ```
 
-## “Qué hacer si algo falla”
+## Phase 2: Cascade & Sweeper Monitoring
+
+### Checklist diario (Phase 2)
+
+1. **lineup_detected_at**: Verificar que se está poblando going-forward
+```sql
+SELECT COUNT(*) AS with_detected_at
+FROM match_lineups ml
+JOIN matches m ON m.id = ml.match_id
+WHERE m.date >= NOW() - INTERVAL '24 hours'
+  AND ml.lineup_detected_at IS NOT NULL;
+```
+
+2. **Sweeper Queue**: Debe procesar <2-3% de partidos (red de seguridad, no procesador principal)
+```sql
+-- Si esto retorna matches, cascade no está disparando correctamente
+SELECT m.id, ml.lineup_detected_at, m.date
+FROM matches m
+JOIN match_lineups ml ON ml.match_id = m.id AND ml.team_id = m.home_team_id
+WHERE m.date BETWEEN NOW() AND NOW() + INTERVAL '65 minutes'
+  AND m.status = 'NS'
+  AND ml.lineup_detected_at IS NOT NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM predictions p
+      WHERE p.match_id = m.id AND p.asof_timestamp >= ml.lineup_detected_at
+  );
+```
+
+3. **CLV scoring**: Verificar que se calculan post-match
+```sql
+SELECT COUNT(*) AS clv_last_7d
+FROM prediction_clv pc
+JOIN matches m ON m.id = pc.match_id
+WHERE m.date >= NOW() - INTERVAL '7 days';
+```
+
+4. **Cascade A/B**: Ver estado en `/dashboard/ops.json` → `cascade_ab`
+
+### Troubleshooting Phase 2
+
+**Cascade no dispara (lineup_detected_at = 0)**:
+- Verificar que el deploy tiene el código de Sprint 3+ (`app/events/`)
+- Logs: `railway logs --filter "CASCADE"` o `--filter "LINEUP_CONFIRMED"`
+- El lineup monitoring escribe `lineup_detected_at` solo para partidos NUEVOS
+- Partidos ya procesados pre-Sprint 3 necesitan backfill manual
+
+**Sweeper procesa >5% de partidos**:
+- Indica que el Event Bus no está emitiendo correctamente
+- Logs: `railway logs --filter "SWEEPER"`
+- Verificar que `get_event_bus().start()` se ejecuta en lifespan (main.py)
+
+**SteamChaser data**:
+- Verificar acumulación: `SELECT COUNT(*) FROM market_movement_snapshots WHERE snapshot_type = 'T60'`
+- Training readiness: endpoint o `training_readiness_check()` en `app/ml/steamchaser.py`
+
+**CLV no se calcula**:
+- Job post-match debe insertar en `prediction_clv`
+- Verificar canonical bookmaker en `odds_history` (Bet365 > Pinnacle > 1xBet)
+
+---
+
+## "Qué hacer si algo falla"
 
 - **PIT=0 en días con partidos**:
   - revisar logs Railway: jobs `lineup_monitoring_*` y `global_sync_today`

@@ -28,6 +28,12 @@ app/
 ├── database.py          # Async SQLAlchemy engine
 ├── config.py            # Settings (pydantic)
 ├── ml/                  # Modelo ML y predicciones
+│   ├── steamchaser.py   # SteamChaser: line movement predictor (Phase 2, shadow mode)
+│   └── policy.py        # Market Anchor + betting policy
+├── events/              # Phase 2: Event-driven lineup cascade
+│   ├── bus.py           # EventBus (asyncio.Queue) + Sweeper Queue (2min)
+│   └── handlers.py      # cascade_handler (steel degradation, 5s timeout)
+├── features/            # Feature engineering (PTS, VORP, talent delta, xi_continuity)
 ├── llm/                 # Narrativas con Gemini
 ├── etl/                 # ETL desde API-Football
 └── telemetry/           # Prometheus metrics, Sentry
@@ -209,8 +215,12 @@ Anti-contaminación:
 - **Modelo activo**: XGBoost v1.0.0 (14 features)
 - **Shadow mode**: Two-stage (en evaluación, NO en producción)
 - **Sensor B**: Diagnóstico de calibración (no afecta predicciones)
+- **SteamChaser**: Modelo secundario XGBoost binario — predice line movement post-lineup (shadow/data collection only)
+- **CLV**: Closing Line Value 3-way log-odds contra canonical bookmaker (849 matches scored)
+- **Market Anchor**: Blend model + market probs para ligas low-signal (Argentina α=1.0)
 
 Para detalles técnicos de ML, shadow mode y sensor B, ver `docs/ML_ARCHITECTURE.md`.
+Para Phase 2 (cascade, CLV, SteamChaser), ver `docs/PHASE2_ARCHITECTURE.md` y `docs/PHASE2_EVALUATION.md`.
 
 ## Jobs del Scheduler
 | Job | Frecuencia | Función |
@@ -220,3 +230,17 @@ Para detalles técnicos de ML, shadow mode y sensor B, ver `docs/ML_ARCHITECTURE
 | `stats_backfill` | 60 min | Capturar stats de partidos FT |
 | `odds_sync` | 6 horas | Sync odds para partidos próximos |
 | `fastpath` | 2 min | Generar narrativas LLM |
+| `lineup_monitoring` | 60-90 seg | Detectar lineups confirmadas, capturar odds frescos, emit LINEUP_CONFIRMED |
+| `event_bus_sweeper` | 2 min | Reconciliar lineups sin cascade prediction (FOR UPDATE SKIP LOCKED) |
+| `lineup_relative_movement` | 3 min | Capturar odds relativos a lineup detection (L0, L+5, L+10) |
+
+## Tablas Clave (Phase 2)
+
+| Tabla | Propósito |
+|-------|-----------|
+| `prediction_clv` | CLV 3-way log-odds por predicción (post-match scoring) |
+| `player_id_mapping` | Mapeo API-Football ↔ Sofascore IDs (Hungarian bipartite) |
+| `market_movement_snapshots` | Snapshots T5/T15/T30/T60 pre-kickoff |
+| `lineup_movement_snapshots` | Snapshots L0/L+5/L+10 post-lineup |
+| `match_lineups.lineup_detected_at` | Timestamp de detección de lineup (PIT anchor para cascade) |
+| `predictions.asof_timestamp` | PIT anchor: momento exacto de generación de predicción |
