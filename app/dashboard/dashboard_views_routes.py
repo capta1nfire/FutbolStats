@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import column, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -5067,3 +5068,445 @@ async def dashboard_coverage_map(
         "cache_age_seconds": 0,
         "data": data,
     }
+
+
+# =============================================================================
+# COVERAGE MAP — HTML VISUALIZATION (ECharts)
+# =============================================================================
+
+
+def _render_coverage_map_page() -> str:
+    """Render standalone Coverage Map HTML page with ECharts choropleth."""
+    # No f-string — CSS/JS use {} extensively
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coverage Map — FutbolStats</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #131416; color: #dee0e3;
+    font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100vh;
+  }
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 24px; border-bottom: 1px solid rgba(249,250,250,0.07);
+    background: #1c1e21;
+  }
+  .header h1 { font-size: 18px; font-weight: 600; }
+  .header-controls { display: flex; align-items: center; gap: 12px; }
+  .header-stats { font-size: 12px; color: #b7bcc2; }
+  select {
+    background: #232326; color: #dee0e3; border: 1px solid rgba(249,250,250,0.10);
+    border-radius: 6px; padding: 6px 10px; font-size: 13px; cursor: pointer;
+    outline: none;
+  }
+  select:focus { border-color: #4797FF; }
+  #map-container { width: 100%; height: 520px; }
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 24px; border-bottom: 1px solid rgba(249,250,250,0.07);
+    background: #1c1e21;
+  }
+  .section-header h2 { font-size: 14px; font-weight: 600; }
+  .clear-filter {
+    background: none; border: 1px solid rgba(249,250,250,0.10);
+    color: #b7bcc2; border-radius: 4px; padding: 4px 10px;
+    font-size: 11px; cursor: pointer; display: none;
+  }
+  .clear-filter:hover { border-color: #4797FF; color: #dee0e3; }
+  .table-wrap { overflow-x: auto; }
+  table {
+    width: 100%; border-collapse: collapse; font-size: 13px;
+  }
+  th {
+    text-align: left; padding: 8px 12px; font-weight: 500; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.5px; color: #b7bcc2;
+    border-bottom: 1px solid rgba(249,250,250,0.07); cursor: pointer;
+    user-select: none; white-space: nowrap;
+  }
+  th:hover { color: #dee0e3; }
+  th .sort-arrow { margin-left: 4px; font-size: 9px; }
+  td {
+    padding: 8px 12px; border-bottom: 1px solid rgba(249,250,250,0.04);
+    white-space: nowrap;
+  }
+  tr:hover td { background: rgba(71,151,255,0.04); }
+  .tier-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 500;
+  }
+  .tier-xi_odds_xg { background: rgba(34,197,94,0.15); color: #22c55e; }
+  .tier-odds_xg { background: rgba(21,128,61,0.15); color: #15803d; }
+  .tier-xg { background: rgba(3,105,161,0.15); color: #0369a1; }
+  .tier-odds { background: rgba(180,83,9,0.15); color: #b45309; }
+  .tier-base { background: rgba(127,29,29,0.15); color: #7f1d1d; }
+  .tier-insufficient_data { background: rgba(107,114,128,0.15); color: #6b7280; }
+  .pct-cell { font-variant-numeric: tabular-nums; }
+  .pct-high { color: #22c55e; }
+  .pct-mid { color: #0369a1; }
+  .pct-low { color: #b45309; }
+  .pct-crit { color: #7f1d1d; }
+  .loading {
+    display: flex; align-items: center; justify-content: center;
+    height: 520px; color: #b7bcc2; font-size: 14px;
+  }
+  .spinner {
+    width: 24px; height: 24px; border: 2px solid rgba(249,250,250,0.10);
+    border-top-color: #4797FF; border-radius: 50%;
+    animation: spin 0.8s linear infinite; margin-right: 10px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .error-box {
+    text-align: center; padding: 40px; color: #ef4444;
+  }
+  .error-box button {
+    margin-top: 12px; background: #232326; color: #dee0e3;
+    border: 1px solid rgba(249,250,250,0.10); border-radius: 6px;
+    padding: 8px 16px; cursor: pointer;
+  }
+  .dim-row { display: none; }
+  .dim-row td { padding: 4px 12px 4px 36px; font-size: 12px; color: #b7bcc2; }
+  .dim-toggle { cursor: pointer; }
+  .dim-toggle:hover { color: #4797FF; }
+  .expand-icon { font-size: 10px; margin-right: 4px; transition: transform 0.15s; display: inline-block; }
+  .expand-icon.open { transform: rotate(90deg); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Coverage Map</h1>
+  <div class="header-controls">
+    <span class="header-stats" id="stats"></span>
+    <select id="window-select">
+      <option value="since_2023">Since 2023</option>
+      <option value="last_365d">Last 365 days</option>
+      <option value="season_to_date">Season to date</option>
+    </select>
+  </div>
+</div>
+
+<div id="map-container">
+  <div class="loading" id="map-loading">
+    <div class="spinner"></div>Loading coverage data...
+  </div>
+</div>
+
+<div class="section-header">
+  <h2 id="table-title">All Leagues</h2>
+  <button class="clear-filter" id="clear-filter" onclick="clearCountryFilter()">Show all</button>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th data-col="league_name" onclick="sortTable('league_name')">League <span class="sort-arrow"></span></th>
+        <th data-col="country" onclick="sortTable('country')">Country <span class="sort-arrow"></span></th>
+        <th data-col="eligible_matches" onclick="sortTable('eligible_matches')">Matches <span class="sort-arrow"></span></th>
+        <th data-col="p0_pct" onclick="sortTable('p0_pct')">P0% <span class="sort-arrow"></span></th>
+        <th data-col="p1_pct" onclick="sortTable('p1_pct')">P1% <span class="sort-arrow"></span></th>
+        <th data-col="p2_pct" onclick="sortTable('p2_pct')">P2% <span class="sort-arrow"></span></th>
+        <th data-col="coverage_total_pct" onclick="sortTable('coverage_total_pct')">Total% <span class="sort-arrow"></span></th>
+        <th data-col="universe_tier" onclick="sortTable('universe_tier')">Tier <span class="sort-arrow"></span></th>
+      </tr>
+    </thead>
+    <tbody id="league-tbody"></tbody>
+  </table>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+<script>
+(function() {
+  // --- Constants ---
+  const ISO3_TO_ECHARTS = {
+    ARG:"Argentina", BEL:"Belgium", BOL:"Bolivia", BRA:"Brazil",
+    CHL:"Chile", COL:"Colombia", ECU:"Ecuador", GBR:"United Kingdom",
+    FRA:"France", DEU:"Germany", ITA:"Italy", MEX:"Mexico",
+    NLD:"Netherlands", PRY:"Paraguay", PER:"Peru", PRT:"Portugal",
+    SAU:"Saudi Arabia", ESP:"Spain", TUR:"Turkey", URY:"Uruguay",
+    USA:"United States of America", VEN:"Venezuela"
+  };
+  const ECHARTS_TO_ISO3 = Object.fromEntries(
+    Object.entries(ISO3_TO_ECHARTS).map(function(e){ return [e[1], e[0]]; })
+  );
+  const TIER_ORDER = ['xi_odds_xg','odds_xg','xg','odds','base','insufficient_data'];
+  const TIER_LABELS = {
+    xi_odds_xg: 'XI+Odds+xG', odds_xg: 'Odds+xG', xg: 'xG',
+    odds: 'Odds', base: 'Base', insufficient_data: 'Insufficient'
+  };
+
+  // --- State ---
+  var appData = null;
+  var chart = null;
+  var geoLoaded = false;
+  var filterISO3 = null;
+  var sortCol = 'coverage_total_pct';
+  var sortAsc = false;
+
+  // --- Season helper ---
+  function currentSeason() {
+    var d = new Date();
+    return d.getMonth() >= 6 ? d.getFullYear() : d.getFullYear() - 1;
+  }
+
+  // --- Fetch ---
+  function buildApiUrl(w) {
+    var url = '/dashboard/coverage-map.json?window=' + w;
+    if (w === 'season_to_date') url += '&season=' + currentSeason();
+    return url;
+  }
+
+  async function loadData(w) {
+    var mapEl = document.getElementById('map-container');
+    var loadingEl = document.getElementById('map-loading');
+    loadingEl.style.display = 'flex';
+    loadingEl.innerHTML = '<div class="spinner"></div>Loading coverage data...';
+
+    try {
+      var fetches = [
+        fetch(buildApiUrl(w), {credentials: 'same-origin'}).then(function(r) {
+          if (!r.ok) throw new Error('API ' + r.status);
+          return r.json();
+        })
+      ];
+      if (!geoLoaded) {
+        fetches.push(
+          fetch('https://cdn.jsdelivr.net/npm/echarts@5.5.1/map/json/world.json')
+            .then(function(r){ return r.json(); })
+        );
+      }
+      var results = await Promise.all(fetches);
+      appData = results[0].data || results[0];
+
+      if (!geoLoaded && results[1]) {
+        echarts.registerMap('world', results[1]);
+        geoLoaded = true;
+      }
+
+      loadingEl.style.display = 'none';
+      updateStats();
+      renderMap();
+      renderTable();
+    } catch(err) {
+      loadingEl.innerHTML = '<div class="error-box">Failed to load data: ' +
+        err.message + '<br><button onclick="loadData(document.getElementById(\'window-select\').value)">Retry</button></div>';
+    }
+  }
+
+  // --- Stats ---
+  function updateStats() {
+    if (!appData || !appData.summary) return;
+    var s = appData.summary;
+    document.getElementById('stats').textContent =
+      s.countries + ' countries, ' + s.leagues + ' leagues, ' +
+      s.eligible_matches.toLocaleString() + ' matches';
+  }
+
+  // --- Map ---
+  function renderMap() {
+    if (!appData || !geoLoaded) return;
+    var container = document.getElementById('map-container');
+    if (!chart) {
+      chart = echarts.init(container, null, {renderer: 'canvas'});
+      window.addEventListener('resize', function(){ chart.resize(); });
+    }
+
+    var countries = appData.countries || [];
+    var seriesData = countries.map(function(c) {
+      var name = ISO3_TO_ECHARTS[c.country_iso3] || c.country_name;
+      return {
+        name: name,
+        value: c.coverage_total_pct,
+        _raw: c
+      };
+    });
+
+    chart.setOption({
+      backgroundColor: '#131416',
+      tooltip: {
+        trigger: 'item',
+        backgroundColor: '#232326',
+        borderColor: 'rgba(249,250,250,0.10)',
+        textStyle: { color: '#dee0e3', fontSize: 12 },
+        formatter: function(p) {
+          if (!p.data || p.data.value == null) return p.name + '<br/>No data';
+          var c = p.data._raw;
+          return '<b>' + c.country_name + '</b><br/>' +
+            'Coverage: <b>' + c.coverage_total_pct + '%</b><br/>' +
+            'Tier: ' + (TIER_LABELS[c.universe_tier] || c.universe_tier) + '<br/>' +
+            'Leagues: ' + c.league_count + '<br/>' +
+            'Matches: ' + c.eligible_matches.toLocaleString() + '<br/>' +
+            '<span style="color:#b7bcc2">P0: ' + c.p0_pct + '% &middot; P1: ' + c.p1_pct + '% &middot; P2: ' + c.p2_pct + '%</span>';
+        }
+      },
+      visualMap: {
+        type: 'piecewise',
+        pieces: [
+          {min: 85, max: 100, label: '85-100%', color: '#22c55e'},
+          {min: 70, max: 84.9, label: '70-84%', color: '#15803d'},
+          {min: 50, max: 69.9, label: '50-69%', color: '#0369a1'},
+          {min: 25, max: 49.9, label: '25-49%', color: '#b45309'},
+          {min: 0, max: 24.9, label: '0-24%', color: '#7f1d1d'}
+        ],
+        orient: 'vertical',
+        left: 16,
+        bottom: 16,
+        textStyle: { color: '#b7bcc2', fontSize: 11 },
+        itemWidth: 14,
+        itemHeight: 14
+      },
+      series: [{
+        type: 'map',
+        map: 'world',
+        roam: true,
+        scaleLimit: { min: 1, max: 8 },
+        label: { show: false },
+        itemStyle: {
+          areaColor: '#1c1e21',
+          borderColor: 'rgba(249,250,250,0.07)',
+          borderWidth: 0.5
+        },
+        emphasis: {
+          label: { show: true, color: '#dee0e3', fontSize: 11 },
+          itemStyle: { areaColor: '#282b2f', borderColor: '#4797FF', borderWidth: 2 }
+        },
+        select: {
+          label: { show: true, color: '#fff' },
+          itemStyle: { borderColor: '#4797FF', borderWidth: 2 }
+        },
+        data: seriesData
+      }]
+    });
+
+    chart.off('click');
+    chart.on('click', function(p) {
+      if (!p.data || !p.data._raw) return;
+      var iso = ECHARTS_TO_ISO3[p.name];
+      if (!iso) return;
+      if (filterISO3 === iso) {
+        clearCountryFilter();
+      } else {
+        filterISO3 = iso;
+        document.getElementById('table-title').textContent =
+          p.data._raw.country_name + ' Leagues';
+        document.getElementById('clear-filter').style.display = 'inline-block';
+        renderTable();
+      }
+    });
+  }
+
+  // --- Table ---
+  function pctClass(v) {
+    if (v >= 85) return 'pct-high';
+    if (v >= 50) return 'pct-mid';
+    if (v >= 25) return 'pct-low';
+    return 'pct-crit';
+  }
+
+  function renderTable() {
+    if (!appData) return;
+    var leagues = appData.leagues || [];
+    if (filterISO3) {
+      leagues = leagues.filter(function(l){ return l.country_iso3 === filterISO3; });
+    }
+
+    // Sort
+    leagues = leagues.slice().sort(function(a, b) {
+      var va = a[sortCol], vb = b[sortCol];
+      if (sortCol === 'universe_tier') {
+        va = TIER_ORDER.indexOf(va); vb = TIER_ORDER.indexOf(vb);
+      }
+      if (typeof va === 'string') {
+        va = va.toLowerCase(); vb = (vb||'').toLowerCase();
+      }
+      if (va < vb) return sortAsc ? -1 : 1;
+      if (va > vb) return sortAsc ? 1 : -1;
+      return 0;
+    });
+
+    // Update sort arrows
+    document.querySelectorAll('th .sort-arrow').forEach(function(el){ el.textContent = ''; });
+    var activeHeader = document.querySelector('th[data-col="' + sortCol + '"] .sort-arrow');
+    if (activeHeader) activeHeader.textContent = sortAsc ? ' \\u25B2' : ' \\u25BC';
+
+    var tbody = document.getElementById('league-tbody');
+    var html = '';
+    leagues.forEach(function(lg, idx) {
+      var tierCls = 'tier-' + (lg.universe_tier || 'base');
+      var tierLabel = TIER_LABELS[lg.universe_tier] || lg.universe_tier;
+      html += '<tr class="dim-toggle" onclick="toggleDims(' + idx + ')">' +
+        '<td><span class="expand-icon" id="exp-' + idx + '">&#9654;</span>' + lg.league_name + '</td>' +
+        '<td>' + (lg.country || '') + '</td>' +
+        '<td>' + lg.eligible_matches.toLocaleString() + '</td>' +
+        '<td class="pct-cell ' + pctClass(lg.p0_pct) + '">' + lg.p0_pct + '</td>' +
+        '<td class="pct-cell ' + pctClass(lg.p1_pct) + '">' + lg.p1_pct + '</td>' +
+        '<td class="pct-cell ' + pctClass(lg.p2_pct) + '">' + lg.p2_pct + '</td>' +
+        '<td class="pct-cell ' + pctClass(lg.coverage_total_pct) + '"><b>' + lg.coverage_total_pct + '</b></td>' +
+        '<td><span class="tier-badge ' + tierCls + '">' + tierLabel + '</span></td>' +
+        '</tr>';
+
+      // Dimension detail rows
+      if (lg.dimensions) {
+        var dims = lg.dimensions;
+        var dimKeys = Object.keys(dims);
+        dimKeys.forEach(function(dk) {
+          var d = dims[dk];
+          html += '<tr class="dim-row" data-parent="' + idx + '">' +
+            '<td colspan="2">' + dk.replace(/_/g, ' ') + '</td>' +
+            '<td>' + d.numerator + '/' + d.denominator + '</td>' +
+            '<td class="pct-cell ' + pctClass(d.pct) + '" colspan="4">' + d.pct + '%</td>' +
+            '<td></td></tr>';
+        });
+      }
+    });
+    tbody.innerHTML = html;
+  }
+
+  // --- Sort ---
+  window.sortTable = function(col) {
+    if (sortCol === col) { sortAsc = !sortAsc; }
+    else { sortCol = col; sortAsc = false; }
+    renderTable();
+  };
+
+  // --- Expand dims ---
+  window.toggleDims = function(idx) {
+    var rows = document.querySelectorAll('tr.dim-row[data-parent="' + idx + '"]');
+    var icon = document.getElementById('exp-' + idx);
+    var show = rows.length > 0 && rows[0].style.display !== 'table-row';
+    rows.forEach(function(r){ r.style.display = show ? 'table-row' : 'none'; });
+    if (icon) icon.classList.toggle('open', show);
+  };
+
+  // --- Clear filter ---
+  window.clearCountryFilter = function() {
+    filterISO3 = null;
+    document.getElementById('table-title').textContent = 'All Leagues';
+    document.getElementById('clear-filter').style.display = 'none';
+    renderTable();
+  };
+
+  // --- Window change ---
+  document.getElementById('window-select').addEventListener('change', function() {
+    loadData(this.value);
+  });
+
+  // --- Init ---
+  loadData('since_2023');
+})();
+</script>
+</body>
+</html>"""
+
+
+@router.get("/dashboard/coverage-map", response_class=HTMLResponse)
+async def dashboard_coverage_map_page(request: Request):
+    """Coverage Map HTML visualization (ECharts choropleth)."""
+    if not verify_dashboard_token_bool(request):
+        return RedirectResponse(url="/ops/login", status_code=302)
+    return HTMLResponse(content=_render_coverage_map_page())
