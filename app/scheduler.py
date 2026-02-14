@@ -4283,6 +4283,9 @@ async def capture_finished_match_player_stats() -> dict:
                 s = value.strip()
                 if s in ("", "-", "null", "None"):
                     return None
+                # Handle stoppage-time formats like "90+4"
+                if "+" in s:
+                    s = s.split("+", 1)[0].strip()
                 if s.endswith("%"):
                     s = s[:-1]
                 return int(float(s))
@@ -4425,7 +4428,9 @@ async def capture_finished_match_player_stats() -> dict:
                         metrics["skipped_no_data"] += 1
                         continue
 
-                    rows = []
+                    # Deduplicate per fixture (GDT #1): keep best row per player_external_id.
+                    # Prefer non-null rating; otherwise prefer higher minutes.
+                    rows_by_player: dict[int, dict] = {}
                     for team_block in resp:
                         team = team_block.get("team") or {}
                         team_external_id = team.get("id")
@@ -4444,6 +4449,10 @@ async def capture_finished_match_player_stats() -> dict:
                             rating = _parse_rating(games.get("rating"))
                             minutes = _parse_smallint(games.get("minutes"))
                             position = games.get("position")
+
+                            # Ghost filter (GDT #2): bench warmers → force rating NULL
+                            if minutes is None or minutes == 0:
+                                rating = None
 
                             row = {
                                 "match_id": match_id,
@@ -4478,8 +4487,23 @@ async def capture_finished_match_player_stats() -> dict:
                                 "red_cards": _parse_smallint((st.get("cards") or {}).get("red")),
                                 "raw_json": json.dumps(st),
                             }
-                            rows.append(row)
 
+                            pid = row["player_external_id"]
+                            existing = rows_by_player.get(pid)
+                            if not existing:
+                                rows_by_player[pid] = row
+                            else:
+                                # Prefer row with a rating
+                                if existing.get("rating") is None and row.get("rating") is not None:
+                                    rows_by_player[pid] = row
+                                else:
+                                    # Prefer higher minutes when available
+                                    m_new = row.get("minutes")
+                                    m_old = existing.get("minutes")
+                                    if m_new is not None and (m_old is None or m_new > m_old):
+                                        rows_by_player[pid] = row
+
+                    rows = list(rows_by_player.values())
                     if not rows:
                         metrics["skipped_no_players"] += 1
                         continue
