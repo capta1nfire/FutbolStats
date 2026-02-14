@@ -162,9 +162,17 @@ export function CoverageWorldMap({
               ? `<img src="/flags/${iso2}.svg" width="16" height="16" style="border-radius:50%;vertical-align:middle;margin-right:6px">`
               : "";
             const countryLeagues = leagues.filter((l) => l.country_iso3 === c.country_iso3);
-            const leagueNames = countryLeagues.map((l) => l.league_name).join(", ");
+            const leagueLines = countryLeagues.map((l) => {
+              const logo = l.logo_url
+                ? `<img src="${l.logo_url}" width="16" height="16" style="vertical-align:middle;margin-right:4px">`
+                : "";
+              return `${logo}${l.league_name}`;
+            });
+            const leagueHtml = leagueLines.length
+              ? leagueLines.join("<br/>")
+              : c.country_name;
             return [
-              `<div style="display:flex;align-items:center;margin-bottom:4px">${flag}<b>${leagueNames || c.country_name}</b></div>`,
+              `<div style="display:flex;align-items:center;margin-bottom:4px">${flag}<b>${leagueHtml}</b></div>`,
               `Coverage: <b>${c.coverage_total_pct}%</b>`,
               `Tier: ${TIER_LABELS[c.universe_tier] || c.universe_tier}`,
               `Matches: ${c.eligible_matches.toLocaleString()}`,

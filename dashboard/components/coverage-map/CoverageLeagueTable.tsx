@@ -166,17 +166,28 @@ export function CoverageLeagueTable({
                     className="cursor-pointer hover:bg-[rgba(71,151,255,0.04)] border-b border-border/30"
                   >
                     <td className="px-3 py-2 whitespace-nowrap">
-                      <span
-                        className="inline-block mr-1.5 text-[10px] transition-transform"
-                        style={{
-                          transform: isExpanded
-                            ? "rotate(90deg)"
-                            : "rotate(0deg)",
-                        }}
-                      >
-                        ▶
+                      <span className="inline-flex items-center gap-1.5">
+                        <span
+                          className="inline-block text-[10px] transition-transform"
+                          style={{
+                            transform: isExpanded
+                              ? "rotate(90deg)"
+                              : "rotate(0deg)",
+                          }}
+                        >
+                          ▶
+                        </span>
+                        {lg.logo_url && (
+                          <img
+                            src={lg.logo_url}
+                            alt=""
+                            width={18}
+                            height={18}
+                            className="inline-block"
+                          />
+                        )}
+                        {lg.league_name}
                       </span>
-                      {lg.league_name}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       {lg.country}

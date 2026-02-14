@@ -11,6 +11,8 @@ export interface CoverageLeague {
   league_name: string;
   country: string;
   country_iso3: string | null;
+  logo_url: string | null;
+  wikipedia_url: string | null;
   eligible_matches: number;
   p0_pct: number;
   p1_pct: number;

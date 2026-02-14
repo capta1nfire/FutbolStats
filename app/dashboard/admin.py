@@ -29,7 +29,8 @@ async def _load_league_cache(session: AsyncSession) -> dict[int, dict]:
     result = await session.execute(
         text("""
             SELECT
-                league_id, name, country, kind, is_active,
+                league_id, name, display_name, logo_url, wikipedia_url,
+                country, kind, is_active,
                 priority, match_type, match_weight, group_id, source, rules_json
             FROM admin_leagues
         """)
@@ -41,6 +42,9 @@ async def _load_league_cache(session: AsyncSession) -> dict[int, dict]:
         _league_cache[r.league_id] = {
             "league_id": r.league_id,
             "name": r.name,
+            "display_name": r.display_name,
+            "logo_url": r.logo_url,
+            "wikipedia_url": r.wikipedia_url,
             "country": r.country,
             "kind": r.kind,
             "is_active": r.is_active,
@@ -264,6 +268,9 @@ async def build_leagues_list(session: AsyncSession) -> dict:
             league_entry = {
                 "league_id": league_id,
                 "name": db_entry["name"],
+                "display_name": db_entry["display_name"],
+                "logo_url": db_entry["logo_url"],
+                "wikipedia_url": db_entry["wikipedia_url"],
                 "country": db_entry["country"],
                 "kind": db_entry["kind"],
                 "is_active": db_entry["is_active"],
@@ -502,6 +509,9 @@ async def build_league_detail(session: AsyncSession, league_id: int) -> Optional
     if db_entry:
         league_info.update({
             "name": db_entry["name"],
+            "display_name": db_entry["display_name"],
+            "logo_url": db_entry["logo_url"],
+            "wikipedia_url": db_entry["wikipedia_url"],
             "country": db_entry["country"],
             "kind": db_entry["kind"],
             "is_active": db_entry["is_active"],
@@ -1201,7 +1211,8 @@ async def _build_feature_coverage(session: AsyncSession, team_id: int) -> Option
 # Whitelist of fields allowed in PATCH
 PATCH_ALLOWED_FIELDS = {
     "is_active", "country", "kind", "priority", "match_type", "match_weight",
-    "display_order", "tags", "rules_json", "group_id", "name"
+    "display_order", "tags", "rules_json", "group_id", "name",
+    "display_name", "logo_url", "wikipedia_url",
 }
 
 # Valid values for enums
@@ -1612,7 +1623,8 @@ async def patch_league(
     # Get current state
     current_query = text("""
         SELECT
-            league_id, sport, name, country, kind, is_active,
+            league_id, sport, name, display_name, logo_url, wikipedia_url,
+            country, kind, is_active,
             priority, match_type, match_weight, display_order,
             group_id, tags, rules_json, source, created_at, updated_at
         FROM admin_leagues
@@ -1629,6 +1641,9 @@ async def patch_league(
         "league_id": row.league_id,
         "sport": row.sport,
         "name": row.name,
+        "display_name": row.display_name,
+        "logo_url": row.logo_url,
+        "wikipedia_url": row.wikipedia_url,
         "country": row.country,
         "kind": row.kind,
         "is_active": row.is_active,
@@ -1666,7 +1681,8 @@ async def patch_league(
         SET {set_clause}
         WHERE league_id = :lid
         RETURNING
-            league_id, sport, name, country, kind, is_active,
+            league_id, sport, name, display_name, logo_url, wikipedia_url,
+            country, kind, is_active,
             priority, match_type, match_weight, display_order,
             group_id, tags, rules_json, source, created_at, updated_at
     """)
@@ -1679,6 +1695,9 @@ async def patch_league(
         "league_id": updated_row.league_id,
         "sport": updated_row.sport,
         "name": updated_row.name,
+        "display_name": updated_row.display_name,
+        "logo_url": updated_row.logo_url,
+        "wikipedia_url": updated_row.wikipedia_url,
         "country": updated_row.country,
         "kind": updated_row.kind,
         "is_active": updated_row.is_active,

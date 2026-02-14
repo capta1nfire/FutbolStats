@@ -163,8 +163,10 @@ def _build_coverage_sql(
     sql = f"""
 SELECT
   m.league_id,
-  al.name AS league_name,
+  COALESCE(al.display_name, al.name) AS league_name,
   al.country,
+  al.logo_url,
+  al.wikipedia_url,
   COUNT(*) AS eligible_matches,
 
   -- ===== P0 =====
@@ -323,7 +325,7 @@ JOIN admin_leagues al ON m.league_id = al.league_id AND al.is_active = true
 WHERE m.status IN ('FT','AET','PEN')
   AND m.date >= :date_from
   AND m.date < :date_to{extra_where}
-GROUP BY m.league_id, al.name, al.country
+GROUP BY m.league_id, al.display_name, al.name, al.country, al.logo_url, al.wikipedia_url
 ORDER BY COUNT(*) DESC
 """
     return sql, params
@@ -378,6 +380,8 @@ def _compute_league_data(row) -> dict:
         "league_name": row.league_name,
         "country": row.country,
         "country_iso3": COUNTRY_TO_ISO3.get(row.country),
+        "logo_url": getattr(row, "logo_url", None),
+        "wikipedia_url": getattr(row, "wikipedia_url", None),
         "eligible_matches": total,
         "dimensions": dims,
     }
