@@ -19,8 +19,17 @@ import type {
   CoverageLeague,
 } from "@/lib/types/coverage-map";
 import { Globe } from "lucide-react";
+import Image from "next/image";
 
 // --- Constants ---
+
+const ISO3_TO_ISO2: Record<string, string> = {
+  ARG: "ar", BEL: "be", BOL: "bo", BRA: "br", CHL: "cl",
+  COL: "co", ECU: "ec", GBR: "gb", FRA: "fr", DEU: "de",
+  ITA: "it", MEX: "mx", NLD: "nl", PRY: "py", PER: "pe",
+  PRT: "pt", SAU: "sa", ESP: "es", TUR: "tr", URY: "uy",
+  USA: "us", VEN: "ve",
+};
 
 const WINDOW_OPTIONS: { value: CoverageWindow; label: string }[] = [
   { value: "since_2023", label: "Since 2023" },
@@ -307,6 +316,26 @@ function CoverageMapContent() {
     );
   }, [selectedCountry, data?.countries]);
 
+  const selectedFlagIso2 = selectedCountry ? ISO3_TO_ISO2[selectedCountry] : null;
+
+  const drawerTitle = useMemo(() => {
+    if (!selectedCountryName) return null;
+    return (
+      <span className="inline-flex items-center gap-2">
+        {selectedFlagIso2 && (
+          <Image
+            src={`/flags/${selectedFlagIso2}.svg`}
+            alt=""
+            width={20}
+            height={20}
+            className="rounded-full object-cover"
+          />
+        )}
+        {selectedCountryName}
+      </span>
+    );
+  }, [selectedCountryName, selectedFlagIso2]);
+
   const drawerOpen = !!selectedCountry;
   const handleDrawerClose = useCallback(() => setSelectedCountry(null), []);
 
@@ -381,7 +410,7 @@ function CoverageMapContent() {
             <DetailDrawer
               open={drawerOpen}
               onClose={handleDrawerClose}
-              title={selectedCountryName}
+              title={drawerTitle}
             >
               <CountryDetailContent leagues={selectedLeagues} />
             </DetailDrawer>
@@ -397,7 +426,16 @@ function CoverageMapContent() {
         >
           <SheetContent side="right" className="w-full sm:max-w-md p-0">
             <SheetHeader className="px-4 py-3 border-b border-border">
-              <SheetTitle className="text-sm font-semibold truncate">
+              <SheetTitle className="text-sm font-semibold truncate flex items-center justify-center gap-2">
+                {selectedFlagIso2 && (
+                  <Image
+                    src={`/flags/${selectedFlagIso2}.svg`}
+                    alt=""
+                    width={20}
+                    height={20}
+                    className="rounded-full object-cover"
+                  />
+                )}
                 {selectedCountryName}
               </SheetTitle>
             </SheetHeader>

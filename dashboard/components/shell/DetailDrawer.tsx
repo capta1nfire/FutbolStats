@@ -143,7 +143,7 @@ export function DetailDrawer({
             variant="ghost"
             size="icon"
             onClick={onClose}
-            className="h-8 w-8 shrink-0 ml-auto"
+            className="h-8 w-8 shrink-0 absolute right-4"
             aria-label="Close details panel"
           >
             <X className="h-4 w-4" strokeWidth={1.5} />
