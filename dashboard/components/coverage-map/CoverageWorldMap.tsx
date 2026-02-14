@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useCallback } from "react";
+import { geoNaturalEarth1 } from "d3-geo";
 import type { CoverageCountry } from "@/lib/types/coverage-map";
 
 // --- Country name mapping ---
@@ -107,11 +108,30 @@ export function CoverageWorldMap({
         });
       }
 
-      // Build series data
+      // Natural Earth projection — proper globe-like appearance
+      const projection = geoNaturalEarth1();
+
+      // Color bands: [min, max, r, g, b]
+      const BANDS: [number, number, number, number, number][] = [
+        [85, 100, 34, 197, 94],
+        [70, 85, 21, 128, 61],
+        [50, 70, 3, 105, 161],
+        [25, 50, 180, 83, 9],
+        [0, 25, 127, 29, 29],
+      ];
+
+      function bandColor(pct: number, alpha: number): string {
+        const b = BANDS.find(([min]) => pct >= min) || BANDS[BANDS.length - 1];
+        return `rgba(${b[2]}, ${b[3]}, ${b[4]}, ${alpha})`;
+      }
+
+      // Build series data with per-item colors
       const seriesData = countries.map((c) => ({
         name: ISO3_TO_ECHARTS[c.country_iso3] || c.country_name,
         value: c.coverage_total_pct,
         _raw: c,
+        itemStyle: { areaColor: bandColor(c.coverage_total_pct, 0.55) },
+        emphasis: { itemStyle: { areaColor: bandColor(c.coverage_total_pct, 0.80) } },
       }));
 
       chartRef.current.setOption({
@@ -136,39 +156,37 @@ export function CoverageWorldMap({
           },
         },
         visualMap: {
+          show: false,
           type: "piecewise",
           pieces: [
-            { min: 85, max: 100, label: "85-100%", color: "#22c55e" },
-            { min: 70, max: 84.9, label: "70-84%", color: "#15803d" },
-            { min: 50, max: 69.9, label: "50-69%", color: "#0369a1" },
-            { min: 25, max: 49.9, label: "25-49%", color: "#b45309" },
-            { min: 0, max: 24.9, label: "0-24%", color: "#7f1d1d" },
+            { min: 85, max: 100, color: "rgba(34, 197, 94, 0.55)" },
+            { min: 70, max: 84.9, color: "rgba(21, 128, 61, 0.55)" },
+            { min: 50, max: 69.9, color: "rgba(3, 105, 161, 0.55)" },
+            { min: 25, max: 49.9, color: "rgba(180, 83, 9, 0.55)" },
+            { min: 0, max: 24.9, color: "rgba(127, 29, 29, 0.55)" },
           ],
-          orient: "vertical",
-          left: 16,
-          bottom: 16,
-          textStyle: { color: "#b7bcc2", fontSize: 11 },
-          itemWidth: 14,
-          itemHeight: 14,
         },
         series: [
           {
             type: "map",
             map: "world",
+            projection: {
+              project: (point: number[]) => projection(point as [number, number]) as number[],
+              unproject: (point: number[]) => projection.invert!(point as [number, number]) as number[],
+            },
             roam: true,
             scaleLimit: { min: 1, max: 8 },
             label: { show: false },
             itemStyle: {
-              areaColor: "#1c1e21",
+              areaColor: "rgba(28, 30, 33, 0.4)",
               borderColor: "rgba(249,250,250,0.07)",
               borderWidth: 0.5,
             },
             emphasis: {
               label: { show: true, color: "#dee0e3", fontSize: 11 },
               itemStyle: {
-                areaColor: "#282b2f",
-                borderColor: "#4797FF",
-                borderWidth: 2,
+                borderColor: "rgba(249,250,250,0.25)",
+                borderWidth: 1.5,
               },
             },
             select: {
@@ -183,6 +201,9 @@ export function CoverageWorldMap({
       // Click handler
       chartRef.current.off("click");
       chartRef.current.on("click", handleClick);
+
+      // Force resize after layout settles
+      requestAnimationFrame(() => chartRef.current?.resize());
     }
 
     init().catch(console.error);
@@ -208,8 +229,7 @@ export function CoverageWorldMap({
   return (
     <div
       ref={containerRef}
-      className="w-full"
-      style={{ height: 520, minHeight: 400 }}
+      className="w-full h-full"
     />
   );
 }

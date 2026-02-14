@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, Fragment } from "react";
 import type { CoverageLeague } from "@/lib/types/coverage-map";
 
 // --- Tier config ---
@@ -116,7 +116,7 @@ export function CoverageLeagueTable({
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Section header */}
-      <div className="flex items-center justify-between px-6 py-2 border-b border-border bg-[var(--surface,#1c1e21)]">
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
         <h2 className="text-sm font-semibold text-foreground">
           {filterISO3
             ? `${filtered[0]?.country || filterISO3} Leagues`
@@ -158,9 +158,8 @@ export function CoverageLeagueTable({
               const tierStyle = TIER_COLORS[lg.universe_tier] || TIER_COLORS.base;
               const isExpanded = expandedIdx === idx;
               return (
-                <>
+                <Fragment key={lg.league_id}>
                   <tr
-                    key={lg.league_id}
                     onClick={() =>
                       setExpandedIdx(isExpanded ? null : idx)
                     }
@@ -246,7 +245,7 @@ export function CoverageLeagueTable({
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               );
             })}
           </tbody>
