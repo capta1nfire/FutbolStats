@@ -4960,3 +4960,110 @@ async def dashboard_team_logos(
             "status": "degraded",
             "error": str(e)[:100],
         }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Coverage Map — data coverage per league/country choropleth
+# Contract: docs/COVERAGE_MAP_CONTRACT.md
+# ═══════════════════════════════════════════════════════════════════════════
+
+_coverage_map_cache = {
+    "data": None,
+    "timestamp": 0,
+    "ttl": 1800,  # 30 min
+    "params": None,
+}
+
+
+@router.get("/dashboard/coverage-map.json")
+async def dashboard_coverage_map(
+    request: Request,
+    window: str = Query("since_2023", regex=r"^(since_2023|season_to_date|last_365d|custom)$"),
+    season: Optional[int] = None,
+    date_from: Optional[str] = Query(None, alias="from", regex=r"^\d{4}-\d{2}-\d{2}$"),
+    date_to: Optional[str] = Query(None, alias="to", regex=r"^\d{4}-\d{2}-\d{2}$"),
+    league_ids: Optional[str] = None,
+    country_iso3: Optional[str] = None,
+    group_by: str = Query("country", regex=r"^(country|league)$"),
+    min_matches: int = Query(30, ge=1, le=500),
+    include_leagues: bool = True,
+    include_quality_flags: bool = True,
+):
+    """
+    Data coverage map per league/country.
+
+    Returns coverage percentages for 19 dimensions across P0/P1/P2 tiers,
+    with weighted total score and universe tier classification.
+    """
+    _check_token(request)
+
+    # Validate conditional params
+    if window == "season_to_date" and season is None:
+        raise HTTPException(status_code=400, detail="season param required when window=season_to_date")
+    if window == "custom" and (date_from is None or date_to is None):
+        raise HTTPException(status_code=400, detail="from/to params required when window=custom")
+    if window == "custom" and date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=400, detail="from must be before to")
+
+    # Parse CSV params
+    parsed_league_ids = None
+    if league_ids:
+        try:
+            parsed_league_ids = [int(x.strip()) for x in league_ids.split(",")]
+        except ValueError:
+            raise HTTPException(status_code=422, detail="league_ids must be comma-separated integers")
+
+    parsed_country_iso3 = None
+    if country_iso3:
+        parsed_country_iso3 = [x.strip().upper() for x in country_iso3.split(",")]
+
+    # Cache key: ALL params that affect result
+    cache_key = (
+        f"{window}:{season}:{date_from}:{date_to}:{league_ids}:"
+        f"{country_iso3}:{group_by}:{min_matches}:{include_leagues}:{include_quality_flags}"
+    )
+
+    now = time.time()
+    cache = _coverage_map_cache
+    if cache["data"] is not None and cache["params"] == cache_key:
+        if now - cache["timestamp"] < cache["ttl"]:
+            return {
+                "generated_at": cache["data"]["_generated_at"],
+                "cached": True,
+                "cache_age_seconds": round(now - cache["timestamp"], 1),
+                "data": cache["data"]["payload"],
+            }
+
+    # Compute
+    from app.dashboard.coverage_map import build_coverage_map
+
+    t0 = time.time()
+    async with AsyncSessionLocal() as session:
+        data = await build_coverage_map(
+            session=session,
+            window=window,
+            season=season,
+            date_from=date_from,
+            date_to=date_to,
+            league_ids=parsed_league_ids,
+            country_iso3=parsed_country_iso3,
+            group_by=group_by,
+            min_matches=min_matches,
+            include_leagues=include_leagues,
+            include_quality_flags=include_quality_flags,
+        )
+    elapsed_ms = round((time.time() - t0) * 1000)
+    generated_at = datetime.utcnow().isoformat() + "Z"
+    logger.info("coverage_map | computed in %dms | leagues=%d", elapsed_ms, data.get("summary", {}).get("leagues", 0))
+
+    # Store in cache
+    cache["data"] = {"_generated_at": generated_at, "payload": data}
+    cache["timestamp"] = time.time()
+    cache["params"] = cache_key
+
+    return {
+        "generated_at": generated_at,
+        "cached": False,
+        "cache_age_seconds": 0,
+        "data": data,
+    }
