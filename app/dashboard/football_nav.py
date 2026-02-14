@@ -168,7 +168,7 @@ async def build_countries_list(session: AsyncSession) -> dict:
             ARRAY_AGG(
                 JSON_BUILD_OBJECT(
                     'league_id', al.league_id,
-                    'name', al.name,
+                    'name', COALESCE(al.display_name, al.name),
                     'kind', al.kind,
                     'priority', al.priority,
                     'group_id', al.group_id
@@ -225,7 +225,7 @@ async def build_country_detail(session: AsyncSession, country: str) -> Optional[
     # Get leagues for country
     leagues_query = text("""
         SELECT
-            al.league_id, al.name, al.kind, al.is_active,
+            al.league_id, COALESCE(al.display_name, al.name) AS name, al.kind, al.is_active,
             al.priority, al.match_type, al.match_weight,
             al.group_id, al.rules_json, al.display_order
         FROM admin_leagues al
@@ -396,7 +396,9 @@ async def build_league_nav_detail(session: AsyncSession, league_id: int) -> Opti
     # Get league info
     league_query = text("""
         SELECT
-            al.league_id, al.name, al.country, al.kind, al.is_active,
+            al.league_id, COALESCE(al.display_name, al.name) AS name,
+            al.display_name, al.logo_url, al.wikipedia_url,
+            al.country, al.kind, al.is_active,
             al.priority, al.match_type, al.match_weight,
             al.group_id, al.rules_json, al.tags, al.source
         FROM admin_leagues al
@@ -552,6 +554,9 @@ async def build_league_nav_detail(session: AsyncSession, league_id: int) -> Opti
         "league": {
             "league_id": league_row.league_id,
             "name": league_row.name,
+            "display_name": getattr(league_row, "display_name", None),
+            "logo_url": getattr(league_row, "logo_url", None),
+            "wikipedia_url": getattr(league_row, "wikipedia_url", None),
             "country": league_row.country,
             "kind": league_row.kind,
             "priority": league_row.priority,
@@ -596,7 +601,7 @@ async def build_group_nav_detail(session: AsyncSession, group_id: int) -> Option
     # Get member leagues (only active)
     members_query = text("""
         SELECT
-            al.league_id, al.name, al.kind, al.is_active,
+            al.league_id, COALESCE(al.display_name, al.name) AS name, al.kind, al.is_active,
             al.priority, al.match_type, al.match_weight, al.rules_json
         FROM admin_leagues al
         WHERE al.group_id = :gid AND al.is_active = true
@@ -816,7 +821,7 @@ async def build_football_overview(session: AsyncSession) -> dict:
     upcoming_query = text("""
         SELECT
             m.id as match_id, m.date, m.league_id, m.status,
-            al.name as league_name,
+            COALESCE(al.display_name, al.name) as league_name,
             ht.name as home_team, at.name as away_team,
             COALESCE(hto.short_name, htw.short_name, ht.name) as home_display_name,
             COALESCE(ato.short_name, atw.short_name, at.name) as away_display_name,
@@ -853,7 +858,7 @@ async def build_football_overview(session: AsyncSession) -> dict:
     # 4. Top 10 leagues by matches_30d, then matches_total
     leagues_query = text("""
         SELECT
-            al.league_id, al.name, al.country,
+            al.league_id, COALESCE(al.display_name, al.name) AS name, al.country,
             COUNT(*) FILTER (WHERE m.date >= NOW() - INTERVAL '30 days') as matches_30d,
             COUNT(*) as matches_total,
             COUNT(*) FILTER (WHERE m.stats IS NOT NULL AND m.stats::text != '{}' AND (m.stats->>'_no_stats') IS NULL) as with_stats,
@@ -861,7 +866,7 @@ async def build_football_overview(session: AsyncSession) -> dict:
         FROM admin_leagues al
         LEFT JOIN matches m ON m.league_id = al.league_id
         WHERE al.is_active = true
-        GROUP BY al.league_id, al.name, al.country
+        GROUP BY al.league_id, al.display_name, al.name, al.country
         ORDER BY COUNT(*) FILTER (WHERE m.date >= NOW() - INTERVAL '30 days') DESC, COUNT(*) DESC
         LIMIT 10
     """)
@@ -883,14 +888,14 @@ async def build_football_overview(session: AsyncSession) -> dict:
     alerts_query = text("""
         WITH league_coverage AS (
             SELECT
-                al.league_id, al.name,
+                al.league_id, COALESCE(al.display_name, al.name) AS name,
                 COUNT(*) as total,
                 COUNT(*) FILTER (WHERE m.stats IS NOT NULL AND m.stats::text != '{}' AND (m.stats->>'_no_stats') IS NULL) as with_stats,
                 COUNT(*) FILTER (WHERE m.odds_home IS NOT NULL) as with_odds
             FROM admin_leagues al
             LEFT JOIN matches m ON m.league_id = al.league_id
             WHERE al.is_active = true
-            GROUP BY al.league_id, al.name
+            GROUP BY al.league_id, al.display_name, al.name
             HAVING COUNT(*) > 0
         )
         SELECT league_id, name,
@@ -1394,7 +1399,7 @@ async def build_tournaments_list(session: AsyncSession) -> dict:
     tournaments_query = text("""
         SELECT
             al.league_id,
-            al.name,
+            COALESCE(al.display_name, al.name) AS name,
             al.country,
             al.kind,
             al.priority,
@@ -1410,7 +1415,7 @@ async def build_tournaments_list(session: AsyncSession) -> dict:
         LEFT JOIN matches m ON m.league_id = al.league_id
         WHERE al.is_active = true
           AND al.kind IN ('cup', 'international', 'friendly')
-        GROUP BY al.league_id, al.name, al.country, al.kind, al.priority
+        GROUP BY al.league_id, al.display_name, al.name, al.country, al.kind, al.priority
         ORDER BY
             CASE WHEN al.kind = 'international' THEN 1 WHEN al.kind = 'cup' THEN 2 ELSE 3 END,
             CASE WHEN al.priority = 'high' THEN 1 WHEN al.priority = 'medium' THEN 2 ELSE 3 END,

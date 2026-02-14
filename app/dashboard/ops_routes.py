@@ -3326,8 +3326,9 @@ _LEAGUE_NAMES_FALLBACK: dict[int, str] = {
 
 
 def _build_league_name_map() -> dict[int, str]:
-    """Build league_id -> name map from fallback + COMPETITIONS."""
+    """Build league_id -> name map from fallback + COMPETITIONS + display_name overlay."""
     from app.etl.competitions import COMPETITIONS
+    from app.dashboard.admin import _league_cache
 
     league_name_by_id = _LEAGUE_NAMES_FALLBACK.copy()
     try:
@@ -3338,6 +3339,11 @@ def _build_league_name_map() -> dict[int, str]:
                     league_name_by_id[int(league_id)] = name
     except Exception:
         pass
+    # Overlay display_name from admin_leagues (highest priority)
+    for lid, entry in _league_cache.items():
+        ename = entry.get("effective_name")
+        if ename:
+            league_name_by_id[lid] = ename
     return league_name_by_id
 
 

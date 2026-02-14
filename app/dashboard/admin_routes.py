@@ -1024,7 +1024,7 @@ async def _build_injuries_view(session, league_id=None, limit=1000) -> dict:
         text(f"""
             SELECT
                 pi.league_id,
-                al.name AS league_name,
+                COALESCE(al.display_name, al.name) AS league_name,
                 pi.team_id,
                 t.name AS team_name,
                 pi.player_name,
@@ -1151,7 +1151,7 @@ async def _build_managers_view(session, league_id=None, limit=1000) -> dict:
                 tmh.team_id,
                 t.name AS team_name,
                 tpl.league_id,
-                al.name AS league_name,
+                COALESCE(al.display_name, al.name) AS league_name,
                 tmh.manager_external_id,
                 tmh.manager_name,
                 mg.nationality,

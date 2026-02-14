@@ -744,11 +744,14 @@ async def ia_features_preview(
                 "away_prob": prediction.away_prob,
             }
 
-        # Get league name from COMPETITIONS constant
-        league_name = ""
-        league_info = COMPETITIONS.get(match.league_id)
-        if league_info:
-            league_name = league_info.name or ""
+        # Get league name: display_name from admin_leagues > COMPETITIONS fallback
+        from app.dashboard.admin import get_league_info_sync
+        league_info_cached = get_league_info_sync(match.league_id)
+        league_name = league_info_cached.get("name", "") if league_info_cached else ""
+        if not league_name:
+            comp_info = COMPETITIONS.get(match.league_id)
+            if comp_info:
+                league_name = comp_info.name or ""
 
         match_data = {
             "match_id": match.id,
@@ -1049,11 +1052,14 @@ async def ia_features_playground(
                 "away_prob": prediction.away_prob,
             }
 
-        # Get league name
-        league_name = ""
-        league_info = COMPETITIONS.get(match.league_id)
-        if league_info:
-            league_name = league_info.name or ""
+        # Get league name: display_name from admin_leagues > COMPETITIONS fallback
+        from app.dashboard.admin import get_league_info_sync
+        league_info_cached = get_league_info_sync(match.league_id)
+        league_name = league_info_cached.get("name", "") if league_info_cached else ""
+        if not league_name:
+            comp_info = COMPETITIONS.get(match.league_id)
+            if comp_info:
+                league_name = comp_info.name or ""
 
         match_data = {
             "match_id": match.id,

@@ -43,6 +43,7 @@ async def _load_league_cache(session: AsyncSession) -> dict[int, dict]:
             "league_id": r.league_id,
             "name": r.name,
             "display_name": r.display_name,
+            "effective_name": r.display_name or r.name,
             "logo_url": r.logo_url,
             "wikipedia_url": r.wikipedia_url,
             "country": r.country,
@@ -66,7 +67,7 @@ def get_league_info_sync(league_id: int) -> dict:
     if league_id in _league_cache:
         entry = _league_cache[league_id]
         return {
-            "name": entry["name"],
+            "name": entry["effective_name"],
             "priority": entry["priority"],
             "match_type": entry["match_type"],
             "match_weight": entry["match_weight"],
@@ -267,7 +268,7 @@ async def build_leagues_list(session: AsyncSession) -> dict:
         if db_entry:
             league_entry = {
                 "league_id": league_id,
-                "name": db_entry["name"],
+                "name": db_entry["effective_name"],
                 "display_name": db_entry["display_name"],
                 "logo_url": db_entry["logo_url"],
                 "wikipedia_url": db_entry["wikipedia_url"],
@@ -508,7 +509,7 @@ async def build_league_detail(session: AsyncSession, league_id: int) -> Optional
 
     if db_entry:
         league_info.update({
-            "name": db_entry["name"],
+            "name": db_entry["effective_name"],
             "display_name": db_entry["display_name"],
             "logo_url": db_entry["logo_url"],
             "wikipedia_url": db_entry["wikipedia_url"],

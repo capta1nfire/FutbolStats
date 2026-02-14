@@ -295,7 +295,7 @@ QUERY_BOOKIES = f"""
     SELECT r.id AS match_id, r.league_id, r.date AS kickoff, r.status,
            r.home_goals, r.away_goals,
            lp.source, lp.odds_home, lp.odds_draw, lp.odds_away,
-           al.name AS league_name, COALESCE(al.country, '') AS country
+           COALESCE(al.display_name, al.name) AS league_name, COALESCE(al.country, '') AS country
     FROM resolved r
     JOIN last_pre_ko lp ON lp.match_id = r.id
     LEFT JOIN admin_leagues al ON al.league_id = r.league_id
@@ -342,7 +342,7 @@ QUERY_MODELS = f"""
            mp.model_version, mp.home_prob AS ma_h, mp.draw_prob AS ma_d, mp.away_prob AS ma_a,
            sp.shadow_home_prob AS sh_h, sp.shadow_draw_prob AS sh_d, sp.shadow_away_prob AS sh_a,
            pin.odds_home AS pin_h, pin.odds_draw AS pin_d, pin.odds_away AS pin_a,
-           al.name AS league_name, COALESCE(al.country, '') AS country
+           COALESCE(al.display_name, al.name) AS league_name, COALESCE(al.country, '') AS country
     FROM resolved r
     LEFT JOIN model_preds mp ON mp.match_id = r.id
     LEFT JOIN shadow_preds sp ON sp.match_id = r.id

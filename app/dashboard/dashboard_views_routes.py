@@ -432,11 +432,13 @@ async def _calculate_feature_coverage(session) -> dict:
         {"key": "xi_away_fwd_count", "tier_id": "tier1d", "badge": "TITAN", "source": "titan.feature_matrix"},
     ]
 
-    # Build leagues list from COMPETITIONS
-    leagues = [
-        {"league_id": comp.league_id, "name": comp.name}
-        for comp in COMPETITIONS.values()
-    ]
+    # Build leagues list from COMPETITIONS + display_name overlay
+    from app.dashboard.admin import _league_cache
+    leagues = []
+    for comp in COMPETITIONS.values():
+        entry = _league_cache.get(comp.league_id)
+        name = entry["effective_name"] if entry else comp.name
+        leagues.append({"league_id": comp.league_id, "name": name})
 
     # =========================================================================
     # Query 1: Get match counts and Tier 1 coverage per league/window
@@ -2045,11 +2047,16 @@ async def get_upcoming_matches_dashboard(
         )
         display_map = {r.team_id: r.display_name for r in dn_result.fetchall()}
 
-    # Build league name lookup from COMPETITIONS (single source of truth)
+    # Build league name lookup: COMPETITIONS + display_name overlay
     from app.etl.competitions import COMPETITIONS
+    from app.dashboard.admin import _league_cache
     league_name_by_id: dict[int, str] = {
         lid: comp.name for lid, comp in COMPETITIONS.items() if comp.name
     }
+    for lid, entry in _league_cache.items():
+        ename = entry.get("effective_name")
+        if ename:
+            league_name_by_id[lid] = ename
 
     # Format response
     upcoming = []
@@ -2561,11 +2568,16 @@ async def get_matches_dashboard(
         307: "Saudi-Arabia",
     }
 
-    # Build league name lookup: COMPETITIONS takes priority, then extended fallback
+    # Build league name lookup: COMPETITIONS takes priority, then extended fallback, then display_name overlay
+    from app.dashboard.admin import _league_cache
     league_name_by_id: dict[int, str] = LEAGUE_NAMES_EXTENDED.copy()
     for lid, comp in COMPETITIONS.items():
         if comp.name:
             league_name_by_id[lid] = comp.name
+    for lid, entry in _league_cache.items():
+        ename = entry.get("effective_name")
+        if ename:
+            league_name_by_id[lid] = ename
 
     # Format response
     matches = []
@@ -3938,7 +3950,8 @@ async def dashboard_predictions_json(
 
         where_clause = " AND ".join(filters)
 
-        # League names fallback (no competitions table)
+        # League names: hardcoded fallback + display_name overlay from admin_leagues
+        from app.dashboard.admin import _league_cache
         league_names = {
             1: "World Cup", 2: "Champions League", 3: "Europa League",
             39: "Premier League", 40: "Championship", 61: "Ligue 1",
@@ -3948,6 +3961,10 @@ async def dashboard_predictions_json(
             128: "Argentina Primera", 71: "Brasileirão",
             848: "Conference League", 45: "FA Cup", 143: "Copa del Rey",
         }
+        for lid, entry in _league_cache.items():
+            ename = entry.get("effective_name")
+            if ename:
+                league_names[lid] = ename
 
         # =================================================================
         # SHADOW PATH: Read from shadow_predictions table (canonical source)
