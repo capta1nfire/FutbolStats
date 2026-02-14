@@ -671,8 +671,12 @@ async def build_coverage_map(
         window, resolved_from, resolved_to, league_ids, country_iso3,
     )
 
-    result = await session.execute(text(sql), params)
-    rows = result.fetchall()
+    try:
+        result = await session.execute(text(sql), params)
+        rows = result.fetchall()
+    except Exception as exc:
+        logger.error("coverage_map SQL error: %s", str(exc)[:500])
+        raise
 
     # Transform rows into league dicts
     leagues = []
