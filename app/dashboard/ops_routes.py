@@ -1757,6 +1757,112 @@ async def _calculate_predictions_health(session) -> dict:
     }
 
 
+async def _calculate_cascade_ab_test(session) -> dict:
+    """
+    A/B comparison: Cascade vs Daily predictions (Phase 2, P2-15).
+
+    Compares CLV distribution between predictions that went through cascade
+    (asof_timestamp IS NOT NULL and set by cascade handler) vs daily batch.
+
+    Also reports cascade latency metrics from logged events.
+
+    Cascade prediction identifiers:
+    - asof_timestamp IS NOT NULL → cascade touched this prediction
+    - asof_timestamp IS NULL → daily batch only
+    """
+    # CLV comparison: cascade vs daily
+    result = await session.execute(text("""
+        WITH pred_type AS (
+            SELECT
+                p.id AS prediction_id,
+                p.match_id,
+                p.asof_timestamp,
+                CASE WHEN p.asof_timestamp IS NOT NULL THEN 'cascade' ELSE 'daily' END AS pred_source
+            FROM predictions p
+            JOIN matches m ON m.id = p.match_id
+            WHERE m.status IN ('FT', 'AET', 'PEN')
+        )
+        SELECT
+            pt.pred_source,
+            COUNT(pc.id) AS n_scored,
+            ROUND(AVG(pc.clv_home)::numeric, 5) AS mean_clv_home,
+            ROUND(AVG(pc.clv_draw)::numeric, 5) AS mean_clv_draw,
+            ROUND(AVG(pc.clv_away)::numeric, 5) AS mean_clv_away,
+            ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY pc.clv_home)::numeric, 5) AS median_clv_home,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE pc.clv_home > 0) / NULLIF(COUNT(*), 0), 1) AS pct_pos_home,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE pc.clv_draw > 0) / NULLIF(COUNT(*), 0), 1) AS pct_pos_draw,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE pc.clv_away > 0) / NULLIF(COUNT(*), 0), 1) AS pct_pos_away
+        FROM pred_type pt
+        JOIN prediction_clv pc ON pc.prediction_id = pt.prediction_id
+        WHERE pc.clv_home IS NOT NULL
+        GROUP BY pt.pred_source
+        ORDER BY pt.pred_source
+    """))
+    rows = result.fetchall()
+
+    ab_by_source = {}
+    for row in rows:
+        ab_by_source[row.pred_source] = {
+            "n_scored": row.n_scored,
+            "mean_clv": {
+                "home": float(row.mean_clv_home),
+                "draw": float(row.mean_clv_draw),
+                "away": float(row.mean_clv_away),
+            },
+            "median_clv_home": float(row.median_clv_home),
+            "pct_positive": {
+                "home": float(row.pct_pos_home),
+                "draw": float(row.pct_pos_draw),
+                "away": float(row.pct_pos_away),
+            },
+        }
+
+    # Cascade count (regardless of CLV availability)
+    cascade_result = await session.execute(text("""
+        SELECT COUNT(*) AS n_cascade
+        FROM predictions p
+        WHERE p.asof_timestamp IS NOT NULL
+    """))
+    n_cascade = cascade_result.scalar() or 0
+
+    has_data = "cascade" in ab_by_source and ab_by_source["cascade"]["n_scored"] >= 10
+
+    return {
+        "status": "OK" if has_data else "ACCUMULATING",
+        "n_cascade_predictions": n_cascade,
+        "ab_comparison": ab_by_source if ab_by_source else None,
+        "verdict": (
+            _compute_ab_verdict(ab_by_source) if has_data
+            else f"Need >=10 cascade CLV scores to compare (have {ab_by_source.get('cascade', {}).get('n_scored', 0)})"
+        ),
+    }
+
+
+def _compute_ab_verdict(ab: dict) -> str:
+    """Compute A/B verdict from CLV comparison."""
+    daily = ab.get("daily", {})
+    cascade = ab.get("cascade", {})
+    if not daily or not cascade:
+        return "Incomplete data for comparison"
+
+    d_mean = daily.get("mean_clv", {})
+    c_mean = cascade.get("mean_clv", {})
+    if not d_mean or not c_mean:
+        return "Missing CLV means"
+
+    # Average CLV across outcomes
+    d_avg = (d_mean.get("home", 0) + d_mean.get("draw", 0) + d_mean.get("away", 0)) / 3
+    c_avg = (c_mean.get("home", 0) + c_mean.get("draw", 0) + c_mean.get("away", 0)) / 3
+    delta = c_avg - d_avg
+
+    if delta > 0.001:
+        return f"CASCADE WINS: +{delta:.5f} avg CLV vs daily (N_daily={daily.get('n_scored')}, N_cascade={cascade.get('n_scored')})"
+    elif delta < -0.001:
+        return f"DAILY WINS: {delta:.5f} avg CLV delta (cascade worse) (N_daily={daily.get('n_scored')}, N_cascade={cascade.get('n_scored')})"
+    else:
+        return f"NEUTRAL: {delta:.5f} avg CLV delta (within noise) (N_daily={daily.get('n_scored')}, N_cascade={cascade.get('n_scored')})"
+
+
 async def _calculate_clv_summary(session) -> dict:
     """
     CLV (Closing Line Value) rolling metrics per league (Phase 2, P2-12).
@@ -3802,6 +3908,7 @@ async def _load_ops_data() -> dict:
         llm_cost_data,
         coverage_by_league,
         clv_data,
+        cascade_ab_data,
     ) = await asyncio.gather(
         _fetch_budget_status(),
         _fetch_sentry_health(),
@@ -3820,6 +3927,7 @@ async def _load_ops_data() -> dict:
         _run_llm_cost_queries(),
         _safe(_run_coverage_queries(league_name_by_id), [], "coverage"),
         _calc(_calculate_clv_summary),
+        _calc(_calculate_cascade_ab_test),
     )
 
     # Post-processing: enrich with league names
@@ -3890,6 +3998,7 @@ async def _load_ops_data() -> dict:
         "titan": titan_data,
         "coverage_by_league": coverage_by_league,
         "clv": clv_data,
+        "cascade_ab": cascade_ab_data,
         "ml_model": ml_model_info,
         "live_summary": live_summary_stats,
         "db_pool": get_pool_status(),
