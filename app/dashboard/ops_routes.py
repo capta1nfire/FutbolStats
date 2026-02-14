@@ -1761,14 +1761,17 @@ async def _calculate_cascade_ab_test(session) -> dict:
     """
     A/B comparison: Cascade vs Daily predictions (Phase 2, P2-15).
 
-    Compares CLV distribution between predictions that went through cascade
-    (asof_timestamp IS NOT NULL and set by cascade handler) vs daily batch.
+    Compares CLV distribution between predictions that were updated post-lineup
+    (cascade) vs those that remained pre-lineup (daily batch only).
 
-    Also reports cascade latency metrics from logged events.
+    IMPORTANT: `asof_timestamp` is a PIT anchor and is populated for *all*
+    predictions (GDT #1). Therefore, cascade-vs-daily must NOT be inferred
+    from NULL-ness of `asof_timestamp`.
 
-    Cascade prediction identifiers:
-    - asof_timestamp IS NOT NULL → cascade touched this prediction
-    - asof_timestamp IS NULL → daily batch only
+    Cascade prediction identifiers (DB-first):
+    - `match_lineups.lineup_detected_at` exists AND `predictions.asof_timestamp >= lineup_detected_at`
+      (i.e., prediction was saved after we detected the lineup).
+    - Otherwise, treat as "daily" (pre-lineup or cascade not executed).
     """
     # CLV comparison: cascade vs daily
     result = await session.execute(text("""
@@ -1777,10 +1780,19 @@ async def _calculate_cascade_ab_test(session) -> dict:
                 p.id AS prediction_id,
                 p.match_id,
                 p.asof_timestamp,
-                CASE WHEN p.asof_timestamp IS NOT NULL THEN 'cascade' ELSE 'daily' END AS pred_source
+                ml.lineup_detected_at,
+                CASE
+                    WHEN ml.lineup_detected_at IS NOT NULL AND p.asof_timestamp >= ml.lineup_detected_at
+                        THEN 'cascade'
+                    ELSE 'daily'
+                END AS pred_source
             FROM predictions p
             JOIN matches m ON m.id = p.match_id
+            -- match_lineups has 2 rows per match (home/away). Join ONLY home row to avoid duplicates.
+            LEFT JOIN match_lineups ml
+                ON ml.match_id = m.id AND ml.team_id = m.home_team_id
             WHERE m.status IN ('FT', 'AET', 'PEN')
+              AND p.asof_timestamp IS NOT NULL
         )
         SELECT
             pt.pred_source,
@@ -1817,23 +1829,51 @@ async def _calculate_cascade_ab_test(session) -> dict:
             },
         }
 
-    # Cascade count (regardless of CLV availability)
-    cascade_result = await session.execute(text("""
-        SELECT COUNT(*) AS n_cascade
+    # Prediction counts (regardless of CLV availability), classified using the same rule.
+    count_result = await session.execute(text("""
+        SELECT
+            SUM(
+                CASE
+                    WHEN ml.lineup_detected_at IS NOT NULL AND p.asof_timestamp >= ml.lineup_detected_at
+                        THEN 1 ELSE 0
+                END
+            ) AS n_cascade,
+            SUM(
+                CASE
+                    WHEN NOT (ml.lineup_detected_at IS NOT NULL AND p.asof_timestamp >= ml.lineup_detected_at)
+                        THEN 1 ELSE 0
+                END
+            ) AS n_daily
         FROM predictions p
-        WHERE p.asof_timestamp IS NOT NULL
+        JOIN matches m ON m.id = p.match_id
+        LEFT JOIN match_lineups ml
+            ON ml.match_id = m.id AND ml.team_id = m.home_team_id
+        WHERE m.status IN ('FT', 'AET', 'PEN')
+          AND p.asof_timestamp IS NOT NULL
     """))
-    n_cascade = cascade_result.scalar() or 0
+    cr = count_result.fetchone()
+    n_cascade = int(cr.n_cascade or 0) if cr else 0
+    n_daily = int(cr.n_daily or 0) if cr else 0
 
-    has_data = "cascade" in ab_by_source and ab_by_source["cascade"]["n_scored"] >= 10
+    has_data = (
+        "cascade" in ab_by_source
+        and "daily" in ab_by_source
+        and ab_by_source["cascade"]["n_scored"] >= 10
+        and ab_by_source["daily"]["n_scored"] >= 10
+    )
 
     return {
         "status": "OK" if has_data else "ACCUMULATING",
         "n_cascade_predictions": n_cascade,
+        "n_daily_predictions": n_daily,
         "ab_comparison": ab_by_source if ab_by_source else None,
         "verdict": (
             _compute_ab_verdict(ab_by_source) if has_data
-            else f"Need >=10 cascade CLV scores to compare (have {ab_by_source.get('cascade', {}).get('n_scored', 0)})"
+            else (
+                "Need >=10 CLV scores in BOTH groups to compare "
+                f"(have cascade={ab_by_source.get('cascade', {}).get('n_scored', 0)}, "
+                f"daily={ab_by_source.get('daily', {}).get('n_scored', 0)})"
+            )
         ),
     }
 
