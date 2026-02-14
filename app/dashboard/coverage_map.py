@@ -145,11 +145,11 @@ def _build_coverage_sql(
     league_ids: Optional[List[int]] = None,
     country_names: Optional[List[str]] = None,
 ) -> tuple:
-    """Build the big CTE query. Returns (sql_string, params_dict).
+    """Build coverage query using FILTER + EXISTS (no CTEs, no LEFT JOINs).
 
+    Returns (sql_string, params_dict).
     Uses bound parameters for all user-supplied values (no string interpolation).
     """
-    # Dynamic WHERE clauses for optional filters
     extra_where = ""
     params: Dict[str, Any] = {}
 
@@ -161,276 +161,169 @@ def _build_coverage_sql(
         params["country_names"] = country_names
 
     sql = f"""
-WITH eligible AS (
-  SELECT m.id, m.league_id, m.season, m.home_team_id, m.away_team_id, m.date,
-         m.odds_home, m.odds_draw, m.odds_away, m.odds_recorded_at,
-         m.opening_odds_home, m.opening_odds_draw, m.opening_odds_away, m.opening_odds_recorded_at,
-         m.stats, m.events, m.venue_name, m.venue_city, m.tainted
-  FROM matches m
-  JOIN admin_leagues al ON m.league_id = al.league_id AND al.is_active = true
-  WHERE m.status IN ('FT','AET','PEN')
-    AND m.date >= :date_from
-    AND m.date < :date_to{extra_where}
-),
-
--- ========== P0 ==========
-
--- xG: Understat OR FotMob — data presence (xG is post-match, PIT N/A)
-dim_xg AS (
-  SELECT DISTINCT e.id AS match_id
-  FROM eligible e
-  LEFT JOIN match_understat_team ust ON ust.match_id = e.id
-  LEFT JOIN match_fotmob_stats fmt
-    ON fmt.match_id = e.id
-    AND fmt.xg_home IS NOT NULL AND fmt.xg_away IS NOT NULL
-  WHERE ust.match_id IS NOT NULL OR fmt.match_id IS NOT NULL
-),
-
--- Closing odds: matches table OR odds_history(is_closing) — data presence
-dim_odds_closing AS (
-  SELECT DISTINCT e.id AS match_id FROM eligible e
-  LEFT JOIN odds_history ohc
-    ON ohc.match_id = e.id AND ohc.is_closing = true
-    AND ohc.odds_home > 1.0 AND ohc.odds_draw > 1.0 AND ohc.odds_away > 1.0
-    AND (ohc.quarantined IS NULL OR ohc.quarantined = false)
-  WHERE (e.odds_home > 1.0 AND e.odds_draw > 1.0 AND e.odds_away > 1.0)
-     OR ohc.match_id IS NOT NULL
-),
-
--- Opening odds: matches table OR odds_history(is_opening) — data presence
-dim_odds_opening AS (
-  SELECT DISTINCT e.id AS match_id FROM eligible e
-  LEFT JOIN odds_history oho
-    ON oho.match_id = e.id AND oho.is_opening = true
-    AND oho.odds_home > 1.0 AND oho.odds_draw > 1.0 AND oho.odds_away > 1.0
-    AND (oho.quarantined IS NULL OR oho.quarantined = false)
-  WHERE (e.opening_odds_home > 1.0 AND e.opening_odds_draw > 1.0 AND e.opening_odds_away > 1.0)
-     OR oho.match_id IS NOT NULL
-),
-
--- Lineups: both sides with >=7 starters, PIT-safe, robust to duplicates
-dim_lineups AS (
-  SELECT ml.match_id
-  FROM match_lineups ml
-  JOIN eligible e ON e.id = ml.match_id
-  WHERE array_length(ml.starting_xi_ids, 1) >= 7
-    AND (ml.lineup_confirmed_at IS NULL OR ml.lineup_confirmed_at < e.date)
-  GROUP BY ml.match_id
-  HAVING COUNT(DISTINCT ml.is_home) = 2
-),
-
--- ========== P1 ==========
-
--- Weather: exists PIT-safe
-dim_weather AS (
-  SELECT DISTINCT mw.match_id
-  FROM match_weather mw
-  JOIN eligible e ON e.id = mw.match_id
-  WHERE mw.captured_at < e.date
-),
-
--- Bio-adaptability: both teams have timezone, away has climate normals
-dim_bio AS (
-  SELECT e.id AS match_id FROM eligible e
-  JOIN team_home_city_profile hp ON hp.team_id = e.home_team_id AND hp.timezone IS NOT NULL
-  JOIN team_home_city_profile ap ON ap.team_id = e.away_team_id AND ap.timezone IS NOT NULL
-    AND ap.climate_normals_by_month IS NOT NULL
-),
-
--- Sofascore XI: >=11 rated starters per side — data presence
-dim_sofascore AS (
-  SELECT match_id FROM (
-    SELECT msp.match_id, msp.team_side,
-           COUNT(*) FILTER (
-             WHERE msp.is_starter = true
-               AND (msp.rating_pre_match IS NOT NULL OR msp.rating_recent_form IS NOT NULL)
-           ) AS rated_starters
-    FROM match_sofascore_player msp
-    JOIN eligible e ON e.id = msp.match_id
-    GROUP BY msp.match_id, msp.team_side
-  ) sub
-  WHERE rated_starters >= 11
-  GROUP BY match_id
-  HAVING COUNT(*) = 2
-),
-
--- External refs: at least 1 high-confidence ref from xG/rating sources
-dim_ext_refs AS (
-  SELECT DISTINCT mer.match_id
-  FROM match_external_refs mer
-  JOIN eligible e ON e.id = mer.match_id
-  WHERE mer.source IN ('understat', 'fotmob', 'sofascore')
-    AND mer.confidence >= 0.90
-),
-
--- Freshness: odds captured pre-kickoff AND (xG captured OR lineups confirmed) pre-kickoff
--- This measures real-time pipeline timeliness, NOT data presence
-dim_freshness AS (
-  SELECT e.id AS match_id FROM eligible e
-  WHERE e.odds_recorded_at IS NOT NULL AND e.odds_recorded_at < e.date
-    AND (
-      EXISTS (
-        SELECT 1 FROM match_understat_team ust
-        WHERE ust.match_id = e.id AND ust.captured_at < e.date
-      )
-      OR EXISTS (
-        SELECT 1 FROM match_fotmob_stats fmt
-        WHERE fmt.match_id = e.id AND fmt.xg_home IS NOT NULL AND fmt.captured_at < e.date
-      )
-      OR EXISTS (
-        SELECT 1 FROM match_lineups ml
-        WHERE ml.match_id = e.id AND array_length(ml.starting_xi_ids, 1) >= 7
-          AND (ml.lineup_confirmed_at IS NULL OR ml.lineup_confirmed_at < e.date)
-      )
-    )
-),
-
--- Join health: >=2 distinct high-confidence sources (cross-provider breadth)
-dim_join_health AS (
-  SELECT mer.match_id
-  FROM match_external_refs mer
-  JOIN eligible e ON e.id = mer.match_id
-  WHERE mer.confidence >= 0.90
-  GROUP BY mer.match_id
-  HAVING COUNT(DISTINCT mer.source) >= 2
-),
-
--- ========== P2 ==========
-
--- Match stats: non-empty JSON with required keys
-dim_stats AS (
-  SELECT e.id AS match_id FROM eligible e
-  WHERE e.stats IS NOT NULL
-    AND e.stats::text NOT IN ('{{}}', 'null', '')
-    AND e.stats::text LIKE '%shots_on_goal%'
-    AND e.stats::text LIKE '%corner_kicks%'
-),
-
--- Match events: non-empty
-dim_events AS (
-  SELECT e.id AS match_id FROM eligible e
-  WHERE e.events IS NOT NULL
-    AND e.events::text NOT IN ('[]', 'null', '')
-),
-
--- Venue: both name and city
-dim_venue AS (
-  SELECT e.id AS match_id FROM eligible e
-  WHERE e.venue_name IS NOT NULL AND e.venue_city IS NOT NULL
-),
-
--- Referees: fallback to coach presence in lineups (no dedicated referee columns)
-dim_referees AS (
-  SELECT DISTINCT ml.match_id
-  FROM match_lineups ml
-  JOIN eligible e ON e.id = ml.match_id
-  WHERE ml.coach_id IS NOT NULL
-),
-
--- Player injuries: at least 1 injury record PIT-safe
-dim_injuries AS (
-  SELECT DISTINCT pi.match_id
-  FROM player_injuries pi
-  JOIN eligible e ON e.id = pi.match_id
-  WHERE pi.match_id IS NOT NULL
-    AND pi.captured_at IS NOT NULL AND pi.captured_at < e.date
-),
-
--- Managers: both teams have active manager at match date
-dim_managers AS (
-  SELECT e.id AS match_id FROM eligible e
-  WHERE EXISTS (
-    SELECT 1 FROM team_manager_history tmh
-    WHERE tmh.team_id = e.home_team_id
-      AND tmh.start_date <= e.date::date
-      AND (tmh.end_date IS NULL OR tmh.end_date >= e.date::date)
-  ) AND EXISTS (
-    SELECT 1 FROM team_manager_history tmh
-    WHERE tmh.team_id = e.away_team_id
-      AND tmh.start_date <= e.date::date
-      AND (tmh.end_date IS NULL OR tmh.end_date >= e.date::date)
-  )
-),
-
--- Squad catalog: both teams have >=11 players
-dim_squad AS (
-  SELECT e.id AS match_id FROM eligible e
-  WHERE (SELECT COUNT(*) FROM players p WHERE p.team_id = e.home_team_id) >= 11
-    AND (SELECT COUNT(*) FROM players p WHERE p.team_id = e.away_team_id) >= 11
-),
-
--- Standings: season-safe (PIT N/A — snapshot data backfilled)
-dim_standings AS (
-  SELECT DISTINCT e.id AS match_id
-  FROM eligible e
-  JOIN league_standings ls
-    ON ls.league_id = e.league_id
-    AND ls.season = e.season
-),
-
--- ========== DIAGNOSTIC ==========
-
--- Data quality: not tainted AND no quarantined odds
-dim_quality AS (
-  SELECT e.id AS match_id FROM eligible e
-  WHERE (e.tainted IS NULL OR e.tainted = false)
-    AND NOT EXISTS (
-      SELECT 1 FROM odds_history oh
-      WHERE oh.match_id = e.id AND oh.quarantined = true
-    )
-)
-
--- ========== FINAL AGGREGATION ==========
 SELECT
-  e.league_id,
+  m.league_id,
   al.name AS league_name,
   al.country,
   COUNT(*) AS eligible_matches,
-  -- P0 numerators
-  COUNT(d_xg.match_id) AS xg_n,
-  COUNT(d_oc.match_id) AS odds_closing_n,
-  COUNT(d_oo.match_id) AS odds_opening_n,
-  COUNT(d_lu.match_id) AS lineups_n,
-  -- P1 numerators
-  COUNT(d_we.match_id) AS weather_n,
-  COUNT(d_bi.match_id) AS bio_adaptability_n,
-  COUNT(d_sc.match_id) AS sofascore_xi_ratings_n,
-  COUNT(d_er.match_id) AS external_refs_n,
-  COUNT(d_fr.match_id) AS freshness_n,
-  COUNT(d_jh.match_id) AS join_health_n,
-  -- P2 numerators
-  COUNT(d_st.match_id) AS match_stats_n,
-  COUNT(d_ev.match_id) AS match_events_n,
-  COUNT(d_ve.match_id) AS venue_n,
-  COUNT(d_re.match_id) AS referees_n,
-  COUNT(d_in.match_id) AS player_injuries_n,
-  COUNT(d_mg.match_id) AS managers_n,
-  COUNT(d_sq.match_id) AS squad_catalog_n,
-  COUNT(d_sd.match_id) AS standings_n,
-  -- Diagnostic
-  COUNT(d_dq.match_id) AS data_quality_n
-FROM eligible e
-JOIN admin_leagues al ON al.league_id = e.league_id
-LEFT JOIN dim_xg d_xg ON d_xg.match_id = e.id
-LEFT JOIN dim_odds_closing d_oc ON d_oc.match_id = e.id
-LEFT JOIN dim_odds_opening d_oo ON d_oo.match_id = e.id
-LEFT JOIN dim_lineups d_lu ON d_lu.match_id = e.id
-LEFT JOIN dim_weather d_we ON d_we.match_id = e.id
-LEFT JOIN dim_bio d_bi ON d_bi.match_id = e.id
-LEFT JOIN dim_sofascore d_sc ON d_sc.match_id = e.id
-LEFT JOIN dim_ext_refs d_er ON d_er.match_id = e.id
-LEFT JOIN dim_freshness d_fr ON d_fr.match_id = e.id
-LEFT JOIN dim_join_health d_jh ON d_jh.match_id = e.id
-LEFT JOIN dim_stats d_st ON d_st.match_id = e.id
-LEFT JOIN dim_events d_ev ON d_ev.match_id = e.id
-LEFT JOIN dim_venue d_ve ON d_ve.match_id = e.id
-LEFT JOIN dim_referees d_re ON d_re.match_id = e.id
-LEFT JOIN dim_injuries d_in ON d_in.match_id = e.id
-LEFT JOIN dim_managers d_mg ON d_mg.match_id = e.id
-LEFT JOIN dim_squad d_sq ON d_sq.match_id = e.id
-LEFT JOIN dim_standings d_sd ON d_sd.match_id = e.id
-LEFT JOIN dim_quality d_dq ON d_dq.match_id = e.id
-GROUP BY e.league_id, al.name, al.country
+
+  -- ===== P0 =====
+
+  -- xG: Understat OR FotMob (post-match data, PIT N/A)
+  COUNT(*) FILTER (WHERE
+    EXISTS (SELECT 1 FROM match_understat_team ust WHERE ust.match_id = m.id)
+    OR EXISTS (SELECT 1 FROM match_fotmob_stats fmt
+               WHERE fmt.match_id = m.id AND fmt.xg_home IS NOT NULL AND fmt.xg_away IS NOT NULL)
+  ) AS xg_n,
+
+  -- Closing odds: matches.odds OR odds_history(is_closing)
+  COUNT(*) FILTER (WHERE
+    (m.odds_home > 1.0 AND m.odds_draw > 1.0 AND m.odds_away > 1.0)
+    OR EXISTS (SELECT 1 FROM odds_history ohc
+               WHERE ohc.match_id = m.id AND ohc.is_closing = true
+               AND ohc.odds_home > 1.0 AND ohc.odds_draw > 1.0 AND ohc.odds_away > 1.0
+               AND (ohc.quarantined IS NULL OR ohc.quarantined = false))
+  ) AS odds_closing_n,
+
+  -- Opening odds: matches.opening_odds OR odds_history(is_opening)
+  COUNT(*) FILTER (WHERE
+    (m.opening_odds_home > 1.0 AND m.opening_odds_draw > 1.0 AND m.opening_odds_away > 1.0)
+    OR EXISTS (SELECT 1 FROM odds_history oho
+               WHERE oho.match_id = m.id AND oho.is_opening = true
+               AND oho.odds_home > 1.0 AND oho.odds_draw > 1.0 AND oho.odds_away > 1.0
+               AND (oho.quarantined IS NULL OR oho.quarantined = false))
+  ) AS odds_opening_n,
+
+  -- Lineups: both sides with >=7 starters
+  COUNT(*) FILTER (WHERE EXISTS (
+    SELECT 1 FROM (
+      SELECT ml.match_id FROM match_lineups ml
+      WHERE ml.match_id = m.id AND array_length(ml.starting_xi_ids, 1) >= 7
+        AND (ml.lineup_confirmed_at IS NULL OR ml.lineup_confirmed_at < m.date)
+      GROUP BY ml.match_id HAVING COUNT(DISTINCT ml.is_home) = 2
+    ) sub
+  )) AS lineups_n,
+
+  -- ===== P1 =====
+
+  -- Weather (PIT-safe)
+  COUNT(*) FILTER (WHERE EXISTS (
+    SELECT 1 FROM match_weather mw WHERE mw.match_id = m.id AND mw.captured_at < m.date
+  )) AS weather_n,
+
+  -- Bio-adaptability: both teams timezone, away has climate normals
+  COUNT(*) FILTER (WHERE
+    EXISTS (SELECT 1 FROM team_home_city_profile hp
+            WHERE hp.team_id = m.home_team_id AND hp.timezone IS NOT NULL)
+    AND EXISTS (SELECT 1 FROM team_home_city_profile ap
+                WHERE ap.team_id = m.away_team_id AND ap.timezone IS NOT NULL
+                AND ap.climate_normals_by_month IS NOT NULL)
+  ) AS bio_adaptability_n,
+
+  -- Sofascore XI: >=11 rated starters per side
+  COUNT(*) FILTER (WHERE EXISTS (
+    SELECT 1 FROM (
+      SELECT x.match_id FROM (
+        SELECT msp.match_id, msp.team_side,
+               COUNT(*) FILTER (WHERE msp.is_starter = true
+                 AND (msp.rating_pre_match IS NOT NULL OR msp.rating_recent_form IS NOT NULL)) AS rated
+        FROM match_sofascore_player msp WHERE msp.match_id = m.id
+        GROUP BY msp.match_id, msp.team_side
+      ) x WHERE x.rated >= 11
+      GROUP BY x.match_id HAVING COUNT(*) = 2
+    ) sub
+  )) AS sofascore_xi_ratings_n,
+
+  -- External refs: >=1 high-confidence from xG/rating sources
+  COUNT(*) FILTER (WHERE EXISTS (
+    SELECT 1 FROM match_external_refs mer
+    WHERE mer.match_id = m.id AND mer.source IN ('understat','fotmob','sofascore')
+    AND mer.confidence >= 0.90
+  )) AS external_refs_n,
+
+  -- Freshness: real-time pipeline timeliness (odds pre-kickoff + xG/lineups pre-kickoff)
+  COUNT(*) FILTER (WHERE
+    m.odds_recorded_at IS NOT NULL AND m.odds_recorded_at < m.date
+    AND (
+      EXISTS (SELECT 1 FROM match_understat_team ust
+              WHERE ust.match_id = m.id AND ust.captured_at < m.date)
+      OR EXISTS (SELECT 1 FROM match_fotmob_stats fmt
+                 WHERE fmt.match_id = m.id AND fmt.xg_home IS NOT NULL AND fmt.captured_at < m.date)
+      OR EXISTS (SELECT 1 FROM match_lineups ml
+                 WHERE ml.match_id = m.id AND array_length(ml.starting_xi_ids, 1) >= 7
+                 AND (ml.lineup_confirmed_at IS NULL OR ml.lineup_confirmed_at < m.date))
+    )
+  ) AS freshness_n,
+
+  -- Join health: >=2 distinct high-confidence sources
+  COUNT(*) FILTER (WHERE EXISTS (
+    SELECT 1 FROM match_external_refs mer
+    WHERE mer.match_id = m.id AND mer.confidence >= 0.90
+    GROUP BY mer.match_id HAVING COUNT(DISTINCT mer.source) >= 2
+  )) AS join_health_n,
+
+  -- ===== P2 =====
+
+  -- Match stats: non-empty with required keys
+  COUNT(*) FILTER (WHERE
+    m.stats IS NOT NULL AND m.stats::text NOT IN ('{{}}', 'null', '')
+    AND m.stats::text LIKE '%shots_on_goal%' AND m.stats::text LIKE '%corner_kicks%'
+  ) AS match_stats_n,
+
+  -- Match events: non-empty
+  COUNT(*) FILTER (WHERE
+    m.events IS NOT NULL AND m.events::text NOT IN ('[]', 'null', '')
+  ) AS match_events_n,
+
+  -- Venue
+  COUNT(*) FILTER (WHERE m.venue_name IS NOT NULL AND m.venue_city IS NOT NULL) AS venue_n,
+
+  -- Referees/Coaches: coach presence in lineups
+  COUNT(*) FILTER (WHERE EXISTS (
+    SELECT 1 FROM match_lineups ml WHERE ml.match_id = m.id AND ml.coach_id IS NOT NULL
+  )) AS referees_n,
+
+  -- Player injuries (PIT-safe)
+  COUNT(*) FILTER (WHERE EXISTS (
+    SELECT 1 FROM player_injuries pi
+    WHERE pi.match_id = m.id AND pi.captured_at IS NOT NULL AND pi.captured_at < m.date
+  )) AS player_injuries_n,
+
+  -- Managers: both teams have active manager at match date
+  COUNT(*) FILTER (WHERE
+    EXISTS (SELECT 1 FROM team_manager_history tmh
+            WHERE tmh.team_id = m.home_team_id AND tmh.start_date <= m.date::date
+            AND (tmh.end_date IS NULL OR tmh.end_date >= m.date::date))
+    AND EXISTS (SELECT 1 FROM team_manager_history tmh
+                WHERE tmh.team_id = m.away_team_id AND tmh.start_date <= m.date::date
+                AND (tmh.end_date IS NULL OR tmh.end_date >= m.date::date))
+  ) AS managers_n,
+
+  -- Squad catalog: both teams >=11 players
+  COUNT(*) FILTER (WHERE
+    (SELECT COUNT(*) FROM players p WHERE p.team_id = m.home_team_id) >= 11
+    AND (SELECT COUNT(*) FROM players p WHERE p.team_id = m.away_team_id) >= 11
+  ) AS squad_catalog_n,
+
+  -- Standings: season-safe
+  COUNT(*) FILTER (WHERE EXISTS (
+    SELECT 1 FROM league_standings ls WHERE ls.league_id = m.league_id AND ls.season = m.season
+  )) AS standings_n,
+
+  -- ===== DIAGNOSTIC =====
+
+  -- Data quality: not tainted, no quarantined odds
+  COUNT(*) FILTER (WHERE
+    (m.tainted IS NULL OR m.tainted = false)
+    AND NOT EXISTS (SELECT 1 FROM odds_history oh WHERE oh.match_id = m.id AND oh.quarantined = true)
+  ) AS data_quality_n
+
+FROM matches m
+JOIN admin_leagues al ON m.league_id = al.league_id AND al.is_active = true
+WHERE m.status IN ('FT','AET','PEN')
+  AND m.date >= :date_from
+  AND m.date < :date_to{extra_where}
+GROUP BY m.league_id, al.name, al.country
 ORDER BY COUNT(*) DESC
 """
     return sql, params
@@ -672,6 +565,9 @@ async def build_coverage_map(
     )
 
     try:
+        # Disable JIT: 19-dim FILTER+EXISTS query triggers excessive JIT compilation
+        # (~1.2s overhead for 130 functions). Query runs in ~1.1s without JIT.
+        await session.execute(text("SET LOCAL jit = off"))
         result = await session.execute(text(sql), params)
         rows = result.fetchall()
     except Exception as exc:
