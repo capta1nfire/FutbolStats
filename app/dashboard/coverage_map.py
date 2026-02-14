@@ -348,6 +348,48 @@ SELECT
     SELECT 1 FROM league_standings ls WHERE ls.league_id = m.league_id AND ls.season = m.season
   )) AS standings_n,
 
+  -- ===== INTERSECTIONS (exact, not approximated) =====
+
+  -- Odds AND xG
+  COUNT(*) FILTER (WHERE
+    (
+      (m.odds_home > 1.0 AND m.odds_draw > 1.0 AND m.odds_away > 1.0)
+      OR EXISTS (SELECT 1 FROM odds_history ohc
+                 WHERE ohc.match_id = m.id AND ohc.is_closing = true
+                 AND ohc.odds_home > 1.0 AND ohc.odds_draw > 1.0 AND ohc.odds_away > 1.0
+                 AND (ohc.quarantined IS NULL OR ohc.quarantined = false))
+    )
+    AND (
+      EXISTS (SELECT 1 FROM match_understat_team ust WHERE ust.match_id = m.id)
+      OR EXISTS (SELECT 1 FROM match_fotmob_stats fmt
+                 WHERE fmt.match_id = m.id AND fmt.xg_home IS NOT NULL AND fmt.xg_away IS NOT NULL)
+    )
+  ) AS odds_xg_n,
+
+  -- Lineups AND Odds AND xG
+  COUNT(*) FILTER (WHERE
+    (
+      (m.odds_home > 1.0 AND m.odds_draw > 1.0 AND m.odds_away > 1.0)
+      OR EXISTS (SELECT 1 FROM odds_history ohc
+                 WHERE ohc.match_id = m.id AND ohc.is_closing = true
+                 AND ohc.odds_home > 1.0 AND ohc.odds_draw > 1.0 AND ohc.odds_away > 1.0
+                 AND (ohc.quarantined IS NULL OR ohc.quarantined = false))
+    )
+    AND (
+      EXISTS (SELECT 1 FROM match_understat_team ust WHERE ust.match_id = m.id)
+      OR EXISTS (SELECT 1 FROM match_fotmob_stats fmt
+                 WHERE fmt.match_id = m.id AND fmt.xg_home IS NOT NULL AND fmt.xg_away IS NOT NULL)
+    )
+    AND EXISTS (
+      SELECT 1 FROM (
+        SELECT ml.match_id FROM match_lineups ml
+        WHERE ml.match_id = m.id AND array_length(ml.starting_xi_ids, 1) >= 7
+          AND (ml.lineup_confirmed_at IS NULL OR ml.lineup_confirmed_at < m.date)
+        GROUP BY ml.match_id HAVING COUNT(DISTINCT ml.is_home) = 2
+      ) sub
+    )
+  ) AS xi_odds_xg_n,
+
   -- ===== DIAGNOSTIC =====
 
   -- Data quality: not tainted, no quarantined odds
@@ -409,6 +451,10 @@ def _compute_league_data(row) -> dict:
     dq_n = getattr(row, "data_quality_n", 0) or 0
     dims["data_quality_flags"] = {"pct": _pct(dq_n, total), "numerator": dq_n, "denominator": total}
 
+    # Intersection counts (exact from SQL, not approximated)
+    odds_xg_n = getattr(row, "odds_xg_n", 0) or 0
+    xi_odds_xg_n = getattr(row, "xi_odds_xg_n", 0) or 0
+
     return {
         "league_id": row.league_id,
         "league_name": row.league_name,
@@ -418,6 +464,8 @@ def _compute_league_data(row) -> dict:
         "wikipedia_url": getattr(row, "wikipedia_url", None),
         "eligible_matches": total,
         "dimensions": dims,
+        "_odds_xg_n": odds_xg_n,
+        "_xi_odds_xg_n": xi_odds_xg_n,
     }
 
 
@@ -446,10 +494,9 @@ def _compute_scores(league: dict) -> dict:
     xg_pct = dims["xg"]["pct"]
     lineups_pct = dims["lineups"]["pct"]
 
-    # Intersection percentages (approximate using min since we don't have exact intersections)
-    # For precise values we'd need additional SQL, but min is a good lower bound
-    odds_xg_pct = min(odds_pct, xg_pct)
-    xi_odds_xg_pct = min(lineups_pct, odds_pct, xg_pct)
+    # Exact intersection percentages from SQL (not approximated with min())
+    odds_xg_pct = _pct(league.get("_odds_xg_n", 0), total)
+    xi_odds_xg_pct = _pct(league.get("_xi_odds_xg_n", 0), total)
 
     league["universe_coverage"] = {
         "base_pct": 100.0,
@@ -496,6 +543,8 @@ def _aggregate_by_country(leagues: List[dict]) -> List[dict]:
                 "_dim_numerators": {k: 0 for k in ALL_DIM_KEYS},
                 "_dim_numerators_dq": 0,
                 "_dim_denominator": 0,
+                "_odds_xg_n": 0,
+                "_xi_odds_xg_n": 0,
             }
         c = by_country[iso3]
         n = lg["eligible_matches"]
@@ -509,6 +558,8 @@ def _aggregate_by_country(leagues: List[dict]) -> List[dict]:
         for k in ALL_DIM_KEYS:
             c["_dim_numerators"][k] += lg["dimensions"][k]["numerator"]
         c["_dim_numerators_dq"] += lg["dimensions"]["data_quality_flags"]["numerator"]
+        c["_odds_xg_n"] += lg.get("_odds_xg_n", 0)
+        c["_xi_odds_xg_n"] += lg.get("_xi_odds_xg_n", 0)
 
     countries = []
     for iso3, c in sorted(by_country.items(), key=lambda x: x[1]["eligible_matches"], reverse=True):
@@ -527,8 +578,8 @@ def _aggregate_by_country(leagues: List[dict]) -> List[dict]:
         odds_pct = _pct(c["_dim_numerators"]["odds_closing"], total)
         xg_pct = _pct(c["_dim_numerators"]["xg"], total)
         lu_pct = _pct(c["_dim_numerators"]["lineups"], total)
-        odds_xg_pct = min(odds_pct, xg_pct)
-        xi_odds_xg_pct = min(lu_pct, odds_pct, xg_pct)
+        odds_xg_pct = _pct(c["_odds_xg_n"], total)
+        xi_odds_xg_pct = _pct(c["_xi_odds_xg_n"], total)
 
         country["universe_tier"] = "base"
         if xi_odds_xg_pct >= 70:
@@ -633,14 +684,22 @@ async def build_coverage_map(
         if lg["eligible_matches"] < min_matches:
             lg["universe_tier"] = "insufficient_data"
 
-        # Strip quality flags from dimensions if not requested
-        if not include_quality_flags:
-            lg["dimensions"].pop("data_quality_flags", None)
-
         leagues.append(lg)
 
-    # Aggregate by country
+    # Aggregate by country (BEFORE stripping data_quality_flags — aggregation needs it)
     countries = _aggregate_by_country(leagues)
+
+    # Strip quality flags AFTER aggregation
+    if not include_quality_flags:
+        for lg in leagues:
+            lg["dimensions"].pop("data_quality_flags", None)
+        for c in countries:
+            c["dimensions"].pop("data_quality_flags", None)
+
+    # Strip internal intersection counts (not part of the API contract)
+    for lg in leagues:
+        lg.pop("_odds_xg_n", None)
+        lg.pop("_xi_odds_xg_n", None)
 
     # Build response
     response = {
