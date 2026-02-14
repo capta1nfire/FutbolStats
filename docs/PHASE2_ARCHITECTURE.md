@@ -389,6 +389,10 @@ CREATE TABLE prediction_clv (
     match_id             INT NOT NULL,
     asof_timestamp       TIMESTAMPTZ NOT NULL,
     canonical_bookmaker  VARCHAR NOT NULL,
+    -- Odds crudas al momento asof (antes de de-vig)
+    odds_asof_home       NUMERIC,
+    odds_asof_draw       NUMERIC,
+    odds_asof_away       NUMERIC,
     -- Vector de probabilidades al momento de prediccion (de-vigged)
     prob_asof_home       NUMERIC,
     prob_asof_draw       NUMERIC,
@@ -404,11 +408,22 @@ CREATE TABLE prediction_clv (
     -- CLV del outcome seleccionado (si hay value bet)
     selected_outcome     VARCHAR,   -- 'home'/'draw'/'away'/NULL
     clv_selected         NUMERIC,
-    -- Metadata
-    closing_source       VARCHAR,   -- 'is_closing_real' / 'T5_proxy'
-    created_at           TIMESTAMPTZ DEFAULT NOW()
+    -- Metadata: "asof_source|close_method"
+    -- asof_source: 'pit_aligned' (odds at asof_ts) | 'opening_proxy' (earliest recorded)
+    -- close_method: 'is_closing' | 'latest_pre_kickoff' | 'single_snapshot'
+    close_source         VARCHAR,
+    created_at           TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (prediction_id, canonical_bookmaker)
 );
+-- Indices
+CREATE INDEX idx_prediction_clv_match ON prediction_clv (match_id);
+CREATE INDEX idx_prediction_clv_prediction ON prediction_clv (prediction_id);
 ```
+
+> **Nota Sprint 1 (implementado)**: `close_source` contiene un valor compuesto
+> `"asof_source|close_method"` para auditabilidad. Filtrar por
+> `close_source LIKE 'pit_aligned%'` para obtener solo scores PIT-correctos.
+> Predicciones historicas usan `opening_proxy` como fallback.
 
 #### 5.1.4 Uso
 
@@ -784,7 +799,7 @@ Todos → P2-16 (evaluation report)
 | SteamChaser sin datos suficientes S4 | Alta | Medio | Solo pipeline + collection, training mes 3+ |
 | Event bus pierde eventos en crash | Media | Alto | Sweeper Queue cada 2min reconcilia (ATI #4) |
 | Cascade timeout cascading | Baja | Alto | Hard timeout 5s + fallback Phase 1 (ATI #3) |
-| CLV no auditable por mezcla bookmakers | Media | Alto | Canonical bookmaker strict + closing_source (GDT #5) |
+| CLV no auditable por mezcla bookmakers | Media | Alto | Canonical bookmaker strict + close_source auditable (GDT #5) |
 | asof_timestamp no implementado | — | Critico | P2-02 bloqueante S1, sin esto NADA es auditable |
 | VORP division por cero | — | Critico | P25 prior + global fallback 6.30 (ATI #2) |
 

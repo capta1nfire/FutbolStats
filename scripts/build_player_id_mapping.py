@@ -571,6 +571,7 @@ def aggregate_pairs(all_pairs: List[dict]) -> List[dict]:
         })
 
     # Resolve conflicts: if multiple sc_ids for same af_id, keep highest confidence
+    # as active; secondary alternatives downgraded to pending_review for auditing
     results.sort(key=lambda x: -x["confidence"])
     seen_af = set()
     seen_sc = set()
@@ -579,11 +580,14 @@ def aggregate_pairs(all_pairs: List[dict]) -> List[dict]:
         af = r["api_football_id"]
         sc = r["sofascore_id"]
         if af in seen_af or sc in seen_sc:
-            # Conflict — downgrade to pending_review if it was active
-            if af not in seen_af and sc not in seen_sc:
+            # This is a secondary candidate — one side already has a better match
+            # Keep as pending_review for auditing (not silently dropped)
+            if af not in seen_af or sc not in seen_sc:
+                # Only ONE side conflicts — plausible alternative, keep for review
                 r["status"] = "pending_review"
                 r["method"] += "_conflict"
                 final.append(r)
+            # If BOTH sides already seen → true duplicate pair, skip
             continue
         seen_af.add(af)
         seen_sc.add(sc)
