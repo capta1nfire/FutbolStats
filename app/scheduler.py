@@ -4215,6 +4215,326 @@ async def capture_finished_match_stats() -> dict:
 
 
 # =============================================================================
+# FINISHED MATCH PLAYER STATS SYNC (API-Football /fixtures/players)
+# =============================================================================
+# Captures per-player statistics and rating for recently finished matches.
+# Writes to match_player_stats (data layer) and is guarded by feature flags.
+
+async def capture_finished_match_player_stats() -> dict:
+    """
+    Going-forward job: ingest per-player per-match stats from API-Football /fixtures/players.
+
+    Guardrails:
+    - PLAYER_STATS_SYNC_ENABLED: If false, job returns immediately (default OFF during incubation)
+    - PLAYER_STATS_SYNC_DELAY_HOURS: Only process matches finished >= delay hours ago
+    - PLAYER_STATS_SYNC_MAX_CALLS: Hard cap on API calls per run
+
+    PIT note:
+    The API-Football rating is POST-match. It must ONLY be used for pre-match PTS with:
+        matches.date < asof_timestamp
+    Never include same-match ratings in pre-match feature computation.
+
+    Run frequency: Every 60 minutes (scheduler job), but disabled by default.
+    """
+    import json
+    import os
+    import time
+    from datetime import datetime
+    from pathlib import Path
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    start_time = time.time()
+
+    enabled = os.environ.get("PLAYER_STATS_SYNC_ENABLED", str(settings.PLAYER_STATS_SYNC_ENABLED)).lower()
+    if enabled in ("false", "0", "no"):
+        logger.info("Player stats sync job disabled via PLAYER_STATS_SYNC_ENABLED=false")
+        return {"status": "disabled"}
+
+    delay_hours = int(os.environ.get("PLAYER_STATS_SYNC_DELAY_HOURS", settings.PLAYER_STATS_SYNC_DELAY_HOURS))
+    max_calls = int(os.environ.get("PLAYER_STATS_SYNC_MAX_CALLS", settings.PLAYER_STATS_SYNC_MAX_CALLS))
+
+    metrics = {
+        "checked": 0,
+        "api_calls": 0,
+        "matches_ingested": 0,
+        "rows_upserted": 0,
+        "skipped_no_external_id": 0,
+        "skipped_no_data": 0,
+        "skipped_no_players": 0,
+        "errors": 0,
+        "started_at": datetime.utcnow().isoformat(),
+        "delay_hours": delay_hours,
+        "max_calls": max_calls,
+    }
+
+    def _parse_smallint(value) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            if isinstance(value, bool):
+                return int(value)
+            if isinstance(value, (int,)):
+                return int(value)
+            if isinstance(value, (float, Decimal)):
+                return int(value)
+            if isinstance(value, str):
+                s = value.strip()
+                if s in ("", "-", "null", "None"):
+                    return None
+                if s.endswith("%"):
+                    s = s[:-1]
+                return int(float(s))
+        except Exception:
+            return None
+        return None
+
+    def _parse_rating(value) -> Optional[Decimal]:
+        if value is None:
+            return None
+        try:
+            if isinstance(value, Decimal):
+                return value.quantize(Decimal("0.01"))
+            if isinstance(value, (int, float)):
+                return Decimal(str(value)).quantize(Decimal("0.01"))
+            if isinstance(value, str):
+                s = value.strip()
+                if s in ("", "-", "null", "None"):
+                    return None
+                return Decimal(s).quantize(Decimal("0.01"))
+        except Exception:
+            return None
+        return None
+
+    insert_sql = text("""
+        INSERT INTO match_player_stats (
+            match_id, player_external_id, player_name,
+            team_external_id, team_id, match_date,
+            rating, minutes, position, is_substitute, is_captain,
+            goals, assists, saves,
+            shots_total, shots_on_target,
+            passes_total, passes_key, passes_accuracy,
+            tackles, interceptions, blocks,
+            duels_total, duels_won,
+            dribbles_attempts, dribbles_success,
+            fouls_drawn, fouls_committed,
+            yellow_cards, red_cards,
+            raw_json, captured_at
+        ) VALUES (
+            :match_id, :player_external_id, :player_name,
+            :team_external_id, :team_id, :match_date,
+            :rating, :minutes, :position, :is_substitute, :is_captain,
+            :goals, :assists, :saves,
+            :shots_total, :shots_on_target,
+            :passes_total, :passes_key, :passes_accuracy,
+            :tackles, :interceptions, :blocks,
+            :duels_total, :duels_won,
+            :dribbles_attempts, :dribbles_success,
+            :fouls_drawn, :fouls_committed,
+            :yellow_cards, :red_cards,
+            CAST(:raw_json AS JSONB), NOW()
+        )
+        ON CONFLICT (match_id, player_external_id)
+        DO UPDATE SET
+            player_name = EXCLUDED.player_name,
+            team_external_id = EXCLUDED.team_external_id,
+            team_id = COALESCE(EXCLUDED.team_id, match_player_stats.team_id),
+            match_date = COALESCE(EXCLUDED.match_date, match_player_stats.match_date),
+            rating = EXCLUDED.rating,
+            minutes = EXCLUDED.minutes,
+            position = EXCLUDED.position,
+            is_substitute = EXCLUDED.is_substitute,
+            is_captain = EXCLUDED.is_captain,
+            goals = EXCLUDED.goals,
+            assists = EXCLUDED.assists,
+            saves = EXCLUDED.saves,
+            shots_total = EXCLUDED.shots_total,
+            shots_on_target = EXCLUDED.shots_on_target,
+            passes_total = EXCLUDED.passes_total,
+            passes_key = EXCLUDED.passes_key,
+            passes_accuracy = EXCLUDED.passes_accuracy,
+            tackles = EXCLUDED.tackles,
+            interceptions = EXCLUDED.interceptions,
+            blocks = EXCLUDED.blocks,
+            duels_total = EXCLUDED.duels_total,
+            duels_won = EXCLUDED.duels_won,
+            dribbles_attempts = EXCLUDED.dribbles_attempts,
+            dribbles_success = EXCLUDED.dribbles_success,
+            fouls_drawn = EXCLUDED.fouls_drawn,
+            fouls_committed = EXCLUDED.fouls_committed,
+            yellow_cards = EXCLUDED.yellow_cards,
+            red_cards = EXCLUDED.red_cards,
+            raw_json = EXCLUDED.raw_json,
+            captured_at = NOW()
+    """)
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Pre-load team external_id → internal id mapping
+            team_rows = (await session.execute(text("""
+                SELECT id, external_id FROM teams WHERE external_id IS NOT NULL
+            """))).fetchall()
+            team_map = {r.external_id: r.id for r in team_rows}
+
+            # Select finished matches older than delay with no player stats yet
+            result = await session.execute(text("""
+                SELECT m.id, m.external_id, m.date
+                FROM matches m
+                WHERE m.status IN ('FT', 'AET', 'PEN')
+                  AND m.date <= NOW() - INTERVAL ':delay hours'
+                  AND m.external_id IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM match_player_stats mps WHERE mps.match_id = m.id
+                  )
+                ORDER BY m.date DESC
+                LIMIT :lim
+            """.replace(":delay", str(delay_hours))), {"lim": max_calls})
+
+            matches = result.fetchall()
+            metrics["checked"] = len(matches)
+
+            if not matches:
+                duration_ms = (time.time() - start_time) * 1000
+                record_job_run(job="player_stats_sync", status="ok", duration_ms=duration_ms)
+                return {**metrics, "status": "no_matches", "duration_ms": round(duration_ms, 1)}
+
+            provider = APIFootballProvider()
+            try:
+                for m in matches:
+                    match_id = m.id
+                    fixture_id = m.external_id
+                    match_date = m.date.date() if getattr(m, "date", None) else None
+
+                    if not fixture_id:
+                        metrics["skipped_no_external_id"] += 1
+                        continue
+
+                    if metrics["api_calls"] >= max_calls:
+                        break
+
+                    try:
+                        resp = await provider.get_fixture_players(int(fixture_id))
+                        metrics["api_calls"] += 1
+                    except Exception as e:
+                        metrics["errors"] += 1
+                        logger.warning(f"Player stats sync: API error match_id={match_id}: {e}")
+                        continue
+
+                    if not resp:
+                        metrics["skipped_no_data"] += 1
+                        continue
+
+                    rows = []
+                    for team_block in resp:
+                        team = team_block.get("team") or {}
+                        team_external_id = team.get("id")
+                        team_id = team_map.get(team_external_id) if team_external_id is not None else None
+
+                        for pl in (team_block.get("players") or []):
+                            player = pl.get("player") or {}
+                            player_external_id = player.get("id")
+                            if not player_external_id:
+                                continue
+
+                            stats_list = pl.get("statistics") or []
+                            st = stats_list[0] if stats_list else {}
+                            games = st.get("games") or {}
+
+                            rating = _parse_rating(games.get("rating"))
+                            minutes = _parse_smallint(games.get("minutes"))
+                            position = games.get("position")
+
+                            row = {
+                                "match_id": match_id,
+                                "player_external_id": int(player_external_id),
+                                "player_name": player.get("name"),
+                                "team_external_id": int(team_external_id) if team_external_id is not None else None,
+                                "team_id": int(team_id) if team_id is not None else None,
+                                "match_date": match_date,
+                                "rating": rating,
+                                "minutes": minutes,
+                                "position": position,
+                                "is_substitute": games.get("substitute"),
+                                "is_captain": games.get("captain"),
+                                "goals": _parse_smallint((st.get("goals") or {}).get("total")),
+                                "assists": _parse_smallint((st.get("goals") or {}).get("assists")),
+                                "saves": _parse_smallint((st.get("goals") or {}).get("saves")),
+                                "shots_total": _parse_smallint((st.get("shots") or {}).get("total")),
+                                "shots_on_target": _parse_smallint((st.get("shots") or {}).get("on")),
+                                "passes_total": _parse_smallint((st.get("passes") or {}).get("total")),
+                                "passes_key": _parse_smallint((st.get("passes") or {}).get("key")),
+                                "passes_accuracy": _parse_smallint((st.get("passes") or {}).get("accuracy")),
+                                "tackles": _parse_smallint((st.get("tackles") or {}).get("total")),
+                                "interceptions": _parse_smallint((st.get("tackles") or {}).get("interceptions")),
+                                "blocks": _parse_smallint((st.get("tackles") or {}).get("blocks")),
+                                "duels_total": _parse_smallint((st.get("duels") or {}).get("total")),
+                                "duels_won": _parse_smallint((st.get("duels") or {}).get("won")),
+                                "dribbles_attempts": _parse_smallint((st.get("dribbles") or {}).get("attempts")),
+                                "dribbles_success": _parse_smallint((st.get("dribbles") or {}).get("success")),
+                                "fouls_drawn": _parse_smallint((st.get("fouls") or {}).get("drawn")),
+                                "fouls_committed": _parse_smallint((st.get("fouls") or {}).get("committed")),
+                                "yellow_cards": _parse_smallint((st.get("cards") or {}).get("yellow")),
+                                "red_cards": _parse_smallint((st.get("cards") or {}).get("red")),
+                                "raw_json": json.dumps(st),
+                            }
+                            rows.append(row)
+
+                    if not rows:
+                        metrics["skipped_no_players"] += 1
+                        continue
+
+                    # Atomic per match: savepoint + commit once match rows are upserted
+                    await session.execute(text("SAVEPOINT sp_player_stats_match"))
+                    try:
+                        await session.execute(insert_sql, rows)
+                        await session.execute(text("RELEASE SAVEPOINT sp_player_stats_match"))
+                        await session.commit()
+                        metrics["matches_ingested"] += 1
+                        metrics["rows_upserted"] += len(rows)
+                    except Exception as e:
+                        await session.execute(text("ROLLBACK TO SAVEPOINT sp_player_stats_match"))
+                        await session.commit()
+                        metrics["errors"] += 1
+                        logger.warning(f"Player stats sync: DB upsert failed match_id={match_id}: {e}")
+                        continue
+
+            finally:
+                await provider.close()
+
+        duration_ms = (time.time() - start_time) * 1000
+        metrics["completed_at"] = datetime.utcnow().isoformat()
+        metrics["duration_ms"] = round(duration_ms, 1)
+        record_job_run(job="player_stats_sync", status="ok", duration_ms=duration_ms)
+
+        # Save log file (best-effort)
+        try:
+            logs_dir = Path("logs")
+            logs_dir.mkdir(exist_ok=True)
+            log_file = logs_dir / f"player_stats_sync_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.log"
+            with open(log_file, "w") as f:
+                f.write(json.dumps(metrics, indent=2))
+            metrics["log_file"] = str(log_file)
+        except Exception:
+            pass
+
+        return {**metrics, "status": "completed"}
+
+    except APIBudgetExceeded as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.warning(f"Player stats sync stopped: {e}. Budget status: {get_api_budget_status()}")
+        record_job_run(job="player_stats_sync", status="budget_exceeded", duration_ms=duration_ms)
+        metrics["budget_status"] = get_api_budget_status()
+        return {**metrics, "status": "budget_exceeded", "error": str(e)}
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(f"Player stats sync failed: {e}")
+        sentry_capture_exception(e, job_id="player_stats_sync", metrics=metrics)
+        record_job_run(job="player_stats_sync", status="error", duration_ms=duration_ms)
+        return {**metrics, "status": "error", "error": str(e)}
+
+
+# =============================================================================
 # HISTORICAL STATS BACKFILL JOB
 # =============================================================================
 # Backfills stats for matches from 2023-08-01 onwards that have NULL stats.
@@ -7982,6 +8302,21 @@ def start_scheduler(ml_engine):
         id="finished_match_stats_backfill",
         name="Finished Match Stats Backfill (every 60 min)",
         replace_existing=True,
+    )
+
+    # Finished Match Player Stats Sync: Every 60 minutes (going-forward)
+    # Fetches per-player stats + rating from API-Football /fixtures/players
+    # Guardrails: PLAYER_STATS_SYNC_ENABLED (default OFF), delay hours, max calls/run
+    scheduler.add_job(
+        capture_finished_match_player_stats,
+        trigger=IntervalTrigger(minutes=60),
+        id="finished_match_player_stats_sync",
+        name="Finished Match Player Stats Sync (every 60 min)",
+        replace_existing=True,
+        next_run_time=datetime.utcnow() + timedelta(seconds=135),  # Offset from stats_backfill
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,  # 1h grace for 60min interval
     )
 
     # Historical Stats Backfill: Every 60 minutes

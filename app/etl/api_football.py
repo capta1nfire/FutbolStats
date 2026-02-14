@@ -861,6 +861,18 @@ class APIFootballProvider(DataProvider):
 
         return result
 
+    async def get_fixture_players(self, fixture_id: int):
+        """Fetch per-player statistics for a fixture.
+
+        Returns list of {team: {...}, players: [{player: {...}, statistics: [...]}]}
+        or None if no data. Uses _rate_limited_request for budget/backoff/telemetry.
+        """
+        data = await self._rate_limited_request(
+            "fixtures/players", {"fixture": fixture_id}, entity="player_stats"
+        )
+        resp = data.get("response")
+        return resp if resp else None
+
     async def get_players_squad(self, team_id: int) -> list[dict]:
         """
         Fetch full squad for a team.

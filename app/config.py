@@ -151,6 +151,11 @@ class Settings(BaseSettings):
     STATS_BACKFILL_LOOKBACK_HOURS: int = 72
     STATS_BACKFILL_MAX_CALLS_PER_RUN: int = 200
 
+    # Player Stats Sync (going-forward job for match_player_stats)
+    PLAYER_STATS_SYNC_ENABLED: bool = False  # OFF during incubation
+    PLAYER_STATS_SYNC_DELAY_HOURS: int = 4   # T+4h after FT (provider audit lag)
+    PLAYER_STATS_SYNC_MAX_CALLS: int = 50    # Max calls per run
+
     # Wikidata Team Enrichment
     WIKIDATA_ENRICH_ENABLED: bool = False  # Feature flag (off by default)
     WIKIDATA_ENRICH_BATCH_SIZE: int = 100  # Teams per run (736 teams / 100 = ~8 days catch-up)
