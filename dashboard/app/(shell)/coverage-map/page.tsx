@@ -17,7 +17,7 @@ import type {
   CoverageWindow,
   CoverageLeague,
 } from "@/lib/types/coverage-map";
-import { Shield, Trophy, Users } from "lucide-react";
+import { Shield, Trophy, Users, ExternalLink } from "lucide-react";
 import { IconTabs } from "@/components/ui/icon-tabs";
 import Image from "next/image";
 
@@ -81,9 +81,19 @@ const LIST_TABS = [
   { id: "national", icon: <Users />, label: "National Teams", disabled: true },
 ];
 
+function leagueKind(l: CoverageLeague): string {
+  if (l.kind) return l.kind;
+  // Fallback when backend hasn't deployed kind yet:
+  // international tournaments have no country_iso3
+  return l.country_iso3 ? "league" : "international";
+}
+
 function filterByTab(leagues: CoverageLeague[], tab: ListTab): CoverageLeague[] {
-  if (tab === "leagues") return leagues.filter((l) => !l.kind || l.kind === "league");
-  if (tab === "tournaments") return leagues.filter((l) => l.kind === "cup" || l.kind === "international");
+  if (tab === "leagues") return leagues.filter((l) => leagueKind(l) === "league");
+  if (tab === "tournaments") {
+    const k = new Set(["cup", "international"]);
+    return leagues.filter((l) => k.has(leagueKind(l)));
+  }
   return [];
 }
 
@@ -154,11 +164,7 @@ function MapSidebar({
             {sorted.map((lg) => (
               <button
                 key={lg.league_id}
-                onClick={() =>
-                  onCountryClick(
-                    selectedCountry === lg.country_iso3 ? null : lg.country_iso3
-                  )
-                }
+                onClick={() => onCountryClick(lg.country_iso3)}
                 className={`text-left px-3 py-1.5 text-[12px] flex justify-between items-center transition-smooth ${
                   selectedCountry === lg.country_iso3
                     ? "bg-[rgba(71,151,255,0.08)] text-foreground"
@@ -334,6 +340,12 @@ function CoverageMapContent() {
 
   const selectedFlagIso2 = selectedCountry ? ISO3_TO_ISO2[selectedCountry] : null;
 
+  const footballLink = useMemo(() => {
+    if (!selectedLeagues.length) return null;
+    const lg = selectedLeagues[0];
+    return `/football?category=leagues_by_country&country=${encodeURIComponent(lg.country)}&league=${lg.league_id}`;
+  }, [selectedLeagues]);
+
   const drawerTitle = useMemo(() => {
     if (!selectedCountryName) return null;
     return (
@@ -348,9 +360,18 @@ function CoverageMapContent() {
           />
         )}
         {selectedCountryName}
+        {footballLink && (
+          <a
+            href={footballLink}
+            className="text-muted-foreground hover:text-primary transition-colors"
+            title="Open in Football"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+          </a>
+        )}
       </span>
     );
-  }, [selectedCountryName, selectedFlagIso2]);
+  }, [selectedCountryName, selectedFlagIso2, footballLink]);
 
   const drawerOpen = !!selectedCountry;
   const handleDrawerClose = useCallback(() => setSelectedCountry(null), []);

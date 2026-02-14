@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback, useMemo, useState } from "react";
 import { geoMercator } from "d3-geo";
+import Image from "next/image";
 import type { CoverageCountry, CoverageLeague } from "@/lib/types/coverage-map";
 
 // --- Country name mapping ---
@@ -47,6 +48,24 @@ const TIER_LABELS: Record<string, string> = {
   insufficient_data: "Insufficient",
 };
 
+const ISO3_TO_ISO2: Record<string, string> = {
+  ARG: "ar", BEL: "be", BOL: "bo", BRA: "br", CHL: "cl",
+  COL: "co", ECU: "ec", GBR: "gb", FRA: "fr", DEU: "de",
+  ITA: "it", MEX: "mx", NLD: "nl", PRY: "py", PER: "pe",
+  PRT: "pt", SAU: "sa", ESP: "es", TUR: "tr", URY: "uy",
+  USA: "us", VEN: "ve",
+};
+
+// Approximate geographic centers [lon, lat] for badge positioning
+const COUNTRY_CENTERS: Record<string, [number, number]> = {
+  ARG: [-64, -34], BEL: [4.5, 50.5], BOL: [-65, -17], BRA: [-51, -14],
+  CHL: [-71, -35], COL: [-74, 4], ECU: [-78, -1.8], GBR: [-3, 54],
+  FRA: [2, 46], DEU: [10, 51], ITA: [12, 42], MEX: [-102, 23],
+  NLD: [5, 52], PRY: [-58, -23], PER: [-75, -10], PRT: [-8, 39.5],
+  SAU: [45, 24], ESP: [-4, 40], TUR: [35, 39], URY: [-56, -33],
+  USA: [-98, 38], VEN: [-66, 7],
+};
+
 // --- Component ---
 
 interface CoverageWorldMapProps {
@@ -70,6 +89,32 @@ export function CoverageWorldMap({
   const chartRef = useRef<ReturnType<typeof import("echarts")["init"]> | null>(
     null
   );
+  const [badgePos, setBadgePos] = useState<{ x: number; y: number } | null>(null);
+  const [hoveredCountry, setHoveredCountry] = useState<string | null>(null);
+
+  // Badge shows for selected country, or hovered country as fallback
+  const badgeCountry = selectedCountry || hoveredCountry;
+
+  // Ref-based badge updater — avoids triggering chart effect on hover changes
+  const badgeCountryRef = useRef(badgeCountry);
+  badgeCountryRef.current = badgeCountry;
+
+  const updateBadgePos = useCallback(() => {
+    const chart = chartRef.current;
+    const iso = badgeCountryRef.current;
+    if (!chart || !iso) {
+      setBadgePos(null);
+      return;
+    }
+    const center = COUNTRY_CENTERS[iso];
+    if (!center) { setBadgePos(null); return; }
+    try {
+      const px = chart.convertToPixel({ seriesIndex: 0 }, center);
+      if (px) setBadgePos({ x: px[0], y: px[1] });
+    } catch {
+      setBadgePos(null);
+    }
+  }, []); // stable — reads from ref
 
   const handleClick = useCallback(
     (params: { name?: string }) => {
@@ -82,6 +127,7 @@ export function CoverageWorldMap({
   );
 
   useEffect(() => {
+    setHoveredCountry(null);
     if (!containerRef.current) return;
     let disposed = false;
 
@@ -128,21 +174,34 @@ export function CoverageWorldMap({
       }
 
       // Build series data with per-item colors
-      const seriesData = countries.map((c) => ({
-        name: ISO3_TO_ECHARTS[c.country_iso3] || c.country_name,
-        value: c.coverage_total_pct,
-        _raw: c,
-        itemStyle: { areaColor: bandColor(c.coverage_total_pct, 1.0) },
-        emphasis: { itemStyle: { areaColor: bandColor(c.coverage_total_pct, 1.0) } },
-      }));
+      // When a country is selected, dim others to 35% opacity
+      const dimmed = selectedCountry !== null;
+      const seriesData = countries.map((c) => {
+        const isSelected = selectedCountry === c.country_iso3;
+        const alpha = dimmed && !isSelected ? 0.35 : 1.0;
+        return {
+          name: ISO3_TO_ECHARTS[c.country_iso3] || c.country_name,
+          value: c.coverage_total_pct,
+          _raw: c,
+          itemStyle: {
+            areaColor: bandColor(c.coverage_total_pct, alpha),
+            ...(isSelected && { shadowColor: "rgba(0,0,0,0.4)", shadowBlur: 8 }),
+          },
+          emphasis: { itemStyle: { areaColor: bandColor(c.coverage_total_pct, 1.0) } },
+        };
+      });
 
       chartRef.current.setOption({
         backgroundColor: "transparent",
         tooltip: {
           trigger: "item",
           backgroundColor: "#232326",
-          borderColor: "rgba(249,250,250,0.10)",
-          textStyle: { color: "#dee0e3", fontSize: 12 },
+          borderColor: "transparent",
+          borderWidth: 0,
+          padding: [8, 16],
+          textStyle: { color: "#dee0e3", fontSize: 11, lineHeight: 16 },
+          extraCssText:
+            "border-radius:4px;box-shadow:0 8px 24px rgba(0,0,0,1),0 0 1px rgba(249,250,250,0.08);",
           formatter: (p: Record<string, unknown>) => {
             const d = p.data as { _raw?: CoverageCountry; value?: number };
             if (!d?._raw) return `${p.name}<br/>No data`;
@@ -180,21 +239,17 @@ export function CoverageWorldMap({
             scaleLimit: { min: 1, max: 8 },
             label: { show: false },
             itemStyle: {
-              areaColor: "#2d3039",
+              areaColor: "#282b2f",
               borderColor: "rgba(249,250,250,0.12)",
               borderWidth: 0.5,
             },
             emphasis: {
-              label: { show: true, color: "#dee0e3", fontSize: 11 },
+              label: { show: false },
               itemStyle: {
-                areaColor: "#383d47",
+                areaColor: "#353840",
                 borderColor: "rgba(249,250,250,0.25)",
                 borderWidth: 1,
               },
-            },
-            select: {
-              label: { show: true, color: "#fff" },
-              itemStyle: { borderColor: "#4797FF", borderWidth: 2 },
             },
             data: seriesData,
           },
@@ -205,8 +260,25 @@ export function CoverageWorldMap({
       chartRef.current.off("click");
       chartRef.current.on("click", handleClick);
 
-      // Force resize after layout settles
-      requestAnimationFrame(() => chartRef.current?.resize());
+      // Hover handler for badge
+      chartRef.current.off("mouseover");
+      chartRef.current.on("mouseover", (params: { name?: string }) => {
+        if (!params.name) return;
+        const iso = ECHARTS_TO_ISO3[params.name];
+        if (iso) setHoveredCountry(iso);
+      });
+      chartRef.current.off("mouseout");
+      chartRef.current.on("mouseout", () => setHoveredCountry(null));
+
+      // Update badge on zoom/pan
+      chartRef.current.off("georoam");
+      chartRef.current.on("georoam", updateBadgePos);
+
+      // Force resize after layout settles, then position badge
+      requestAnimationFrame(() => {
+        chartRef.current?.resize();
+        updateBadgePos();
+      });
     }
 
     init().catch(console.error);
@@ -214,6 +286,7 @@ export function CoverageWorldMap({
     // ResizeObserver for responsive
     const observer = new ResizeObserver(() => {
       chartRef.current?.resize();
+      updateBadgePos();
     });
     if (containerRef.current) {
       observer.observe(containerRef.current);
@@ -227,12 +300,54 @@ export function CoverageWorldMap({
         chartRef.current = null;
       }
     };
-  }, [countries, handleClick]);
+  }, [countries, selectedCountry, handleClick, updateBadgePos]);
+
+  // Update badge position when badgeCountry changes (lightweight, no chart rebuild)
+  useEffect(() => {
+    updateBadgePos();
+  }, [badgeCountry, updateBadgePos]);
+
+  const badgeLabel = useMemo(() => {
+    if (!badgeCountry) return null;
+    const country = countries.find((c) => c.country_iso3 === badgeCountry);
+    const name = country?.country_name || ISO3_TO_ECHARTS[badgeCountry] || badgeCountry;
+    const iso2 = ISO3_TO_ISO2[badgeCountry];
+    return { name, iso2 };
+  }, [badgeCountry, countries]);
 
   return (
-    <div
-      ref={containerRef}
-      className="w-full h-full"
-    />
+    <div className="relative w-full h-full">
+      <div ref={containerRef} className="w-full h-full" />
+      {badgeLabel && badgePos && (
+        <div
+          className="absolute z-10 pointer-events-none -translate-x-1/2 -translate-y-full"
+          style={{ left: badgePos.x, top: badgePos.y - 8 }}
+        >
+          <div className="relative inline-flex items-center gap-1.5 bg-surface-elevated/90 backdrop-blur-sm rounded-lg px-3 py-1.5" style={{ boxShadow: "0 2px 8px rgba(0,0,0,0.4)" }}>
+            {badgeLabel.iso2 && (
+              <Image
+                src={`/flags/${badgeLabel.iso2}.svg`}
+                alt=""
+                width={16}
+                height={16}
+                className="rounded-full object-cover"
+              />
+            )}
+            <span className="text-xs font-medium text-foreground">
+              {badgeLabel.name}
+            </span>
+            {/* Arrow */}
+            <div
+              className="absolute left-1/2 -translate-x-1/2 -bottom-1.5 w-0 h-0"
+              style={{
+                borderLeft: "6px solid transparent",
+                borderRight: "6px solid transparent",
+                borderTop: "6px solid rgba(35,35,38,0.9)",
+              }}
+            />
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
