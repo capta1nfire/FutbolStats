@@ -130,6 +130,9 @@ export interface LeagueTags {
 export interface LeagueInfo {
   league_id: number;
   name: string;
+  display_name: string | null;
+  logo_url: string | null;
+  wikipedia_url: string | null;
   country: string;
   kind: string;
   priority: string;
