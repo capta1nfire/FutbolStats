@@ -1030,7 +1030,7 @@ async def dashboard_admin_team_squad_stats(
                         mps.player_external_id,
                         MAX(mps.player_name) AS player_name,
                         COALESCE(MODE() WITHIN GROUP (ORDER BY mps.position), 'U') AS position,
-                        MAX(p.jersey_number) AS jersey_number,
+                        COALESCE(MAX(p.jersey_number), MAX((mps.raw_json #>> '{statistics,games,number}')::int)) AS jersey_number,
                         COUNT(*) FILTER (WHERE COALESCE(mps.minutes, 0) > 0) AS appearances,
                         -- Weighted rating by minutes (PTS-aligned)
                         ROUND(
