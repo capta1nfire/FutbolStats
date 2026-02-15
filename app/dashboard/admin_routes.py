@@ -1070,7 +1070,8 @@ async def dashboard_admin_team_squad_stats(
                         MAX(p.birth_country) AS birth_country,
                         MAX(p.nationality) AS nationality,
                         MAX(p.height) AS height,
-                        MAX(p.weight) AS weight
+                        MAX(p.weight) AS weight,
+                        MAX(p.photo_url) AS photo_url
                     FROM match_player_stats mps
                     JOIN matches m ON m.id = mps.match_id
                     LEFT JOIN players p ON p.external_id = mps.player_external_id
@@ -1086,6 +1087,7 @@ async def dashboard_admin_team_squad_stats(
                 players.append({
                     "player_external_id": int(r.player_external_id),
                     "player_name": r.player_name or f"Player#{int(r.player_external_id)}",
+                    "photo_url": r.photo_url,
                     "position": r.position,
                     "jersey_number": int(r.jersey_number) if r.jersey_number is not None else None,
                     "appearances": int(r.appearances or 0),

@@ -83,6 +83,17 @@ function buildSections(p: TeamSquadPlayerSeasonStats): StatSection[] {
   ];
 }
 
+function computeAge(birthDateStr: string): number {
+  const birth = new Date(birthDateStr + "T00:00:00");
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  const monthDiff = today.getMonth() - birth.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+    age--;
+  }
+  return age;
+}
+
 interface PlayerDetailProps {
   player: TeamSquadPlayerSeasonStats;
   teamName?: string;
@@ -94,13 +105,27 @@ export function PlayerDetail({ player, teamName }: PlayerDetailProps) {
   const isGK = pos === "G";
   const sections = buildSections(player);
 
+  // Full name from firstname + lastname if available
+  const fullName =
+    player.firstname && player.lastname
+      ? `${player.firstname} ${player.lastname}`
+      : player.player_name;
+
+  // Compute age from birth_date
+  const age = player.birth_date ? computeAge(player.birth_date) : null;
+
+  // Birthplace: city + country
+  const birthLocation = [player.birth_place, player.birth_country]
+    .filter(Boolean)
+    .join(", ");
+
   return (
     <div className="px-4 py-4 space-y-4">
       {/* Player header */}
       <div className="flex items-center gap-4">
         {!imgError ? (
           <Image
-            src={playerPhotoUrl(player.player_external_id)}
+            src={player.photo_url || playerPhotoUrl(player.player_external_id)}
             alt={player.player_name}
             width={64}
             height={64}
@@ -117,7 +142,7 @@ export function PlayerDetail({ player, teamName }: PlayerDetailProps) {
         )}
         <div className="min-w-0">
           <h3 className="text-lg font-semibold text-foreground truncate">
-            {player.player_name}
+            {fullName}
           </h3>
           <div className="flex items-center gap-2 text-sm text-muted-foreground mt-0.5 flex-wrap">
             {player.jersey_number != null && (
@@ -150,13 +175,14 @@ export function PlayerDetail({ player, teamName }: PlayerDetailProps) {
               <span className="text-xs text-muted-foreground">Born</span>
               <span className="text-sm text-foreground tabular-nums">
                 {new Date(player.birth_date + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                {age != null && ` (${age})`}
               </span>
             </div>
           )}
-          {player.birth_place && (
+          {birthLocation && (
             <div className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground">Birthplace</span>
-              <span className="text-sm text-foreground truncate ml-2">{player.birth_place}</span>
+              <span className="text-sm text-foreground truncate ml-2">{birthLocation}</span>
             </div>
           )}
           {(player.height || player.weight) && (

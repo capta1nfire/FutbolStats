@@ -47,6 +47,7 @@ export interface TeamSquadData {
 export interface TeamSquadPlayerSeasonStats {
   player_external_id: number;
   player_name: string;
+  photo_url?: string | null;
   position: string; // 'G' | 'D' | 'M' | 'F' | 'U'
   jersey_number: number | null;
   appearances: number;
