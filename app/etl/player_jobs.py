@@ -831,11 +831,11 @@ async def _get_active_teams(session: AsyncSession, league_ids: list[int]) -> lis
         text("""
             SELECT DISTINCT ON (t.id)
                    t.id, t.external_id, t.name,
-                   l.external_id AS league_external_id,
+                   l.league_id AS league_external_id,
                    m.season
             FROM teams t
             JOIN matches m ON (m.home_team_id = t.id OR m.away_team_id = t.id)
-            JOIN admin_leagues l ON l.id = m.league_id
+            JOIN admin_leagues l ON l.league_id = m.league_id
             WHERE m.league_id = ANY(:league_ids)
               AND m.date >= NOW() - INTERVAL '180 days'
               AND t.external_id IS NOT NULL
