@@ -5,7 +5,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from sqlalchemy.exc import InterfaceError, OperationalError
+from sqlalchemy.exc import InterfaceError, InvalidRequestError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -150,7 +150,7 @@ async def get_session_with_retry(max_retries: int = 3, retry_delay: float = 1.0)
             # Test the connection is alive before yielding
             await session.connection()
             break  # Connection successful, exit retry loop
-        except (InterfaceError, OperationalError) as e:
+        except (InterfaceError, OperationalError, InvalidRequestError) as e:
             last_error = e
             error_msg = str(e)
 
@@ -161,8 +161,10 @@ async def get_session_with_retry(max_retries: int = 3, retry_delay: float = 1.0)
                     pass
                 session = None
 
+            # MissingGreenlet during pool_pre_ping on stale Railway connections
+            is_greenlet = "greenlet" in error_msg.lower()
             # Check if this is a connection-closed error worth retrying
-            if "closed" in error_msg.lower() or "connection" in error_msg.lower() or "terminated" in error_msg.lower():
+            if is_greenlet or "closed" in error_msg.lower() or "connection" in error_msg.lower() or "terminated" in error_msg.lower():
                 if attempt < max_retries - 1:
                     logger.warning(
                         f"Database connection error (attempt {attempt + 1}/{max_retries}): {e}. "

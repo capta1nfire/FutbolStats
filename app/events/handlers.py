@@ -98,12 +98,16 @@ async def cascade_handler(event: Event):
 
         # PIT/idempotency: if we already have a prediction saved AFTER lineup_detected_at,
         # skip. This prevents duplicate processing from sweeper + monitoring + multi-worker.
-        if isinstance(lineup_detected_at, datetime) and row.pred_asof and row.pred_asof >= lineup_detected_at:
-            logger.info(
-                f"[CASCADE] Match {match_id} already has post-lineup prediction "
-                f"(pred_asof={row.pred_asof}, lineup_detected_at={lineup_detected_at}), skipping"
-            )
-            return
+        # Normalize both to naive UTC to avoid offset-naive vs offset-aware comparison.
+        if isinstance(lineup_detected_at, datetime) and row.pred_asof:
+            _pred_asof = row.pred_asof.replace(tzinfo=None) if row.pred_asof.tzinfo else row.pred_asof
+            _lda = lineup_detected_at.replace(tzinfo=None) if lineup_detected_at.tzinfo else lineup_detected_at
+            if _pred_asof >= _lda:
+                logger.info(
+                    f"[CASCADE] Match {match_id} already has post-lineup prediction "
+                    f"(pred_asof={row.pred_asof}, lineup_detected_at={lineup_detected_at}), skipping"
+                )
+                return
 
         # Canonical asof timestamp for this cascade run (PIT anchor for auditing).
         # Prefer lineup_detected_at if provided; fallback to now.

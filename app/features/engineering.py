@@ -1558,6 +1558,10 @@ class TeamMatchCache:
         if team_id not in self._cache:
             return []
 
+        # Normalize to naive for safe comparison with cached dates
+        if before_date is not None and before_date.tzinfo is not None:
+            before_date = before_date.replace(tzinfo=None)
+
         # Filter matches before the date and return up to limit
         matches = []
         for match_date, match in self._cache[team_id]:
@@ -1741,6 +1745,10 @@ class FeatureEngineer:
             Dictionary of feature values.
         """
         prefix = "home" if is_home else "away"
+        # Defensive: normalize to naive (DB stores TIMESTAMP WITHOUT TZ).
+        # Prevents TypeError when match_date is timezone-aware from upstream.
+        if match_date is not None and match_date.tzinfo is not None:
+            match_date = match_date.replace(tzinfo=None)
         matches = await self._get_team_matches(team_id, match_date, league_only=league_only)
 
         if not matches:
@@ -2451,7 +2459,7 @@ class FeatureEngineer:
                 rows.append(features)
 
             except Exception as e:
-                logger.error(f"Error processing match {match.id}: {e}")
+                logger.error(f"Error processing match {match.id}: {e}", exc_info=True)
                 try:
                     await self.session.rollback()
                 except Exception:
@@ -2537,7 +2545,7 @@ class FeatureEngineer:
                 rows.append(features)
 
             except Exception as e:
-                logger.error(f"Error processing match {match.id}: {e}")
+                logger.error(f"Error processing match {match.id}: {e}", exc_info=True)
                 try:
                     await self.session.rollback()
                 except Exception:
@@ -2693,7 +2701,7 @@ class FeatureEngineer:
                 features["venue_city"] = match.venue_city
                 rows.append(features)
             except Exception as e:
-                logger.error(f"Error processing match {match.id}: {e}")
+                logger.error(f"Error processing match {match.id}: {e}", exc_info=True)
                 try:
                     await self.session.rollback()
                 except Exception:

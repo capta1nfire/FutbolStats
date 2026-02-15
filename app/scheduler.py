@@ -3119,7 +3119,7 @@ async def retrain_sensor_model():
     logger.info("[SENSOR] Starting sensor retrain job...")
 
     try:
-        async with AsyncSessionLocal() as session:
+        async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
             result = await retrain_sensor(session)
             status = result.get("status", "ERROR").lower()
 

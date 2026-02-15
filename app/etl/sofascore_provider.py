@@ -295,7 +295,7 @@ class SofascoreProvider:
                 logger.error(f"[SOFASCORE] Unexpected error for event {event_id}: {e}")
                 return None, f"unexpected_error: {str(e)[:100]}"
 
-        logger.error(f"[SOFASCORE] Failed to fetch event {event_id} after {MAX_RETRIES} attempts")
+        logger.warning(f"[SOFASCORE] Failed to fetch event {event_id} after {MAX_RETRIES} attempts")
         return None, "max_retries_exceeded"
 
     async def get_match_lineup(
