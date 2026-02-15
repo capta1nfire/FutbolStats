@@ -579,7 +579,7 @@ async def sync_squads(
                                 VALUES
                                     (:ext_id, :name, :firstname, :lastname, :position,
                                      :team_id, :team_ext_id, :number, :age, :photo,
-                                     CAST(:birth_date AS DATE), :birth_place, :birth_country,
+                                     :birth_date, :birth_place, :birth_country,
                                      :nationality, :height, :weight, NOW())
                                 ON CONFLICT (external_id) DO UPDATE SET
                                     name = COALESCE(EXCLUDED.name, players.name),
@@ -610,7 +610,7 @@ async def sync_squads(
                                 "number": p.get("number"),
                                 "age": p.get("age"),
                                 "photo": p.get("photo"),
-                                "birth_date": p.get("birth_date"),
+                                "birth_date": date.fromisoformat(p["birth_date"]) if p.get("birth_date") else None,
                                 "birth_place": p.get("birth_place"),
                                 "birth_country": p.get("birth_country"),
                                 "nationality": p.get("nationality"),
