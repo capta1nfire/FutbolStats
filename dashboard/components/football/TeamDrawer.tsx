@@ -37,7 +37,6 @@ import { TeamEnrichmentSettings } from "./TeamEnrichmentSettings";
 import type { TeamEnrichmentHandle, EnrichmentFormState } from "./TeamEnrichmentSettings";
 import { TeamWikiSettings } from "./TeamWikiSettings";
 import { ManagerCard, InjuryList } from "@/components/squad";
-import { TeamSquadStats } from "./TeamSquadStats";
 
 interface TeamDrawerProps {
   teamId: number | null;
@@ -230,7 +229,6 @@ function RecentFormSection({ form }: { form: TeamFormMatch[] }) {
 /** Tab definitions for team drawer */
 const TEAM_TABS = [
   { id: "overview", icon: <Info />, label: "Overview" },
-  { id: "squad", icon: <Users />, label: "Squad" },
   { id: "multimedia", icon: <ImageIcon />, label: "Multimedia" },
   { id: "settings", icon: <Settings />, label: "Settings" },
 ];
@@ -341,12 +339,6 @@ export function TeamPanelContent({ teamId }: { teamId: number | null }) {
               <TeamSquadOverview teamId={data.team.team_id} />
             )}
           </>
-        )}
-
-        {activeTab === "squad" && (
-          <div className="pb-4">
-            <TeamSquadStats teamId={data.team.team_id} />
-          </div>
         )}
 
         {activeTab === "multimedia" && (
