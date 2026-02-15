@@ -723,109 +723,67 @@ def _bucketize_position_roster(pos: Optional[str]) -> str:
     return "MID"
 
 
-async def load_player_id_mapping_api_to_sofascore(
+async def load_batch_pts_from_match_player_stats(
     session: AsyncSession,
-    api_player_ids: list[int],
-    min_confidence: float = 0.60,
-    status: str = "active",
-) -> dict[int, str]:
+    api_player_ids: list,
+    before_date: datetime,
+    exclude_match_id: Optional[int] = None,
+    limit: int = 10,
+) -> dict:
     """
-    Load best Sofascore mapping for API-Football player IDs (batch).
+    Compute PTS (Player Talent Score) from match_player_stats (batch).
 
-    Uses player_id_mapping (Phase 2 Sprint 1) and selects the highest-confidence
-    mapping per api_football_id.
+    Uses native API-Football player_external_id — no Sofascore mapping needed.
+    PIT-safe: JOIN matches for timestamp-exact filtering (GDT S2).
+    Minutes-weighted average; falls back to simple average if no minutes.
     """
     if not api_player_ids:
         return {}
 
     result = await session.execute(
         text("""
-            SELECT DISTINCT ON (api_football_id)
-                api_football_id, sofascore_id
-            FROM player_id_mapping
-            WHERE api_football_id = ANY(:api_ids)
-              AND status = :status
-              AND confidence >= :min_conf
-              AND sofascore_id IS NOT NULL
-            ORDER BY api_football_id, confidence DESC
-        """),
-        {
-            "api_ids": api_player_ids,
-            "status": status,
-            "min_conf": min_confidence,
-        },
-    )
-    mapping: dict[int, str] = {}
-    for row in result.fetchall():
-        try:
-            mapping[int(row.api_football_id)] = str(row.sofascore_id)
-        except Exception:
-            continue
-    return mapping
-
-
-async def load_batch_pts_from_sofascore_history(
-    session: AsyncSession,
-    sofascore_player_ids: list[str],
-    before_date: datetime,
-    exclude_match_id: Optional[int] = None,
-    limit: int = 10,
-) -> dict[str, dict]:
-    """
-    Compute PTS (Player Talent Score) from sofascore_player_rating_history (batch).
-
-    PIT-safe: only uses match_date < before_date and excludes current match_id.
-    If minutes_played is present, uses minutes-weighted average; otherwise falls
-    back to simple average rating over the last `limit` matches.
-    """
-    if not sofascore_player_ids:
-        return {}
-
-    result = await session.execute(
-        text("""
             WITH ranked AS (
                 SELECT
-                    player_id_ext,
-                    rating,
-                    minutes_played,
-                    match_date,
-                    match_id,
+                    mps.player_external_id,
+                    mps.rating,
+                    mps.minutes,
                     ROW_NUMBER() OVER (
-                        PARTITION BY player_id_ext
-                        ORDER BY match_date DESC
+                        PARTITION BY mps.player_external_id
+                        ORDER BY m.date DESC
                     ) AS rn
-                FROM sofascore_player_rating_history
-                WHERE player_id_ext = ANY(:player_ids)
-                  AND match_date < :before_date
-                  AND rating IS NOT NULL
-                  AND (:exclude_match_id IS NULL OR match_id != :exclude_match_id)
+                FROM match_player_stats mps
+                JOIN matches m ON m.id = mps.match_id
+                WHERE mps.player_external_id = ANY(:player_ids)
+                  AND m.date < :before_date
+                  AND mps.rating IS NOT NULL
+                  AND (:exclude_match_id IS NULL OR mps.match_id != :exclude_match_id)
             )
             SELECT
-                player_id_ext,
+                player_external_id,
                 COUNT(*) AS n_ratings,
                 AVG(rating) AS avg_rating,
-                SUM(COALESCE(minutes_played, 0)) AS sum_minutes,
+                COALESCE(SUM(minutes), 0) AS sum_minutes,
                 CASE
-                    WHEN SUM(COALESCE(minutes_played, 0)) > 0 THEN
-                        SUM(rating * COALESCE(minutes_played, 0)) / NULLIF(SUM(COALESCE(minutes_played, 0)), 0)
+                    WHEN SUM(COALESCE(minutes, 0)) > 0 THEN
+                        SUM(rating * COALESCE(minutes, 0)) / SUM(COALESCE(minutes, 0))
                     ELSE
                         AVG(rating)
                 END AS pts
             FROM ranked
             WHERE rn <= :limit
-            GROUP BY player_id_ext
+            GROUP BY player_external_id
         """),
         {
-            "player_ids": sofascore_player_ids,
+            "player_ids": api_player_ids,
             "before_date": before_date,
             "exclude_match_id": exclude_match_id,
             "limit": limit,
         },
     )
 
-    out: dict[str, dict] = {}
+    out = {}
     for row in result.fetchall():
-        pid = str(row.player_id_ext)
+        pid = int(row.player_external_id)
         out[pid] = {
             "pts": float(row.pts) if row.pts is not None else None,
             "avg_rating": float(row.avg_rating) if row.avg_rating is not None else None,
@@ -842,60 +800,52 @@ async def compute_team_vorp_priors(
     exclude_match_id: Optional[int] = None,
     limit_matches: int = 10,
     min_peer_ratings: int = 3,
-    min_mapping_confidence: float = 0.60,
 ) -> dict:
     """
-    Compute VORP-style priors (P25) for a team using available Sofascore PTS.
+    Compute VORP-style priors (P25) for a team using match_player_stats.
 
-    Returns:
-        {
-          "p25_team": float | None,
-          "p25_by_bucket": { "GK": float|None, "DEF":..., ... },
-          "n_team": int,
-          "n_by_bucket": { ... },
-        }
+    PIT-safe: roster from MPS with temporal cutoff (ABE P0-2).
+    Uses idx_mps_team_id(team_id) for indexed access.
     """
-    # Load roster from players table (API-Football catalog)
+    # Load roster from match_player_stats with PIT cutoff (ABE P0-2)
+    # DISTINCT ON: 1 row per player, most recent position (deterministic)
     roster_res = await session.execute(
         text("""
-            SELECT external_id, position
-            FROM players
-            WHERE team_id = :team_id
-              AND external_id IS NOT NULL
+            SELECT DISTINCT ON (mps.player_external_id)
+                   mps.player_external_id, mps.position
+            FROM match_player_stats mps
+            JOIN matches m ON m.id = mps.match_id
+            WHERE mps.team_id = :team_id
+              AND m.date < :before_date
+              AND mps.rating IS NOT NULL
+            ORDER BY mps.player_external_id, m.date DESC
         """),
-        {"team_id": team_id},
+        {"team_id": team_id, "before_date": before_date},
     )
     roster = roster_res.fetchall()
     if not roster:
         return {"p25_team": None, "p25_by_bucket": {}, "n_team": 0, "n_by_bucket": {}}
 
-    api_ids = [int(r.external_id) for r in roster if r.external_id is not None]
+    api_ids = [int(r.player_external_id) for r in roster]
     api_to_bucket = {
-        int(r.external_id): _bucketize_position_roster(r.position)
+        int(r.player_external_id): _bucketize_position_api_football(r.position)
         for r in roster
-        if r.external_id is not None
     }
 
-    api_to_sc = await load_player_id_mapping_api_to_sofascore(
+    # Get PTS for all roster players (same PIT window)
+    pts_stats = await load_batch_pts_from_match_player_stats(
         session,
         api_player_ids=api_ids,
-        min_confidence=min_mapping_confidence,
-        status="active",
-    )
-    sc_ids = list({sid for sid in api_to_sc.values() if sid})
-    pts_stats = await load_batch_pts_from_sofascore_history(
-        session,
-        sofascore_player_ids=sc_ids,
         before_date=before_date,
         exclude_match_id=exclude_match_id,
         limit=limit_matches,
     )
 
-    by_bucket: dict[str, list[float]] = {"GK": [], "DEF": [], "MID": [], "FWD": []}
-    all_pts: list[float] = []
+    by_bucket = {"GK": [], "DEF": [], "MID": [], "FWD": []}
+    all_pts = []
 
-    for api_id, sc_id in api_to_sc.items():
-        stats = pts_stats.get(sc_id)
+    for api_id in api_ids:
+        stats = pts_stats.get(api_id)
         if not stats:
             continue
         pts = stats.get("pts")
@@ -923,41 +873,33 @@ async def compute_team_vorp_priors(
 
 async def compute_player_talent_scores_for_api_ids(
     session: AsyncSession,
-    api_player_ids: list[int],
+    api_player_ids: list,
     team_id: Optional[int],
     before_date: datetime,
     exclude_match_id: Optional[int] = None,
     limit_matches: int = 10,
-    min_mapping_confidence: float = 0.60,
     min_peer_ratings: int = 3,
-    api_positions: Optional[dict[int, str]] = None,
-) -> dict[int, dict]:
+    api_positions: Optional[dict] = None,
+) -> dict:
     """
     Compute PTS per API-Football player ID (batch), with VORP priors.
 
-    Returns:
-        { api_id: { "pts": float, "source": str, "n_ratings": int } }
+    Uses match_player_stats directly (no Sofascore mapping).
+    VORP cascade: mps_rolling → vorp_p25_pos → vorp_p25_team → global_p25_fallback (6.50)
     """
     if not api_player_ids:
         return {}
 
-    # Mapping API -> Sofascore
-    api_to_sc = await load_player_id_mapping_api_to_sofascore(
+    # Direct PTS from match_player_stats (no mapping needed)
+    pts_stats = await load_batch_pts_from_match_player_stats(
         session,
         api_player_ids=api_player_ids,
-        min_confidence=min_mapping_confidence,
-        status="active",
-    )
-    sc_ids = list({sid for sid in api_to_sc.values() if sid})
-    pts_stats = await load_batch_pts_from_sofascore_history(
-        session,
-        sofascore_player_ids=sc_ids,
         before_date=before_date,
         exclude_match_id=exclude_match_id,
         limit=limit_matches,
     )
 
-    # Team VORP priors (optional if team_id provided)
+    # Team VORP priors
     vorp = None
     if team_id is not None:
         try:
@@ -968,23 +910,20 @@ async def compute_player_talent_scores_for_api_ids(
                 exclude_match_id=exclude_match_id,
                 limit_matches=limit_matches,
                 min_peer_ratings=min_peer_ratings,
-                min_mapping_confidence=min_mapping_confidence,
             )
         except Exception:
-            # Fail-soft: do not break feature computation on missing tables
             vorp = None
 
     p25_team = vorp.get("p25_team") if vorp else None
     p25_by_bucket = vorp.get("p25_by_bucket", {}) if vorp else {}
 
-    out: dict[int, dict] = {}
+    out = {}
     for api_id in api_player_ids:
-        sc_id = api_to_sc.get(api_id)
-        stats = pts_stats.get(sc_id) if sc_id else None
+        stats = pts_stats.get(api_id)
         if stats and stats.get("pts") is not None:
             out[api_id] = {
                 "pts": float(stats["pts"]),
-                "source": "sofascore_rolling",
+                "source": "mps_rolling",
                 "n_ratings": int(stats.get("n_ratings") or 0),
             }
             continue
@@ -1002,7 +941,7 @@ async def compute_player_talent_scores_for_api_ids(
         elif p25_team is not None:
             out[api_id] = {"pts": float(p25_team), "source": "vorp_p25_team", "n_ratings": 0}
         else:
-            out[api_id] = {"pts": 6.5, "source": "default_league_avg", "n_ratings": 0}
+            out[api_id] = {"pts": 6.5, "source": "global_p25_fallback", "n_ratings": 0}
 
     return out
 
