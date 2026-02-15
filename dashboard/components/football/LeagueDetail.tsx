@@ -41,7 +41,7 @@ import { TeamLogo } from "@/components/ui/team-logo";
 import { CoverageDetailContent } from "@/components/coverage-map/CoverageDetail";
 import { FeatureCoverageSection } from "./FeatureCoverageSection";
 import { TeamSquadStats } from "./TeamSquadStats";
-
+import type { TeamSquadPlayerSeasonStats } from "@/lib/types/squad";
 
 const TEAM_DETAIL_TABS = [
   { id: "overview", label: "Overview" },
@@ -105,6 +105,8 @@ interface LeagueDetailProps {
   siblingLeagues?: SiblingLeague[];
   /** Called when user switches to a different league via dropdown */
   onLeagueChange?: (leagueId: number) => void;
+  /** Called when user clicks a player row in Squad tab */
+  onPlayerSelect?: (player: TeamSquadPlayerSeasonStats) => void;
 }
 
 /**
@@ -606,7 +608,7 @@ export function CoverageDrawerContent({ leagueId }: { leagueId: number }) {
  * - Recent matches
  * - Standings (with sub-tabs for reclasificación/descenso)
  */
-export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, onCoverageClick, initialTeamId, siblingLeagues, onLeagueChange }: LeagueDetailProps) {
+export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, onCoverageClick, initialTeamId, siblingLeagues, onLeagueChange, onPlayerSelect }: LeagueDetailProps) {
   const [standingsSubTab, _setStandingsSubTab] = useState<string>(() => {
     if (typeof window === "undefined") return "standings";
     return localStorage.getItem("fs:leagueSubTab") || "standings";
@@ -619,14 +621,15 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(initialTeamId ?? null);
   const [teamTab, _setTeamTab] = useState<TeamDetailTabId>(() => {
     if (typeof window === "undefined") return "overview";
-    return (localStorage.getItem("fs:teamTab") as TeamDetailTabId) || "overview";
+    const stored = localStorage.getItem("fs:teamTab");
+    const valid = TEAM_DETAIL_TABS.some(t => t.id === stored);
+    return valid ? (stored as TeamDetailTabId) : "overview";
   });
   const setTeamTab = useCallback((v: TeamDetailTabId) => {
     _setTeamTab(v);
     try { localStorage.setItem("fs:teamTab", v); } catch {}
   }, []);
   const [squadSeason, setSquadSeason] = useState<number | null>(null);
-
   // Reset selected team when league changes (let auto-select pick first team)
   useEffect(() => {
     setSelectedTeamId(initialTeamId ?? null);
@@ -681,7 +684,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
   const handleTeamSelect = useCallback(
     (teamId: number) => {
       setSelectedTeamId(teamId);
-      setSquadSeason(null); // Reset season on team change
+      setSquadSeason(null);
       onTeamSelect(teamId);
     },
     [onTeamSelect]
@@ -1453,7 +1456,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
               )}
 
               {teamTab === "squad" && selectedTeamId && (
-                <TeamSquadStats teamId={selectedTeamId} season={squadSeason} />
+                <TeamSquadStats teamId={selectedTeamId} season={squadSeason} onPlayerSelect={onPlayerSelect} />
               )}
 
               {teamTab === "matches" && (

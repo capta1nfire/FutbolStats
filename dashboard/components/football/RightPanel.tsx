@@ -2,15 +2,17 @@
 
 import { ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { ShieldUser, Settings, BarChart3, X } from "lucide-react";
+import { ShieldUser, Settings, BarChart3, User, X } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { TeamPanelContent } from "./TeamDrawer";
 import { LeagueSettingsPanelContent } from "./LeagueSettingsDrawer";
 import { CoverageDrawerContent } from "./LeagueDetail";
+import { PlayerDetail } from "./PlayerDetail";
 import type { LeagueInfo } from "@/lib/types/football";
+import type { TeamSquadPlayerSeasonStats } from "@/lib/types/squad";
 
-export type PanelTabId = "team" | "settings" | "coverage";
+export type PanelTabId = "team" | "settings" | "coverage" | "player";
 
 interface PanelTabDef {
   id: PanelTabId;
@@ -23,6 +25,7 @@ const TAB_DEFS: Record<PanelTabId, PanelTabDef> = {
   team:     { id: "team",     icon: <ShieldUser className="w-3.5 h-3.5" />, label: "Team",     closeable: false },
   settings: { id: "settings", icon: <Settings className="w-3.5 h-3.5" />,   label: "Settings", closeable: true },
   coverage: { id: "coverage", icon: <BarChart3 className="w-3.5 h-3.5" />,  label: "Coverage", closeable: true },
+  player:   { id: "player",   icon: <User className="w-3.5 h-3.5" />,       label: "Player",   closeable: true },
 };
 
 interface RightPanelProps {
@@ -36,6 +39,9 @@ interface RightPanelProps {
   league?: LeagueInfo | null;
   // Coverage tab data
   leagueId: number | null;
+  // Player tab data
+  selectedPlayer?: TeamSquadPlayerSeasonStats | null;
+  teamName?: string;
 }
 
 /**
@@ -52,6 +58,8 @@ export function RightPanel({
   teamId,
   league,
   leagueId,
+  selectedPlayer,
+  teamName,
 }: RightPanelProps) {
   return (
     <aside
@@ -65,6 +73,9 @@ export function RightPanel({
           {tabs.map((tabId) => {
             const def = TAB_DEFS[tabId];
             const isActive = activeTab === tabId;
+            const label = tabId === "player" && selectedPlayer
+              ? selectedPlayer.player_name.trim().split(/\s+/).slice(-1)[0] || "Player"
+              : def.label;
             return (
               <button
                 key={tabId}
@@ -78,7 +89,7 @@ export function RightPanel({
                 )}
               >
                 {def.icon}
-                <span>{def.label}</span>
+                <span>{label}</span>
                 {def.closeable && (
                   <span
                     role="button"
@@ -115,6 +126,11 @@ export function RightPanel({
         )}
         {activeTab === "coverage" && leagueId != null && (
           <CoveragePanelContent leagueId={leagueId} />
+        )}
+        {activeTab === "player" && selectedPlayer && (
+          <ScrollArea className="flex-1 min-h-0">
+            <PlayerDetail player={selectedPlayer} teamName={teamName} />
+          </ScrollArea>
         )}
       </div>
     </aside>

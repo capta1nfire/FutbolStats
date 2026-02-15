@@ -1,6 +1,6 @@
 """Database models using SQLModel."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 from uuid import UUID
 
@@ -1511,6 +1511,14 @@ class Player(SQLModel, table=True):
     jersey_number: Optional[int] = Field(default=None, description="Squad number")
     age: Optional[int] = Field(default=None, description="Current age from API")
     photo_url: Optional[str] = Field(default=None, max_length=500, description="Player headshot URL")
+    firstname: Optional[str] = Field(default=None, max_length=100)
+    lastname: Optional[str] = Field(default=None, max_length=150)
+    birth_date: Optional[date] = Field(default=None, description="Birth date YYYY-MM-DD")
+    birth_place: Optional[str] = Field(default=None, max_length=200)
+    birth_country: Optional[str] = Field(default=None, max_length=100)
+    nationality: Optional[str] = Field(default=None, max_length=100)
+    height: Optional[str] = Field(default=None, max_length=10, description="Height in cm")
+    weight: Optional[str] = Field(default=None, max_length=10, description="Weight in kg")
     last_synced_at: Optional[datetime] = Field(default_factory=datetime.utcnow, description="Last sync timestamp")
     created_at: Optional[datetime] = Field(default_factory=datetime.utcnow, description="Row creation timestamp")
 

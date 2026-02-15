@@ -1061,7 +1061,16 @@ async def dashboard_admin_team_squad_stats(
                         SUM(COALESCE(mps.dribbles_success, 0)) AS dribbles_success,
                         SUM(COALESCE(mps.fouls_drawn, 0)) AS fouls_drawn,
                         SUM(COALESCE(mps.fouls_committed, 0)) AS fouls_committed,
-                        BOOL_OR(COALESCE(mps.is_captain, false)) AS ever_captain
+                        BOOL_OR(COALESCE(mps.is_captain, false)) AS ever_captain,
+                        -- Bio fields from players table
+                        MAX(p.firstname) AS firstname,
+                        MAX(p.lastname) AS lastname,
+                        MAX(p.birth_date::text) AS birth_date,
+                        MAX(p.birth_place) AS birth_place,
+                        MAX(p.birth_country) AS birth_country,
+                        MAX(p.nationality) AS nationality,
+                        MAX(p.height) AS height,
+                        MAX(p.weight) AS weight
                     FROM match_player_stats mps
                     JOIN matches m ON m.id = mps.match_id
                     LEFT JOIN players p ON p.external_id = mps.player_external_id
@@ -1102,6 +1111,14 @@ async def dashboard_admin_team_squad_stats(
                     "fouls_drawn": int(r.fouls_drawn or 0),
                     "fouls_committed": int(r.fouls_committed or 0),
                     "ever_captain": bool(r.ever_captain),
+                    "firstname": r.firstname,
+                    "lastname": r.lastname,
+                    "birth_date": r.birth_date,
+                    "birth_place": r.birth_place,
+                    "birth_country": r.birth_country,
+                    "nationality": r.nationality,
+                    "height": r.height,
+                    "weight": r.weight,
                 })
 
     data = {

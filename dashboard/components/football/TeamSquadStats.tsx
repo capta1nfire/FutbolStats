@@ -130,9 +130,10 @@ const GROUP_COLORS: Record<string, string> = {
 interface TeamSquadStatsProps {
   teamId: number;
   season: number | null;
+  onPlayerSelect?: (player: TeamSquadPlayerSeasonStats) => void;
 }
 
-export function TeamSquadStats({ teamId, season }: TeamSquadStatsProps) {
+export function TeamSquadStats({ teamId, season, onPlayerSelect }: TeamSquadStatsProps) {
   const { data, isLoading, error, refetch } = useTeamSquadStats(teamId, season);
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -249,7 +250,7 @@ export function TeamSquadStats({ teamId, season }: TeamSquadStatsProps) {
             <thead className="sticky top-0 z-10 bg-background">
               {/* Group header row */}
               <tr className="border-b border-border/50">
-                <th className="w-10" />
+                <th className="sticky left-0 z-20 bg-background" style={{ width: 28, minWidth: 28, maxWidth: 28 }} />
                 {groupSpans.map(({ group, span }) => (
                   <th
                     key={group}
@@ -266,7 +267,7 @@ export function TeamSquadStats({ teamId, season }: TeamSquadStatsProps) {
               </tr>
               {/* Column header row */}
               <tr className="border-b border-border">
-                <th className="w-10 text-center py-2 px-1 text-xs font-medium text-muted-foreground">#</th>
+                <th className="text-center py-2 text-xs font-medium text-muted-foreground sticky left-0 z-20 bg-background" style={{ width: 28, minWidth: 28, maxWidth: 28 }}>#</th>
                 {COLUMNS.map((col, ci) => {
                   const isGroupStart = ci > 0 && COLUMNS[ci - 1].group !== col.group;
                   return (
@@ -275,7 +276,7 @@ export function TeamSquadStats({ teamId, season }: TeamSquadStatsProps) {
                       onClick={() => handleSort(col.key)}
                       className={cn(
                         "py-2 text-xs font-medium select-none cursor-pointer transition-colors hover:text-foreground whitespace-nowrap",
-                        col.key === "name" ? "px-3 text-left min-w-[180px] sticky left-10 z-20 bg-background" : "px-2 text-center min-w-[48px]",
+                        col.key === "name" ? "px-3 text-left min-w-[180px] sticky left-[28px] z-20 bg-background" : "px-2 text-center min-w-[48px]",
                         sortKey === col.key ? "text-foreground" : "text-muted-foreground",
                         isGroupStart && "border-l border-border/30"
                       )}
@@ -297,13 +298,20 @@ export function TeamSquadStats({ teamId, season }: TeamSquadStatsProps) {
               {sortedPlayers.map((p, idx) => (
                 <tr
                   key={p.player_external_id}
-                  className="border-b border-border transition-colors hover:bg-accent/50"
+                  role={onPlayerSelect ? "button" : undefined}
+                  tabIndex={onPlayerSelect ? 0 : undefined}
+                  onClick={() => onPlayerSelect?.(p)}
+                  onKeyDown={onPlayerSelect ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPlayerSelect(p); } } : undefined}
+                  className={cn(
+                    "group/row border-b border-border",
+                    onPlayerSelect && "cursor-pointer"
+                  )}
                 >
-                  <td className="text-center py-1.5 px-1 text-[11px] text-muted-foreground/50 tabular-nums w-10">
+                  <td className="text-center py-1.5 text-[11px] text-muted-foreground/50 tabular-nums sticky left-0 z-[5] bg-background group-hover/row:bg-accent/50 transition-colors" style={{ width: 28, minWidth: 28, maxWidth: 28 }}>
                     {idx + 1}
                   </td>
                   {/* Player name — sticky */}
-                  <td className="px-3 py-2 min-w-[180px] sticky left-10 z-[5] bg-background">
+                  <td className="px-3 py-2 min-w-[180px] sticky left-[28px] z-[5] bg-background group-hover/row:bg-accent/50 transition-colors">
                     <div className="flex items-center gap-2">
                       <Image
                         src={playerPhotoUrl(p.player_external_id)}
@@ -343,19 +351,19 @@ export function TeamSquadStats({ teamId, season }: TeamSquadStatsProps) {
                     </div>
                   </td>
                   {/* Pos */}
-                  <td className="px-2 py-2 text-center text-xs text-muted-foreground">
+                  <td className="px-2 py-2 text-center text-xs text-muted-foreground group-hover/row:bg-accent/50 transition-colors">
                     {p.posKey}
                   </td>
                   {/* App */}
-                  <td className="px-2 py-2 text-center text-sm text-muted-foreground tabular-nums">
+                  <td className="px-2 py-2 text-center text-sm text-muted-foreground tabular-nums group-hover/row:bg-accent/50 transition-colors">
                     {p.appearances}
                   </td>
                   {/* Min */}
-                  <td className="px-2 py-2 text-center text-sm text-muted-foreground tabular-nums">
+                  <td className="px-2 py-2 text-center text-sm text-muted-foreground tabular-nums group-hover/row:bg-accent/50 transition-colors">
                     {p.total_minutes}
                   </td>
                   {/* Rtg */}
-                  <td className="px-2 py-2 text-center text-sm font-semibold text-foreground tabular-nums">
+                  <td className="px-2 py-2 text-center text-sm font-semibold text-foreground tabular-nums group-hover/row:bg-accent/50 transition-colors">
                     {formatRating(p.avg_rating)}
                   </td>
                   {/* Attack, Passing, Defense, Duels, Discipline — all remaining columns */}
@@ -365,7 +373,7 @@ export function TeamSquadStats({ teamId, season }: TeamSquadStatsProps) {
                       <td
                         key={col.key}
                         className={cn(
-                          "px-2 py-2 text-center text-sm text-muted-foreground tabular-nums",
+                          "px-2 py-2 text-center text-sm text-muted-foreground tabular-nums group-hover/row:bg-accent/50 transition-colors",
                           isGroupStart && "border-l border-border/30"
                         )}
                       >

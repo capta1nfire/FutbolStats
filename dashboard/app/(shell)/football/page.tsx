@@ -20,6 +20,7 @@ import {
 } from "@/components/football";
 import { RightPanel } from "@/components/football/RightPanel";
 import type { PanelTabId } from "@/components/football/RightPanel";
+import type { TeamSquadPlayerSeasonStats } from "@/lib/types/squad";
 
 /**
  * Parse numeric ID from URL param
@@ -117,13 +118,24 @@ function FootballPageContent() {
 
   const handleClosePanel = useCallback((tabId: PanelTabId) => {
     setPanelTabs(prev => prev.filter(t => t !== tabId));
+    if (tabId === "player") setSelectedPlayer(null);
     setActivePanel("team");
+  }, []);
+
+  // Player detail state
+  const [selectedPlayer, setSelectedPlayer] = useState<TeamSquadPlayerSeasonStats | null>(null);
+
+  const handlePlayerSelect = useCallback((player: TeamSquadPlayerSeasonStats) => {
+    setSelectedPlayer(player);
+    setPanelTabs(prev => prev.includes("player") ? prev : [...prev, "player"]);
+    setActivePanel("player");
   }, []);
 
   // Reset extra tabs when league changes
   useEffect(() => {
     setPanelTabs(["team"]);
     setActivePanel("team");
+    setSelectedPlayer(null);
   }, [leagueId]);
 
   // Auto-select primary league when team is selected from search
@@ -425,6 +437,7 @@ function FootballPageContent() {
             initialTeamId={teamId}
             siblingLeagues={siblingLeagues}
             onLeagueChange={handleLeagueSelect}
+            onPlayerSelect={handlePlayerSelect}
           />
         )}
         {contentView === "group" && groupId && (
@@ -488,6 +501,8 @@ function FootballPageContent() {
         teamId={teamId}
         league={leagueData?.league}
         leagueId={leagueId}
+        selectedPlayer={selectedPlayer}
+        teamName={teamData?.team?.name}
       />
     </div>
   );

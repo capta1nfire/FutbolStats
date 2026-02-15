@@ -900,6 +900,64 @@ class APIFootballProvider(DataProvider):
 
         return players
 
+    async def get_players_full(self, team_id: int, season: int, league_id: int = None) -> list[dict]:
+        """
+        Fetch full player data (bio + stats) for a team/season.
+
+        Uses /players endpoint which returns birth date, nationality, height, weight,
+        unlike /players/squads which only returns basic info.
+
+        Paginated (20 players/page). Filters statistics[] by team_id match.
+        """
+        params = {"team": team_id, "season": season}
+        if league_id:
+            params["league"] = league_id
+
+        all_players = []
+        page = 1
+        while True:
+            data = await self._rate_limited_request(
+                "players", {**params, "page": page}, entity="player"
+            )
+            for entry in data.get("response", []):
+                p = entry.get("player", {})
+                birth = p.get("birth") or {}
+
+                # Pick the statistics entry that matches the team
+                stats = entry.get("statistics", [])
+                best_stat = next(
+                    (s for s in stats if s.get("team", {}).get("id") == team_id),
+                    stats[0] if stats else {}
+                )
+                games = best_stat.get("games", {}) if best_stat else {}
+
+                # Sanitize empty-string values to None
+                height_raw = p.get("height")
+                weight_raw = p.get("weight")
+
+                all_players.append({
+                    "id": p.get("id"),
+                    "name": p.get("name"),
+                    "firstname": p.get("firstname"),
+                    "lastname": p.get("lastname"),
+                    "age": p.get("age"),
+                    "birth_date": birth.get("date"),
+                    "birth_place": birth.get("place"),
+                    "birth_country": birth.get("country"),
+                    "nationality": p.get("nationality"),
+                    "height": height_raw.strip() if height_raw and str(height_raw).strip() else None,
+                    "weight": weight_raw.strip() if weight_raw and str(weight_raw).strip() else None,
+                    "photo": p.get("photo"),
+                    "position": games.get("position"),
+                    "number": games.get("number"),
+                })
+
+            paging = data.get("paging", {})
+            if page >= paging.get("total", 1):
+                break
+            page += 1
+        return all_players
+
     async def get_fixture_events(self, fixture_id: int) -> list[dict]:
         """
         Fetch match events (goals, cards, substitutions) for a fixture.

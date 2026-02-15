@@ -72,6 +72,15 @@ export interface TeamSquadPlayerSeasonStats {
   fouls_drawn: number;
   fouls_committed: number;
   ever_captain: boolean;
+  // Bio fields (from players table, may be null until sync)
+  firstname?: string | null;
+  lastname?: string | null;
+  birth_date?: string | null;
+  birth_place?: string | null;
+  birth_country?: string | null;
+  nationality?: string | null;
+  height?: string | null;
+  weight?: string | null;
 }
 
 export interface TeamSquadStatsData {

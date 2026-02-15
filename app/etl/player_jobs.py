@@ -548,9 +548,18 @@ async def sync_squads(
             team_id = team["id"]
             team_ext_id = team["external_id"]
             team_name = team["name"]
+            league_ext_id = team.get("league_external_id")
+            season = team.get("season")
 
             try:
-                players = await provider.get_players_squad(team_ext_id)
+                # Use full player data endpoint (bio + stats) with league filter
+                if season:
+                    players = await provider.get_players_full(
+                        team_ext_id, season, league_id=league_ext_id
+                    )
+                else:
+                    # Fallback to basic squad if no season available
+                    players = await provider.get_players_squad(team_ext_id)
 
                 if not players:
                     logger.debug(f"[SQUAD_SYNC] No squad data for {team_name} (ext={team_ext_id})")
@@ -563,30 +572,50 @@ async def sync_squads(
                         await session.execute(
                             text("""
                                 INSERT INTO players
-                                    (external_id, name, position, team_id, team_external_id,
-                                     jersey_number, age, photo_url, last_synced_at)
+                                    (external_id, name, firstname, lastname, position,
+                                     team_id, team_external_id, jersey_number, age, photo_url,
+                                     birth_date, birth_place, birth_country, nationality,
+                                     height, weight, last_synced_at)
                                 VALUES
-                                    (:ext_id, :name, :position, :team_id, :team_ext_id,
-                                     :number, :age, :photo, NOW())
+                                    (:ext_id, :name, :firstname, :lastname, :position,
+                                     :team_id, :team_ext_id, :number, :age, :photo,
+                                     CAST(:birth_date AS DATE), :birth_place, :birth_country,
+                                     :nationality, :height, :weight, NOW())
                                 ON CONFLICT (external_id) DO UPDATE SET
-                                    name = EXCLUDED.name,
-                                    position = EXCLUDED.position,
-                                    team_id = EXCLUDED.team_id,
-                                    team_external_id = EXCLUDED.team_external_id,
-                                    jersey_number = EXCLUDED.jersey_number,
-                                    age = EXCLUDED.age,
-                                    photo_url = EXCLUDED.photo_url,
+                                    name = COALESCE(EXCLUDED.name, players.name),
+                                    firstname = COALESCE(EXCLUDED.firstname, players.firstname),
+                                    lastname = COALESCE(EXCLUDED.lastname, players.lastname),
+                                    position = COALESCE(EXCLUDED.position, players.position),
+                                    team_id = COALESCE(EXCLUDED.team_id, players.team_id),
+                                    team_external_id = COALESCE(EXCLUDED.team_external_id, players.team_external_id),
+                                    jersey_number = COALESCE(EXCLUDED.jersey_number, players.jersey_number),
+                                    age = COALESCE(EXCLUDED.age, players.age),
+                                    photo_url = COALESCE(EXCLUDED.photo_url, players.photo_url),
+                                    birth_date = COALESCE(EXCLUDED.birth_date, players.birth_date),
+                                    birth_place = COALESCE(EXCLUDED.birth_place, players.birth_place),
+                                    birth_country = COALESCE(EXCLUDED.birth_country, players.birth_country),
+                                    nationality = COALESCE(EXCLUDED.nationality, players.nationality),
+                                    height = COALESCE(EXCLUDED.height, players.height),
+                                    weight = COALESCE(EXCLUDED.weight, players.weight),
                                     last_synced_at = NOW()
                             """),
                             {
                                 "ext_id": p["id"],
                                 "name": p.get("name", "Unknown"),
+                                "firstname": p.get("firstname"),
+                                "lastname": p.get("lastname"),
                                 "position": p.get("position"),
                                 "team_id": team_id,
                                 "team_ext_id": team_ext_id,
                                 "number": p.get("number"),
                                 "age": p.get("age"),
                                 "photo": p.get("photo"),
+                                "birth_date": p.get("birth_date"),
+                                "birth_place": p.get("birth_place"),
+                                "birth_country": p.get("birth_country"),
+                                "nationality": p.get("nationality"),
+                                "height": p.get("height"),
+                                "weight": p.get("weight"),
                             },
                         )
                         metrics["players_upserted"] += 1
@@ -793,17 +822,34 @@ async def _load_match_map(session: AsyncSession) -> dict[int, int]:
 
 
 async def _get_active_teams(session: AsyncSession, league_ids: list[int]) -> list[dict]:
-    """Get distinct teams that have played in the given leagues recently."""
+    """Get distinct teams that have played in the given leagues recently.
+
+    Returns team info plus the league_external_id and latest season for
+    the get_players_full() endpoint.
+    """
     result = await session.execute(
         text("""
-            SELECT DISTINCT t.id, t.external_id, t.name
+            SELECT DISTINCT ON (t.id)
+                   t.id, t.external_id, t.name,
+                   l.external_id AS league_external_id,
+                   m.season
             FROM teams t
             JOIN matches m ON (m.home_team_id = t.id OR m.away_team_id = t.id)
+            JOIN admin_leagues l ON l.id = m.league_id
             WHERE m.league_id = ANY(:league_ids)
               AND m.date >= NOW() - INTERVAL '180 days'
               AND t.external_id IS NOT NULL
-            ORDER BY t.name
+            ORDER BY t.id, m.date DESC
         """),
         {"league_ids": league_ids},
     )
-    return [{"id": row.id, "external_id": row.external_id, "name": row.name} for row in result.fetchall()]
+    return [
+        {
+            "id": row.id,
+            "external_id": row.external_id,
+            "name": row.name,
+            "league_external_id": row.league_external_id,
+            "season": row.season,
+        }
+        for row in result.fetchall()
+    ]
