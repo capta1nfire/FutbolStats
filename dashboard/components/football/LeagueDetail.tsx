@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useFootballLeague, useFootballTeam, useStandings, useTeamSquad } from "@/lib/hooks";
+import { useFootballLeague, useFootballTeam, useStandings, useTeamSquad, useTeamSquadStats } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
 import type { StandingEntry, DescensoData, ReclasificacionData, AvailableTable } from "@/lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -32,6 +32,7 @@ import {
   MapPin,
   ShieldUser,
   Settings,
+  ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useCoverageMap } from "@/lib/hooks/use-coverage-map";
@@ -621,6 +622,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
   const [selectedGroup, setSelectedGroup] = useState<string | undefined>(undefined);
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(initialTeamId ?? null);
   const [teamTab, setTeamTab] = useState<TeamDetailTabId>("overview");
+  const [squadSeason, setSquadSeason] = useState<number | null>(null);
 
   // Reset selected team when league changes (let auto-select pick first team)
   useEffect(() => {
@@ -643,6 +645,11 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
   }, [standingsData, selectedTeamId, onTeamSelect]);
   const selectedTeam = useFootballTeam(selectedTeamId);
   const selectedTeamSquad = useTeamSquad(selectedTeamId ?? 0, !!selectedTeamId);
+
+  // Squad stats — shares TanStack cache key with TeamSquadStats (no duplicate fetch)
+  const squadStatsQuery = useTeamSquadStats(selectedTeamId, squadSeason, teamTab === "squad");
+  const squadSeasons = squadStatsQuery.data?.available_seasons ?? [];
+  const squadDisplaySeason = squadSeason ?? squadStatsQuery.data?.season ?? null;
 
   // MUST be called on every render (Rules of Hooks). Keep defensive for loading/error.
   const nextMatches = useMemo(() => {
@@ -668,6 +675,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
   const handleTeamSelect = useCallback(
     (teamId: number) => {
       setSelectedTeamId(teamId);
+      setSquadSeason(null); // Reset season on team change
       onTeamSelect(teamId);
     },
     [onTeamSelect]
@@ -1160,20 +1168,56 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
 
               {/* Team Tabs */}
               <div className="flex gap-1 border-b border-border">
-                {TEAM_DETAIL_TABS.map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setTeamTab(tab.id)}
-                    className={cn(
-                      "px-4 py-2 text-sm font-medium transition-colors",
-                      teamTab === tab.id
-                        ? "text-foreground border-b-2 border-primary"
-                        : "text-muted-foreground hover:text-foreground"
-                    )}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
+                {TEAM_DETAIL_TABS.map((tab) => {
+                  const isActive = teamTab === tab.id;
+
+                  // Squad tab: inline season selector
+                  if (tab.id === "squad" && isActive && squadSeasons.length > 1) {
+                    return (
+                      <div
+                        key={tab.id}
+                        className="inline-flex items-center text-foreground border-b-2 border-primary"
+                      >
+                        <button
+                          onClick={() => setTeamTab(tab.id)}
+                          className="px-4 py-2 text-sm font-medium"
+                        >
+                          {tab.label}
+                        </button>
+                        <Select
+                          value={squadDisplaySeason ? String(squadDisplaySeason) : ""}
+                          onValueChange={(v) => setSquadSeason(Number(v))}
+                        >
+                          <SelectTrigger className="h-auto border-0 bg-transparent shadow-none px-0 pr-1 py-0 text-xs text-muted-foreground gap-0.5 focus:ring-0 [&>svg]:h-3 [&>svg]:w-3">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent align="start">
+                            {squadSeasons.map((s) => (
+                              <SelectItem key={s} value={String(s)}>
+                                {s}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setTeamTab(tab.id)}
+                      className={cn(
+                        "px-4 py-2 text-sm font-medium transition-colors",
+                        isActive
+                          ? "text-foreground border-b-2 border-primary"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      {tab.label}
+                    </button>
+                  );
+                })}
               </div>
 
               {/* Tab Content */}
@@ -1399,7 +1443,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
               )}
 
               {teamTab === "squad" && selectedTeamId && (
-                <TeamSquadStats teamId={selectedTeamId} />
+                <TeamSquadStats teamId={selectedTeamId} season={squadSeason} />
               )}
 
               {teamTab === "matches" && (

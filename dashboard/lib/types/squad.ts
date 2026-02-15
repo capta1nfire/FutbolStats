@@ -48,6 +48,7 @@ export interface TeamSquadPlayerSeasonStats {
   player_external_id: number;
   player_name: string;
   position: string; // 'G' | 'D' | 'M' | 'F' | 'U'
+  jersey_number: number | null;
   appearances: number;
   avg_rating: number | null;
   total_minutes: number;

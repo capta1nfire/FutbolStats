@@ -1,15 +1,12 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useTeamSquadStats } from "@/lib/hooks";
 import type { TeamSquadPlayerSeasonStats } from "@/lib/types/squad";
 import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
-import { SurfaceCard } from "@/components/ui/surface-card";
-import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { AlertTriangle, RefreshCw, Users } from "lucide-react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 
 function playerPhotoUrl(externalId: number): string {
   return `https://media.api-sports.io/football/players/${externalId}.png`;
@@ -19,7 +16,7 @@ const EMPTY_PLAYERS: TeamSquadPlayerSeasonStats[] = [];
 
 function formatRating(r: number | null): string {
   if (r === null || Number.isNaN(r)) return "—";
-  return `★${r.toFixed(1)}`;
+  return r.toFixed(1);
 }
 
 function posGroup(pos: string | null | undefined): "G" | "D" | "M" | "F" | "U" {
@@ -32,19 +29,21 @@ function posGroup(pos: string | null | undefined): "G" | "D" | "M" | "F" | "U" {
 }
 
 const GROUP_LABEL: Record<string, string> = {
-  G: "GOALKEEPERS",
-  D: "DEFENDERS",
-  M: "MIDFIELDERS",
-  F: "FORWARDS",
-  U: "OTHER",
+  G: "Goalkeepers",
+  D: "Defenders",
+  M: "Midfielders",
+  F: "Forwards",
+  U: "Other",
 };
 
-export function TeamSquadStats({ teamId }: { teamId: number }) {
-  const [season, setSeason] = useState<number | null>(null);
-  const { data, isLoading, error, refetch, isFetching } = useTeamSquadStats(teamId, season);
+interface TeamSquadStatsProps {
+  teamId: number;
+  season: number | null;
+}
 
-  const selectedSeason = season ?? data?.season ?? null;
-  const seasons = data?.available_seasons ?? [];
+export function TeamSquadStats({ teamId, season }: TeamSquadStatsProps) {
+  const { data, isLoading, error, refetch } = useTeamSquadStats(teamId, season);
+
   const players = data?.players ?? EMPTY_PLAYERS;
 
   const { grouped, teamAvgRating, totalMinutes } = useMemo(() => {
@@ -60,7 +59,6 @@ export function TeamSquadStats({ teamId }: { teamId: number }) {
       }
     }
 
-    // Sort within each group
     for (const k of Object.keys(groups)) {
       groups[k].sort((a, b) => {
         if (b.appearances !== a.appearances) return b.appearances - a.appearances;
@@ -102,117 +100,117 @@ export function TeamSquadStats({ teamId }: { teamId: number }) {
     );
   }
 
+  // Check if any group has goalkeepers (for conditional Sv column)
+  const hasGoalkeepers = (grouped["G"]?.length ?? 0) > 0;
+
   return (
-    <div className="space-y-4 pb-2">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Users className="h-4 w-4 text-muted-foreground" />
-          <h4 className="text-sm font-medium text-foreground">Squad</h4>
-          {isFetching && <span className="text-xs text-muted-foreground">(updating)</span>}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Select
-            value={selectedSeason ? String(selectedSeason) : ""}
-            onValueChange={(v) => setSeason(Number(v))}
-            disabled={!seasons || seasons.length === 0}
-          >
-            <SelectTrigger size="sm" className="min-w-[120px]">
-              <SelectValue placeholder="Season" />
-            </SelectTrigger>
-            <SelectContent align="end">
-              {seasons.map((s) => (
-                <SelectItem key={s} value={String(s)}>
-                  {s}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
+    <div className="flex flex-col max-h-[600px] rounded-lg border border-border overflow-hidden">
       {players.length === 0 ? (
-        <SurfaceCard className="py-10 text-center">
+        <div className="py-10 text-center">
           <p className="text-sm text-muted-foreground">No player stats for this season.</p>
-        </SurfaceCard>
+        </div>
       ) : (
-        <>
-          {(["G", "D", "M", "F", "U"] as const).map((k) => {
-            const groupPlayers = grouped[k];
-            if (!groupPlayers || groupPlayers.length === 0) return null;
+        <div className="overflow-auto flex-1 min-h-0">
+          <table className="w-full table-fixed">
+            <colgroup><col style={{ width: "38%" }} /><col style={{ width: "7%" }} /><col style={{ width: "9%" }} /><col style={{ width: "10%" }} /><col style={{ width: "9%" }} /><col style={{ width: "7%" }} /><col style={{ width: "8%" }} /><col style={{ width: "12%" }} /></colgroup>
+            {/* Sticky header */}
+            <thead className="sticky top-0 z-10 bg-background">
+              <tr className="border-b border-border">
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Player</th>
+                <th className="px-1 py-2.5 text-center text-xs font-semibold text-muted-foreground">Pos</th>
+                <th className="px-1 py-2.5 text-center text-xs font-semibold text-muted-foreground">App</th>
+                <th className="px-1 py-2.5 text-center text-xs font-semibold text-muted-foreground">Min</th>
+                <th className="px-1 py-2.5 text-center text-xs font-semibold text-muted-foreground">Rtg</th>
+                <th className="px-1 py-2.5 text-center text-xs font-semibold text-muted-foreground">G</th>
+                <th className="px-1 py-2.5 text-center text-xs font-semibold text-muted-foreground">A</th>
+                <th className="px-1 py-2.5 text-center text-xs font-semibold text-muted-foreground"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {(["G", "D", "M", "F", "U"] as const).map((k) => {
+                const groupPlayers = grouped[k];
+                if (!groupPlayers || groupPlayers.length === 0) return null;
 
-            return (
-              <div key={k} className="space-y-2">
-                <div className="text-xs font-medium text-muted-foreground">
-                  {GROUP_LABEL[k]} ({groupPlayers.length})
-                </div>
-                <SurfaceCard className="p-0 overflow-hidden">
-                  <div className="divide-y divide-border">
-                    {groupPlayers.map((p) => (
-                      <div key={p.player_external_id} className="px-3 py-2 flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-2.5 min-w-0">
-                          <Image
-                            src={playerPhotoUrl(p.player_external_id)}
-                            alt={p.player_name}
-                            width={32}
-                            height={32}
-                            className="rounded-full shrink-0 mt-0.5"
-                          />
-                          <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <div className="text-sm font-medium text-foreground truncate">
-                              {p.player_name}
-                            </div>
-                            {p.ever_captain && (
-                              <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
-                                C
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="mt-0.5 text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
-                            <span className="tabular-nums">
-                              {p.goals}G · {p.assists}A
-                              {posGroup(p.position) === "G" ? ` · ${p.saves}sv` : ""}
+                return groupPlayers.map((p, idx) => (
+                  <tr
+                    key={p.player_external_id}
+                    className="border-b border-border transition-colors hover:bg-accent/50"
+                  >
+                    {/* Player cell */}
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <Image
+                          src={playerPhotoUrl(p.player_external_id)}
+                          alt=""
+                          width={28}
+                          height={28}
+                          className="rounded-full shrink-0 object-cover"
+                          unoptimized
+                        />
+                        {p.jersey_number != null && (
+                          <span className="text-[10px] tabular-nums text-muted-foreground shrink-0 w-4 text-right">
+                            {p.jersey_number}
+                          </span>
+                        )}
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-sm font-medium text-foreground truncate">
+                            {p.player_name}
+                          </span>
+                          {p.ever_captain && (
+                            <span className="text-[9px] font-medium text-muted-foreground bg-muted px-1 py-px rounded shrink-0">
+                              c
                             </span>
-                            {(p.yellows > 0 || p.reds > 0) && (
-                              <span className="tabular-nums">
-                                {p.yellows > 0 ? `🟨${p.yellows}` : ""}
-                                {p.yellows > 0 && p.reds > 0 ? " " : ""}
-                                {p.reds > 0 ? `🟥${p.reds}` : ""}
-                              </span>
-                            )}
-                          </div>
-                          </div>
-                        </div>
-
-                        <div className="shrink-0 text-right">
-                          <div className="text-sm font-semibold text-foreground tabular-nums">
-                            {formatRating(p.avg_rating)}
-                          </div>
-                          <div className="text-xs text-muted-foreground tabular-nums">
-                            {p.appearances} app · {p.total_minutes} min
-                          </div>
+                          )}
                         </div>
                       </div>
-                    ))}
-                  </div>
-                </SurfaceCard>
-              </div>
-            );
-          })}
-
-          <div className="text-xs text-muted-foreground text-center pt-1">
-            {players.length} players · avg{" "}
-            <span className="font-medium text-foreground tabular-nums">
-              {teamAvgRating !== null ? `★${teamAvgRating.toFixed(1)}` : "—"}
-            </span>
-            {totalMinutes > 0 ? (
-              <span className="opacity-70"> · {totalMinutes.toLocaleString()} min</span>
-            ) : null}
-          </div>
-        </>
+                    </td>
+                    {/* Position */}
+                    <td className="px-1 py-2.5 text-center text-xs text-muted-foreground">
+                      {k}
+                    </td>
+                    {/* App */}
+                    <td className="px-1 py-2.5 text-center text-sm text-muted-foreground tabular-nums">
+                      {p.appearances}
+                    </td>
+                    {/* Min */}
+                    <td className="px-1 py-2.5 text-center text-sm text-muted-foreground tabular-nums">
+                      {p.total_minutes}
+                    </td>
+                    {/* Rating */}
+                    <td className="px-1 py-2.5 text-center text-sm font-semibold text-foreground tabular-nums">
+                      {formatRating(p.avg_rating)}
+                    </td>
+                    {/* Goals */}
+                    <td className="px-1 py-2.5 text-center text-sm text-muted-foreground tabular-nums">
+                      {p.goals || "—"}
+                    </td>
+                    {/* Assists / Saves for GK */}
+                    <td className="px-1 py-2.5 text-center text-sm text-muted-foreground tabular-nums">
+                      {k === "G" ? (p.saves || "—") : (p.assists || "—")}
+                    </td>
+                    {/* Cards */}
+                    <td className="px-1 py-2.5 text-center tabular-nums whitespace-nowrap">
+                      {p.yellows > 0 && (
+                        <span className="inline-flex items-center gap-px text-[11px]">
+                          <span className="inline-block w-2.5 h-3 rounded-[1px] bg-yellow-400" />
+                          <span className="text-muted-foreground">{p.yellows}</span>
+                        </span>
+                      )}
+                      {p.yellows > 0 && p.reds > 0 && <span className="mx-0.5" />}
+                      {p.reds > 0 && (
+                        <span className="inline-flex items-center gap-px text-[11px]">
+                          <span className="inline-block w-2.5 h-3 rounded-[1px] bg-red-500" />
+                          <span className="text-muted-foreground">{p.reds}</span>
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ));
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
 }
-

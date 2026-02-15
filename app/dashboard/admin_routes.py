@@ -1030,6 +1030,7 @@ async def dashboard_admin_team_squad_stats(
                         mps.player_external_id,
                         MAX(mps.player_name) AS player_name,
                         COALESCE(MODE() WITHIN GROUP (ORDER BY mps.position), 'U') AS position,
+                        MAX(p.jersey_number) AS jersey_number,
                         COUNT(*) FILTER (WHERE COALESCE(mps.minutes, 0) > 0) AS appearances,
                         -- Weighted rating by minutes (PTS-aligned)
                         ROUND(
@@ -1049,6 +1050,7 @@ async def dashboard_admin_team_squad_stats(
                         BOOL_OR(COALESCE(mps.is_captain, false)) AS ever_captain
                     FROM match_player_stats mps
                     JOIN matches m ON m.id = mps.match_id
+                    LEFT JOIN players p ON p.external_id = mps.player_external_id
                     WHERE mps.team_external_id = :team_ext
                       AND m.season = :season
                     GROUP BY mps.player_external_id
@@ -1062,6 +1064,7 @@ async def dashboard_admin_team_squad_stats(
                     "player_external_id": int(r.player_external_id),
                     "player_name": r.player_name or f"Player#{int(r.player_external_id)}",
                     "position": r.position,
+                    "jersey_number": int(r.jersey_number) if r.jersey_number is not None else None,
                     "appearances": int(r.appearances or 0),
                     "avg_rating": float(r.avg_rating) if r.avg_rating is not None else None,
                     "total_minutes": int(r.total_minutes or 0),
