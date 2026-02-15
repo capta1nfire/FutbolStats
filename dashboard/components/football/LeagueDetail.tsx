@@ -35,16 +35,20 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useCoverageMap } from "@/lib/hooks/use-coverage-map";
+import { useLiveLeagueMatches } from "@/lib/hooks/use-live-league-matches";
+import type { LiveMatch } from "@/lib/hooks/use-live-league-matches";
+import { useTeamLogos } from "@/lib/hooks/use-team-logos";
+import { TeamLogo } from "@/components/ui/team-logo";
 import { CoverageDetailContent } from "@/components/coverage-map/CoverageDetail";
 import { FeatureCoverageSection } from "./FeatureCoverageSection";
 
-const LEAGUE_DETAIL_TABS = [
-  { id: "standings", icon: null, label: "Standings" },
+const LEAGUE_DETAIL_TABS_BASE = [
+  { id: "standings", icon: null, label: "Overview" },
   { id: "next", icon: null, label: "Next Matches" },
   { id: "stats", icon: null, label: "Stats by Season" },
 ] as const;
 
-type LeagueDetailTabId = (typeof LEAGUE_DETAIL_TABS)[number]["id"];
+type LeagueDetailTabId = (typeof LEAGUE_DETAIL_TABS_BASE)[number]["id"];
 
 const TEAM_DETAIL_TABS = [
   { id: "overview", label: "Overview" },
@@ -645,6 +649,20 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
     return matches.filter((m) => !m.score);
   }, [data?.recent_matches]);
 
+  // Live matches — polls every 30s, only enabled when leagueId is set
+  const { data: liveMatches } = useLiveLeagueMatches(leagueId);
+  const hasLive = (liveMatches?.length ?? 0) > 0;
+  const { getLogoUrl } = useTeamLogos();
+
+  // Auto-switch to live sub-tab when live matches appear, back to standings when they end
+  useEffect(() => {
+    if (hasLive && standingsSubTab !== "live") {
+      setStandingsSubTab("live");
+    } else if (!hasLive && standingsSubTab === "live") {
+      setStandingsSubTab("standings");
+    }
+  }, [hasLive]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleTeamSelect = useCallback(
     (teamId: number) => {
       setSelectedTeamId(teamId);
@@ -835,9 +853,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
             {/* Tabs */}
             <div className="px-4 py-3 border-b border-border">
               <IconTabs
-                tabs={
-                  LEAGUE_DETAIL_TABS as unknown as { id: string; icon: React.ReactNode; label: string }[]
-                }
+                tabs={LEAGUE_DETAIL_TABS_BASE as unknown as { id: string; icon: React.ReactNode; label: string }[]}
                 value={activeTab}
                 onValueChange={(v) => setActiveTab(v as LeagueDetailTabId)}
                 showLabels
@@ -848,44 +864,42 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
             {/* Tab content */}
             {activeTab === "standings" && (
               <div>
-                <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-                  <h2 className="text-sm font-semibold text-foreground">Standings</h2>
-                  {standingsData && (
-                    <span className="text-xs text-muted-foreground ml-auto">
-                      {standingsData.season} &middot; {standingsData.source}
-                    </span>
-                  )}
-                  {standingsData?.isPlaceholder && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]">
-                      Placeholder
-                    </span>
-                  )}
-                  {standingsData?.isCalculated && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--status-info-bg)] text-[var(--status-info-text)]">
-                      Calculated
-                    </span>
-                  )}
-                </div>
-
-                {/* Phase 5: Group selector from available_tables */}
+                {/* Sub-tabs: Live + Group/Standings + Reclassification + Relegation */}
                 {(() => {
                   const tables = standingsData?.meta?.available_tables ?? [];
                   const navigableGroups = tables.filter(
                     (t: AvailableTable) => t.type === "regular" || t.type === "group_stage" || t.type === "playoff"
                   );
-                  // Shorten long group names for pills (e.g. "CONMEBOL Libertadores 2025, Group A" → "Group A")
                   const shortLabel = (name: string) => {
                     const match = name.match(/Group\s+\w+$/i);
                     return match ? match[0] : name;
                   };
                   const hasVirtualTabs = !!(standingsData?.reclasificacion || isDescensoValid(standingsData?.descenso ?? null));
                   const showGroupPills = navigableGroups.length > 1;
-                  const showSubTabs = hasVirtualTabs || showGroupPills;
+                  const showSubTabs = hasLive || hasVirtualTabs || showGroupPills;
 
-                  if (!standingsData || !showSubTabs) return null;
+                  if (!showSubTabs) return null;
 
                   return (
-                    <div className="px-4 py-2 border-b border-border flex gap-1 overflow-x-auto">
+                    <div className="flex gap-1 border-b border-border overflow-x-auto">
+                      {/* Live tab — only when in-play */}
+                      {hasLive && (
+                        <button
+                          onClick={() => setStandingsSubTab("live")}
+                          className={cn(
+                            "px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors inline-flex items-center gap-1.5",
+                            standingsSubTab === "live"
+                              ? "text-success border-b-2 border-success"
+                              : "text-success/70 hover:text-success"
+                          )}
+                        >
+                          <span className="relative flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" />
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-success" />
+                          </span>
+                          Live
+                        </button>
+                      )}
                       {/* Group/table pills */}
                       {showGroupPills ? (
                         <>
@@ -901,10 +915,10 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                                   setStandingsSubTab("standings");
                                 }}
                                 className={cn(
-                                  "text-xs px-2.5 py-1 rounded-full whitespace-nowrap transition-colors",
+                                  "px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors",
                                   isActive
-                                    ? "bg-foreground text-background font-medium"
-                                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                                    ? "text-foreground border-b-2 border-primary"
+                                    : "text-muted-foreground hover:text-foreground"
                                 )}
                               >
                                 {shortLabel(t.group)}
@@ -916,47 +930,108 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                         <button
                           onClick={() => setStandingsSubTab("standings")}
                           className={cn(
-                            "text-xs px-2.5 py-1 rounded-full whitespace-nowrap transition-colors",
+                            "px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors",
                             standingsSubTab === "standings"
-                              ? "bg-foreground text-background font-medium"
-                              : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                              ? "text-foreground border-b-2 border-primary"
+                              : "text-muted-foreground hover:text-foreground"
                           )}
                         >
-                          Posiciones
+                          Standings
                         </button>
                       )}
                       {/* Virtual table sub-tabs */}
-                      {standingsData.reclasificacion && (
+                      {standingsData?.reclasificacion && (
                         <button
                           onClick={() => setStandingsSubTab("reclasificacion")}
                           className={cn(
-                            "text-xs px-2.5 py-1 rounded-full whitespace-nowrap transition-colors",
+                            "px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors",
                             standingsSubTab === "reclasificacion"
-                              ? "bg-foreground text-background font-medium"
-                              : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                              ? "text-foreground border-b-2 border-primary"
+                              : "text-muted-foreground hover:text-foreground"
                           )}
                         >
-                          Reclasificación
+                          Reclassification
                         </button>
                       )}
-                      {isDescensoValid(standingsData.descenso) && (
+                      {isDescensoValid(standingsData?.descenso ?? null) && (
                         <button
                           onClick={() => setStandingsSubTab("descenso")}
                           className={cn(
-                            "text-xs px-2.5 py-1 rounded-full whitespace-nowrap transition-colors",
+                            "px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors",
                             standingsSubTab === "descenso"
-                              ? "bg-foreground text-background font-medium"
-                              : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                              ? "text-foreground border-b-2 border-primary"
+                              : "text-muted-foreground hover:text-foreground"
                           )}
                         >
-                          Descenso
+                          Relegation
                         </button>
                       )}
                     </div>
                   );
                 })()}
 
-                {isStandingsLoading ? (
+                {/* Sub-tab content */}
+                {standingsSubTab === "live" && hasLive ? (
+                  <div>
+                    {liveMatches!.map((m: LiveMatch, idx: number) => {
+                      const isHT = m.status === "HT";
+                      const elapsed = m.elapsedExtra
+                        ? `${m.elapsed}+${m.elapsedExtra}'`
+                        : m.elapsed != null
+                          ? `${m.elapsed}'`
+                          : m.status;
+                      const isLast = idx === liveMatches!.length - 1;
+                      return (
+                        <div key={m.id}>
+                          <div className="px-3 py-2">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-[18px]">
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <div className="flex items-center justify-center">
+                                      <TeamLogo src={getLogoUrl(m.home)} teamName={m.home} size={20} />
+                                    </div>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="bottom"><p>{m.home}</p></TooltipContent>
+                                </Tooltip>
+                                <span className="text-lg font-bold text-foreground font-condensed tabular-nums">
+                                  {m.homeScore}
+                                </span>
+                              </div>
+                              <div className="flex flex-col items-center gap-0.5">
+                                <span className="text-xs font-medium text-muted-foreground tabular-nums">
+                                  {elapsed}
+                                </span>
+                                <div className={cn(
+                                  "w-8 h-0.5 animate-pulse",
+                                  isHT ? "bg-[var(--status-warning-text)]" : "bg-success"
+                                )} />
+                              </div>
+                              <div className="flex items-center gap-[18px]">
+                                <span className="text-lg font-bold text-foreground font-condensed tabular-nums">
+                                  {m.awayScore}
+                                </span>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <div className="flex items-center justify-center">
+                                      <TeamLogo src={getLogoUrl(m.away)} teamName={m.away} size={20} />
+                                    </div>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="bottom"><p>{m.away}</p></TooltipContent>
+                                </Tooltip>
+                              </div>
+                            </div>
+                          </div>
+                          {!isLast && (
+                            <div className="flex justify-center">
+                              <div className="w-[65%] h-px bg-border" />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : isStandingsLoading ? (
                   <div className="flex items-center justify-center py-6">
                     <Loader size="sm" />
                   </div>
@@ -1063,6 +1138,22 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                   )}
                 </div>
                 {selectedTeam.isLoading && <Loader size="sm" />}
+                {/* Coverage ring — click navigates to Coverage tab */}
+                {(() => {
+                  const sources = selectedTeam.data?.feature_coverage?.sources;
+                  if (!sources) return null;
+                  const pcts = [sources.odds.pct, sources.xg.pct, sources.lineup.pct, sources.xi_depth.pct, sources.form.pct, sources.h2h.pct];
+                  const avg = pcts.reduce((a, b) => a + b, 0) / pcts.length;
+                  return (
+                    <button
+                      onClick={() => setTeamTab("coverage")}
+                      className="shrink-0 rounded-full hover:ring-2 hover:ring-primary/30 transition-shadow"
+                      title="View coverage details"
+                    >
+                      <CoverageRing pct={avg} size={64} />
+                    </button>
+                  );
+                })()}
               </div>
 
               {/* Team Tabs */}
