@@ -32,7 +32,13 @@ function posGroup(pos: string | null | undefined): "G" | "D" | "M" | "F" | "U" {
 // Position sort order: G=0, D=1, M=2, F=3, U=4
 const POS_ORDER: Record<string, number> = { G: 0, D: 1, M: 2, F: 3, U: 4 };
 
-type SortKey = "name" | "pos" | "app" | "min" | "rtg" | "g" | "a";
+type SortKey =
+  | "name" | "pos" | "app" | "min" | "rtg" | "g" | "a" | "sv"
+  | "kp" | "tkl" | "int" | "blk"
+  | "sh" | "sot" | "pas" | "pacc"
+  | "dtot" | "dwon" | "drba" | "drbs"
+  | "fld" | "fc";
+
 type SortDir = "asc" | "desc";
 
 interface PlayerRow extends TeamSquadPlayerSeasonStats {
@@ -47,9 +53,79 @@ function getSortValue(p: PlayerRow, key: SortKey): number | string {
     case "min": return p.total_minutes;
     case "rtg": return p.avg_rating ?? -1;
     case "g": return p.goals;
-    case "a": return p.posKey === "G" ? p.saves : p.assists;
+    case "a": return p.assists;
+    case "sv": return p.saves;
+    case "kp": return p.key_passes;
+    case "tkl": return p.tackles;
+    case "int": return p.interceptions;
+    case "blk": return p.blocks;
+    case "sh": return p.shots_total;
+    case "sot": return p.shots_on_target;
+    case "pas": return p.passes_total;
+    case "pacc": return p.passes_accuracy ?? -1;
+    case "dtot": return p.duels_total;
+    case "dwon": return p.duels_won;
+    case "drba": return p.dribbles_attempts;
+    case "drbs": return p.dribbles_success;
+    case "fld": return p.fouls_drawn;
+    case "fc": return p.fouls_committed;
   }
 }
+
+interface ColDef {
+  key: SortKey;
+  label: string;
+  group: "core" | "attack" | "passing" | "defense" | "duels" | "discipline";
+}
+
+const COLUMNS: ColDef[] = [
+  // Core
+  { key: "name", label: "Player", group: "core" },
+  { key: "pos", label: "Pos", group: "core" },
+  { key: "app", label: "App", group: "core" },
+  { key: "min", label: "Min", group: "core" },
+  { key: "rtg", label: "Rtg", group: "core" },
+  // Attack
+  { key: "g", label: "G", group: "attack" },
+  { key: "a", label: "A", group: "attack" },
+  { key: "sh", label: "Sh", group: "attack" },
+  { key: "sot", label: "SoT", group: "attack" },
+  // Passing
+  { key: "pas", label: "Pas", group: "passing" },
+  { key: "kp", label: "KP", group: "passing" },
+  { key: "pacc", label: "Acc%", group: "passing" },
+  // Defense
+  { key: "tkl", label: "Tkl", group: "defense" },
+  { key: "int", label: "Int", group: "defense" },
+  { key: "blk", label: "Blk", group: "defense" },
+  { key: "sv", label: "Sv", group: "defense" },
+  // Duels
+  { key: "dtot", label: "Duel", group: "duels" },
+  { key: "dwon", label: "DW", group: "duels" },
+  { key: "drba", label: "Drb", group: "duels" },
+  { key: "drbs", label: "DrS", group: "duels" },
+  // Discipline
+  { key: "fld", label: "FD", group: "discipline" },
+  { key: "fc", label: "FC", group: "discipline" },
+];
+
+const GROUP_LABELS: Record<string, string> = {
+  core: "",
+  attack: "Attack",
+  passing: "Passing",
+  defense: "Defense",
+  duels: "Duels",
+  discipline: "Disc.",
+};
+
+const GROUP_COLORS: Record<string, string> = {
+  core: "",
+  attack: "text-emerald-500",
+  passing: "text-blue-500",
+  defense: "text-amber-500",
+  duels: "text-purple-500",
+  discipline: "text-red-400",
+};
 
 interface TeamSquadStatsProps {
   teamId: number;
@@ -66,7 +142,7 @@ export function TeamSquadStats({ teamId, season }: TeamSquadStatsProps) {
   const handleSort = useCallback((key: SortKey) => {
     if (sortKey === key) {
       if (sortDir === "desc") setSortDir("asc");
-      else { setSortKey(null); setSortDir("desc"); } // third click resets
+      else { setSortKey(null); setSortDir("desc"); }
     } else {
       setSortKey(key);
       setSortDir(key === "name" ? "asc" : "desc");
@@ -80,7 +156,6 @@ export function TeamSquadStats({ teamId, season }: TeamSquadStatsProps) {
     }));
 
     if (!sortKey) {
-      // Default: group by position, then by appearances desc
       rows.sort((a, b) => {
         const posA = POS_ORDER[a.posKey] ?? 4;
         const posB = POS_ORDER[b.posKey] ?? 4;
@@ -127,15 +202,40 @@ export function TeamSquadStats({ teamId, season }: TeamSquadStatsProps) {
     );
   }
 
-  const columns: { key: SortKey; label: string; align: "left" | "center" }[] = [
-    { key: "name", label: "Player", align: "left" },
-    { key: "pos", label: "Pos", align: "center" },
-    { key: "app", label: "App", align: "center" },
-    { key: "min", label: "Min", align: "center" },
-    { key: "rtg", label: "Rtg", align: "center" },
-    { key: "g", label: "G", align: "center" },
-    { key: "a", label: "A", align: "center" },
-  ];
+  // Build group header spans
+  const groupSpans: { group: string; span: number }[] = [];
+  for (const col of COLUMNS) {
+    const last = groupSpans[groupSpans.length - 1];
+    if (last && last.group === col.group) {
+      last.span++;
+    } else {
+      groupSpans.push({ group: col.group, span: 1 });
+    }
+  }
+
+  function renderCellValue(p: PlayerRow, key: SortKey): React.ReactNode {
+    switch (key) {
+      case "rtg": return formatRating(p.avg_rating);
+      case "pacc": return p.passes_accuracy != null ? `${p.passes_accuracy}%` : "—";
+      case "g": return p.goals || "—";
+      case "a": return p.assists || "—";
+      case "sv": return p.saves || "—";
+      case "sh": return p.shots_total || "—";
+      case "sot": return p.shots_on_target || "—";
+      case "pas": return p.passes_total || "—";
+      case "kp": return p.key_passes || "—";
+      case "tkl": return p.tackles || "—";
+      case "int": return p.interceptions || "—";
+      case "blk": return p.blocks || "—";
+      case "dtot": return p.duels_total || "—";
+      case "dwon": return p.duels_won || "—";
+      case "drba": return p.dribbles_attempts || "—";
+      case "drbs": return p.dribbles_success || "—";
+      case "fld": return p.fouls_drawn || "—";
+      case "fc": return p.fouls_committed || "—";
+      default: return "—";
+    }
+  }
 
   return (
     <div className="flex flex-col max-h-[calc(100dvh-300px)] overflow-hidden">
@@ -145,31 +245,52 @@ export function TeamSquadStats({ teamId, season }: TeamSquadStatsProps) {
         </div>
       ) : (
         <div className="overflow-auto flex-1 min-h-0">
-          <table className="w-full table-fixed">
-            <colgroup><col style={{ width: "6%" }} /><col style={{ width: "42%" }} /><col style={{ width: "7%" }} /><col style={{ width: "9%" }} /><col style={{ width: "11%" }} /><col style={{ width: "10%" }} /><col style={{ width: "7%" }} /><col style={{ width: "8%" }} /></colgroup>
+          <table className="min-w-[1100px]">
             <thead className="sticky top-0 z-10 bg-background">
-              <tr className="border-b border-border">
-                <th className="text-center py-2 px-2 text-xs font-medium text-muted-foreground">#</th>
-                {columns.map((col) => (
+              {/* Group header row */}
+              <tr className="border-b border-border/50">
+                <th className="w-10" />
+                {groupSpans.map(({ group, span }) => (
                   <th
-                    key={col.key}
-                    onClick={() => handleSort(col.key)}
+                    key={group}
+                    colSpan={group === "core" ? span : span}
                     className={cn(
-                      "py-2 text-xs font-medium select-none cursor-pointer transition-colors hover:text-foreground",
-                      col.align === "left" ? "px-3 text-left" : "px-1 text-center",
-                      sortKey === col.key ? "text-foreground" : "text-muted-foreground"
+                      "py-1 text-[10px] font-semibold uppercase tracking-wider",
+                      group !== "core" && "border-l border-border/30",
+                      GROUP_COLORS[group] || "text-muted-foreground/50"
                     )}
                   >
-                    <span className="inline-flex items-center gap-0.5">
-                      {col.label}
-                      {sortKey === col.key && (
-                        sortDir === "asc"
-                          ? <ChevronUp className="w-3 h-3" />
-                          : <ChevronDown className="w-3 h-3" />
-                      )}
-                    </span>
+                    {GROUP_LABELS[group]}
                   </th>
                 ))}
+              </tr>
+              {/* Column header row */}
+              <tr className="border-b border-border">
+                <th className="w-10 text-center py-2 px-1 text-xs font-medium text-muted-foreground">#</th>
+                {COLUMNS.map((col, ci) => {
+                  const isGroupStart = ci > 0 && COLUMNS[ci - 1].group !== col.group;
+                  return (
+                    <th
+                      key={col.key}
+                      onClick={() => handleSort(col.key)}
+                      className={cn(
+                        "py-2 text-xs font-medium select-none cursor-pointer transition-colors hover:text-foreground whitespace-nowrap",
+                        col.key === "name" ? "px-3 text-left min-w-[180px] sticky left-10 z-20 bg-background" : "px-2 text-center min-w-[48px]",
+                        sortKey === col.key ? "text-foreground" : "text-muted-foreground",
+                        isGroupStart && "border-l border-border/30"
+                      )}
+                    >
+                      <span className="inline-flex items-center gap-0.5">
+                        {col.label}
+                        {sortKey === col.key && (
+                          sortDir === "asc"
+                            ? <ChevronUp className="w-3 h-3" />
+                            : <ChevronDown className="w-3 h-3" />
+                        )}
+                      </span>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
@@ -178,16 +299,17 @@ export function TeamSquadStats({ teamId, season }: TeamSquadStatsProps) {
                   key={p.player_external_id}
                   className="border-b border-border transition-colors hover:bg-accent/50"
                 >
-                  <td className="text-center py-1.5 px-2 text-[11px] text-muted-foreground/50 tabular-nums">
+                  <td className="text-center py-1.5 px-1 text-[11px] text-muted-foreground/50 tabular-nums w-10">
                     {idx + 1}
                   </td>
-                  <td className="px-3 py-2.5">
+                  {/* Player name — sticky */}
+                  <td className="px-3 py-2 min-w-[180px] sticky left-10 z-[5] bg-background">
                     <div className="flex items-center gap-2">
                       <Image
                         src={playerPhotoUrl(p.player_external_id)}
                         alt=""
-                        width={28}
-                        height={28}
+                        width={26}
+                        height={26}
                         className="rounded-full shrink-0 object-cover"
                         unoptimized
                       />
@@ -220,24 +342,37 @@ export function TeamSquadStats({ teamId, season }: TeamSquadStatsProps) {
                       </div>
                     </div>
                   </td>
-                  <td className="px-1 py-2.5 text-center text-xs text-muted-foreground">
+                  {/* Pos */}
+                  <td className="px-2 py-2 text-center text-xs text-muted-foreground">
                     {p.posKey}
                   </td>
-                  <td className="px-1 py-2.5 text-center text-sm text-muted-foreground tabular-nums">
+                  {/* App */}
+                  <td className="px-2 py-2 text-center text-sm text-muted-foreground tabular-nums">
                     {p.appearances}
                   </td>
-                  <td className="px-1 py-2.5 text-center text-sm text-muted-foreground tabular-nums">
+                  {/* Min */}
+                  <td className="px-2 py-2 text-center text-sm text-muted-foreground tabular-nums">
                     {p.total_minutes}
                   </td>
-                  <td className="px-1 py-2.5 text-center text-sm font-semibold text-foreground tabular-nums">
+                  {/* Rtg */}
+                  <td className="px-2 py-2 text-center text-sm font-semibold text-foreground tabular-nums">
                     {formatRating(p.avg_rating)}
                   </td>
-                  <td className="px-1 py-2.5 text-center text-sm text-muted-foreground tabular-nums">
-                    {p.goals || "—"}
-                  </td>
-                  <td className="px-1 py-2.5 text-center text-sm text-muted-foreground tabular-nums">
-                    {p.posKey === "G" ? (p.saves || "—") : (p.assists || "—")}
-                  </td>
+                  {/* Attack, Passing, Defense, Duels, Discipline — all remaining columns */}
+                  {COLUMNS.slice(5).map((col, ci) => {
+                    const isGroupStart = ci > 0 && COLUMNS[5 + ci - 1].group !== col.group;
+                    return (
+                      <td
+                        key={col.key}
+                        className={cn(
+                          "px-2 py-2 text-center text-sm text-muted-foreground tabular-nums",
+                          isGroupStart && "border-l border-border/30"
+                        )}
+                      >
+                        {renderCellValue(p, col.key)}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>

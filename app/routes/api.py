@@ -115,9 +115,13 @@ def _get_cached_standings(league_id: int, season: int) -> Optional[list]:
 
 
 def _set_cached_standings(league_id: int, season: int, data: list) -> None:
-    """Store standings in L1 memory cache."""
+    """Store standings in L1 memory cache.
+
+    Stores deep copies to prevent downstream in-place mutations (e.g.,
+    external→internal ID translation) from corrupting the cache.
+    """
     key = (league_id, season)
-    _standings_cache[key] = {"data": data, "timestamp": time.time()}
+    _standings_cache[key] = {"data": [dict(e) for e in data], "timestamp": time.time()}
 
 
 async def _get_standings_from_db(session, league_id: int, season: int) -> Optional[list]:

@@ -1047,6 +1047,20 @@ async def dashboard_admin_team_squad_stats(
                         SUM(COALESCE(mps.passes_key, 0)) AS key_passes,
                         SUM(COALESCE(mps.tackles, 0)) AS tackles,
                         SUM(COALESCE(mps.interceptions, 0)) AS interceptions,
+                        SUM(COALESCE(mps.shots_total, 0)) AS shots_total,
+                        SUM(COALESCE(mps.shots_on_target, 0)) AS shots_on_target,
+                        SUM(COALESCE(mps.passes_total, 0)) AS passes_total,
+                        ROUND(
+                            AVG(mps.passes_accuracy) FILTER (WHERE mps.passes_accuracy IS NOT NULL AND mps.minutes > 0),
+                            0
+                        ) AS passes_accuracy,
+                        SUM(COALESCE(mps.blocks, 0)) AS blocks,
+                        SUM(COALESCE(mps.duels_total, 0)) AS duels_total,
+                        SUM(COALESCE(mps.duels_won, 0)) AS duels_won,
+                        SUM(COALESCE(mps.dribbles_attempts, 0)) AS dribbles_attempts,
+                        SUM(COALESCE(mps.dribbles_success, 0)) AS dribbles_success,
+                        SUM(COALESCE(mps.fouls_drawn, 0)) AS fouls_drawn,
+                        SUM(COALESCE(mps.fouls_committed, 0)) AS fouls_committed,
                         BOOL_OR(COALESCE(mps.is_captain, false)) AS ever_captain
                     FROM match_player_stats mps
                     JOIN matches m ON m.id = mps.match_id
@@ -1076,6 +1090,17 @@ async def dashboard_admin_team_squad_stats(
                     "key_passes": int(r.key_passes or 0),
                     "tackles": int(r.tackles or 0),
                     "interceptions": int(r.interceptions or 0),
+                    "shots_total": int(r.shots_total or 0),
+                    "shots_on_target": int(r.shots_on_target or 0),
+                    "passes_total": int(r.passes_total or 0),
+                    "passes_accuracy": int(r.passes_accuracy) if r.passes_accuracy is not None else None,
+                    "blocks": int(r.blocks or 0),
+                    "duels_total": int(r.duels_total or 0),
+                    "duels_won": int(r.duels_won or 0),
+                    "dribbles_attempts": int(r.dribbles_attempts or 0),
+                    "dribbles_success": int(r.dribbles_success or 0),
+                    "fouls_drawn": int(r.fouls_drawn or 0),
+                    "fouls_committed": int(r.fouls_committed or 0),
                     "ever_captain": bool(r.ever_captain),
                 })
 

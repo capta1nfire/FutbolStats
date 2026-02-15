@@ -60,6 +60,17 @@ export interface TeamSquadPlayerSeasonStats {
   key_passes: number;
   tackles: number;
   interceptions: number;
+  shots_total: number;
+  shots_on_target: number;
+  passes_total: number;
+  passes_accuracy: number | null;
+  blocks: number;
+  duels_total: number;
+  duels_won: number;
+  dribbles_attempts: number;
+  dribbles_success: number;
+  fouls_drawn: number;
+  fouls_committed: number;
   ever_captain: boolean;
 }
 
