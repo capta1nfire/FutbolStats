@@ -1,13 +1,12 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFootballLeague, useFootballTeam, useStandings, useTeamSquad, useTeamSquadStats } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
 import type { StandingEntry, DescensoData, ReclasificacionData, AvailableTable } from "@/lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { IconTabs } from "@/components/ui/icon-tabs";
 import { QualificationBadge } from "@/components/ui/qualification-badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Loader } from "@/components/ui/loader";
@@ -27,7 +26,6 @@ import {
   Globe,
   Calendar,
   BarChart3,
-  Users,
   TrendingUp,
   MapPin,
   ShieldUser,
@@ -44,13 +42,6 @@ import { CoverageDetailContent } from "@/components/coverage-map/CoverageDetail"
 import { FeatureCoverageSection } from "./FeatureCoverageSection";
 import { TeamSquadStats } from "./TeamSquadStats";
 
-const LEAGUE_DETAIL_TABS_BASE = [
-  { id: "standings", icon: null, label: "Overview" },
-  { id: "next", icon: null, label: "Next Matches" },
-  { id: "stats", icon: null, label: "Stats by Season" },
-] as const;
-
-type LeagueDetailTabId = (typeof LEAGUE_DETAIL_TABS_BASE)[number]["id"];
 
 const TEAM_DETAIL_TABS = [
   { id: "overview", label: "Overview" },
@@ -579,9 +570,8 @@ function CoverageRing({ pct, size = 72 }: { pct: number; size?: number }) {
           strokeDashoffset={offset}
         />
       </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
+      <div className="absolute inset-0 flex items-center justify-center">
         <span className="text-sm font-semibold text-foreground">{pct.toFixed(0)}%</span>
-        <span className="text-[9px] text-muted-foreground leading-tight">coverage</span>
       </div>
     </div>
   );
@@ -617,11 +607,24 @@ export function CoverageDrawerContent({ leagueId }: { leagueId: number }) {
  * - Standings (with sub-tabs for reclasificación/descenso)
  */
 export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, onCoverageClick, initialTeamId, siblingLeagues, onLeagueChange }: LeagueDetailProps) {
-  const [activeTab, setActiveTab] = useState<LeagueDetailTabId>("standings");
-  const [standingsSubTab, setStandingsSubTab] = useState<string>("standings");
+  const [standingsSubTab, _setStandingsSubTab] = useState<string>(() => {
+    if (typeof window === "undefined") return "standings";
+    return localStorage.getItem("fs:leagueSubTab") || "standings";
+  });
+  const setStandingsSubTab = useCallback((v: string) => {
+    _setStandingsSubTab(v);
+    try { localStorage.setItem("fs:leagueSubTab", v); } catch {}
+  }, []);
   const [selectedGroup, setSelectedGroup] = useState<string | undefined>(undefined);
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(initialTeamId ?? null);
-  const [teamTab, setTeamTab] = useState<TeamDetailTabId>("overview");
+  const [teamTab, _setTeamTab] = useState<TeamDetailTabId>(() => {
+    if (typeof window === "undefined") return "overview";
+    return (localStorage.getItem("fs:teamTab") as TeamDetailTabId) || "overview";
+  });
+  const setTeamTab = useCallback((v: TeamDetailTabId) => {
+    _setTeamTab(v);
+    try { localStorage.setItem("fs:teamTab", v); } catch {}
+  }, []);
   const [squadSeason, setSquadSeason] = useState<number | null>(null);
 
   // Reset selected team when league changes (let auto-select pick first team)
@@ -663,13 +666,16 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
   const hasLive = (liveMatches?.length ?? 0) > 0;
   const { getLogoUrl } = useTeamLogos();
 
-  // Auto-switch to live sub-tab when live matches appear, back to standings when they end
+  // Only auto-switch when hasLive transitions: false→true (go to live), true→false (leave live)
+  // Does NOT force the user back to live if they manually picked another tab.
+  const prevHasLive = useRef(hasLive);
   useEffect(() => {
-    if (hasLive && standingsSubTab !== "live") {
+    if (hasLive && !prevHasLive.current) {
       setStandingsSubTab("live");
-    } else if (!hasLive && standingsSubTab === "live") {
+    } else if (!hasLive && prevHasLive.current && standingsSubTab === "live") {
       setStandingsSubTab("standings");
     }
+    prevHasLive.current = hasLive;
   }, [hasLive]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleTeamSelect = useCallback(
@@ -683,7 +689,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
 
   // Keyboard navigation: arrow up/down moves selection in standings
   useEffect(() => {
-    if (activeTab !== "standings" || standingsSubTab !== "standings") return;
+    if (standingsSubTab !== "standings") return;
     const teams = standingsData?.standings;
     if (!teams?.length) return;
 
@@ -712,7 +718,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeTab, standingsSubTab, standingsData?.standings, selectedTeamId, handleTeamSelect]);
+  }, [standingsSubTab, standingsData?.standings, selectedTeamId, handleTeamSelect]);
 
   // Loading state
   if (isLoading) {
@@ -752,127 +758,124 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
     );
   }
 
-  const { league, group, stats_by_season, titan, recent_matches } = data;
+  const { league, stats_by_season, recent_matches } = data;
 
   return (
     <ScrollArea className="h-full">
-      <div className="p-6 space-y-4">
-        {/* League header — full width */}
-        <div className="rounded-lg border border-border px-4 py-3 flex items-center gap-4">
-          {league.logo_url && (
-            <img
-              src={league.logo_url}
-              alt=""
-              className="h-24 w-24 object-contain shrink-0"
-            />
-          )}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              {siblingLeagues && siblingLeagues.length > 1 && onLeagueChange ? (
-                <Select
-                  value={leagueId.toString()}
-                  onValueChange={(v) => onLeagueChange(parseInt(v, 10))}
-                >
-                  <SelectTrigger className="text-2xl font-semibold text-foreground border-none shadow-none px-1 h-auto py-0 gap-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {siblingLeagues.map((sl) => (
-                      <SelectItem key={sl.league_id} value={sl.league_id.toString()}>
-                        {sl.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <h1 className="text-2xl font-semibold text-foreground cursor-help truncate">
-                      {league.name}
-                    </h1>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" sideOffset={6}>
-                    <div className="space-y-1">
-                      <div className="text-foreground">
-                        <span className="text-muted-foreground">Match Weight:</span>{" "}
-                        <span className="font-medium text-foreground">
-                          {league.match_weight ?? 1}
-                        </span>
-                      </div>
-                      <div className="text-muted-foreground">
-                        1 = peso estándar. Valores mayores aumentan la influencia de esta liga
-                        en cálculos internos; menores la reducen.
-                      </div>
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
-              )}
-              {onSettingsClick && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={onSettingsClick}
-                  className="shrink-0 h-8 w-8"
-                  aria-label="League settings"
-                >
-                  <Settings className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
-            <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground flex-wrap">
-              <span className="flex items-center gap-1">
-                <CountryFlag country={league.country} size={14} />
-                {league.country}
-              </span>
-              {league.kind && <span className="capitalize">{league.kind}</span>}
-              {league.priority && (
-                <span className="px-1.5 py-0.5 bg-muted rounded text-xs">
-                  {league.priority}
-                </span>
-              )}
-            </div>
-          </div>
-          {(() => {
-            const current = stats_by_season?.[0];
-            if (!current) return null;
-            const stats = current.with_stats_pct ?? 0;
-            const odds = current.with_odds_pct ?? 0;
-            const pct = (stats + odds) / 2;
-            return onCoverageClick ? (
-              <button
-                onClick={onCoverageClick}
-                className="cursor-pointer hover:opacity-80 transition-opacity"
-              >
-                <CoverageRing pct={pct} />
-              </button>
-            ) : (
-              <CoverageRing pct={pct} />
-            );
-          })()}
-        </div>
-
-        {/* Two-column content: standings/tabs + team details */}
+      <div className="px-6 pt-6 pb-2">
+        {/* Two-column content: league + team */}
         <div className="w-full flex flex-col lg:flex-row gap-4 lg:items-start min-w-0">
-          {/* League container: tabs + tab content */}
+          {/* League column */}
           <div
             className={cn(
-              "rounded-lg border border-border overflow-hidden w-full min-w-0",
+              "flex flex-col gap-4 w-full min-w-0",
               selectedTeamId !== null ? "lg:w-[50%]" : "lg:max-w-[50%] lg:mr-auto"
             )}
           >
-            {/* Tabs */}
-            <div className="px-4 py-3 border-b border-border">
-              <IconTabs
-                tabs={LEAGUE_DETAIL_TABS_BASE as unknown as { id: string; icon: React.ReactNode; label: string }[]}
-                value={activeTab}
-                onValueChange={(v) => setActiveTab(v as LeagueDetailTabId)}
-                showLabels
-                className="w-full"
-              />
+            {/* League header */}
+            <div className="rounded-lg border border-border px-4 py-3 flex items-center gap-4 min-h-[148px]">
+              {league.logo_url && (
+                <img
+                  src={league.logo_url}
+                  alt=""
+                  className="h-24 w-24 object-contain shrink-0"
+                />
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  {siblingLeagues && siblingLeagues.length > 1 && onLeagueChange ? (
+                    <Select
+                      value={leagueId.toString()}
+                      onValueChange={(v) => onLeagueChange(parseInt(v, 10))}
+                    >
+                      <SelectTrigger className="text-2xl font-semibold text-foreground border-none shadow-none px-1 h-auto py-0 gap-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {siblingLeagues.map((sl) => (
+                          <SelectItem key={sl.league_id} value={sl.league_id.toString()}>
+                            {sl.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <h1 className="text-2xl font-semibold text-foreground cursor-help truncate">
+                          {league.name}
+                        </h1>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" sideOffset={6}>
+                        <div className="space-y-1">
+                          <div className="text-foreground">
+                            <span className="text-muted-foreground">Match Weight:</span>{" "}
+                            <span className="font-medium text-foreground">
+                              {league.match_weight ?? 1}
+                            </span>
+                          </div>
+                          <div className="text-muted-foreground">
+                            1 = peso estándar. Valores mayores aumentan la influencia de esta liga
+                            en cálculos internos; menores la reducen.
+                          </div>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                  {onSettingsClick && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={onSettingsClick}
+                      className="shrink-0 h-8 w-8"
+                      aria-label="League settings"
+                    >
+                      <Settings className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground flex-wrap">
+                  <span className="flex items-center gap-1">
+                    <CountryFlag country={league.country} size={14} />
+                    {league.country}
+                  </span>
+                  {league.kind && <span className="capitalize">{league.kind}</span>}
+                  {league.priority && (
+                    <span className="px-1.5 py-0.5 bg-muted rounded text-xs">
+                      {league.priority}
+                    </span>
+                  )}
+                </div>
+              </div>
+              {(() => {
+                const current = stats_by_season?.[0];
+                if (!current) return null;
+                const stats = current.with_stats_pct ?? 0;
+                const odds = current.with_odds_pct ?? 0;
+                const pct = (stats + odds) / 2;
+                const ring = (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      {onCoverageClick ? (
+                        <button
+                          onClick={onCoverageClick}
+                          className="cursor-pointer hover:opacity-80 transition-opacity"
+                        >
+                          <CoverageRing pct={pct} />
+                        </button>
+                      ) : (
+                        <div><CoverageRing pct={pct} /></div>
+                      )}
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">Coverage</TooltipContent>
+                  </Tooltip>
+                );
+                return ring;
+              })()}
             </div>
 
-            {/* Tab content */}
-            {activeTab === "standings" && (
+            {/* League content */}
+            <div className="rounded-lg border border-border overflow-hidden">
               <div>
                 {/* Sub-tabs: Live + Group/Standings + Reclassification + Relegation */}
                 {(() => {
@@ -886,10 +889,6 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                   };
                   const hasVirtualTabs = !!(standingsData?.reclasificacion || isDescensoValid(standingsData?.descenso ?? null));
                   const showGroupPills = navigableGroups.length > 1;
-                  const showSubTabs = hasLive || hasVirtualTabs || showGroupPills;
-
-                  if (!showSubTabs) return null;
-
                   return (
                     <div className="flex gap-1 border-b border-border overflow-x-auto">
                       {/* Live tab — only when in-play */}
@@ -976,6 +975,30 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                           Relegation
                         </button>
                       )}
+                      {/* Next Matches */}
+                      <button
+                        onClick={() => setStandingsSubTab("next")}
+                        className={cn(
+                          "px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors",
+                          standingsSubTab === "next"
+                            ? "text-foreground border-b-2 border-primary"
+                            : "text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        Next
+                      </button>
+                      {/* Stats by Season */}
+                      <button
+                        onClick={() => setStandingsSubTab("stats")}
+                        className={cn(
+                          "px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors",
+                          standingsSubTab === "stats"
+                            ? "text-foreground border-b-2 border-primary"
+                            : "text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        Stats
+                      </button>
                     </div>
                   );
                 })()}
@@ -1055,6 +1078,14 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                     data={standingsData.descenso}
                     onTeamSelect={handleTeamSelect}
                   />
+                ) : standingsSubTab === "next" ? (
+                  <RecentMatchesList
+                    matches={nextMatches}
+                    onTeamSelect={handleTeamSelect}
+                    useShortNames={league.tags?.use_short_names ?? false}
+                  />
+                ) : standingsSubTab === "stats" ? (
+                  <StatsTable stats={stats_by_season} />
                 ) : standingsData && standingsData.standings.length > 0 ? (
                   <StandingsTable
                     standings={standingsData.standings}
@@ -1068,41 +1099,15 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                   </div>
                 )}
               </div>
-            )}
 
-            {activeTab === "next" && (
-              <div>
-                <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-                  <Calendar className="h-4 w-4 text-muted-foreground" />
-                  <h2 className="text-sm font-semibold text-foreground">Next Matches</h2>
-                  <span className="text-xs text-muted-foreground ml-auto">
-                    {nextMatches.length}
-                  </span>
-                </div>
-                <RecentMatchesList
-                  matches={nextMatches}
-                  onTeamSelect={handleTeamSelect}
-                  useShortNames={league.tags?.use_short_names ?? false}
-                />
-              </div>
-            )}
-
-            {activeTab === "stats" && (
-              <div>
-                <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-                  <BarChart3 className="h-4 w-4 text-muted-foreground" />
-                  <h2 className="text-sm font-semibold text-foreground">Stats by Season</h2>
-                </div>
-                <StatsTable stats={stats_by_season} />
-              </div>
-            )}
+          </div>
           </div>
 
           {/* Club container (only when selected) */}
           {selectedTeamId !== null && (
             <div className="flex flex-col gap-4 w-full lg:w-[50%] min-w-0">
               {/* Team Header */}
-              <div className="rounded-lg border border-border px-4 py-3 flex items-center gap-3">
+              <div className="rounded-lg border border-border px-4 py-3 flex items-center gap-3 min-h-[148px]">
                 {selectedTeam.data?.team?.logo_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -1155,19 +1160,24 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                   const pcts = [sources.odds.pct, sources.xg.pct, sources.lineup.pct, sources.xi_depth.pct, sources.form.pct, sources.h2h.pct];
                   const avg = pcts.reduce((a, b) => a + b, 0) / pcts.length;
                   return (
-                    <button
-                      onClick={() => setTeamTab("coverage")}
-                      className="shrink-0 rounded-full hover:ring-2 hover:ring-primary/30 transition-shadow"
-                      title="View coverage details"
-                    >
-                      <CoverageRing pct={avg} size={64} />
-                    </button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={() => setTeamTab("coverage")}
+                          className="shrink-0 hover:opacity-80 transition-opacity"
+                        >
+                          <CoverageRing pct={avg} />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">Coverage</TooltipContent>
+                    </Tooltip>
                   );
                 })()}
               </div>
 
-              {/* Team Tabs */}
-              <div className="flex gap-1 border-b border-border">
+              {/* Team Tabs + Content */}
+              <div className="rounded-lg border border-border overflow-hidden">
+              <div className="flex gap-1 border-b border-border overflow-x-auto">
                 {TEAM_DETAIL_TABS.map((tab) => {
                   const isActive = teamTab === tab.id;
 
@@ -1180,7 +1190,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                       >
                         <button
                           onClick={() => setTeamTab(tab.id)}
-                          className="px-4 py-2 text-sm font-medium"
+                          className="px-4 py-2 text-sm font-medium whitespace-nowrap"
                         >
                           {tab.label}
                         </button>
@@ -1188,7 +1198,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                           value={squadDisplaySeason ? String(squadDisplaySeason) : ""}
                           onValueChange={(v) => setSquadSeason(Number(v))}
                         >
-                          <SelectTrigger className="h-auto border-0 bg-transparent shadow-none px-0 pr-1 py-0 text-xs text-muted-foreground gap-0.5 focus:ring-0 [&>svg]:h-3 [&>svg]:w-3">
+                          <SelectTrigger className="h-auto border-0 bg-transparent! shadow-none! px-0 pr-1 py-0 text-xs text-muted-foreground gap-0.5 ring-0! outline-none! [&>svg]:h-3 [&>svg]:w-3">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent align="start">
@@ -1208,7 +1218,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                       key={tab.id}
                       onClick={() => setTeamTab(tab.id)}
                       className={cn(
-                        "px-4 py-2 text-sm font-medium transition-colors",
+                        "px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors",
                         isActive
                           ? "text-foreground border-b-2 border-primary"
                           : "text-muted-foreground hover:text-foreground"
@@ -1224,7 +1234,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
               {teamTab === "overview" && (
                 <>
                   {!selectedTeam.isLoading && selectedTeam.data?.wikidata_enrichment ? (
-                    <div className="rounded-lg border border-border overflow-hidden">
+                    <div>
                       <table className="w-full text-sm">
                         <tbody className="divide-y divide-border">
                           {[
@@ -1435,7 +1445,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                       </table>
                     </div>
                   ) : !selectedTeam.isLoading ? (
-                    <div className="rounded-lg border border-border px-4 py-4 text-sm text-muted-foreground">
+                    <div className="px-4 py-4 text-sm text-muted-foreground">
                       No enrichment data for this team
                     </div>
                   ) : null}
@@ -1447,14 +1457,14 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
               )}
 
               {teamTab === "matches" && (
-                <div className="rounded-lg border border-border px-4 py-8 text-center">
+                <div className="px-4 py-8 text-center">
                   <Calendar className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
                   <p className="text-sm text-muted-foreground">Matches coming soon</p>
                 </div>
               )}
 
               {teamTab === "stats" && (
-                <div className="rounded-lg border border-border px-4 py-8 text-center">
+                <div className="px-4 py-8 text-center">
                   <BarChart3 className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
                   <p className="text-sm text-muted-foreground">Stats coming soon</p>
                 </div>
@@ -1469,7 +1479,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                   ) : selectedTeam.data?.feature_coverage ? (
                     <FeatureCoverageSection coverage={selectedTeam.data.feature_coverage} />
                   ) : (
-                    <div className="rounded-lg border border-border px-4 py-8 text-center">
+                    <div className="px-4 py-8 text-center">
                       <p className="text-sm text-muted-foreground">No coverage data available</p>
                     </div>
                   )}
@@ -1477,67 +1487,15 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
               )}
 
               {teamTab === "transfers" && (
-                <div className="rounded-lg border border-border px-4 py-8 text-center">
+                <div className="px-4 py-8 text-center">
                   <TrendingUp className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
                   <p className="text-sm text-muted-foreground">Transfers coming soon</p>
                 </div>
               )}
+              </div>
             </div>
           )}
         </div>
-
-        {/* Group Info */}
-        {group && (
-          <div className="bg-[var(--tag-purple-bg)] border border-[var(--tag-purple-border)] rounded-lg p-4">
-            <div className="flex items-center gap-2">
-              <Users className="h-4 w-4 text-[var(--tag-purple-text)]" />
-              <span className="text-sm font-medium text-foreground">Part of Group</span>
-            </div>
-            <p className="text-sm text-muted-foreground mt-1">
-              {group.name} ({group.key})
-            </p>
-            {group.paired_handling && (
-              <p className="text-xs text-muted-foreground mt-1">
-                Paired handling: {group.paired_handling}
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* TITAN Coverage */}
-        {titan && (
-          <div className="bg-card border border-border rounded-lg p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <TrendingUp className="h-4 w-4 text-[var(--tag-purple-text)]" />
-              <h2 className="text-sm font-semibold text-foreground">TITAN Coverage</h2>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <div>
-                <p className="text-xl font-semibold text-foreground">{titan.tier1_pct.toFixed(1)}%</p>
-                <p className="text-xs text-muted-foreground">Tier 1</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">{titan.tier1}</p>
-                <p className="text-xs text-muted-foreground">Tier 1 count</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">{titan.tier1b}</p>
-                <p className="text-xs text-muted-foreground">Tier 1b</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">{titan.tier1c}</p>
-                <p className="text-xs text-muted-foreground">Tier 1c</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">{titan.tier1d}</p>
-                <p className="text-xs text-muted-foreground">Tier 1d</p>
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground mt-2">
-              Total: {titan.total.toLocaleString()} matches
-            </p>
-          </div>
-        )}
 
       </div>
     </ScrollArea>
