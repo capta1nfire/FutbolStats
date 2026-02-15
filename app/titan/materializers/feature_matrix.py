@@ -11,7 +11,7 @@ Per plan zazzy-jingling-pudding.md v1.1:
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -1270,6 +1270,130 @@ class FeatureMatrixMaterializer:
 
         logger.info(
             f"Lineup fixup complete: {stats['fixed']} fixed, "
+            f"{stats['skipped']} skipped, {stats['errors']} errors "
+            f"(of {stats['candidates']} candidates)"
+        )
+        return stats
+
+    async def fixup_missing_xg_from_sota(self, limit: int = 100) -> dict:
+        """Fill-only fixup for matches missing Tier 1b (xG) in feature_matrix.
+
+        Finds matches where tier1b_complete=false but SOTA has sufficient xG data
+        (>=5 past matches with xG per team). Computes rolling xG averages and
+        UPDATEs only if successful.
+
+        ABE directives:
+        - DB-only + fill-only. Never degrades existing True to False.
+        - Only leagues in UNDERSTAT_SUPPORTED_LEAGUES ∪ FOTMOB_CONFIRMED_XG_LEAGUES.
+        - xg_captured_at must be pre-kickoff (ABE P0: not NOW()).
+        - Uses m.date as kickoff cutoff (not fm.kickoff_utc) to handle rescheduled matches.
+        - Does NOT touch pit_max_captured_at.
+
+        Args:
+            limit: Max matches to process per run.
+
+        Returns:
+            Dict with fixed/skipped/error counts.
+        """
+        from app.etl.sota_constants import UNDERSTAT_SUPPORTED_LEAGUES, FOTMOB_CONFIRMED_XG_LEAGUES
+
+        eligible_leagues = UNDERSTAT_SUPPORTED_LEAGUES | FOTMOB_CONFIRMED_XG_LEAGUES
+
+        # 1. Find candidates: tier1b_complete=false in TITAN, league has xG source
+        query = text(f"""
+            SELECT
+                fm.match_id AS external_id,
+                fm.kickoff_utc,
+                m.id AS internal_id,
+                m.date AS match_date,
+                m.home_team_id,
+                m.away_team_id,
+                m.league_id
+            FROM {self.schema}.feature_matrix fm
+            JOIN public.matches m ON m.external_id = CAST(fm.match_id AS INTEGER)
+            WHERE fm.tier1b_complete = false
+              AND m.league_id = ANY(:eligible_leagues)
+            ORDER BY fm.kickoff_utc DESC
+            LIMIT :limit
+        """)
+
+        result = await self.session.execute(query, {
+            "eligible_leagues": list(eligible_leagues),
+            "limit": limit,
+        })
+        candidates = result.fetchall()
+
+        stats = {"candidates": len(candidates), "fixed": 0, "skipped": 0, "errors": 0}
+
+        for row in candidates:
+            external_id = row.external_id
+            kickoff_utc = row.kickoff_utc
+            match_date = row.match_date
+            internal_id = row.internal_id
+            home_team_id = row.home_team_id
+            away_team_id = row.away_team_id
+            league_id = row.league_id
+
+            try:
+                # Use m.date as cutoff (handles rescheduled matches)
+                cutoff = match_date
+                if cutoff.tzinfo is None:
+                    cutoff = cutoff.replace(tzinfo=timezone.utc)
+
+                xg = await self.compute_xg_last5_features(
+                    home_team_id=home_team_id,
+                    away_team_id=away_team_id,
+                    kickoff_utc=cutoff,
+                    league_id=league_id,
+                )
+
+                if xg is None:
+                    stats["skipped"] += 1
+                    continue
+
+                # ABE P0: xg_captured_at must be pre-kickoff, not NOW()
+                # Use cutoff - 1 minute (same pattern as lineup backfill)
+                safe_captured_at = cutoff - timedelta(minutes=1)
+
+                match_id_int = int(external_id) if not isinstance(external_id, int) else external_id
+
+                update_query = text(f"""
+                    UPDATE {self.schema}.feature_matrix SET
+                        xg_home_last5 = :xg_home_last5,
+                        xg_away_last5 = :xg_away_last5,
+                        xga_home_last5 = :xga_home_last5,
+                        xga_away_last5 = :xga_away_last5,
+                        npxg_home_last5 = :npxg_home_last5,
+                        npxg_away_last5 = :npxg_away_last5,
+                        xg_captured_at = :xg_captured_at,
+                        tier1b_complete = true
+                    WHERE match_id = :match_id
+                      AND tier1b_complete = false
+                """)
+
+                await self.session.execute(update_query, {
+                    "match_id": match_id_int,
+                    "xg_home_last5": xg.xg_home_last5,
+                    "xg_away_last5": xg.xg_away_last5,
+                    "xga_home_last5": xg.xga_home_last5,
+                    "xga_away_last5": xg.xga_away_last5,
+                    "npxg_home_last5": xg.npxg_home_last5,
+                    "npxg_away_last5": xg.npxg_away_last5,
+                    "xg_captured_at": safe_captured_at,
+                })
+                await self.session.commit()
+                stats["fixed"] += 1
+
+            except Exception as e:
+                logger.warning(f"xG fixup failed for match {external_id}: {e}")
+                stats["errors"] += 1
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    pass
+
+        logger.info(
+            f"xG fixup complete: {stats['fixed']} fixed, "
             f"{stats['skipped']} skipped, {stats['errors']} errors "
             f"(of {stats['candidates']} candidates)"
         )
