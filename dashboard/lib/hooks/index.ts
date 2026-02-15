@@ -71,6 +71,7 @@ export * from "./use-model-selection";
 // Squad (Players & Managers)
 export * from "./use-match-squad";
 export * from "./use-team-squad";
+export * from "./use-team-squad-stats";
 export * from "./use-players-view";
 export * from "./use-managers-view";
 // Coverage Map

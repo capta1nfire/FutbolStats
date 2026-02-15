@@ -41,6 +41,7 @@ import { useTeamLogos } from "@/lib/hooks/use-team-logos";
 import { TeamLogo } from "@/components/ui/team-logo";
 import { CoverageDetailContent } from "@/components/coverage-map/CoverageDetail";
 import { FeatureCoverageSection } from "./FeatureCoverageSection";
+import { TeamSquadStats } from "./TeamSquadStats";
 
 const LEAGUE_DETAIL_TABS_BASE = [
   { id: "standings", icon: null, label: "Overview" },
@@ -52,6 +53,7 @@ type LeagueDetailTabId = (typeof LEAGUE_DETAIL_TABS_BASE)[number]["id"];
 
 const TEAM_DETAIL_TABS = [
   { id: "overview", label: "Overview" },
+  { id: "squad", label: "Squad" },
   { id: "matches", label: "Matches" },
   { id: "stats", label: "Stats" },
   { id: "coverage", label: "Coverage" },
@@ -1394,6 +1396,10 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                     </div>
                   ) : null}
                 </>
+              )}
+
+              {teamTab === "squad" && selectedTeamId && (
+                <TeamSquadStats teamId={selectedTeamId} />
               )}
 
               {teamTab === "matches" && (

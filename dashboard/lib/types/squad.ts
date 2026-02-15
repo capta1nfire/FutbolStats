@@ -43,6 +43,34 @@ export interface TeamSquadData {
   current_injuries: PlayerInjury[];
 }
 
+// Team squad stats (TeamDrawer > Squad tab)
+export interface TeamSquadPlayerSeasonStats {
+  player_external_id: number;
+  player_name: string;
+  position: string; // 'G' | 'D' | 'M' | 'F' | 'U'
+  appearances: number;
+  avg_rating: number | null;
+  total_minutes: number;
+  goals: number;
+  assists: number;
+  saves: number;
+  yellows: number;
+  reds: number;
+  key_passes: number;
+  tackles: number;
+  interceptions: number;
+  ever_captain: boolean;
+}
+
+export interface TeamSquadStatsData {
+  team_id: number;
+  team_external_id: number | null;
+  team_name: string;
+  season: number | null;
+  available_seasons: number[];
+  players: TeamSquadPlayerSeasonStats[];
+}
+
 // Players view (Football > Players category)
 export interface PlayersViewData {
   leagues: Array<{

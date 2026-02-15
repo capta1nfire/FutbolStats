@@ -25,6 +25,7 @@ _admin_cache = {
     "team_detail": {},  # keyed by team_id
     "match_squad": {},  # keyed by match_id
     "team_squad": {},  # keyed by team_id
+    "team_squad_stats": {},  # keyed by team_id:season
     "players_managers": {},  # keyed by view:league_id:limit
 }
 
@@ -925,6 +926,163 @@ async def dashboard_admin_team_squad(request: Request, team_id: int):
         "current_manager": current_manager,
         "manager_history": manager_history,
         "current_injuries": current_injuries,
+    }
+    result_obj = {"generated_at": datetime.utcnow().isoformat() + "Z", "data": data}
+    cache[cache_key] = {"data": result_obj, "timestamp": now}
+
+    return {
+        "generated_at": result_obj["generated_at"],
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
+    }
+
+
+@router.get("/team/{team_id}/squad-stats.json")
+async def dashboard_admin_team_squad_stats(
+    request: Request,
+    team_id: int,
+    season: int = None,
+):
+    """
+    Team squad stats: per-player seasonal aggregates from match_player_stats.
+
+    Data source: match_player_stats (API-Football /fixtures/players backfill).
+
+    Notes:
+    - Ratings are post-match. They are safe for dashboard display, but PIT-critical
+      for modeling: NEVER use same-match ratings for pre-match PTS.
+    - This endpoint is admin-only (dashboard token).
+    """
+    _check_token(request)
+
+    now = time.time()
+    cache_key = f"{team_id}:{season or 'latest'}"
+    cache = _admin_cache["team_squad_stats"]
+
+    if cache_key in cache and cache[cache_key]["data"] and (now - cache[cache_key]["timestamp"]) < 120:
+        cached = cache[cache_key]
+        return {
+            "generated_at": cached["data"]["generated_at"],
+            "cached": True,
+            "cache_age_seconds": round(now - cached["timestamp"], 1),
+            "data": cached["data"]["data"],
+        }
+
+    async with AsyncSessionLocal() as session:
+        team_result = await session.execute(
+            text("SELECT id, name, external_id FROM teams WHERE id = :tid"),
+            {"tid": team_id},
+        )
+        team = team_result.fetchone()
+        if not team:
+            raise HTTPException(status_code=404, detail=f"Team {team_id} not found.")
+
+        team_external_id = team.external_id
+        if team_external_id is None:
+            # Team exists but has no external mapping — cannot query match_player_stats
+            data = {
+                "team_id": team_id,
+                "team_external_id": None,
+                "team_name": team.name,
+                "season": season,
+                "available_seasons": [],
+                "players": [],
+            }
+            result_obj = {"generated_at": datetime.utcnow().isoformat() + "Z", "data": data}
+            cache[cache_key] = {"data": result_obj, "timestamp": now}
+            return {
+                "generated_at": result_obj["generated_at"],
+                "cached": False,
+                "cache_age_seconds": None,
+                "data": data,
+            }
+
+        # Available seasons for this team (desc)
+        seasons_result = await session.execute(
+            text("""
+                SELECT DISTINCT m.season
+                FROM match_player_stats mps
+                JOIN matches m ON m.id = mps.match_id
+                WHERE mps.team_external_id = :team_ext
+                  AND m.season IS NOT NULL
+                ORDER BY m.season DESC
+            """),
+            {"team_ext": team_external_id},
+        )
+        available_seasons = [int(r.season) for r in seasons_result.fetchall() if r.season is not None]
+
+        selected_season = season
+        if selected_season is None and available_seasons:
+            selected_season = available_seasons[0]
+
+        if selected_season is not None and available_seasons and selected_season not in available_seasons:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Season {selected_season} not available for team {team_id}.",
+            )
+
+        players = []
+        if selected_season is not None:
+            result = await session.execute(
+                text("""
+                    SELECT
+                        mps.player_external_id,
+                        MAX(mps.player_name) AS player_name,
+                        COALESCE(MODE() WITHIN GROUP (ORDER BY mps.position), 'U') AS position,
+                        COUNT(*) FILTER (WHERE COALESCE(mps.minutes, 0) > 0) AS appearances,
+                        -- Weighted rating by minutes (PTS-aligned)
+                        ROUND(
+                            SUM(mps.rating * mps.minutes)
+                            / NULLIF(SUM(mps.minutes) FILTER (WHERE mps.rating IS NOT NULL AND mps.minutes IS NOT NULL AND mps.minutes > 0), 0),
+                            2
+                        ) AS avg_rating,
+                        SUM(COALESCE(mps.minutes, 0)) AS total_minutes,
+                        SUM(COALESCE(mps.goals, 0)) AS goals,
+                        SUM(COALESCE(mps.assists, 0)) AS assists,
+                        SUM(COALESCE(mps.saves, 0)) AS saves,
+                        SUM(COALESCE(mps.yellow_cards, 0)) AS yellows,
+                        SUM(COALESCE(mps.red_cards, 0)) AS reds,
+                        SUM(COALESCE(mps.passes_key, 0)) AS key_passes,
+                        SUM(COALESCE(mps.tackles, 0)) AS tackles,
+                        SUM(COALESCE(mps.interceptions, 0)) AS interceptions,
+                        BOOL_OR(COALESCE(mps.is_captain, false)) AS ever_captain
+                    FROM match_player_stats mps
+                    JOIN matches m ON m.id = mps.match_id
+                    WHERE mps.team_external_id = :team_ext
+                      AND m.season = :season
+                    GROUP BY mps.player_external_id
+                    HAVING SUM(COALESCE(mps.minutes, 0)) > 0
+                    ORDER BY appearances DESC, total_minutes DESC
+                """),
+                {"team_ext": team_external_id, "season": selected_season},
+            )
+            for r in result.fetchall():
+                players.append({
+                    "player_external_id": int(r.player_external_id),
+                    "player_name": r.player_name or f"Player#{int(r.player_external_id)}",
+                    "position": r.position,
+                    "appearances": int(r.appearances or 0),
+                    "avg_rating": float(r.avg_rating) if r.avg_rating is not None else None,
+                    "total_minutes": int(r.total_minutes or 0),
+                    "goals": int(r.goals or 0),
+                    "assists": int(r.assists or 0),
+                    "saves": int(r.saves or 0),
+                    "yellows": int(r.yellows or 0),
+                    "reds": int(r.reds or 0),
+                    "key_passes": int(r.key_passes or 0),
+                    "tackles": int(r.tackles or 0),
+                    "interceptions": int(r.interceptions or 0),
+                    "ever_captain": bool(r.ever_captain),
+                })
+
+    data = {
+        "team_id": team_id,
+        "team_external_id": int(team_external_id) if team_external_id is not None else None,
+        "team_name": team.name,
+        "season": selected_season,
+        "available_seasons": available_seasons,
+        "players": players,
     }
     result_obj = {"generated_at": datetime.utcnow().isoformat() + "Z", "data": data}
     cache[cache_key] = {"data": result_obj, "timestamp": now}
