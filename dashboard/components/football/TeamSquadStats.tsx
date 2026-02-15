@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useMemo, useState } from "react";
 import { useTeamSquadStats } from "@/lib/hooks";
 import type { TeamSquadPlayerSeasonStats } from "@/lib/types/squad";
@@ -9,6 +10,10 @@ import { SurfaceCard } from "@/components/ui/surface-card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AlertTriangle, RefreshCw, Users } from "lucide-react";
+
+function playerPhotoUrl(externalId: number): string {
+  return `https://media.api-sports.io/football/players/${externalId}.png`;
+}
 
 const EMPTY_PLAYERS: TeamSquadPlayerSeasonStats[] = [];
 
@@ -145,7 +150,15 @@ export function TeamSquadStats({ teamId }: { teamId: number }) {
                   <div className="divide-y divide-border">
                     {groupPlayers.map((p) => (
                       <div key={p.player_external_id} className="px-3 py-2 flex items-start justify-between gap-3">
-                        <div className="min-w-0">
+                        <div className="flex items-start gap-2.5 min-w-0">
+                          <Image
+                            src={playerPhotoUrl(p.player_external_id)}
+                            alt={p.player_name}
+                            width={32}
+                            height={32}
+                            className="rounded-full shrink-0 mt-0.5"
+                          />
+                          <div className="min-w-0">
                           <div className="flex items-center gap-2">
                             <div className="text-sm font-medium text-foreground truncate">
                               {p.player_name}
@@ -168,6 +181,7 @@ export function TeamSquadStats({ teamId }: { teamId: number }) {
                                 {p.reds > 0 ? `🟥${p.reds}` : ""}
                               </span>
                             )}
+                          </div>
                           </div>
                         </div>
 
