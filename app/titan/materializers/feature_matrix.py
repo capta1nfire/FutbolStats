@@ -1134,6 +1134,147 @@ class FeatureMatrixMaterializer:
         logger.info(f"Inserted feature_matrix row for match {match_id}")
         return True
 
+    async def fixup_missing_lineup_from_sota(self, limit: int = 100) -> dict:
+        """Fill-only fixup for matches missing Tier 1c/1d in feature_matrix.
+
+        Finds matches where sofascore_lineup_available=false but
+        match_sofascore_lineup has both sides captured pre-kickoff.
+        Computes lineup + XI depth and UPDATEs only if successful.
+
+        ABE directive: DB-only + fill-only. Never degrades existing True to False.
+        PIT-safe: compute_lineup_features uses captured_at < kickoff.
+
+        Args:
+            limit: Max matches to process per run.
+
+        Returns:
+            Dict with fixed/skipped/error counts.
+        """
+        # 1. Find candidates: tier1c_complete=false in TITAN, but lineup exists in SOTA
+        query = text(f"""
+            SELECT
+                fm.match_id AS external_id,
+                fm.kickoff_utc,
+                m.id AS internal_id,
+                m.date AS match_date
+            FROM {self.schema}.feature_matrix fm
+            JOIN public.matches m ON m.external_id = CAST(fm.match_id AS INTEGER)
+            WHERE fm.sofascore_lineup_available = false
+              AND EXISTS (
+                  SELECT 1 FROM public.match_sofascore_lineup msl
+                  WHERE msl.match_id = m.id AND msl.team_side = 'home'
+                    AND msl.captured_at < m.date
+              )
+              AND EXISTS (
+                  SELECT 1 FROM public.match_sofascore_lineup msl
+                  WHERE msl.match_id = m.id AND msl.team_side = 'away'
+                    AND msl.captured_at < m.date
+              )
+            ORDER BY fm.kickoff_utc DESC
+            LIMIT :limit
+        """)
+
+        result = await self.session.execute(query, {"limit": limit})
+        candidates = result.fetchall()
+
+        stats = {"candidates": len(candidates), "fixed": 0, "skipped": 0, "errors": 0}
+
+        for row in candidates:
+            external_id, kickoff_utc, internal_id, match_date = row
+            try:
+                # Ensure kickoff is timezone-aware
+                if kickoff_utc.tzinfo is None:
+                    kickoff_utc = kickoff_utc.replace(tzinfo=timezone.utc)
+
+                # Compute lineup (PIT-safe: captured_at < kickoff)
+                lineup = await self.compute_lineup_features(
+                    match_id=internal_id,
+                    kickoff_utc=kickoff_utc,
+                )
+
+                if lineup is None or not lineup.sofascore_lineup_available:
+                    stats["skipped"] += 1
+                    continue
+
+                # Compute XI depth (also PIT-safe)
+                xi_depth = await self.compute_xi_depth_features(
+                    match_id=internal_id,
+                    kickoff_utc=kickoff_utc,
+                    home_formation=lineup.sofascore_home_formation,
+                    away_formation=lineup.sofascore_away_formation,
+                )
+
+                # Fill-only UPDATE: only set lineup/xi columns, never touch other tiers
+                update_values = {
+                    "match_id": int(external_id) if not isinstance(external_id, int) else external_id,
+                    "sofascore_lineup_available": True,
+                    "sofascore_home_formation": lineup.sofascore_home_formation,
+                    "sofascore_away_formation": lineup.sofascore_away_formation,
+                    "lineup_home_starters_count": lineup.lineup_home_starters_count,
+                    "lineup_away_starters_count": lineup.lineup_away_starters_count,
+                    "sofascore_lineup_integrity_score": lineup.sofascore_lineup_integrity_score,
+                    "sofascore_lineup_captured_at": lineup.captured_at,
+                    "tier1c_complete": True,
+                }
+
+                xi_set_clause = ""
+                if xi_depth and xi_depth.captured_at:
+                    update_values.update({
+                        "xi_home_def_count": xi_depth.xi_home_def_count,
+                        "xi_home_mid_count": xi_depth.xi_home_mid_count,
+                        "xi_home_fwd_count": xi_depth.xi_home_fwd_count,
+                        "xi_away_def_count": xi_depth.xi_away_def_count,
+                        "xi_away_mid_count": xi_depth.xi_away_mid_count,
+                        "xi_away_fwd_count": xi_depth.xi_away_fwd_count,
+                        "xi_formation_mismatch_flag": xi_depth.xi_formation_mismatch_flag,
+                        "xi_depth_captured_at": xi_depth.captured_at,
+                        "tier1d_complete": True,
+                    })
+                    xi_set_clause = """,
+                        xi_home_def_count = :xi_home_def_count,
+                        xi_home_mid_count = :xi_home_mid_count,
+                        xi_home_fwd_count = :xi_home_fwd_count,
+                        xi_away_def_count = :xi_away_def_count,
+                        xi_away_mid_count = :xi_away_mid_count,
+                        xi_away_fwd_count = :xi_away_fwd_count,
+                        xi_formation_mismatch_flag = :xi_formation_mismatch_flag,
+                        xi_depth_captured_at = :xi_depth_captured_at,
+                        tier1d_complete = :tier1d_complete"""
+
+                update_query = text(f"""
+                    UPDATE {self.schema}.feature_matrix SET
+                        sofascore_lineup_available = :sofascore_lineup_available,
+                        sofascore_home_formation = :sofascore_home_formation,
+                        sofascore_away_formation = :sofascore_away_formation,
+                        lineup_home_starters_count = :lineup_home_starters_count,
+                        lineup_away_starters_count = :lineup_away_starters_count,
+                        sofascore_lineup_integrity_score = :sofascore_lineup_integrity_score,
+                        sofascore_lineup_captured_at = :sofascore_lineup_captured_at,
+                        tier1c_complete = :tier1c_complete
+                        {xi_set_clause}
+                    WHERE match_id = :match_id
+                      AND sofascore_lineup_available = false
+                """)
+
+                await self.session.execute(update_query, update_values)
+                await self.session.commit()
+                stats["fixed"] += 1
+
+            except Exception as e:
+                logger.warning(f"Lineup fixup failed for match {external_id}: {e}")
+                stats["errors"] += 1
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    pass
+
+        logger.info(
+            f"Lineup fixup complete: {stats['fixed']} fixed, "
+            f"{stats['skipped']} skipped, {stats['errors']} errors "
+            f"(of {stats['candidates']} candidates)"
+        )
+        return stats
+
     async def get_pit_stats(self) -> dict:
         """Get PIT compliance statistics for dashboard.
 

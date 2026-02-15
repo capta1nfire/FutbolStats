@@ -7724,6 +7724,58 @@ async def titan_outcome_sync() -> dict:
         return {"status": "error", "error": str(e), "duration_ms": duration_ms}
 
 
+async def titan_lineup_fixup() -> dict:
+    """
+    TITAN Lineup Fixup - fills missing Tier 1c/1d from SOTA data.
+
+    Finds matches where sofascore_lineup_available=false in feature_matrix
+    but match_sofascore_lineup has both sides captured pre-kickoff.
+    Fill-only: never degrades existing True to False (ABE directive).
+
+    Frequency: Every 1 hour
+    Guardrail: TITAN_LINEUP_FIXUP_ENABLED env var (default: true)
+    """
+    import time as _time
+
+    job_name = "titan_lineup_fixup"
+    start_time = _time.time()
+
+    if os.environ.get("TITAN_LINEUP_FIXUP_ENABLED", "true").lower() in ("false", "0", "no"):
+        logger.debug(f"[{job_name}] Disabled via env var")
+        return {"status": "disabled"}
+
+    try:
+        async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
+            from app.titan.materializers.feature_matrix import FeatureMatrixMaterializer
+
+            materializer = FeatureMatrixMaterializer(session=session, schema="titan")
+            stats = await materializer.fixup_missing_lineup_from_sota(limit=100)
+
+            duration_ms = (_time.time() - start_time) * 1000
+
+            if stats["fixed"] > 0:
+                logger.info(
+                    f"[{job_name}] Fixed {stats['fixed']} lineups in {duration_ms:.0f}ms "
+                    f"({stats['skipped']} skipped, {stats['errors']} errors)"
+                )
+            else:
+                logger.debug(f"[{job_name}] No fixable matches found ({duration_ms:.0f}ms)")
+
+            record_job_run(job=job_name, status="ok", duration_ms=duration_ms)
+
+            return {
+                "status": "ok",
+                **stats,
+                "duration_ms": duration_ms,
+            }
+
+    except Exception as e:
+        duration_ms = (_time.time() - start_time) * 1000
+        logger.error(f"[{job_name}] Failed: {e}")
+        record_job_run(job=job_name, status="error", duration_ms=duration_ms)
+        return {"status": "error", "error": str(e), "duration_ms": duration_ms}
+
+
 async def logo_resize_pending() -> dict:
     """
     Logo Resize Job - processes pending_resize logos into thumbnails.
@@ -8715,6 +8767,21 @@ def start_scheduler(ml_engine):
         max_instances=1,
         coalesce=True,
         misfire_grace_time=1800,  # 30min grace
+    )
+
+    # TITAN: Lineup Fixup - every 1 hour
+    # Fills missing Tier 1c/1d from SOTA lineup data captured pre-kickoff
+    # Fill-only: never degrades existing True to False
+    scheduler.add_job(
+        titan_lineup_fixup,
+        trigger=IntervalTrigger(hours=1),
+        id="titan_lineup_fixup",
+        name="TITAN Lineup Fixup (every 1h)",
+        replace_existing=True,
+        next_run_time=datetime.utcnow() + timedelta(seconds=95),  # Offset: +95s
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,  # 1h grace
     )
 
     # Logos: Resize pending thumbnails - every 5 minutes
