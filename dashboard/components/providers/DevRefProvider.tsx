@@ -85,17 +85,15 @@ function shortenPath(fileName: string): string {
 
 function flashElement(el: Element) {
   const htmlEl = el as HTMLElement;
-  htmlEl.style.outline = "2px solid rgba(99, 179, 237, 0.8)";
-  htmlEl.style.outlineOffset = "2px";
-  htmlEl.style.transition = "outline-color 0.4s ease-out";
+  const prev = htmlEl.style.opacity;
+  htmlEl.style.transition = "opacity 0.15s ease-out";
+  htmlEl.style.opacity = "0.4";
   setTimeout(() => {
-    htmlEl.style.outlineColor = "transparent";
+    htmlEl.style.opacity = prev || "1";
     setTimeout(() => {
-      htmlEl.style.outline = "";
-      htmlEl.style.outlineOffset = "";
       htmlEl.style.transition = "";
-    }, 400);
-  }, 400);
+    }, 300);
+  }, 600);
 }
 
 // ---------------------------------------------------------------------------
