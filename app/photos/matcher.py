@@ -118,10 +118,21 @@ def fuzzy_name_score(candidate_name: str, db_name: str, db_firstname: Optional[s
         fl = normalize_name(f"{db_firstname} {db_lastname}")
         scores.append(SequenceMatcher(None, c, fl).ratio())
 
-    # Lastname only (common for LATAM: "Falcao", "James")
+    # Lastname only (common for LATAM mononyms: "Falcao", "James")
+    # Only use this path when candidate is a single token (mononym) to avoid
+    # false positives like "Marcos Mina" matching lastname "Garcés Mina".
     if db_lastname:
         ln = normalize_name(db_lastname)
-        scores.append(SequenceMatcher(None, c, ln).ratio())
+        c_tokens = c.split()
+        if len(c_tokens) == 1:
+            # Mononym: compare directly
+            scores.append(SequenceMatcher(None, c, ln).ratio())
+        else:
+            # Multi-word candidate: require very high similarity (>=0.90)
+            # to prevent partial surname overlaps from inflating score
+            sim = SequenceMatcher(None, c, ln).ratio()
+            if sim >= 0.90:
+                scores.append(sim)
 
     # Initial+lastname pattern: "J. Ramírez" vs "Juan Carlos Ramírez Mejía"
     # If DB lastname is contained in candidate AND first initials match → high score
