@@ -60,7 +60,7 @@ function resolveComponentChain(fiber: Record<string, unknown> | null): string[] 
   let current = fiber;
   while (current && names.length < 5) {
     const type = current.type;
-    if (typeof type === "function" || typeof type === "object") {
+    if (type != null && (typeof type === "function" || typeof type === "object")) {
       const name =
         (type as { displayName?: string }).displayName ??
         (type as { name?: string }).name;
