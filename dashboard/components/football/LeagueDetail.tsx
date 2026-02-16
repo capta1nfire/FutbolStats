@@ -856,8 +856,6 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                       const isCurrent = selectedSeason === undefined && s.season === stats_by_season[0].season;
                       const color = isActive || isCurrent
                         ? "bg-primary text-primary-foreground"
-                        : avg >= 80 ? "bg-[var(--status-success-bg)] text-[var(--status-success-text)]"
-                        : avg >= 40 ? "bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]"
                         : "bg-muted text-muted-foreground";
                       return (
                         <Tooltip key={s.season}>

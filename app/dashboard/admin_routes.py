@@ -1042,8 +1042,9 @@ async def dashboard_admin_team_squad_stats(
             result = await session.execute(
                 text("""
                     SELECT
-                        mps.player_external_id,
-                        MAX(mps.player_name) AS player_name,
+                        -- Use MAX external_id (most recent) as canonical ID
+                        MAX(mps.player_external_id) AS player_external_id,
+                        mps.player_name,
                         COALESCE(MODE() WITHIN GROUP (ORDER BY mps.position), 'U') AS position,
                         COALESCE(MAX(p.jersey_number), MAX((mps.raw_json #>> '{statistics,games,number}')::int)) AS jersey_number,
                         COUNT(*) FILTER (WHERE COALESCE(mps.minutes, 0) > 0) AS appearances,
@@ -1077,7 +1078,7 @@ async def dashboard_admin_team_squad_stats(
                         SUM(COALESCE(mps.fouls_drawn, 0)) AS fouls_drawn,
                         SUM(COALESCE(mps.fouls_committed, 0)) AS fouls_committed,
                         BOOL_OR(COALESCE(mps.is_captain, false)) AS ever_captain,
-                        -- Bio fields from players table
+                        -- Bio fields from players table (prefer record with most data)
                         MAX(p.firstname) AS firstname,
                         MAX(p.lastname) AS lastname,
                         MAX(p.birth_date::text) AS birth_date,
@@ -1087,15 +1088,15 @@ async def dashboard_admin_team_squad_stats(
                         MAX(p.height) AS height,
                         MAX(p.weight) AS weight,
                         MAX(p.photo_url) AS photo_url,
-                        -- HQ photo URLs: best available (contextual > global)
+                        -- HQ photo URLs: use MAX external_id (most recent canonical)
                         (SELECT a.cdn_url FROM player_photo_assets a
-                         WHERE a.player_external_id = mps.player_external_id
+                         WHERE a.player_external_id = MAX(mps.player_external_id)
                            AND a.is_active = true AND a.asset_type = 'thumb'
                            AND a.style IN ('segmented', 'raw')
                          ORDER BY (a.context_team_id = :team_id)::int DESC, a.updated_at DESC
                          LIMIT 1) AS photo_url_thumb_hq,
                         (SELECT a.cdn_url FROM player_photo_assets a
-                         WHERE a.player_external_id = mps.player_external_id
+                         WHERE a.player_external_id = MAX(mps.player_external_id)
                            AND a.is_active = true AND a.asset_type = 'card'
                            AND a.style IN ('segmented', 'raw')
                          ORDER BY (a.context_team_id = :team_id)::int DESC, a.updated_at DESC
@@ -1105,7 +1106,7 @@ async def dashboard_admin_team_squad_stats(
                     LEFT JOIN players p ON p.external_id = mps.player_external_id
                     WHERE mps.team_external_id = :team_ext
                       AND m.season = :season
-                    GROUP BY mps.player_external_id
+                    GROUP BY mps.player_name
                     HAVING SUM(COALESCE(mps.minutes, 0)) > 0
                     ORDER BY appearances DESC, total_minutes DESC
                 """),

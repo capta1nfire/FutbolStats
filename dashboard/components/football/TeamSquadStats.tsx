@@ -30,11 +30,29 @@ function posGroup(pos: string | null | undefined): "G" | "D" | "M" | "F" | "U" {
 }
 
 const POS_LABEL: Record<string, string> = {
-  G: "Goalkeeper",
-  D: "Defender",
-  M: "Midfielder",
-  F: "Forward",
+  G: "GK",
+  D: "DEF",
+  M: "MID",
+  F: "FWD",
   U: "—",
+};
+
+// Position colors (cold tones) — used for row indicator + photo ring
+const POS_COLOR: Record<string, string> = {
+  G: "bg-slate-400/70",
+  D: "bg-sky-200/70",
+  M: "bg-blue-500/70",
+  F: "bg-blue-800/70",
+  U: "bg-muted-foreground/20",
+};
+
+// Position badge styles
+const POS_BADGE: Record<string, string> = {
+  G: "bg-slate-400/15 text-slate-400",
+  D: "bg-sky-200/15 text-sky-200",
+  M: "bg-blue-500/15 text-blue-400",
+  F: "bg-blue-800/15 text-blue-300",
+  U: "bg-muted text-muted-foreground",
 };
 
 // Position sort order: G=0, D=1, M=2, F=3, U=4
@@ -175,7 +193,7 @@ export function TeamSquadStats({ teamId, season, onPlayerSelect }: TeamSquadStat
                       {col.label}
                       {col.key === "app" && teamMatchesPlayed > 0 && (
                         <span className="text-[9px] tabular-nums text-muted-foreground bg-muted px-1 py-px rounded ml-0.5">
-                          /{teamMatchesPlayed}
+                          {teamMatchesPlayed}
                         </span>
                       )}
                       {sortKey === col.key && (
@@ -245,8 +263,10 @@ export function TeamSquadStats({ teamId, season, onPlayerSelect }: TeamSquadStat
                     </div>
                   </td>
                   {/* Position */}
-                  <td className="px-3 py-2 text-left text-xs text-muted-foreground group-hover/row:bg-accent/50 transition-colors">
-                    {POS_LABEL[p.posKey]}
+                  <td className="px-3 py-2 text-left group-hover/row:bg-accent/50 transition-colors">
+                    <span className={cn("inline-block px-1.5 py-0.5 rounded text-[10px] font-medium", POS_BADGE[p.posKey])}>
+                      {POS_LABEL[p.posKey]}
+                    </span>
                   </td>
                   {/* App */}
                   <td className="px-2 py-2 text-center text-sm text-muted-foreground tabular-nums group-hover/row:bg-accent/50 transition-colors">
