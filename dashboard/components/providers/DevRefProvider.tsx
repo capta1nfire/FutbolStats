@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { toast } from "sonner";
+
 
 // ---------------------------------------------------------------------------
 // Types
@@ -185,16 +185,6 @@ export function DevRefProvider({ children }: { children: ReactNode }) {
 
       navigator.clipboard.writeText(clipText);
       flashElement(target);
-      toast("Copied", {
-        description: clipText,
-        duration: 1500,
-        style: {
-          background: "#1c1e21",
-          border: "1px solid rgba(99, 179, 237, 0.3)",
-          color: "#dee0e3",
-          fontSize: "12px",
-        },
-      });
     };
 
     // Use capture phase so we intercept before normal handlers
