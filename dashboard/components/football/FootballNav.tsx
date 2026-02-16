@@ -165,11 +165,11 @@ export function FootballNav({
   const showNationalsList = selectedCategory === "national_teams";
 
   return (
-    <div className="w-[277px] border-r border-border bg-sidebar flex flex-col">
+    <div data-dev-ref="FootballNav" className="w-[277px] border-r border-border bg-sidebar flex flex-col">
       {/* Header */}
       <div className="shrink-0">
         {/* Team Search */}
-        <div className="px-3 pt-3 pb-2 relative" ref={teamSearchRef}>
+        <div data-dev-ref="FootballNav:TeamSearch" className="px-3 pt-3 pb-2 relative" ref={teamSearchRef}>
           <SearchInput
             placeholder="Search teams..."
             value={teamSearchQuery}
@@ -225,7 +225,7 @@ export function FootballNav({
         </div>
 
         {/* Category List */}
-        <div className="p-2">
+        <div data-dev-ref="FootballNav:CategoryList" className="p-2">
           {isNavLoading ? (
             <div className="flex items-center justify-center py-4">
               <Loader size="sm" />
@@ -293,7 +293,7 @@ export function FootballNav({
           </div>
 
           {/* Nationals ScrollArea */}
-          <ScrollArea className="flex-1 min-h-0">
+          <ScrollArea data-dev-ref="FootballNav:NationalsList" className="flex-1 min-h-0">
             <div className="p-2">
               {isNationalsLoading ? (
                 <div className="flex items-center justify-center py-4">
@@ -358,7 +358,7 @@ export function FootballNav({
           </div>
 
           {/* Countries ScrollArea */}
-          <ScrollArea className="flex-1 min-h-0">
+          <ScrollArea data-dev-ref="FootballNav:CountriesList" className="flex-1 min-h-0">
             <div className="p-2">
               {isCountriesLoading ? (
                 <div className="flex items-center justify-center py-4">

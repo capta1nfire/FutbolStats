@@ -131,7 +131,7 @@ export function FilterPanel({
   // Expanded state: full filter panel (277px matches UniFi Left Rail width)
   // overflow-hidden ensures flex-col works and footer stays at bottom
   return (
-    <aside className="w-[277px] shrink-0 border-r border-border bg-sidebar flex flex-col overflow-hidden transition-smooth">
+    <aside data-dev-ref={`FilterPanel:${title}`} className="w-[277px] shrink-0 border-r border-border bg-sidebar flex flex-col overflow-hidden transition-smooth">
       {/* Header - collapse button hidden when CustomizeColumnsPanel is open */}
       <div className="h-12 flex items-center justify-between px-3">
         <span className="text-sm font-semibold text-foreground">{title}</span>

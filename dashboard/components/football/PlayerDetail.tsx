@@ -120,7 +120,7 @@ export function PlayerDetail({ player, teamName }: PlayerDetailProps) {
     .join(", ");
 
   return (
-    <div className="px-4 py-4 space-y-4">
+    <div data-dev-ref="PlayerDetail" className="px-4 py-4 space-y-4">
       {/* Player header */}
       <div className="flex items-center gap-4">
         {!imgError ? (

@@ -63,6 +63,7 @@ export function RightPanel({
 }: RightPanelProps) {
   return (
     <aside
+      data-dev-ref="RightPanel"
       className="w-[400px] border-l border-border shadow-drawer-left bg-sidebar flex flex-col"
       role="complementary"
       aria-label="Details panel"
@@ -119,16 +120,22 @@ export function RightPanel({
       {/* Content area */}
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {activeTab === "team" && (
-          <TeamPanelContent teamId={teamId} />
+          <div data-dev-ref="RightPanel:TeamTab" className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            <TeamPanelContent teamId={teamId} />
+          </div>
         )}
         {activeTab === "settings" && league && (
-          <LeagueSettingsPanelContent league={league} />
+          <div data-dev-ref="RightPanel:SettingsTab" className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            <LeagueSettingsPanelContent league={league} />
+          </div>
         )}
         {activeTab === "coverage" && leagueId != null && (
-          <CoveragePanelContent leagueId={leagueId} />
+          <div data-dev-ref="RightPanel:CoverageTab" className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            <CoveragePanelContent leagueId={leagueId} />
+          </div>
         )}
         {activeTab === "player" && selectedPlayer && (
-          <ScrollArea className="flex-1 min-h-0">
+          <ScrollArea data-dev-ref="RightPanel:PlayerTab" className="flex-1 min-h-0">
             <PlayerDetail player={selectedPlayer} teamName={teamName} />
           </ScrollArea>
         )}

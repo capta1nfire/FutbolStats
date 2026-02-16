@@ -151,7 +151,7 @@ export function IaFeaturesSection() {
   const selectedModel = config.availableModels.find((m) => m.id === primaryModel);
 
   return (
-    <div className="bg-background rounded-lg p-6 space-y-6 border border-border">
+    <div data-dev-ref="IaFeaturesSection" className="bg-background rounded-lg p-6 space-y-6 border border-border">
       <SettingsSectionHeader
         title="IA Features"
         description="Configure narrative generation, LLM settings, and 3D logo generation"

@@ -413,7 +413,7 @@ function FootballPageContent() {
   }, [category, country, leagueId, groupId, worldCupTab, worldCupGroup]);
 
   return (
-    <div className="h-full flex overflow-hidden relative">
+    <div data-dev-ref="FootballPage" className="h-full flex overflow-hidden relative">
       {/* Col 2: Navigation Panel */}
       <FootballNav
         selectedCategory={category}
@@ -425,7 +425,7 @@ function FootballPageContent() {
       />
 
       {/* Col 3+4: Main Content Area */}
-      <div className="flex-1 flex flex-col overflow-hidden bg-background">
+      <div data-dev-ref="FootballPage:MainContent" className="flex-1 flex flex-col overflow-hidden bg-background">
         {contentView === "overview" && <FootballOverview />}
         {contentView === "league" && leagueId && (
           <LeagueDetail

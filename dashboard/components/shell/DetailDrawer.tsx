@@ -120,6 +120,7 @@ export function DetailDrawer({
         />
       )}
       <aside
+        data-dev-ref={`DetailDrawer${title ? `:${typeof title === "string" ? title : ""}` : ""}`}
         className={cn(
           "bg-sidebar flex flex-col transition-smooth overflow-hidden",
           persistent

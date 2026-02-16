@@ -284,7 +284,7 @@ export function AnalyticsDetailDrawer({
   // Mobile/Tablet: Sheet overlay
   return (
     <Sheet open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <SheetContent side="right" className="w-full sm:max-w-md p-0">
+      <SheetContent side="right" className="w-full sm:max-w-md p-0" data-dev-ref="AnalyticsDetailDrawer">
         <SheetHeader className="px-4 py-3 border-b border-border">
           <SheetTitle className="text-sm font-semibold truncate">
             {reportTitle}

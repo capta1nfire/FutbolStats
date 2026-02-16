@@ -764,7 +764,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
   const { league, stats_by_season, recent_matches } = data;
 
   return (
-    <ScrollArea className="h-full">
+    <ScrollArea data-dev-ref="LeagueDetail" className="h-full">
       <div className="px-6 pt-6 pb-2">
         {/* Two-column content: league + team */}
         <div className="w-full flex flex-col lg:flex-row gap-4 lg:items-start min-w-0">
@@ -776,7 +776,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
             )}
           >
             {/* League header */}
-            <div className="rounded-lg border border-border px-4 py-3 flex items-center gap-4 min-h-[148px]">
+            <div data-dev-ref="LeagueDetail:LeagueHeader" className="rounded-lg border border-border px-4 py-3 flex items-center gap-4 min-h-[148px]">
               {league.logo_url && (
                 <img
                   src={league.logo_url}
@@ -878,7 +878,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
             </div>
 
             {/* League content */}
-            <div className="rounded-lg border border-border overflow-hidden">
+            <div data-dev-ref="LeagueDetail:LeagueContent" className="rounded-lg border border-border overflow-hidden">
               <div>
                 {/* Sub-tabs: Live + Group/Standings + Reclassification + Relegation */}
                 {(() => {
@@ -1108,9 +1108,9 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
 
           {/* Club container (only when selected) */}
           {selectedTeamId !== null && (
-            <div className="flex flex-col gap-4 w-full lg:w-[50%] min-w-0">
+            <div data-dev-ref="LeagueDetail:TeamColumn" className="flex flex-col gap-4 w-full lg:w-[50%] min-w-0">
               {/* Team Header */}
-              <div className="rounded-lg border border-border px-4 py-3 flex items-center gap-3 min-h-[148px]">
+              <div data-dev-ref="LeagueDetail:TeamHeader" className="rounded-lg border border-border px-4 py-3 flex items-center gap-3 min-h-[148px]">
                 {selectedTeam.data?.team?.logo_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -1179,7 +1179,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
               </div>
 
               {/* Team Tabs + Content */}
-              <div className="rounded-lg border border-border overflow-hidden">
+              <div data-dev-ref="LeagueDetail:TeamTabs" className="rounded-lg border border-border overflow-hidden">
               <div className="flex gap-1 border-b border-border overflow-x-auto">
                 {TEAM_DETAIL_TABS.map((tab) => {
                   const isActive = teamTab === tab.id;
@@ -1235,7 +1235,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
 
               {/* Tab Content */}
               {teamTab === "overview" && (
-                <>
+                <div data-dev-ref="LeagueDetail:TeamOverviewTab">
                   {!selectedTeam.isLoading && selectedTeam.data?.wikidata_enrichment ? (
                     <div>
                       <table className="w-full text-sm">
@@ -1452,7 +1452,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                       No enrichment data for this team
                     </div>
                   ) : null}
-                </>
+                </div>
               )}
 
               {teamTab === "squad" && selectedTeamId && (
@@ -1474,7 +1474,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
               )}
 
               {teamTab === "coverage" && (
-                <div className="space-y-4">
+                <div data-dev-ref="LeagueDetail:TeamCoverageTab" className="space-y-4">
                   {selectedTeam.isLoading ? (
                     <div className="flex items-center justify-center py-8">
                       <Loader size="sm" />

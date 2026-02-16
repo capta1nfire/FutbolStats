@@ -269,7 +269,7 @@ export default function OverviewPage() {
         </aside>
       ) : (
         /* Expanded state: full panel */
-        <aside className="w-[290px] min-w-[290px] shrink-0 bg-sidebar flex flex-col overflow-hidden transition-smooth">
+        <aside data-dev-ref="OverviewPage:LeftRail" className="w-[290px] min-w-[290px] shrink-0 bg-sidebar flex flex-col overflow-hidden transition-smooth">
           {/* Header with collapse button */}
           <div className="h-12 flex items-center justify-between pl-3 pr-0 shrink-0">
             <span className="text-sm font-semibold text-foreground">Overview</span>
@@ -285,9 +285,9 @@ export default function OverviewPage() {
           </div>
 
           {/* Team Search */}
-          <div className="px-3 pt-3 pb-2 relative shrink-0" ref={teamSearchRef}>
+          <div data-dev-ref="OverviewPage:TeamSearch" className="px-3 pt-3 pb-2 relative shrink-0" ref={teamSearchRef}>
             <SearchInput
-              placeholder="Search teams..."
+              placeholder="Search"
               value={teamSearchQuery}
               onChange={handleTeamSearchChange}
               onFocus={() => teamSearchQuery.length >= 2 && setShowTeamResults(true)}
@@ -342,7 +342,7 @@ export default function OverviewPage() {
           <ScrollArea className="flex-1 min-h-0">
             <div className="pl-3 pr-1.5 py-3 space-y-3">
               {/* Today Matches */}
-              <div>
+              <div data-dev-ref="OverviewPage:TodayMatches">
                 <div className="flex items-center gap-2 mb-2">
                   <Calendar className="h-4 w-4 text-muted-foreground" />
                   <span className="text-sm font-medium text-foreground">
@@ -371,13 +371,13 @@ export default function OverviewPage() {
       )}
 
       {/* Main content - optimized for above-the-fold at 1440x900 */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div data-dev-ref="OverviewPage:MainContent" className="flex-1 flex flex-col overflow-hidden">
         <div className="pl-1.5 pr-4 py-4 space-y-4 flex-1 overflow-auto">
           {/* Row 1: Model Benchmark - Full Width */}
           <ModelBenchmarkTile />
 
           {/* Row 2: Grid - 8 compact tiles */}
-          <div className="grid grid-cols-4 xl:grid-cols-8 gap-3">
+          <div data-dev-ref="OverviewPage:TilesGrid" className="grid grid-cols-4 xl:grid-cols-8 gap-3">
             <OverallOpsBar
               statuses={overallStatuses}
               jobs={jobs}
@@ -422,7 +422,7 @@ export default function OverviewPage() {
           </div>
 
           {/* Row 3: API Budget + Sentry + LLM Cost | Diagnostics */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+          <div data-dev-ref="OverviewPage:BudgetDiagnosticsRow" className="grid grid-cols-1 xl:grid-cols-2 gap-3">
             {/* Left half: 3 compact cards */}
             <div className="grid grid-cols-3 gap-3">
               <ClickableTile panel="budget">

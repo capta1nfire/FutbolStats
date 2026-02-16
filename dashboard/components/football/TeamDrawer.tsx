@@ -493,7 +493,7 @@ export function TeamPanelContent({ teamId }: { teamId: number | null }) {
         </h2>
       </div>
       {/* Scrollable content */}
-      <ScrollArea className="flex-1 min-h-0">
+      <ScrollArea data-dev-ref="TeamDrawer" className="flex-1 min-h-0">
         <div className="px-3 pt-3 pb-3">
           {content}
         </div>

@@ -87,7 +87,7 @@ export function LeagueSettingsPanelContent({ league }: { league: LeagueInfo }) {
         </h2>
       </div>
       {/* Scrollable content */}
-      <ScrollArea className="flex-1 min-h-0">
+      <ScrollArea data-dev-ref="LeagueSettings" className="flex-1 min-h-0">
         <div className="px-3 pt-3 pb-3 space-y-4">
           {/* League info header */}
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
