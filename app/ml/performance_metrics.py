@@ -344,7 +344,7 @@ async def fetch_prediction_records(
           AND m.away_goals IS NOT NULL
           AND COALESCE(m.finished_at, m.date) >= :cutoff
           AND COALESCE(m.finished_at, m.date) <= NOW()
-          AND (:model_version IS NULL OR p.model_version = :model_version)
+          AND (CAST(:model_version AS VARCHAR) IS NULL OR p.model_version = :model_version)
         ORDER BY m.id, p.asof_timestamp DESC NULLS LAST
     """)
 
