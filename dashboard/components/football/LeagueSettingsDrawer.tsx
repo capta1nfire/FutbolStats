@@ -7,16 +7,24 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { DetailDrawer } from "@/components/shell/DetailDrawer";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { IconTabs } from "@/components/ui/icon-tabs";
 import { useAdminLeagueMutation } from "@/lib/hooks/use-admin-league-mutation";
-import { ExternalLink, Loader2 } from "lucide-react";
+import { ExternalLink, Info, Image as ImageIcon, Loader2, Settings } from "lucide-react";
 import type { LeagueInfo, LeagueTags } from "@/lib/types/football";
+
+const LEAGUE_TABS = [
+  { id: "overview", icon: <Info />, label: "Overview" },
+  { id: "multimedia", icon: <ImageIcon />, label: "Multimedia" },
+  { id: "settings", icon: <Settings />, label: "Settings" },
+];
 
 /**
  * League Settings Panel Content — standalone content for the right panel.
- * Contains header, scroll area, and all league settings forms.
+ * Contains league header, IconTabs, and tab content.
  */
 export function LeagueSettingsPanelContent({ league }: { league: LeagueInfo }) {
   const mutation = useAdminLeagueMutation();
+  const [activeTab, setActiveTab] = useState("overview");
 
   const [useShortNames, setUseShortNames] = useState(
     league.tags?.use_short_names ?? false
@@ -28,10 +36,11 @@ export function LeagueSettingsPanelContent({ league }: { league: LeagueInfo }) {
     league.season_start_month ?? 8
   );
 
-  const isDirty =
+  const isDirtyMetadata =
     displayName !== (league.display_name ?? "") ||
-    logoUrl !== (league.logo_url ?? "") ||
     wikipediaUrl !== (league.wikipedia_url ?? "");
+
+  const isDirtyLogo = logoUrl !== (league.logo_url ?? "");
 
   useEffect(() => {
     setUseShortNames(league.tags?.use_short_names ?? false);
@@ -72,182 +81,230 @@ export function LeagueSettingsPanelContent({ league }: { league: LeagueInfo }) {
       id: league.league_id,
       body: {
         display_name: displayName.trim() || null,
-        logo_url: logoUrl.trim() || null,
         wikipedia_url: wikipediaUrl.trim() || null,
       },
     });
-  }, [league.league_id, displayName, logoUrl, wikipediaUrl, mutation]);
+  }, [league.league_id, displayName, wikipediaUrl, mutation]);
+
+  const handleSaveLogo = useCallback(() => {
+    mutation.mutate({
+      id: league.league_id,
+      body: { logo_url: logoUrl.trim() || null },
+    });
+  }, [league.league_id, logoUrl, mutation]);
 
   return (
     <>
-      {/* Header */}
-      <div className="h-14 flex items-center justify-center px-4 shrink-0">
-        <h2 className="text-sm font-semibold text-foreground truncate">
-          League Settings
-        </h2>
+      {/* League header */}
+      <div className="px-4 pt-4 pb-2 shrink-0 space-y-3">
+        <div className="flex items-center gap-3">
+          {league.logo_url && (
+            <img
+              src={league.logo_url}
+              alt=""
+              width={32}
+              height={32}
+              className="shrink-0"
+            />
+          )}
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-foreground truncate">
+              {league.display_name || league.name}
+            </h2>
+            <p className="text-xs text-muted-foreground">{league.country}</p>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <IconTabs
+          tabs={LEAGUE_TABS}
+          value={activeTab}
+          onValueChange={setActiveTab}
+          className="w-full"
+        />
       </div>
-      {/* Scrollable content */}
+
+      {/* Scrollable tab content */}
       <ScrollArea data-dev-ref="LeagueSettings" className="flex-1 min-h-0">
         <div className="px-3 pt-3 pb-3 space-y-4">
-          {/* League info header */}
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            {league.logo_url && (
-              <img
-                src={league.logo_url}
-                alt=""
-                width={20}
-                height={20}
-                className="inline-block"
-              />
-            )}
-            {league.name} ({league.country})
-          </div>
+          {/* Overview tab */}
+          {activeTab === "overview" && (
+            <>
+              {/* League Identity */}
+              <div className="bg-muted/50 rounded-lg p-3 space-y-3">
+                <div className="text-xs text-muted-foreground">League Identity</div>
 
-          {/* Metadata Card */}
-          <div className="bg-muted/50 rounded-lg p-3 space-y-3">
-            <div className="text-xs text-muted-foreground">League Identity</div>
-
-            <div className="space-y-1">
-              <Label htmlFor="display-name" className="text-xs text-muted-foreground">
-                Commercial Name
-              </Label>
-              <Input
-                id="display-name"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                placeholder={league.name}
-                className="h-8 text-sm"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <Label htmlFor="logo-url" className="text-xs text-muted-foreground">
-                Logo URL
-              </Label>
-              <div className="flex items-center gap-2">
-                {logoUrl && (
-                  <img
-                    src={logoUrl}
-                    alt=""
-                    width={24}
-                    height={24}
-                    className="shrink-0"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = "none";
-                    }}
+                <div className="space-y-1">
+                  <Label htmlFor="display-name" className="text-xs text-muted-foreground">
+                    Commercial Name
+                  </Label>
+                  <Input
+                    id="display-name"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    placeholder={league.name}
+                    className="h-8 text-sm"
                   />
-                )}
-                <Input
-                  id="logo-url"
-                  value={logoUrl}
-                  onChange={(e) => setLogoUrl(e.target.value)}
-                  placeholder="https://..."
-                  className="h-8 text-sm flex-1"
-                />
-              </div>
-            </div>
+                </div>
 
-            <div className="space-y-1">
-              <Label htmlFor="wikipedia-url" className="text-xs text-muted-foreground">
-                Wikipedia
-              </Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  id="wikipedia-url"
-                  value={wikipediaUrl}
-                  onChange={(e) => setWikipediaUrl(e.target.value)}
-                  placeholder="https://es.wikipedia.org/wiki/..."
-                  className="h-8 text-sm flex-1"
-                />
-                {wikipediaUrl && (
-                  <a
-                    href={wikipediaUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-muted-foreground hover:text-foreground shrink-0"
+                <div className="space-y-1">
+                  <Label htmlFor="wikipedia-url" className="text-xs text-muted-foreground">
+                    Wikipedia
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="wikipedia-url"
+                      value={wikipediaUrl}
+                      onChange={(e) => setWikipediaUrl(e.target.value)}
+                      placeholder="https://es.wikipedia.org/wiki/..."
+                      className="h-8 text-sm flex-1"
+                    />
+                    {wikipediaUrl && (
+                      <a
+                        href={wikipediaUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-muted-foreground hover:text-foreground shrink-0"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                      </a>
+                    )}
+                  </div>
+                </div>
+
+                {isDirtyMetadata && (
+                  <Button
+                    size="sm"
+                    onClick={handleSaveMetadata}
+                    disabled={mutation.isPending}
+                    className="w-full h-8 text-xs"
                   >
-                    <ExternalLink className="w-4 h-4" />
-                  </a>
+                    {mutation.isPending ? (
+                      <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                    ) : null}
+                    Save Changes
+                  </Button>
                 )}
               </div>
-            </div>
+            </>
+          )}
 
-            {isDirty && (
-              <Button
-                size="sm"
-                onClick={handleSaveMetadata}
-                disabled={mutation.isPending}
-                className="w-full h-8 text-xs"
-              >
-                {mutation.isPending ? (
-                  <Loader2 className="w-3 h-3 animate-spin mr-1" />
-                ) : null}
-                Save Changes
-              </Button>
-            )}
-          </div>
+          {/* Multimedia tab */}
+          {activeTab === "multimedia" && (
+            <>
+              <div className="bg-muted/50 rounded-lg p-3 space-y-3">
+                <div className="text-xs text-muted-foreground">Logo</div>
 
-          {/* Display Settings Card */}
-          <div className="bg-muted/50 rounded-lg p-3 space-y-3">
-            <div className="text-xs text-muted-foreground">Display</div>
+                <div className="space-y-1">
+                  <Label htmlFor="logo-url" className="text-xs text-muted-foreground">
+                    Logo URL
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    {logoUrl && (
+                      <img
+                        src={logoUrl}
+                        alt=""
+                        width={24}
+                        height={24}
+                        className="shrink-0"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = "none";
+                        }}
+                      />
+                    )}
+                    <Input
+                      id="logo-url"
+                      value={logoUrl}
+                      onChange={(e) => setLogoUrl(e.target.value)}
+                      placeholder="https://..."
+                      className="h-8 text-sm flex-1"
+                    />
+                  </div>
+                </div>
 
-            <div className="flex items-center justify-between gap-4">
-              <div className="space-y-0.5">
-                <Label htmlFor="short-names" className="text-sm text-foreground">
-                  Use short names
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Show abbreviated team names
-                </p>
+                {isDirtyLogo && (
+                  <Button
+                    size="sm"
+                    onClick={handleSaveLogo}
+                    disabled={mutation.isPending}
+                    className="w-full h-8 text-xs"
+                  >
+                    {mutation.isPending ? (
+                      <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                    ) : null}
+                    Save Logo
+                  </Button>
+                )}
               </div>
-              <Switch
-                id="short-names"
-                checked={useShortNames}
-                onCheckedChange={handleToggle}
-                disabled={mutation.isPending}
-              />
-            </div>
-          </div>
+            </>
+          )}
 
-          {/* Season Configuration Card */}
-          <div className="bg-muted/50 rounded-lg p-3 space-y-3">
-            <div className="text-xs text-muted-foreground">Season</div>
+          {/* Settings tab */}
+          {activeTab === "settings" && (
+            <>
+              {/* Display Settings */}
+              <div className="bg-muted/50 rounded-lg p-3 space-y-3">
+                <div className="text-xs text-muted-foreground">Display</div>
 
-            <div className="space-y-1">
-              <Label htmlFor="season-start" className="text-xs text-muted-foreground">
-                Season start month
-              </Label>
-              <select
-                id="season-start"
-                value={seasonStartMonth}
-                onChange={(e) => handleSeasonStartChange(Number(e.target.value))}
-                disabled={mutation.isPending}
-                className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm"
-              >
-                {[
-                  { value: 1, label: "January" },
-                  { value: 2, label: "February" },
-                  { value: 3, label: "March" },
-                  { value: 4, label: "April" },
-                  { value: 5, label: "May" },
-                  { value: 6, label: "June" },
-                  { value: 7, label: "July" },
-                  { value: 8, label: "August" },
-                  { value: 9, label: "September" },
-                  { value: 10, label: "October" },
-                  { value: 11, label: "November" },
-                  { value: 12, label: "December" },
-                ].map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-              <p className="text-[11px] text-muted-foreground">
-                Used by Coverage Map season filters
-              </p>
-            </div>
-          </div>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="short-names" className="text-sm text-foreground">
+                      Use short names
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Show abbreviated team names
+                    </p>
+                  </div>
+                  <Switch
+                    id="short-names"
+                    checked={useShortNames}
+                    onCheckedChange={handleToggle}
+                    disabled={mutation.isPending}
+                  />
+                </div>
+              </div>
+
+              {/* Season Configuration */}
+              <div className="bg-muted/50 rounded-lg p-3 space-y-3">
+                <div className="text-xs text-muted-foreground">Season</div>
+
+                <div className="space-y-1">
+                  <Label htmlFor="season-start" className="text-xs text-muted-foreground">
+                    Season start month
+                  </Label>
+                  <select
+                    id="season-start"
+                    value={seasonStartMonth}
+                    onChange={(e) => handleSeasonStartChange(Number(e.target.value))}
+                    disabled={mutation.isPending}
+                    className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm"
+                  >
+                    {[
+                      { value: 1, label: "January" },
+                      { value: 2, label: "February" },
+                      { value: 3, label: "March" },
+                      { value: 4, label: "April" },
+                      { value: 5, label: "May" },
+                      { value: 6, label: "June" },
+                      { value: 7, label: "July" },
+                      { value: 8, label: "August" },
+                      { value: 9, label: "September" },
+                      { value: 10, label: "October" },
+                      { value: 11, label: "November" },
+                      { value: 12, label: "December" },
+                    ].map((m) => (
+                      <option key={m.value} value={m.value}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-muted-foreground">
+                    Used by Coverage Map season filters
+                  </p>
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Status feedback */}
           {mutation.isPending && (

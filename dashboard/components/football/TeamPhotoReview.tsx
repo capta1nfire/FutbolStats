@@ -253,7 +253,7 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
             </button>
           </div>
 
-          {/* Candidate */}
+          {/* Candidate — face-crop preview from backend */}
           <div className="flex flex-col items-center gap-1 flex-1">
             <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
               Candidate
@@ -261,10 +261,10 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
             <div className="relative w-full aspect-square rounded-lg border border-green-500/20 bg-muted overflow-hidden">
               {!imgErrors["candidate"] ? (
                 <Image
-                  src={current.candidate_url}
+                  src={`/api/photos/preview?id=${current.id}`}
                   alt="Candidate"
                   fill
-                  className="object-contain"
+                  className="object-cover"
                   unoptimized
                   onError={() =>
                     setImgErrors((e) => ({ ...e, candidate: true }))

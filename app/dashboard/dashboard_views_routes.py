@@ -5176,3 +5176,57 @@ async def dashboard_photo_review_action(
         "review_status": row["review_status"],
     }
 
+
+@router.get("/dashboard/photos/preview/{candidate_id}")
+async def dashboard_photo_face_preview(
+    request: Request,
+    candidate_id: int,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Return a face-crop preview PNG for a photo candidate.
+
+    Downloads the candidate image, runs crop_face(), and streams the result.
+    Used by the dashboard review UI to show the final crop before approve/reject.
+    """
+    _check_token(request)
+
+    from fastapi.responses import Response
+    import httpx
+    from app.photos.processor import crop_face
+
+    sql = text("""
+        SELECT photo_meta FROM player_photo_assets
+        WHERE id = :id AND asset_type = 'candidate'
+    """)
+    result = await session.execute(sql, {"id": candidate_id})
+    row = result.mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    meta = row["photo_meta"] or {}
+    candidate_url = meta.get("candidate_url", "")
+    if not candidate_url:
+        raise HTTPException(status_code=404, detail="No candidate_url in metadata")
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(candidate_url)
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502, detail=f"Failed to fetch image ({resp.status_code})")
+            image_bytes = resp.content
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Image download failed: {e}")
+
+    face_bytes = crop_face(
+        image_bytes,
+        output_size=256,
+        player_name=meta.get("player_name", ""),
+        player_ext_id=meta.get("player_external_id", 0),
+    )
+    if not face_bytes:
+        raise HTTPException(status_code=422, detail="Face crop failed (content too small or invalid)")
+
+    return Response(content=face_bytes, media_type="image/png", headers={
+        "Cache-Control": "public, max-age=3600",
+    })
+

@@ -209,7 +209,7 @@ export function TeamSquadStats({ teamId, season, onPlayerSelect }: TeamSquadStat
             <tbody>
               {sortedPlayers.map((p, idx) => (
                 <tr
-                  key={p.player_external_id}
+                  key={`${p.player_external_id}-${idx}`}
                   role={onPlayerSelect ? "button" : undefined}
                   tabIndex={onPlayerSelect ? 0 : undefined}
                   onClick={() => onPlayerSelect?.(p)}

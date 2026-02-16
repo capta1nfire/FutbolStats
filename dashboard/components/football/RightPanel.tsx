@@ -70,7 +70,10 @@ export function RightPanel({
     >
       {/* Tab bar */}
       {tabs.length > 1 && (
-        <div className="flex items-center h-10 px-2 gap-1 shrink-0 border-b border-border">
+        <nav
+          role="tablist"
+          className="inline-flex items-center bg-surface rounded-lg p-1 h-10 min-h-9 mx-2 mt-2 shrink-0"
+        >
           {tabs.map((tabId) => {
             const def = TAB_DEFS[tabId];
             const isActive = activeTab === tabId;
@@ -78,43 +81,50 @@ export function RightPanel({
               ? selectedPlayer.player_name.trim().split(/\s+/).slice(-1)[0] || "Player"
               : def.label;
             return (
-              <button
-                key={tabId}
-                onClick={() => onTabChange(tabId)}
-                className={cn(
-                  "inline-flex items-center gap-1.5 px-2.5 h-7 rounded-md text-xs font-medium",
-                  "transition-colors duration-150",
-                  isActive
-                    ? "bg-accent text-primary"
-                    : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
-                )}
-              >
-                {def.icon}
-                <span>{label}</span>
-                {def.closeable && (
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onTabClose(tabId);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
+              <div key={tabId} className="flex-1">
+                <button
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => onTabChange(tabId)}
+                  className={cn(
+                    "inline-flex items-center justify-center gap-1.5 w-full h-8 min-h-8 px-2 rounded-md",
+                    "transition-[background-color,color] duration-150",
+                    "focus-visible:outline focus-visible:outline-1 focus-visible:outline-primary",
+                    "bg-transparent text-muted-foreground",
+                    !isActive && "hover:text-primary",
+                    isActive && "bg-accent text-primary"
+                  )}
+                  style={{ transitionTimingFunction: "cubic-bezier(0.7, 0, 0.3, 1)" }}
+                >
+                  <span className="flex items-center [&>svg]:w-3.5 [&>svg]:h-3.5">
+                    {def.icon}
+                  </span>
+                  <span className="text-xs font-medium">{label}</span>
+                  {def.closeable && (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
                         e.stopPropagation();
                         onTabClose(tabId);
-                      }
-                    }}
-                    className="ml-0.5 rounded-sm p-0.5 opacity-50 hover:opacity-100 hover:bg-muted transition-opacity"
-                    aria-label={`Close ${def.label}`}
-                  >
-                    <X className="w-3 h-3" />
-                  </span>
-                )}
-              </button>
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.stopPropagation();
+                          onTabClose(tabId);
+                        }
+                      }}
+                      className="ml-0.5 rounded-sm p-0.5 opacity-50 hover:opacity-100 hover:bg-muted transition-opacity"
+                      aria-label={`Close ${def.label}`}
+                    >
+                      <X className="w-3 h-3" />
+                    </span>
+                  )}
+                </button>
+              </div>
             );
           })}
-        </div>
+        </nav>
       )}
 
       {/* Content area */}

@@ -44,12 +44,12 @@ import { TeamSquadStats } from "./TeamSquadStats";
 import type { TeamSquadPlayerSeasonStats } from "@/lib/types/squad";
 
 const TEAM_DETAIL_TABS = [
-  { id: "overview", label: "Overview" },
   { id: "squad", label: "Squad" },
   { id: "matches", label: "Matches" },
   { id: "stats", label: "Stats" },
   { id: "coverage", label: "Coverage" },
   { id: "transfers", label: "Transfers" },
+  { id: "club", label: "Club" },
 ] as const;
 
 type TeamDetailTabId = (typeof TEAM_DETAIL_TABS)[number]["id"];
@@ -620,10 +620,10 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
   const [selectedGroup, setSelectedGroup] = useState<string | undefined>(undefined);
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(initialTeamId ?? null);
   const [teamTab, _setTeamTab] = useState<TeamDetailTabId>(() => {
-    if (typeof window === "undefined") return "overview";
+    if (typeof window === "undefined") return "squad";
     const stored = localStorage.getItem("fs:teamTab");
     const valid = TEAM_DETAIL_TABS.some(t => t.id === stored);
-    return valid ? (stored as TeamDetailTabId) : "overview";
+    return valid ? (stored as TeamDetailTabId) : "squad";
   });
   const setTeamTab = useCallback((v: TeamDetailTabId) => {
     _setTeamTab(v);
@@ -1239,7 +1239,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
               </div>
 
               {/* Tab Content */}
-              {teamTab === "overview" && (
+              {teamTab === "club" && (
                 <div data-dev-ref="LeagueDetail:TeamOverviewTab">
                   {!selectedTeam.isLoading && selectedTeam.data?.wikidata_enrichment ? (
                     <div>
@@ -1479,7 +1479,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
               )}
 
               {teamTab === "coverage" && (
-                <div data-dev-ref="LeagueDetail:TeamCoverageTab" className="space-y-4">
+                <div data-dev-ref="LeagueDetail:TeamCoverageTab" className="space-y-4 min-w-0 overflow-hidden p-4">
                   {selectedTeam.isLoading ? (
                     <div className="flex items-center justify-center py-8">
                       <Loader size="sm" />

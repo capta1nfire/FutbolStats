@@ -3,6 +3,9 @@
 import Image from "next/image";
 import { useState } from "react";
 import type { TeamSquadPlayerSeasonStats } from "@/lib/types/squad";
+import { IconTabs } from "@/components/ui/icon-tabs";
+import { SurfaceCard } from "@/components/ui/surface-card";
+import { Info, BarChart3 } from "lucide-react";
 
 function playerPhotoUrl(externalId: number): string {
   return `https://media.api-sports.io/football/players/${externalId}.png`;
@@ -23,7 +26,6 @@ interface StatItem {
 
 interface StatSection {
   title: string;
-  color: string;
   items: StatItem[];
 }
 
@@ -33,7 +35,6 @@ function buildSections(p: TeamSquadPlayerSeasonStats): StatSection[] {
   return [
     {
       title: "Attack",
-      color: "text-emerald-500",
       items: [
         { label: "Goals", value: p.goals },
         { label: "Assists", value: p.assists },
@@ -43,7 +44,6 @@ function buildSections(p: TeamSquadPlayerSeasonStats): StatSection[] {
     },
     {
       title: "Passing",
-      color: "text-blue-500",
       items: [
         { label: "Total", value: p.passes_total },
         { label: "Key Passes", value: p.key_passes },
@@ -52,7 +52,6 @@ function buildSections(p: TeamSquadPlayerSeasonStats): StatSection[] {
     },
     {
       title: "Defense",
-      color: "text-amber-500",
       items: [
         { label: "Tackles", value: p.tackles },
         { label: "Interceptions", value: p.interceptions },
@@ -62,7 +61,6 @@ function buildSections(p: TeamSquadPlayerSeasonStats): StatSection[] {
     },
     {
       title: "Duels",
-      color: "text-purple-500",
       items: [
         { label: "Total", value: p.duels_total },
         { label: "Won", value: p.duels_won },
@@ -72,7 +70,6 @@ function buildSections(p: TeamSquadPlayerSeasonStats): StatSection[] {
     },
     {
       title: "Discipline",
-      color: "text-red-400",
       items: [
         { label: "Yellows", value: p.yellows },
         { label: "Reds", value: p.reds },
@@ -99,8 +96,14 @@ interface PlayerDetailProps {
   teamName?: string;
 }
 
+const PLAYER_TABS = [
+  { id: "overview", icon: <Info />, label: "Overview" },
+  { id: "stats", icon: <BarChart3 />, label: "Stats" },
+];
+
 export function PlayerDetail({ player, teamName }: PlayerDetailProps) {
   const [imgError, setImgError] = useState(false);
+  const [activeTab, setActiveTab] = useState("overview");
   const pos = (player.position || "U").toUpperCase();
   const isGK = pos === "G";
   const sections = buildSections(player);
@@ -121,7 +124,7 @@ export function PlayerDetail({ player, teamName }: PlayerDetailProps) {
 
   return (
     <div data-dev-ref="PlayerDetail" className="px-4 py-4 space-y-4">
-      {/* Player header */}
+      {/* Player header — always visible */}
       <div className="flex items-center gap-4">
         {!imgError ? (
           <Image
@@ -130,7 +133,7 @@ export function PlayerDetail({ player, teamName }: PlayerDetailProps) {
             width={64}
             height={64}
             className="rounded-full object-cover shrink-0"
-            unoptimized
+            unoptimized={!(player.photo_url_card_hq)}
             onError={() => setImgError(true)}
           />
         ) : (
@@ -161,85 +164,105 @@ export function PlayerDetail({ player, teamName }: PlayerDetailProps) {
         </div>
       </div>
 
-      {/* Bio info */}
-      {(player.nationality || player.birth_date || player.height) && (
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-          {player.nationality && (
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">Nationality</span>
-              <span className="text-sm text-foreground">{player.nationality}</span>
-            </div>
+      {/* Tabs */}
+      <IconTabs
+        tabs={PLAYER_TABS}
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className="w-full"
+      />
+
+      {/* Tab content */}
+      {activeTab === "overview" && (
+        <div className="space-y-4">
+          {/* Bio info */}
+          {(player.nationality || player.birth_date || player.height) && (
+            <SurfaceCard className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+              {player.nationality && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Nationality</span>
+                  <span className="text-sm text-foreground">{player.nationality}</span>
+                </div>
+              )}
+              {player.birth_date && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Born</span>
+                  <span className="text-sm text-foreground tabular-nums">
+                    {new Date(player.birth_date + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                    {age != null && ` (${age})`}
+                  </span>
+                </div>
+              )}
+              {birthLocation && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Birthplace</span>
+                  <span className="text-sm text-foreground truncate ml-2">{birthLocation}</span>
+                </div>
+              )}
+              {player.height && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Height</span>
+                  <span className="text-sm text-foreground tabular-nums">{player.height} cm</span>
+                </div>
+              )}
+              {player.weight && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Weight</span>
+                  <span className="text-sm text-foreground tabular-nums">{player.weight} kg</span>
+                </div>
+              )}
+            </SurfaceCard>
           )}
-          {player.birth_date && (
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">Born</span>
-              <span className="text-sm text-foreground tabular-nums">
-                {new Date(player.birth_date + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
-                {age != null && ` (${age})`}
-              </span>
+
+          {/* Hero stats */}
+          <div className="grid grid-cols-4 gap-2">
+            <div className="rounded-lg border border-border px-3 py-2 text-center">
+              <p className="text-lg font-bold text-foreground tabular-nums">
+                {player.avg_rating != null ? player.avg_rating.toFixed(1) : "—"}
+              </p>
+              <p className="text-[10px] text-muted-foreground">Rating</p>
             </div>
-          )}
-          {birthLocation && (
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">Birthplace</span>
-              <span className="text-sm text-foreground truncate ml-2">{birthLocation}</span>
+            <div className="rounded-lg border border-border px-3 py-2 text-center">
+              <p className="text-lg font-bold text-foreground tabular-nums">{player.appearances}</p>
+              <p className="text-[10px] text-muted-foreground">Apps</p>
             </div>
-          )}
-          {(player.height || player.weight) && (
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">Physical</span>
-              <span className="text-sm text-foreground tabular-nums">
-                {[player.height ? `${player.height} cm` : null, player.weight ? `${player.weight} kg` : null].filter(Boolean).join(" / ")}
-              </span>
+            <div className="rounded-lg border border-border px-3 py-2 text-center">
+              <p className="text-lg font-bold text-foreground tabular-nums">
+                {player.total_minutes.toLocaleString()}
+              </p>
+              <p className="text-[10px] text-muted-foreground">Minutes</p>
             </div>
-          )}
+            <div className="rounded-lg border border-border px-3 py-2 text-center">
+              <p className="text-lg font-bold text-foreground tabular-nums">
+                {isGK ? player.saves : player.goals}
+              </p>
+              <p className="text-[10px] text-muted-foreground">{isGK ? "Saves" : "Goals"}</p>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Hero stats */}
-      <div className="grid grid-cols-4 gap-2">
-        <div className="rounded-lg border border-border px-3 py-2 text-center">
-          <p className="text-lg font-bold text-foreground tabular-nums">
-            {player.avg_rating != null ? player.avg_rating.toFixed(1) : "—"}
-          </p>
-          <p className="text-[10px] text-muted-foreground">Rating</p>
-        </div>
-        <div className="rounded-lg border border-border px-3 py-2 text-center">
-          <p className="text-lg font-bold text-foreground tabular-nums">{player.appearances}</p>
-          <p className="text-[10px] text-muted-foreground">Apps</p>
-        </div>
-        <div className="rounded-lg border border-border px-3 py-2 text-center">
-          <p className="text-lg font-bold text-foreground tabular-nums">
-            {player.total_minutes.toLocaleString()}
-          </p>
-          <p className="text-[10px] text-muted-foreground">Minutes</p>
-        </div>
-        <div className="rounded-lg border border-border px-3 py-2 text-center">
-          <p className="text-lg font-bold text-foreground tabular-nums">
-            {isGK ? player.saves : player.goals}
-          </p>
-          <p className="text-[10px] text-muted-foreground">{isGK ? "Saves" : "Goals"}</p>
-        </div>
-      </div>
-
-      {/* Stat sections */}
-      {sections.map((section) => (
-        <div key={section.title}>
-          <h4 className={`text-xs font-semibold uppercase tracking-wider mb-2 ${section.color}`}>
-            {section.title}
-          </h4>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-            {section.items.map((item) => (
-              <div key={item.label} className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">{item.label}</span>
-                <span className="text-sm font-medium text-foreground tabular-nums">
-                  {item.value}
-                </span>
+      {activeTab === "stats" && (
+        <div className="space-y-4">
+          {sections.map((section) => (
+            <div key={section.title}>
+              <h4 className="text-xs font-semibold uppercase tracking-wider mb-2 text-muted-foreground">
+                {section.title}
+              </h4>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                {section.items.map((item) => (
+                  <div key={item.label} className="flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">{item.label}</span>
+                    <span className="text-sm font-medium text-foreground tabular-nums">
+                      {item.value}
+                    </span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
     </div>
   );
 }
