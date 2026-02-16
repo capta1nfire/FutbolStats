@@ -903,10 +903,10 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
     - critical_window_only=False: Full scan every 2 min (all matches in 120 min window)
     - critical_window_only=True: Aggressive scan every 60s (only 45-90 min matches)
 
-    METRICS TRACKING (for weekly report):
-    - API errors by type (429, timeout, other)
-    - Internal latency (lineup detected -> snapshot saved)
-    - Capture counts per job type
+    DEADLOCK FIX (2026-02-15): Refactored to short per-match transactions.
+    - Phase 1: Read candidates into memory (read-only session, closed before API calls).
+    - Phase 2: For each candidate, API calls (lineups + odds) OUTSIDE any DB transaction,
+      then short tx with FOR NO KEY UPDATE lock ordering + deadlock retry.
 
     When a lineup is announced (~60min before kickoff):
     1. Fetch lineups from API-Football
@@ -926,9 +926,12 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
 
     captured_count = 0
     checked_count = 0
+    lineup_calls = 0
+    odds_calls = 0
     errors = []
 
     try:
+        # --- Phase 1: Read candidates into memory ---
         async with AsyncSessionLocal() as session:
             now = datetime.utcnow()
             try:
@@ -937,26 +940,15 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                 logger.warning(f"Could not resolve tracked leagues; falling back to EXTENDED_LEAGUES: {e}")
                 league_ids = EXTENDED_LEAGUES
 
-            # ADAPTIVE WINDOW based on mode:
-            # - Critical mode: Only 45-90 min window (aggressive 60s polling)
-            # - Full mode: 0-120 min window (regular 2 min polling)
             if critical_window_only:
-                # CRITICAL WINDOW: Focus on 45-90 min where lineups are typically announced
-                # This runs every 60s to maximize capture probability in ideal window
                 window_start = now + timedelta(minutes=45)
                 window_end = now + timedelta(minutes=90)
                 log_prefix = "[CRITICAL]"
             else:
-                # FULL WINDOW: Extended monitoring
-                window_start = now - timedelta(minutes=5)  # Very short past window
+                window_start = now - timedelta(minutes=5)
                 window_end = now + timedelta(minutes=120)
                 log_prefix = "[FULL]"
 
-            # Get matches in the window that:
-            # 1. Are in NS (not started) status only
-            # 2. Don't have a lineup_confirmed odds snapshot yet
-            # 3. Are in our extended leagues (for higher volume)
-            # 4. PRIORITIZED by sweet spot (60-80 min) then target window (45-75 min)
             result = await session.execute(text("""
                 SELECT m.id, m.external_id, m.date, m.odds_home, m.odds_draw, m.odds_away,
                        m.status, m.league_id,
@@ -971,10 +963,6 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                         AND os.snapshot_type = 'lineup_confirmed'
                   )
                 ORDER BY
-                  -- PRIORITY 0: Sweet spot 60-80 min (most lineups announced here)
-                  -- PRIORITY 1: Ideal window 45-75 min
-                  -- PRIORITY 2: Extended window 30-90 min
-                  -- PRIORITY 3: Rest
                   CASE
                     WHEN EXTRACT(EPOCH FROM (m.date - NOW())) / 60 BETWEEN 60 AND 80 THEN 0
                     WHEN EXTRACT(EPOCH FROM (m.date - NOW())) / 60 BETWEEN 45 AND 75 THEN 1
@@ -991,7 +979,6 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
 
             matches = result.fetchall()
 
-            # Log window status for monitoring
             if matches:
                 in_sweet_spot = sum(1 for m in matches if 60 <= (m.minutes_to_kickoff or 0) <= 80)
                 in_ideal = sum(1 for m in matches if 45 <= (m.minutes_to_kickoff or 0) <= 75)
@@ -1000,351 +987,316 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                     f"{in_sweet_spot} in sweet spot (60-80), {in_ideal} in ideal (45-75)"
                 )
 
-            # Limit processing to avoid API rate limits
-            # Hard cap per run (independent of match count) to keep API bounded when tracking all leagues.
             max_lineup_checks = LINEUP_MAX_LINEUPS_PER_RUN_CRITICAL if critical_window_only else LINEUP_MAX_LINEUPS_PER_RUN_FULL
-            max_matches = max_lineup_checks  # 1 lineup call per match baseline
-            if len(matches) > max_matches:
+            if len(matches) > max_lineup_checks:
                 logger.warning(
-                    f"{log_prefix} Too many matches ({len(matches)}), processing first {max_matches} "
+                    f"{log_prefix} Too many matches ({len(matches)}), processing first {max_lineup_checks} "
                     f"(prioritized by sweet spot). Remaining will be processed in next run."
                 )
-                matches = matches[:max_matches]
+                matches = matches[:max_lineup_checks]
+        # --- Session closed: no DB locks held during API calls ---
 
-            if not matches:
-                return {"checked": 0, "captured": 0, "message": f"{log_prefix} No matches in window"}
+        if not matches:
+            return {"checked": 0, "captured": 0, "message": f"{log_prefix} No matches in window"}
 
-            # Use API-Football to check lineups
-            provider = APIFootballProvider()
+        # --- Phase 2: API calls + short tx per match ---
+        provider = APIFootballProvider()
+        try:
+            for match in matches:
+                match_id = match.id
+                external_id = match.external_id
+                checked_count += 1
 
-            try:
-                lineup_calls = 0
-                odds_calls = 0
-                # Emit events only AFTER DB commit (avoids race: cascade must see fresh odds + timestamps)
-                events_to_emit: list[dict] = []
-                for match in matches:
-                    match_id = match.id
-                    external_id = match.external_id
-                    checked_count += 1
+                try:
+                    # Cooldown: if we recently checked this fixture and it wasn't confirmed, skip.
+                    if external_id:
+                        last = _lineup_check_cooldown.get(int(external_id))
+                        if last and (datetime.utcnow() - last).total_seconds() < _LINEUP_COOLDOWN_SECONDS:
+                            continue
 
-                    try:
-                        # Cooldown: if we recently checked this fixture and it wasn't confirmed, skip.
-                        if external_id:
-                            last = _lineup_check_cooldown.get(int(external_id))
-                            if last and (datetime.utcnow() - last).total_seconds() < _LINEUP_COOLDOWN_SECONDS:
-                                continue
+                    if lineup_calls >= max_lineup_checks:
+                        break
 
-                        # Per-run cap (lineups)
-                        if lineup_calls >= max_lineup_checks:
+                    capture_start_time = datetime.utcnow()
+
+                    # API call: get lineups (OUTSIDE any DB transaction)
+                    lineup_data = None
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            lineup_data = await provider.get_lineups(external_id)
+                            lineup_calls += 1
                             break
+                        except Exception as e:
+                            error_str = str(e).lower()
+                            if "429" in error_str or "rate limit" in error_str:
+                                _lineup_capture_metrics[job_type]["api_errors_429"] += 1
+                            elif "timeout" in error_str or "timed out" in error_str:
+                                _lineup_capture_metrics[job_type]["api_errors_timeout"] += 1
+                            else:
+                                _lineup_capture_metrics[job_type]["api_errors_other"] += 1
 
-                        # Track start time for latency measurement
-                        capture_start_time = datetime.utcnow()
-
-                        # Fetch lineup from API with retry logic
-                        lineup_data = None
-                        max_retries = 3
-                        for attempt in range(max_retries):
-                            try:
-                                lineup_data = await provider.get_lineups(external_id)
-                                lineup_calls += 1
-                                break
-                            except Exception as e:
-                                error_str = str(e).lower()
-                                # Track error types for metrics
-                                if "429" in error_str or "rate limit" in error_str:
-                                    _lineup_capture_metrics[job_type]["api_errors_429"] += 1
-                                elif "timeout" in error_str or "timed out" in error_str:
-                                    _lineup_capture_metrics[job_type]["api_errors_timeout"] += 1
-                                else:
-                                    _lineup_capture_metrics[job_type]["api_errors_other"] += 1
-
-                                if attempt == max_retries - 1:
-                                    logger.error(
-                                        f"Failed to fetch lineup for match {match_id} "
-                                        f"(external: {external_id}) after {max_retries} attempts: {e}"
-                                    )
-                                    raise
-                                # Exponential backoff: 2s, 4s, 8s
-                                await asyncio.sleep(2 ** attempt)
-                                logger.debug(
-                                    f"Retry {attempt + 1}/{max_retries} for lineup fetch "
-                                    f"(match {match_id})"
-                                )
-
-                        if not lineup_data:
-                            # Lineup not yet announced
-                            if external_id:
-                                _lineup_check_cooldown[int(external_id)] = datetime.utcnow()
-                            continue
-
-                        # Check if we have valid starting XI
-                        home_lineup = lineup_data.get("home")
-                        away_lineup = lineup_data.get("away")
-
-                        if not home_lineup or not away_lineup:
-                            if external_id:
-                                _lineup_check_cooldown[int(external_id)] = datetime.utcnow()
-                            continue
-
-                        home_xi = home_lineup.get("starting_xi", [])
-                        away_xi = away_lineup.get("starting_xi", [])
-
-                        # DIAGNOSTIC: Log partial lineups (8-10 players) for timing analysis
-                        # This helps understand when API publishes lineups gradually
-                        if 8 <= len(home_xi) < 11 or 8 <= len(away_xi) < 11:
-                            minutes_to_ko = (match.date - datetime.utcnow()).total_seconds() / 60 if match.date else 0
-                            logger.info(
-                                f"PARTIAL_LINEUP: match_id={match_id} external={external_id} "
-                                f"home={len(home_xi)}/11 away={len(away_xi)}/11 "
-                                f"minutes_to_kickoff={minutes_to_ko:.1f}"
-                            )
-
-                        # Consider lineup confirmed if we have 11 players for each team
-                        if len(home_xi) < 11 or len(away_xi) < 11:
-                            if external_id:
-                                _lineup_check_cooldown[int(external_id)] = datetime.utcnow()
-                            continue
-
-                        # Validate data quality: check for None player IDs
-                        if any(p is None for p in home_xi) or any(p is None for p in away_xi):
-                            logger.warning(
-                                f"Invalid player IDs (None values) in lineup for match {match_id}. "
-                                f"Skipping to avoid data quality issues."
-                            )
-                            continue
-
-                        # LINEUP CONFIRMED! Now capture the odds
-                        # CRITICAL: Fetch FRESH odds directly from API at this exact moment
-                        logger.info(f"Lineup confirmed for match {match_id} (external: {external_id})")
-
-                        kickoff_time = match.date
-                        lineup_detected_at = datetime.utcnow()
-
-                        # PRIMARY: Get LIVE odds from API-Football (most accurate)
-                        # CRITICAL: We MUST have fresh odds for valid baseline measurement
-                        # Priority: Bet365 > Pinnacle > 1xBet (sharp bookmakers)
-                        if odds_calls >= LINEUP_MAX_ODDS_PER_RUN:
-                            logger.info(f"{log_prefix} Odds cap reached ({LINEUP_MAX_ODDS_PER_RUN}), deferring odds capture.")
-                            continue
-
-                        fresh_odds = await provider.get_odds(external_id)
-                        odds_calls += 1
-
-                        if fresh_odds and fresh_odds.get("odds_home"):
-                            odds_home = float(fresh_odds["odds_home"])
-                            odds_draw = float(fresh_odds["odds_draw"])
-                            odds_away = float(fresh_odds["odds_away"])
-                            bookmaker_name = fresh_odds.get("bookmaker", "unknown")
-                            source = f"{bookmaker_name}_live"
-                            logger.info(f"Got FRESH odds from {bookmaker_name} for match {match_id}")
-                        else:
-                            # NO FALLBACK: We cannot use stale odds as baseline
-                            # This would invalidate the evaluation metric
-                            # The baseline MUST be the market odds at the exact moment of lineup detection
-                            # Note: This is expected when odds aren't published yet (e.g., >2h before kickoff)
-                            logger.warning(
-                                f"Cannot capture fresh odds for match {match_id} "
-                                f"(external: {external_id}) - API returned: {fresh_odds}. "
-                                f"Skipping this match. Will retry in next run."
-                            )
-                            continue
-
-                        # Calculate implied probabilities
-                        if odds_home > 1 and odds_draw > 1 and odds_away > 1:
-                            raw_home = 1 / odds_home
-                            raw_draw = 1 / odds_draw
-                            raw_away = 1 / odds_away
-                            total = raw_home + raw_draw + raw_away
-                            overround = total - 1
-
-                            prob_home = raw_home / total
-                            prob_draw = raw_draw / total
-                            prob_away = raw_away / total
-                        else:
-                            logger.warning(f"Invalid odds for match {match_id}: {odds_home}, {odds_draw}, {odds_away}")
-                            continue
-
-                        # Insert the lineup_confirmed snapshot with timing metadata
-                        snapshot_at = datetime.utcnow()
-
-                        # CRITICAL VALIDATION: snapshot must be BEFORE kickoff
-                        if kickoff_time and snapshot_at >= kickoff_time:
-                            logger.warning(
-                                f"Snapshot AFTER kickoff for match {match_id}: "
-                                f"snapshot_at={snapshot_at}, kickoff={kickoff_time}. Skipping."
-                            )
-                            continue
-
-                        # Calculate delta to kickoff (positive = before kickoff)
-                        delta_to_kickoff = None
-                        if kickoff_time:
-                            delta_to_kickoff = int((kickoff_time - snapshot_at).total_seconds())
-                            
-                            # Validate delta is in expected range (0-120 minutes before kickoff)
-                            minutes_to_kickoff = delta_to_kickoff / 60
-                            if minutes_to_kickoff < 0:
+                            if attempt == max_retries - 1:
                                 logger.error(
-                                    f"Negative delta for match {match_id}: {minutes_to_kickoff:.1f} min. "
-                                    f"This should not happen after validation above."
+                                    f"Failed to fetch lineup for match {match_id} "
+                                    f"(external: {external_id}) after {max_retries} attempts: {e}"
                                 )
-                                continue
-                            elif minutes_to_kickoff > 120:
-                                logger.warning(
-                                    f"Delta very large for match {match_id}: {minutes_to_kickoff:.1f} min. "
-                                    f"Lineup detected very early - may be incorrect."
-                                )
-                                # Don't skip, but log warning for monitoring
-
-                        # Determine odds freshness based on source
-                        if "_live" in source:
-                            odds_freshness = "live"
-                        elif "_stale" in source:
-                            odds_freshness = "stale"
-                        else:
-                            odds_freshness = "unknown"
-
-                        await session.execute(text("""
-                            INSERT INTO odds_snapshots (
-                                match_id, snapshot_type, snapshot_at,
-                                odds_home, odds_draw, odds_away,
-                                prob_home, prob_draw, prob_away,
-                                overround, bookmaker,
-                                kickoff_time, delta_to_kickoff_seconds, odds_freshness
-                            ) VALUES (
-                                :match_id, 'lineup_confirmed', :snapshot_at,
-                                :odds_home, :odds_draw, :odds_away,
-                                :prob_home, :prob_draw, :prob_away,
-                                :overround, :bookmaker,
-                                :kickoff_time, :delta_to_kickoff, :odds_freshness
+                                raise
+                            await asyncio.sleep(2 ** attempt)
+                            logger.debug(
+                                f"Retry {attempt + 1}/{max_retries} for lineup fetch "
+                                f"(match {match_id})"
                             )
-                            ON CONFLICT (match_id, snapshot_type, bookmaker) DO NOTHING
-                        """), {
-                            "match_id": match_id,
-                            "snapshot_at": snapshot_at,
-                            "odds_home": odds_home,
-                            "odds_draw": odds_draw,
-                            "odds_away": odds_away,
-                            "prob_home": prob_home,
-                            "prob_draw": prob_draw,
-                            "prob_away": prob_away,
-                            "overround": overround,
-                            "bookmaker": source,
-                            "kickoff_time": kickoff_time,
-                            "delta_to_kickoff": delta_to_kickoff,
-                            "odds_freshness": odds_freshness,
-                        })
 
-                        # CRITICAL FIX (2026-01-08): Update matches.lineup_confirmed flag
-                        # This was missing - snapshots were created but the match wasn't marked
-                        await session.execute(text("""
-                            UPDATE matches
-                            SET lineup_confirmed = TRUE,
-                                home_formation = :home_formation,
-                                away_formation = :away_formation,
-                                lineup_features_computed_at = :computed_at
-                            WHERE id = :match_id
-                        """), {
-                            "match_id": match_id,
-                            "home_formation": home_lineup.get("formation"),
-                            "away_formation": away_lineup.get("formation"),
-                            "computed_at": snapshot_at,
-                        })
+                    if not lineup_data:
+                        if external_id:
+                            _lineup_check_cooldown[int(external_id)] = datetime.utcnow()
+                        continue
 
-                        # P0 FIX (2026-01-14): Write-through odds to matches table
-                        # odds_snapshots was being populated but matches.odds_* stayed NULL
-                        # This broke /predictions/upcoming → market_odds null → iOS no Bookie/EV
-                        if odds_freshness == "live":
-                            await session.execute(text("""
-                                UPDATE matches
-                                SET odds_home = :odds_home,
-                                    odds_draw = :odds_draw,
-                                    odds_away = :odds_away,
-                                    odds_recorded_at = :recorded_at
-                                WHERE id = :match_id
-                                  AND (odds_recorded_at IS NULL OR odds_recorded_at < :recorded_at)
+                    home_lineup = lineup_data.get("home")
+                    away_lineup = lineup_data.get("away")
+
+                    if not home_lineup or not away_lineup:
+                        if external_id:
+                            _lineup_check_cooldown[int(external_id)] = datetime.utcnow()
+                        continue
+
+                    home_xi = home_lineup.get("starting_xi", [])
+                    away_xi = away_lineup.get("starting_xi", [])
+
+                    if 8 <= len(home_xi) < 11 or 8 <= len(away_xi) < 11:
+                        minutes_to_ko = (match.date - datetime.utcnow()).total_seconds() / 60 if match.date else 0
+                        logger.info(
+                            f"PARTIAL_LINEUP: match_id={match_id} external={external_id} "
+                            f"home={len(home_xi)}/11 away={len(away_xi)}/11 "
+                            f"minutes_to_kickoff={minutes_to_ko:.1f}"
+                        )
+
+                    if len(home_xi) < 11 or len(away_xi) < 11:
+                        if external_id:
+                            _lineup_check_cooldown[int(external_id)] = datetime.utcnow()
+                        continue
+
+                    if any(p is None for p in home_xi) or any(p is None for p in away_xi):
+                        logger.warning(
+                            f"Invalid player IDs (None values) in lineup for match {match_id}. "
+                            f"Skipping to avoid data quality issues."
+                        )
+                        continue
+
+                    # LINEUP CONFIRMED! Now capture the odds
+                    logger.info(f"Lineup confirmed for match {match_id} (external: {external_id})")
+
+                    kickoff_time = match.date
+                    lineup_detected_at = datetime.utcnow()
+
+                    if odds_calls >= LINEUP_MAX_ODDS_PER_RUN:
+                        logger.info(f"{log_prefix} Odds cap reached ({LINEUP_MAX_ODDS_PER_RUN}), deferring odds capture.")
+                        continue
+
+                    # API call: get odds (OUTSIDE any DB transaction)
+                    fresh_odds = await provider.get_odds(external_id)
+                    odds_calls += 1
+
+                    if not (fresh_odds and fresh_odds.get("odds_home")):
+                        logger.warning(
+                            f"Cannot capture fresh odds for match {match_id} "
+                            f"(external: {external_id}) - API returned: {fresh_odds}. "
+                            f"Skipping this match. Will retry in next run."
+                        )
+                        continue
+
+                    odds_home = float(fresh_odds["odds_home"])
+                    odds_draw = float(fresh_odds["odds_draw"])
+                    odds_away = float(fresh_odds["odds_away"])
+                    bookmaker_name = fresh_odds.get("bookmaker", "unknown")
+                    source = f"{bookmaker_name}_live"
+                    logger.info(f"Got FRESH odds from {bookmaker_name} for match {match_id}")
+
+                    if not (odds_home > 1 and odds_draw > 1 and odds_away > 1):
+                        logger.warning(f"Invalid odds for match {match_id}: {odds_home}, {odds_draw}, {odds_away}")
+                        continue
+
+                    raw_home = 1 / odds_home
+                    raw_draw = 1 / odds_draw
+                    raw_away = 1 / odds_away
+                    total = raw_home + raw_draw + raw_away
+                    overround = total - 1
+                    prob_home = raw_home / total
+                    prob_draw = raw_draw / total
+                    prob_away = raw_away / total
+
+                    snapshot_at = datetime.utcnow()
+
+                    if kickoff_time and snapshot_at >= kickoff_time:
+                        logger.warning(
+                            f"Snapshot AFTER kickoff for match {match_id}: "
+                            f"snapshot_at={snapshot_at}, kickoff={kickoff_time}. Skipping."
+                        )
+                        continue
+
+                    delta_to_kickoff = None
+                    if kickoff_time:
+                        delta_to_kickoff = int((kickoff_time - snapshot_at).total_seconds())
+                        minutes_to_kickoff = delta_to_kickoff / 60
+                        if minutes_to_kickoff < 0:
+                            logger.error(
+                                f"Negative delta for match {match_id}: {minutes_to_kickoff:.1f} min. "
+                                f"This should not happen after validation above."
+                            )
+                            continue
+                        elif minutes_to_kickoff > 120:
+                            logger.warning(
+                                f"Delta very large for match {match_id}: {minutes_to_kickoff:.1f} min. "
+                                f"Lineup detected very early - may be incorrect."
+                            )
+
+                    odds_freshness = "live" if "_live" in source else ("stale" if "_stale" in source else "unknown")
+
+                    # --- Short tx: all DB writes for this match ---
+                    home_formation = home_lineup.get("formation")
+                    away_formation = away_lineup.get("formation")
+
+                    async def _write_lineup_snapshot(
+                        _mid=match_id, _sat=snapshot_at,
+                        _oh=odds_home, _od=odds_draw, _oa=odds_away,
+                        _ph=prob_home, _pd=prob_draw, _pa=prob_away,
+                        _ov=overround, _src=source, _kt=kickoff_time,
+                        _dtk=delta_to_kickoff, _of=odds_freshness,
+                        _hf=home_formation, _af=away_formation,
+                        _lda=lineup_detected_at,
+                    ):
+                        async with AsyncSessionLocal() as s:
+                            # Lock match row first → stable lock order
+                            await s.execute(text(
+                                "SELECT 1 FROM matches WHERE id = :mid FOR NO KEY UPDATE"
+                            ), {"mid": _mid})
+
+                            # INSERT odds_snapshot
+                            await s.execute(text("""
+                                INSERT INTO odds_snapshots (
+                                    match_id, snapshot_type, snapshot_at,
+                                    odds_home, odds_draw, odds_away,
+                                    prob_home, prob_draw, prob_away,
+                                    overround, bookmaker,
+                                    kickoff_time, delta_to_kickoff_seconds, odds_freshness
+                                ) VALUES (
+                                    :match_id, 'lineup_confirmed', :snapshot_at,
+                                    :odds_home, :odds_draw, :odds_away,
+                                    :prob_home, :prob_draw, :prob_away,
+                                    :overround, :bookmaker,
+                                    :kickoff_time, :delta_to_kickoff, :odds_freshness
+                                )
+                                ON CONFLICT (match_id, snapshot_type, bookmaker) DO NOTHING
                             """), {
-                                "match_id": match_id,
-                                "odds_home": odds_home,
-                                "odds_draw": odds_draw,
-                                "odds_away": odds_away,
-                                "recorded_at": snapshot_at,
+                                "match_id": _mid, "snapshot_at": _sat,
+                                "odds_home": _oh, "odds_draw": _od, "odds_away": _oa,
+                                "prob_home": _ph, "prob_draw": _pd, "prob_away": _pa,
+                                "overround": _ov, "bookmaker": _src,
+                                "kickoff_time": _kt, "delta_to_kickoff": _dtk,
+                                "odds_freshness": _of,
                             })
-                            logger.info(
-                                f"Synced live odds to matches: match_id={match_id}, "
-                                f"H={odds_home:.2f}, D={odds_draw:.2f}, A={odds_away:.2f}, "
-                                f"bookmaker={source}"
-                            )
 
-                        # Also update match_lineups with lineup timestamps
-                        # lineup_confirmed_at: provider timestamp (legacy, COALESCE preserves)
-                        # lineup_detected_at: OUR detection timestamp (Phase 2 PIT anchor)
-                        await session.execute(text("""
-                            UPDATE match_lineups
-                            SET lineup_confirmed_at = COALESCE(lineup_confirmed_at, :confirmed_at),
-                                lineup_detected_at = COALESCE(lineup_detected_at, :detected_at)
-                            WHERE match_id = :match_id
-                        """), {
-                            "match_id": match_id,
-                            "confirmed_at": snapshot_at,
-                            "detected_at": lineup_detected_at,
-                        })
+                            # UPDATE matches: lineup_confirmed + formations
+                            await s.execute(text("""
+                                UPDATE matches
+                                SET lineup_confirmed = TRUE,
+                                    home_formation = :home_formation,
+                                    away_formation = :away_formation,
+                                    lineup_features_computed_at = :computed_at
+                                WHERE id = :match_id
+                            """), {
+                                "match_id": _mid,
+                                "home_formation": _hf,
+                                "away_formation": _af,
+                                "computed_at": _sat,
+                            })
 
-                        captured_count += 1
+                            # Write-through odds to matches table
+                            if _of == "live":
+                                await s.execute(text("""
+                                    UPDATE matches
+                                    SET odds_home = :odds_home,
+                                        odds_draw = :odds_draw,
+                                        odds_away = :odds_away,
+                                        odds_recorded_at = :recorded_at
+                                    WHERE id = :match_id
+                                      AND (odds_recorded_at IS NULL OR odds_recorded_at < :recorded_at)
+                                """), {
+                                    "match_id": _mid,
+                                    "odds_home": _oh, "odds_draw": _od, "odds_away": _oa,
+                                    "recorded_at": _sat,
+                                })
 
-                        # Phase 2 (P2-10): Emit LINEUP_CONFIRMED post-commit (PIT-correct)
-                        events_to_emit.append({
+                            # UPDATE match_lineups
+                            await s.execute(text("""
+                                UPDATE match_lineups
+                                SET lineup_confirmed_at = COALESCE(lineup_confirmed_at, :confirmed_at),
+                                    lineup_detected_at = COALESCE(lineup_detected_at, :detected_at)
+                                WHERE match_id = :match_id
+                            """), {
+                                "match_id": _mid,
+                                "confirmed_at": _sat,
+                                "detected_at": _lda,
+                            })
+
+                            await s.commit()
+
+                    await _deadlock_retry_write(_write_lineup_snapshot, match_id=match_id)
+
+                    captured_count += 1
+
+                    if odds_freshness == "live":
+                        logger.info(
+                            f"Synced live odds to matches: match_id={match_id}, "
+                            f"H={odds_home:.2f}, D={odds_draw:.2f}, A={odds_away:.2f}, "
+                            f"bookmaker={source}"
+                        )
+
+                    # Emit event AFTER this match's commit (PIT-correct)
+                    try:
+                        from app.events import get_event_bus, LINEUP_CONFIRMED
+                        bus = get_event_bus()
+                        await bus.emit(LINEUP_CONFIRMED, {
                             "match_id": match_id,
                             "lineup_detected_at": lineup_detected_at,
                             "source": "lineup_monitoring",
                         })
-
-                        # Track metrics: capture count and latency
-                        capture_end_time = datetime.utcnow()
-                        latency_ms = int((capture_end_time - capture_start_time).total_seconds() * 1000)
-                        _lineup_capture_metrics[job_type]["captures"] += 1
-                        _lineup_capture_metrics[job_type]["latencies_ms"].append(latency_ms)
-
-                        # Keep latencies list bounded (last 1000 captures)
-                        if len(_lineup_capture_metrics[job_type]["latencies_ms"]) > 1000:
-                            _lineup_capture_metrics[job_type]["latencies_ms"] = \
-                                _lineup_capture_metrics[job_type]["latencies_ms"][-1000:]
-
-                        logger.info(
-                            f"Captured lineup_confirmed odds for match {match_id}: "
-                            f"H={odds_home:.2f}, D={odds_draw:.2f}, A={odds_away:.2f} at {snapshot_at} "
-                            f"(latency: {latency_ms}ms, job: {job_type})"
-                        )
-
-                    except Exception as e:
-                        errors.append(f"Match {match_id}: {str(e)}")
-                        logger.warning(f"Error checking lineup for match {match_id}: {e}")
-
-                await session.commit()
-
-                # Emit events AFTER commit so cascade reads committed DB state
-                if events_to_emit:
-                    try:
-                        from app.events import get_event_bus, LINEUP_CONFIRMED
-                        bus = get_event_bus()
-                        for payload in events_to_emit:
-                            await bus.emit(LINEUP_CONFIRMED, payload)
                     except Exception as evt_err:
-                        logger.warning(f"Failed to emit LINEUP_CONFIRMED batch: {evt_err}")
+                        logger.warning(f"Failed to emit LINEUP_CONFIRMED for match {match_id}: {evt_err}")
 
-            finally:
-                await provider.close()
+                    # Track metrics
+                    capture_end_time = datetime.utcnow()
+                    latency_ms = int((capture_end_time - capture_start_time).total_seconds() * 1000)
+                    _lineup_capture_metrics[job_type]["captures"] += 1
+                    _lineup_capture_metrics[job_type]["latencies_ms"].append(latency_ms)
+                    if len(_lineup_capture_metrics[job_type]["latencies_ms"]) > 1000:
+                        _lineup_capture_metrics[job_type]["latencies_ms"] = \
+                            _lineup_capture_metrics[job_type]["latencies_ms"][-1000:]
 
-            if captured_count > 0:
-                logger.info(f"Lineup monitoring: captured {captured_count} lineup_confirmed snapshots")
+                    logger.info(
+                        f"Captured lineup_confirmed odds for match {match_id}: "
+                        f"H={odds_home:.2f}, D={odds_draw:.2f}, A={odds_away:.2f} at {snapshot_at} "
+                        f"(latency: {latency_ms}ms, job: {job_type})"
+                    )
 
-            return {
-                "checked": checked_count,
-                "captured": captured_count,
-                "lineup_calls": lineup_calls,
-                "odds_calls": odds_calls,
-                "errors": errors[:5] if errors else None,
-            }
+                except Exception as e:
+                    errors.append(f"Match {match_id}: {str(e)}")
+                    logger.warning(f"Error checking lineup for match {match_id}: {e}")
+
+        finally:
+            await provider.close()
+
+        if captured_count > 0:
+            logger.info(f"Lineup monitoring: captured {captured_count} lineup_confirmed snapshots")
+
+        return {
+            "checked": checked_count,
+            "captured": captured_count,
+            "lineup_calls": lineup_calls,
+            "odds_calls": odds_calls,
+            "errors": errors[:5] if errors else None,
+        }
 
     except APIBudgetExceeded as e:
         logger.warning(f"Lineup monitoring stopped: {e}. Budget status: {get_api_budget_status()}")
@@ -1352,6 +1304,47 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
     except Exception as e:
         logger.error(f"monitor_lineups_and_capture_odds failed: {e}")
         return {"checked": 0, "captured": 0, "error": str(e)}
+
+
+# =============================================================================
+# DEADLOCK RETRY HELPER (shared by market movement & lineup tracking jobs)
+# =============================================================================
+import random
+from sqlalchemy.exc import DBAPIError
+
+_DEADLOCK_MAX_RETRIES = 3
+_DEADLOCK_BASE_WAIT = 0.1  # 100ms
+
+
+async def _deadlock_retry_write(write_fn, match_id=None):
+    """Execute a short DB write with deadlock retry + exponential backoff/jitter.
+
+    write_fn is an async callable that opens its own AsyncSessionLocal(),
+    does writes, and commits.  If a deadlock is detected, we retry up to
+    _DEADLOCK_MAX_RETRIES times.
+    """
+    for attempt in range(_DEADLOCK_MAX_RETRIES):
+        try:
+            return await write_fn()
+        except DBAPIError as e:
+            err_msg = str(e.orig) if hasattr(e, "orig") else str(e)
+            if "deadlock detected" in err_msg.lower():
+                if attempt < _DEADLOCK_MAX_RETRIES - 1:
+                    wait = (_DEADLOCK_BASE_WAIT * (2 ** attempt)) + random.uniform(0, 0.1)
+                    logger.warning(
+                        f"Deadlock detected (match {match_id}), "
+                        f"retry {attempt + 1}/{_DEADLOCK_MAX_RETRIES} after {wait:.2f}s"
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    logger.error(
+                        f"Deadlock persisted after {_DEADLOCK_MAX_RETRIES} retries "
+                        f"for match {match_id}: {err_msg}"
+                    )
+                    raise
+            else:
+                raise
+    return None  # Should not reach here
 
 
 # =============================================================================
@@ -1379,6 +1372,11 @@ async def capture_market_movement_snapshots() -> dict:
 
     Run frequency: Every 5 minutes
 
+    DEADLOCK FIX (2026-02-15): Refactored to short per-match transactions.
+    - Phase 1: Read candidates into memory (read-only session, closed before API calls).
+    - Phase 2: For each candidate, call API OUTSIDE any DB transaction,
+      then open a SHORT tx with FOR NO KEY UPDATE lock ordering + deadlock retry.
+
     Environment variables:
     - MARKET_MOVEMENT_REQUIRE_LINEUP: If "0", capture snapshots even without lineup_confirmed.
       Default "1" requires lineup_confirmed=TRUE (legacy behavior).
@@ -1393,16 +1391,15 @@ async def capture_market_movement_snapshots() -> dict:
     require_lineup = os.environ.get("MARKET_MOVEMENT_REQUIRE_LINEUP", "1") == "1"
 
     try:
+        # --- Phase 1: Read candidates into memory ---
+        candidates = []  # list of (match_id, external_id, kickoff_time, minutes_to_kickoff, bucket)
         async with AsyncSessionLocal() as session:
             now = datetime.utcnow()
             league_ids = await resolve_lineup_monitoring_leagues(session)
 
-            # Get matches that need market movement data
-            # Focus on matches 5-65 minutes from now (covers all buckets)
             window_start = now + timedelta(minutes=3)
             window_end = now + timedelta(minutes=65)
 
-            # Build query conditionally based on require_lineup setting
             lineup_condition = "AND m.lineup_confirmed = TRUE" if require_lineup else ""
 
             result = await session.execute(text(f"""
@@ -1421,131 +1418,138 @@ async def capture_market_movement_snapshots() -> dict:
                 "league_ids": league_ids,
                 "league_ids_is_null": league_ids is None,
             })
-
             matches = result.fetchall()
 
             if not matches:
                 return {"checked": 0, "captured": 0}
 
-            provider = APIFootballProvider()
+            MAX_API_CALLS_PER_RUN = int(os.environ.get("MARKET_MOVEMENT_MAX_CALLS", "15"))
 
-            try:
-                api_calls_this_run = 0
-                MAX_API_CALLS_PER_RUN = int(os.environ.get("MARKET_MOVEMENT_MAX_CALLS", "15"))
-                for match in matches:
-                    match_id = match.id
-                    external_id = match.external_id
-                    minutes_to_kickoff = float(match.minutes_to_kickoff)
-                    kickoff_time = match.date
-                    checked_count += 1
+            for match in matches:
+                minutes_to_kickoff = float(match.minutes_to_kickoff)
+                checked_count += 1
 
-                    # Check which bucket this falls into
-                    current_bucket = None
-                    for min_m, max_m, bucket_name in MARKET_MOVEMENT_BUCKETS:
-                        if min_m <= minutes_to_kickoff <= max_m:
-                            current_bucket = bucket_name
-                            break
-
-                    if not current_bucket:
-                        continue
-
-                    # Check if we already have this bucket for this match
-                    existing = await session.execute(text("""
-                        SELECT 1 FROM market_movement_snapshots
-                        WHERE match_id = :match_id AND snapshot_type = :bucket
-                    """), {"match_id": match_id, "bucket": current_bucket})
-
-                    if existing.fetchone():
-                        continue
-
-                    if api_calls_this_run >= MAX_API_CALLS_PER_RUN:
+                current_bucket = None
+                for min_m, max_m, bucket_name in MARKET_MOVEMENT_BUCKETS:
+                    if min_m <= minutes_to_kickoff <= max_m:
+                        current_bucket = bucket_name
                         break
 
-                    # Fetch fresh odds
-                    fresh_odds = await provider.get_odds(external_id)
-                    api_calls_this_run += 1
+                if not current_bucket:
+                    continue
 
-                    if not fresh_odds or not fresh_odds.get("odds_home"):
-                        continue
+                # Check if bucket already captured
+                existing = await session.execute(text("""
+                    SELECT 1 FROM market_movement_snapshots
+                    WHERE match_id = :match_id AND snapshot_type = :bucket
+                """), {"match_id": match.id, "bucket": current_bucket})
 
-                    odds_home = float(fresh_odds["odds_home"])
-                    odds_draw = float(fresh_odds["odds_draw"])
-                    odds_away = float(fresh_odds["odds_away"])
-                    bookmaker = fresh_odds.get("bookmaker", "unknown")
+                if existing.fetchone():
+                    continue
 
-                    # Calculate implied probabilities
-                    if odds_home > 1 and odds_draw > 1 and odds_away > 1:
-                        raw_home = 1 / odds_home
-                        raw_draw = 1 / odds_draw
-                        raw_away = 1 / odds_away
-                        total = raw_home + raw_draw + raw_away
-                        overround = total - 1
-                        prob_home = raw_home / total
-                        prob_draw = raw_draw / total
-                        prob_away = raw_away / total
-                    else:
-                        continue
+                candidates.append((match.id, match.external_id, match.date, minutes_to_kickoff, current_bucket))
 
-                    snapshot_at = datetime.utcnow()
+                if len(candidates) >= MAX_API_CALLS_PER_RUN:
+                    break
+        # --- Session closed: no DB locks held during API calls ---
 
-                    # Insert market movement snapshot
-                    await session.execute(text("""
-                        INSERT INTO market_movement_snapshots (
-                            match_id, snapshot_type, captured_at, kickoff_time,
-                            minutes_to_kickoff, odds_home, odds_draw, odds_away,
-                            bookmaker, odds_freshness,
-                            prob_home, prob_draw, prob_away, overround
-                        ) VALUES (
-                            :match_id, :bucket, :captured_at, :kickoff_time,
-                            :minutes_to_kickoff, :odds_home, :odds_draw, :odds_away,
-                            :bookmaker, 'live',
-                            :prob_home, :prob_draw, :prob_away, :overround
-                        )
-                        ON CONFLICT (match_id, snapshot_type, bookmaker) DO NOTHING
-                    """), {
-                        "match_id": match_id,
-                        "bucket": current_bucket,
-                        "captured_at": snapshot_at,
-                        "kickoff_time": kickoff_time,
-                        "minutes_to_kickoff": minutes_to_kickoff,
-                        "odds_home": odds_home,
-                        "odds_draw": odds_draw,
-                        "odds_away": odds_away,
-                        "bookmaker": f"{bookmaker}_live",
-                        "prob_home": prob_home,
-                        "prob_draw": prob_draw,
-                        "prob_away": prob_away,
-                        "overround": overround,
-                    })
+        if not candidates:
+            return {"checked": checked_count, "captured": 0}
 
-                    captured_count += 1
-                    logger.info(
-                        f"Market movement {current_bucket} captured for match {match_id}: "
-                        f"H={odds_home:.2f} D={odds_draw:.2f} A={odds_away:.2f}"
-                    )
+        # --- Phase 2: API call + short tx per match ---
+        provider = APIFootballProvider()
+        try:
+            for match_id, external_id, kickoff_time, minutes_to_kickoff, current_bucket in candidates:
+                # API call OUTSIDE any DB transaction
+                fresh_odds = await provider.get_odds(external_id)
 
-                    # Check if match has all buckets now
-                    bucket_count = await session.execute(text("""
-                        SELECT COUNT(DISTINCT snapshot_type)
-                        FROM market_movement_snapshots
-                        WHERE match_id = :match_id
-                    """), {"match_id": match_id})
+                if not fresh_odds or not fresh_odds.get("odds_home"):
+                    continue
 
-                    if bucket_count.scalar() >= 4:
-                        await session.execute(text("""
-                            UPDATE matches SET market_movement_complete = TRUE
-                            WHERE id = :match_id
-                        """), {"match_id": match_id})
+                odds_home = float(fresh_odds["odds_home"])
+                odds_draw = float(fresh_odds["odds_draw"])
+                odds_away = float(fresh_odds["odds_away"])
+                bookmaker = fresh_odds.get("bookmaker", "unknown")
 
-                await session.commit()
+                if not (odds_home > 1 and odds_draw > 1 and odds_away > 1):
+                    continue
 
-            finally:
-                await provider.close()
+                raw_home = 1 / odds_home
+                raw_draw = 1 / odds_draw
+                raw_away = 1 / odds_away
+                total = raw_home + raw_draw + raw_away
+                overround = total - 1
+                prob_home = raw_home / total
+                prob_draw = raw_draw / total
+                prob_away = raw_away / total
+                snapshot_at = datetime.utcnow()
 
-            if captured_count > 0:
-                logger.info(f"Market movement: captured {captured_count} snapshots")
+                # Short tx with deadlock retry + consistent lock ordering
+                async def _write_snapshot(
+                    _mid=match_id, _bucket=current_bucket, _snapshot_at=snapshot_at,
+                    _kickoff=kickoff_time, _mtk=minutes_to_kickoff,
+                    _oh=odds_home, _od=odds_draw, _oa=odds_away,
+                    _bk=bookmaker, _ph=prob_home, _pd=prob_draw, _pa=prob_away,
+                    _ov=overround,
+                ):
+                    async with AsyncSessionLocal() as s:
+                        # Lock match row first → stable lock order across concurrent jobs
+                        await s.execute(text(
+                            "SELECT 1 FROM matches WHERE id = :mid FOR NO KEY UPDATE"
+                        ), {"mid": _mid})
 
-            return {"checked": checked_count, "captured": captured_count}
+                        await s.execute(text("""
+                            INSERT INTO market_movement_snapshots (
+                                match_id, snapshot_type, captured_at, kickoff_time,
+                                minutes_to_kickoff, odds_home, odds_draw, odds_away,
+                                bookmaker, odds_freshness,
+                                prob_home, prob_draw, prob_away, overround
+                            ) VALUES (
+                                :match_id, :bucket, :captured_at, :kickoff_time,
+                                :minutes_to_kickoff, :odds_home, :odds_draw, :odds_away,
+                                :bookmaker, 'live',
+                                :prob_home, :prob_draw, :prob_away, :overround
+                            )
+                            ON CONFLICT (match_id, snapshot_type, bookmaker) DO NOTHING
+                        """), {
+                            "match_id": _mid, "bucket": _bucket,
+                            "captured_at": _snapshot_at, "kickoff_time": _kickoff,
+                            "minutes_to_kickoff": _mtk,
+                            "odds_home": _oh, "odds_draw": _od, "odds_away": _oa,
+                            "bookmaker": f"{_bk}_live",
+                            "prob_home": _ph, "prob_draw": _pd, "prob_away": _pa,
+                            "overround": _ov,
+                        })
+
+                        # Check completion
+                        bucket_count = await s.execute(text("""
+                            SELECT COUNT(DISTINCT snapshot_type)
+                            FROM market_movement_snapshots
+                            WHERE match_id = :match_id
+                        """), {"match_id": _mid})
+
+                        if bucket_count.scalar() >= 4:
+                            await s.execute(text("""
+                                UPDATE matches SET market_movement_complete = TRUE
+                                WHERE id = :match_id
+                            """), {"match_id": _mid})
+
+                        await s.commit()
+
+                await _deadlock_retry_write(_write_snapshot, match_id=match_id)
+
+                captured_count += 1
+                logger.info(
+                    f"Market movement {current_bucket} captured for match {match_id}: "
+                    f"H={odds_home:.2f} D={odds_draw:.2f} A={odds_away:.2f}"
+                )
+        finally:
+            await provider.close()
+
+        if captured_count > 0:
+            logger.info(f"Market movement: captured {captured_count} snapshots")
+
+        return {"checked": checked_count, "captured": captured_count}
 
     except APIBudgetExceeded as e:
         logger.warning(f"Market movement stopped: {e}. Budget status: {get_api_budget_status()}")
@@ -1605,6 +1609,8 @@ async def capture_lineup_relative_movement() -> dict:
     2. Use normalized probabilities for movement metrics
 
     Run frequency: Every 3 minutes (matches are scarce, captures are time-sensitive)
+
+    DEADLOCK FIX (2026-02-15): Refactored to short per-match transactions.
     """
     from app.etl.api_football import APIFootballProvider
 
@@ -1612,16 +1618,11 @@ async def capture_lineup_relative_movement() -> dict:
     checked_count = 0
 
     try:
+        # --- Phase 1: Read candidates into memory ---
+        # Each candidate: (match row data, needs_l0, bucket_to_capture)
+        candidates = []
         async with AsyncSessionLocal() as session:
-            now = datetime.utcnow()
             league_ids = await resolve_lineup_monitoring_leagues(session)
-
-            # Find matches that have lineup_confirmed but need movement tracking
-            # We need matches where:
-            # 1. lineup_confirmed = TRUE
-            # 2. lineup_movement_tracked = FALSE
-            # 3. We have the lineup_detected_at timestamp from odds_snapshots
-            # 4. Match hasn't started yet (status = 'NS')
 
             result = await session.execute(text("""
                 SELECT
@@ -1646,47 +1647,182 @@ async def capture_lineup_relative_movement() -> dict:
                   AND COALESCE(m.lineup_movement_tracked, FALSE) = FALSE
                   AND os.snapshot_at IS NOT NULL
                   AND (:league_ids_is_null = TRUE OR m.league_id = ANY(:league_ids))
-                  -- TTL: Only process if lineup was detected in last 45 minutes
-                  -- (enough time for L-30 to L+10 window)
                   AND os.snapshot_at > NOW() - INTERVAL '45 minutes'
-                  -- TTL: Stop tracking 15 min after kickoff (match already started)
                   AND m.date > NOW() - INTERVAL '15 minutes'
                 ORDER BY os.snapshot_at DESC
                 LIMIT 20
             """), {"league_ids": league_ids, "league_ids_is_null": league_ids is None})
 
             matches = result.fetchall()
-
             if not matches:
                 return {"checked": 0, "captured": 0}
 
-            provider = APIFootballProvider()
-
-            # Rate limiting: configurable via env var, default 10
-            # 10 calls × 20 runs/hour = 200 calls/hour max for this job
-            api_calls_this_run = 0
             MAX_API_CALLS_PER_RUN = int(os.environ.get("LINEUP_MOVEMENT_MAX_CALLS", "10"))
 
-            try:
-                for match in matches:
-                    match_id = match.match_id
-                    external_id = match.external_id
-                    lineup_detected_at = match.lineup_detected_at
-                    minutes_since_lineup = float(match.minutes_since_lineup)
-                    kickoff_time = match.kickoff_time
+            for match in matches:
+                match_id = match.match_id
+                minutes_since_lineup = float(match.minutes_since_lineup)
+                checked_count += 1
 
-                    checked_count += 1
+                # Check L0 existence
+                l0_exists = await session.execute(text("""
+                    SELECT 1 FROM lineup_movement_snapshots
+                    WHERE match_id = :match_id AND snapshot_type = 'L0'
+                """), {"match_id": match_id})
+                needs_l0 = not l0_exists.fetchone()
 
-                    # L0 snapshot already exists in odds_snapshots
-                    # Check if we need to insert it into lineup_movement_snapshots
-                    l0_exists = await session.execute(text("""
+                # Check which bucket
+                current_bucket = None
+                for min_m, max_m, bucket_name in LINEUP_MOVEMENT_BUCKETS:
+                    if min_m <= minutes_since_lineup <= max_m:
+                        current_bucket = bucket_name
+                        break
+
+                # Check if bucket already exists
+                if current_bucket:
+                    existing = await session.execute(text("""
                         SELECT 1 FROM lineup_movement_snapshots
-                        WHERE match_id = :match_id AND snapshot_type = 'L0'
-                    """), {"match_id": match_id})
+                        WHERE match_id = :match_id AND snapshot_type = :bucket
+                    """), {"match_id": match_id, "bucket": current_bucket})
+                    if existing.fetchone():
+                        current_bucket = None  # Already captured
 
-                    if not l0_exists.fetchone():
-                        # Insert L0 from odds_snapshots data
-                        await session.execute(text("""
+                if not needs_l0 and not current_bucket:
+                    continue
+
+                candidates.append({
+                    "match": match,
+                    "needs_l0": needs_l0,
+                    "bucket": current_bucket,
+                    "minutes_since_lineup": minutes_since_lineup,
+                })
+
+                # Only count API-requiring candidates against limit
+                if current_bucket and sum(1 for c in candidates if c["bucket"]) >= MAX_API_CALLS_PER_RUN:
+                    break
+        # --- Session closed: no DB locks held during API calls ---
+
+        if not candidates:
+            return {"checked": checked_count, "captured": 0}
+
+        # --- Phase 2: API call + short tx per match ---
+        provider = APIFootballProvider()
+        try:
+            for cand in candidates:
+                match = cand["match"]
+                match_id = match.match_id
+                needs_l0 = cand["needs_l0"]
+                current_bucket = cand["bucket"]
+                minutes_since_lineup = cand["minutes_since_lineup"]
+
+                # Insert L0 in its own short tx (no API call needed)
+                if needs_l0:
+                    async def _write_l0(
+                        _mid=match_id,
+                        _lda=match.lineup_detected_at,
+                        _kt=match.kickoff_time,
+                        _oh=match.lineup_odds_home, _od=match.lineup_odds_draw, _oa=match.lineup_odds_away,
+                        _bk=match.lineup_bookmaker,
+                        _ph=match.lineup_prob_home, _pd=match.lineup_prob_draw, _pa=match.lineup_prob_away,
+                    ):
+                        async with AsyncSessionLocal() as s:
+                            await s.execute(text(
+                                "SELECT 1 FROM matches WHERE id = :mid FOR NO KEY UPDATE"
+                            ), {"mid": _mid})
+                            overround = (1/float(_oh) + 1/float(_od) + 1/float(_oa)) - 1 if _oh else 0
+                            await s.execute(text("""
+                                INSERT INTO lineup_movement_snapshots (
+                                    match_id, lineup_detected_at, snapshot_type,
+                                    minutes_from_lineup, captured_at, kickoff_time,
+                                    odds_home, odds_draw, odds_away, bookmaker, odds_freshness,
+                                    prob_home, prob_draw, prob_away, overround,
+                                    delta_p_vs_baseline, baseline_snapshot_type
+                                ) VALUES (
+                                    :match_id, :lineup_detected_at, 'L0',
+                                    0, :lineup_detected_at, :kickoff_time,
+                                    :odds_home, :odds_draw, :odds_away, :bookmaker, 'live',
+                                    :prob_home, :prob_draw, :prob_away, :overround,
+                                    0, 'L0'
+                                )
+                                ON CONFLICT (match_id, snapshot_type, bookmaker) DO NOTHING
+                            """), {
+                                "match_id": _mid, "lineup_detected_at": _lda,
+                                "kickoff_time": _kt,
+                                "odds_home": _oh, "odds_draw": _od, "odds_away": _oa,
+                                "bookmaker": _bk,
+                                "prob_home": _ph, "prob_draw": _pd, "prob_away": _pa,
+                                "overround": overround,
+                            })
+                            await s.commit()
+
+                    await _deadlock_retry_write(_write_l0, match_id=match_id)
+                    captured_count += 1
+
+                if not current_bucket:
+                    continue
+
+                # API call OUTSIDE any DB transaction
+                try:
+                    fresh_odds = await provider.get_odds(match.external_id)
+                except Exception as e:
+                    error_str = str(e).lower()
+                    if "429" in error_str or "rate limit" in error_str:
+                        logger.warning(
+                            f"Lineup movement: 429 rate limit hit, stopping run. "
+                            f"Captured {captured_count} before throttle."
+                        )
+                        break
+                    else:
+                        logger.warning(f"API error for match {match_id}: {e}")
+                        continue
+
+                if not fresh_odds or not fresh_odds.get("odds_home"):
+                    logger.warning(
+                        f"No odds available for lineup movement {current_bucket}, "
+                        f"match {match_id}"
+                    )
+                    continue
+
+                odds_home = float(fresh_odds["odds_home"])
+                odds_draw = float(fresh_odds["odds_draw"])
+                odds_away = float(fresh_odds["odds_away"])
+                bookmaker = fresh_odds.get("bookmaker", "unknown")
+
+                if not (odds_home > 1 and odds_draw > 1 and odds_away > 1):
+                    continue
+
+                raw_home = 1 / odds_home
+                raw_draw = 1 / odds_draw
+                raw_away = 1 / odds_away
+                total = raw_home + raw_draw + raw_away
+                overround = total - 1
+                prob_home = raw_home / total
+                prob_draw = raw_draw / total
+                prob_away = raw_away / total
+
+                delta_p = compute_delta_p(
+                    float(match.lineup_prob_home or 0),
+                    float(match.lineup_prob_draw or 0),
+                    float(match.lineup_prob_away or 0),
+                    prob_home, prob_draw, prob_away
+                )
+                snapshot_at = datetime.utcnow()
+
+                # Short tx: INSERT snapshot + check completion + UPDATE matches
+                async def _write_movement(
+                    _mid=match_id, _lda=match.lineup_detected_at,
+                    _bucket=current_bucket, _msl=minutes_since_lineup,
+                    _sat=snapshot_at, _kt=match.kickoff_time,
+                    _oh=odds_home, _od=odds_draw, _oa=odds_away,
+                    _bk=bookmaker, _ph=prob_home, _pd=prob_draw, _pa=prob_away,
+                    _ov=overround, _dp=delta_p,
+                ):
+                    async with AsyncSessionLocal() as s:
+                        await s.execute(text(
+                            "SELECT 1 FROM matches WHERE id = :mid FOR NO KEY UPDATE"
+                        ), {"mid": _mid})
+
+                        await s.execute(text("""
                             INSERT INTO lineup_movement_snapshots (
                                 match_id, lineup_detected_at, snapshot_type,
                                 minutes_from_lineup, captured_at, kickoff_time,
@@ -1694,182 +1830,59 @@ async def capture_lineup_relative_movement() -> dict:
                                 prob_home, prob_draw, prob_away, overround,
                                 delta_p_vs_baseline, baseline_snapshot_type
                             ) VALUES (
-                                :match_id, :lineup_detected_at, 'L0',
-                                0, :lineup_detected_at, :kickoff_time,
+                                :match_id, :lineup_detected_at, :bucket,
+                                :minutes_from_lineup, :captured_at, :kickoff_time,
                                 :odds_home, :odds_draw, :odds_away, :bookmaker, 'live',
                                 :prob_home, :prob_draw, :prob_away, :overround,
-                                0, 'L0'
+                                :delta_p, 'L0'
                             )
                             ON CONFLICT (match_id, snapshot_type, bookmaker) DO NOTHING
                         """), {
-                            "match_id": match_id,
-                            "lineup_detected_at": lineup_detected_at,
-                            "kickoff_time": kickoff_time,
-                            "odds_home": match.lineup_odds_home,
-                            "odds_draw": match.lineup_odds_draw,
-                            "odds_away": match.lineup_odds_away,
-                            "bookmaker": match.lineup_bookmaker,
-                            "prob_home": match.lineup_prob_home,
-                            "prob_draw": match.lineup_prob_draw,
-                            "prob_away": match.lineup_prob_away,
-                            "overround": (1/float(match.lineup_odds_home) +
-                                          1/float(match.lineup_odds_draw) +
-                                          1/float(match.lineup_odds_away)) - 1
-                                          if match.lineup_odds_home else 0,
+                            "match_id": _mid, "lineup_detected_at": _lda,
+                            "bucket": _bucket, "minutes_from_lineup": _msl,
+                            "captured_at": _sat, "kickoff_time": _kt,
+                            "odds_home": _oh, "odds_draw": _od, "odds_away": _oa,
+                            "bookmaker": f"{_bk}_live",
+                            "prob_home": _ph, "prob_draw": _pd, "prob_away": _pa,
+                            "overround": _ov, "delta_p": _dp,
                         })
-                        captured_count += 1
 
-                    # Check which bucket we should capture now
-                    current_bucket = None
-                    for min_m, max_m, bucket_name in LINEUP_MOVEMENT_BUCKETS:
-                        if min_m <= minutes_since_lineup <= max_m:
-                            current_bucket = bucket_name
-                            break
+                        # Check completion: L0 + at least one post-lineup
+                        snapshot_count = await s.execute(text("""
+                            SELECT
+                                COUNT(*) FILTER (WHERE snapshot_type = 'L0') as has_l0,
+                                COUNT(*) FILTER (WHERE snapshot_type IN ('L+5', 'L+10')) as has_post
+                            FROM lineup_movement_snapshots
+                            WHERE match_id = :match_id
+                        """), {"match_id": _mid})
 
-                    if not current_bucket:
-                        # Not in a capture window, skip
-                        continue
+                        counts = snapshot_count.fetchone()
+                        if counts and counts.has_l0 > 0 and counts.has_post > 0:
+                            await s.execute(text("""
+                                UPDATE matches SET lineup_movement_tracked = TRUE
+                                WHERE id = :match_id
+                            """), {"match_id": _mid})
+                            logger.info(f"Match {_mid} marked as lineup_movement_tracked")
 
-                    # Check if we already have this bucket
-                    existing = await session.execute(text("""
-                        SELECT 1 FROM lineup_movement_snapshots
-                        WHERE match_id = :match_id AND snapshot_type = :bucket
-                    """), {"match_id": match_id, "bucket": current_bucket})
+                        await s.commit()
 
-                    if existing.fetchone():
-                        continue
+                await _deadlock_retry_write(_write_movement, match_id=match_id)
 
-                    # Rate limit check
-                    if api_calls_this_run >= MAX_API_CALLS_PER_RUN:
-                        logger.info(
-                            f"Lineup movement: rate limit reached ({MAX_API_CALLS_PER_RUN} calls), "
-                            f"deferring remaining matches to next run"
-                        )
-                        break
-
-                    # Fetch fresh odds for this time point
-                    try:
-                        fresh_odds = await provider.get_odds(external_id)
-                        api_calls_this_run += 1
-                    except Exception as e:
-                        error_str = str(e).lower()
-                        if "429" in error_str or "rate limit" in error_str:
-                            # Auto-throttle: stop immediately on rate limit
-                            logger.warning(
-                                f"Lineup movement: 429 rate limit hit, stopping run. "
-                                f"Captured {captured_count} before throttle."
-                            )
-                            break
-                        else:
-                            logger.warning(f"API error for match {match_id}: {e}")
-                            continue
-
-                    if not fresh_odds or not fresh_odds.get("odds_home"):
-                        logger.warning(
-                            f"No odds available for lineup movement {current_bucket}, "
-                            f"match {match_id}"
-                        )
-                        continue
-
-                    odds_home = float(fresh_odds["odds_home"])
-                    odds_draw = float(fresh_odds["odds_draw"])
-                    odds_away = float(fresh_odds["odds_away"])
-                    bookmaker = fresh_odds.get("bookmaker", "unknown")
-
-                    # Calculate normalized probabilities
-                    if odds_home > 1 and odds_draw > 1 and odds_away > 1:
-                        raw_home = 1 / odds_home
-                        raw_draw = 1 / odds_draw
-                        raw_away = 1 / odds_away
-                        total = raw_home + raw_draw + raw_away
-                        overround = total - 1
-                        prob_home = raw_home / total
-                        prob_draw = raw_draw / total
-                        prob_away = raw_away / total
-                    else:
-                        continue
-
-                    # Calculate delta_p vs L0 baseline
-                    delta_p = compute_delta_p(
-                        float(match.lineup_prob_home or 0),
-                        float(match.lineup_prob_draw or 0),
-                        float(match.lineup_prob_away or 0),
-                        prob_home, prob_draw, prob_away
-                    )
-
-                    snapshot_at = datetime.utcnow()
-
-                    # Insert the snapshot
-                    await session.execute(text("""
-                        INSERT INTO lineup_movement_snapshots (
-                            match_id, lineup_detected_at, snapshot_type,
-                            minutes_from_lineup, captured_at, kickoff_time,
-                            odds_home, odds_draw, odds_away, bookmaker, odds_freshness,
-                            prob_home, prob_draw, prob_away, overround,
-                            delta_p_vs_baseline, baseline_snapshot_type
-                        ) VALUES (
-                            :match_id, :lineup_detected_at, :bucket,
-                            :minutes_from_lineup, :captured_at, :kickoff_time,
-                            :odds_home, :odds_draw, :odds_away, :bookmaker, 'live',
-                            :prob_home, :prob_draw, :prob_away, :overround,
-                            :delta_p, 'L0'
-                        )
-                        ON CONFLICT (match_id, snapshot_type, bookmaker) DO NOTHING
-                    """), {
-                        "match_id": match_id,
-                        "lineup_detected_at": lineup_detected_at,
-                        "bucket": current_bucket,
-                        "minutes_from_lineup": minutes_since_lineup,
-                        "captured_at": snapshot_at,
-                        "kickoff_time": kickoff_time,
-                        "odds_home": odds_home,
-                        "odds_draw": odds_draw,
-                        "odds_away": odds_away,
-                        "bookmaker": f"{bookmaker}_live",
-                        "prob_home": prob_home,
-                        "prob_draw": prob_draw,
-                        "prob_away": prob_away,
-                        "overround": overround,
-                        "delta_p": delta_p,
-                    })
-
-                    captured_count += 1
-                    logger.info(
-                        f"Lineup movement {current_bucket} captured for match {match_id}: "
-                        f"delta_p={delta_p:.4f} ({minutes_since_lineup:.1f} min since lineup)"
-                    )
-
-                    # Check if match has enough snapshots to mark as tracked
-                    # We need at least L0 and one post-lineup (L+5 or L+10)
-                    snapshot_count = await session.execute(text("""
-                        SELECT
-                            COUNT(*) FILTER (WHERE snapshot_type = 'L0') as has_l0,
-                            COUNT(*) FILTER (WHERE snapshot_type IN ('L+5', 'L+10')) as has_post
-                        FROM lineup_movement_snapshots
-                        WHERE match_id = :match_id
-                    """), {"match_id": match_id})
-
-                    counts = snapshot_count.fetchone()
-                    if counts and counts.has_l0 > 0 and counts.has_post > 0:
-                        await session.execute(text("""
-                            UPDATE matches
-                            SET lineup_movement_tracked = TRUE
-                            WHERE id = :match_id
-                        """), {"match_id": match_id})
-                        logger.info(f"Match {match_id} marked as lineup_movement_tracked")
-
-                await session.commit()
-
-            finally:
-                await provider.close()
-
-            if captured_count > 0:
+                captured_count += 1
                 logger.info(
-                    f"Lineup-relative movement: captured {captured_count} snapshots "
-                    f"for {checked_count} matches"
+                    f"Lineup movement {current_bucket} captured for match {match_id}: "
+                    f"delta_p={delta_p:.4f} ({minutes_since_lineup:.1f} min since lineup)"
                 )
+        finally:
+            await provider.close()
 
-            return {"checked": checked_count, "captured": captured_count}
+        if captured_count > 0:
+            logger.info(
+                f"Lineup-relative movement: captured {captured_count} snapshots "
+                f"for {checked_count} matches"
+            )
+
+        return {"checked": checked_count, "captured": captured_count}
 
     except APIBudgetExceeded as e:
         logger.warning(f"Lineup-relative movement stopped: {e}. Budget status: {get_api_budget_status()}")
@@ -8373,6 +8386,9 @@ def start_scheduler(ml_engine):
         id="lineup_monitoring_critical",
         name="Lineup Monitoring CRITICAL (every 60s, 45-90min window)",
         replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=120,
     )
 
     # Job 2: FULL WINDOW (0-120 min) - Regular 2 min polling
@@ -8384,6 +8400,9 @@ def start_scheduler(ml_engine):
         id="lineup_monitoring_full",
         name="Lineup Monitoring FULL (every 2 min, 0-120min window)",
         replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=120,
     )
 
     # Job 3: MARKET MOVEMENT - Track odds at T-60, T-30, T-15, T-5
@@ -8395,6 +8414,9 @@ def start_scheduler(ml_engine):
         id="market_movement_tracking",
         name="Market Movement Tracking (every 5 min)",
         replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=120,
     )
 
     # Job 4: LINEUP-RELATIVE MOVEMENT (Auditor Critical Fix 2026-01-09)
@@ -8407,6 +8429,9 @@ def start_scheduler(ml_engine):
         id="lineup_relative_movement",
         name="Lineup-Relative Movement (every 3 min)",
         replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=120,
     )
 
     # Job 5: EVENT BUS SWEEPER (Phase 2, P2-09)
