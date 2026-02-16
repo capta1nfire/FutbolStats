@@ -1,10 +1,13 @@
 """Image Processing for Player Photos.
 
-Handles cropping and thumbnail generation for player headshots.
-Pattern follows app/logos/processor.py.
+New flow (2026-02-16):
+1. Detect if image already has transparent background
+2. If not transparent → send to PhotoRoom for bg removal
+3. Keep original clean (full body, no crop) as "original"
+4. From original, crop face close-up as "face"
+5. Next.js <Image> handles on-demand sizing (no pre-generated thumbnails)
 
-Piloto: heuristic crop (no OpenCV) + Pillow thumbnails.
-Fix #6: NO heavy dependencies (opencv-python-headless) in pilot.
+No heavy dependencies (opencv-python-headless). Face crop is heuristic.
 """
 
 import io
@@ -12,42 +15,93 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
+import numpy as np
 from PIL import Image
-
-from app.photos.config import get_photos_settings
+from PIL.PngImagePlugin import PngInfo
 
 logger = logging.getLogger(__name__)
-photos_settings = get_photos_settings()
 
 
 @dataclass
-class CropResult:
-    """Result of smart cropping."""
+class ProcessedPhoto:
+    """Result of photo processing."""
 
-    card_bytes: Optional[bytes] = None  # ~400x600 portrait crop
-    thumb_bytes: Optional[bytes] = None  # ~256x256 square crop
+    original_bytes: Optional[bytes] = None  # Full clean image (bg removed), PNG
+    face_bytes: Optional[bytes] = None      # Face close-up crop, PNG
+    has_transparency: bool = False           # Source already had transparent bg
     error: Optional[str] = None
 
 
-def smart_crop(
-    image_bytes: bytes,
-    card_width: int = 400,
-    card_height: int = 600,
-    thumb_size: int = 256,
-) -> CropResult:
-    """Heuristic smart crop for player headshot.
+def has_transparent_background(image_bytes: bytes, threshold: float = 0.15) -> bool:
+    """Detect if image already has a transparent background.
 
-    Assumes Gemini Vision already validated this is a single-person headshot.
-    Uses center-weighted crop (upper 2/3 for card, center for thumb).
+    Checks if >15% of pixels have alpha < 128 (semi-transparent or fully transparent).
+    This avoids wasting PhotoRoom credits on already-clean images.
 
     Args:
-        image_bytes: Source image bytes (ideally with transparent background)
-        card_width: Target card width
-        card_height: Target card height
-        thumb_size: Target thumbnail size (square)
+        image_bytes: Raw image bytes
+        threshold: Fraction of transparent pixels needed (default 15%)
 
     Returns:
-        CropResult with card and thumb bytes
+        True if the image has significant transparency
+    """
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        if img.mode != "RGBA":
+            return False
+
+        alpha = np.array(img.split()[3])
+        transparent_pixels = np.sum(alpha < 128)
+        total_pixels = alpha.size
+
+        ratio = transparent_pixels / total_pixels
+        logger.debug(f"Transparency check: {ratio:.1%} transparent pixels")
+        return ratio >= threshold
+
+    except Exception as e:
+        logger.warning(f"Transparency detection failed: {e}")
+        return False
+
+
+def _find_content_bbox(img):
+    """Find bounding box of non-transparent content in an RGBA image.
+
+    Returns (top, bottom, left, right) of the content area,
+    or the full image bounds if no alpha channel.
+    """
+    w, h = img.size
+    if img.mode != "RGBA":
+        return 0, h, 0, w
+
+    alpha = np.array(img.split()[3])
+    rows_with_content = np.any(alpha > 128, axis=1)
+    cols_with_content = np.any(alpha > 128, axis=0)
+
+    if not np.any(rows_with_content):
+        return 0, h, 0, w
+
+    top = int(np.argmax(rows_with_content))
+    bottom = int(h - np.argmax(rows_with_content[::-1]))
+    left = int(np.argmax(cols_with_content))
+    right = int(w - np.argmax(cols_with_content[::-1]))
+
+    return top, bottom, left, right
+
+
+def crop_face(image_bytes: bytes, output_size: int = 512, player_name: str = "", player_ext_id: int = 0) -> Optional[bytes]:
+    """Crop face close-up from a player portrait.
+
+    Detects the actual content area (skipping transparent padding),
+    then takes the top 35% of the content height for the face region.
+
+    Args:
+        image_bytes: Source image bytes (should have transparent bg)
+        output_size: Output square size in pixels
+        player_name: Player name for embedded metadata attribution
+        player_ext_id: API-Football player ID for cross-referencing
+
+    Returns:
+        PNG bytes of face crop, or None on failure
     """
     try:
         img = Image.open(io.BytesIO(image_bytes))
@@ -56,84 +110,91 @@ def smart_crop(
 
         w, h = img.size
 
-        # Card crop: upper 2/3 of image, center-aligned, resize to card dimensions
-        card_crop_h = int(h * 0.85)  # top 85% (head + shoulders)
-        card_region = img.crop((0, 0, w, card_crop_h))
-        card_img = card_region.resize((card_width, card_height), Image.Resampling.LANCZOS)
+        # Find where the actual content starts (skip transparent padding)
+        content_top, content_bottom, content_left, content_right = _find_content_bbox(img)
+        content_h = content_bottom - content_top
+        content_w = content_right - content_left
 
-        card_buf = io.BytesIO()
-        card_img.save(card_buf, format="PNG", optimize=True)
+        logger.debug(f"Content bbox: top={content_top} bottom={content_bottom} ({content_h}px h), left={content_left} right={content_right} ({content_w}px w)")
 
-        # Thumb crop: center square, resize to thumb_size
-        if w > h:
-            left = (w - h) // 2
-            thumb_region = img.crop((left, 0, left + h, h))
+        if content_h < 50 or content_w < 50:
+            logger.warning(f"Content area too small ({content_w}x{content_h})")
+            return None
+
+        # Take top 30% of CONTENT height (tighter face crop)
+        face_h = int(content_h * 0.30)
+
+        # Find horizontal center of mass in the face region
+        # This centers the crop on the actual face, not the body
+        alpha = np.array(img.split()[3])
+        face_region_alpha = alpha[content_top:content_top + face_h, :]
+        cols_opaque = np.sum(face_region_alpha > 128, axis=0)
+
+        if cols_opaque.sum() > 0:
+            col_indices = np.arange(len(cols_opaque))
+            face_center_x = int(np.average(col_indices, weights=cols_opaque))
         else:
-            top = int(h * 0.05)  # slight offset down to center on face
-            size = min(w, h - top)
-            thumb_region = img.crop((0, top, size, top + size))
+            face_center_x = content_left + content_w // 2
 
-        thumb_img = thumb_region.resize((thumb_size, thumb_size), Image.Resampling.LANCZOS)
+        crop_size = min(content_w, face_h)
+        left = max(0, face_center_x - crop_size // 2)
+        left = min(left, w - crop_size)  # clamp to image bounds
+        top = content_top
 
-        thumb_buf = io.BytesIO()
-        thumb_img.save(thumb_buf, format="WEBP", quality=photos_settings.PHOTOS_THUMBNAIL_QUALITY)
+        logger.debug(f"Face center X: {face_center_x}, crop left: {left}, crop_size: {crop_size}")
 
-        return CropResult(
-            card_bytes=card_buf.getvalue(),
-            thumb_bytes=thumb_buf.getvalue(),
+        face_region = img.crop((left, top, left + crop_size, top + crop_size))
+        face_img = face_region.resize((output_size, output_size), Image.Resampling.LANCZOS)
+
+        png_meta = PngInfo()
+        png_meta.add_text("Author", "BON JOGO")
+        png_meta.add_text("Copyright", "BON JOGO - bonjogo.com")
+        png_meta.add_text("Source", "https://bonjogo.com")
+        id_part = f" | id:{player_ext_id}" if player_ext_id else ""
+        if player_name:
+            png_meta.add_text("Comment", f"{player_name}{id_part} | bonjogo.com")
+        buf = io.BytesIO()
+        face_img.save(buf, format="PNG", optimize=True, pnginfo=png_meta)
+        return buf.getvalue()
+
+    except Exception as e:
+        logger.error(f"Face crop failed: {e}")
+        return None
+
+
+def process_photo(image_bytes: bytes) -> ProcessedPhoto:
+    """Process a player photo: detect transparency, prepare original + face crop.
+
+    This does NOT call PhotoRoom — that's handled by the caller based on
+    the has_transparency flag.
+
+    Args:
+        image_bytes: Raw source image bytes
+
+    Returns:
+        ProcessedPhoto with original (re-saved as PNG) and face crop
+    """
+    try:
+        transparency = has_transparent_background(image_bytes)
+
+        # Re-save original as optimized PNG (normalize format)
+        img = Image.open(io.BytesIO(image_bytes))
+        if img.mode != "RGBA":
+            img = img.convert("RGBA")
+
+        original_buf = io.BytesIO()
+        img.save(original_buf, format="PNG", optimize=True)
+        original_bytes = original_buf.getvalue()
+
+        # Face crop
+        face_bytes = crop_face(original_bytes)
+
+        return ProcessedPhoto(
+            original_bytes=original_bytes,
+            face_bytes=face_bytes,
+            has_transparency=transparency,
         )
 
     except Exception as e:
-        logger.error(f"Smart crop failed: {e}")
-        return CropResult(error=str(e))
-
-
-def generate_thumbnails(
-    image_bytes: bytes,
-    sizes: Optional[list] = None,
-) -> dict:
-    """Generate WebP thumbnails at multiple sizes.
-
-    Pattern follows app/logos/processor.py.
-
-    Args:
-        image_bytes: Source image bytes
-        sizes: Target sizes (default from settings)
-
-    Returns:
-        Dict mapping size -> WebP bytes
-    """
-    sizes = sizes or photos_settings.PHOTOS_THUMBNAIL_SIZES
-    quality = photos_settings.PHOTOS_THUMBNAIL_QUALITY
-    thumbnails = {}
-
-    try:
-        img = Image.open(io.BytesIO(image_bytes))
-        if img.mode not in ("RGBA", "LA"):
-            img = img.convert("RGBA")
-    except Exception as e:
-        logger.error(f"Failed to load source image for thumbnails: {e}")
-        return thumbnails
-
-    for size in sizes:
-        try:
-            thumb = img.copy()
-            thumb.thumbnail((size, size), Image.Resampling.LANCZOS)
-
-            # Pad to square if needed
-            if thumb.width != thumb.height:
-                square = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-                x_off = (size - thumb.width) // 2
-                y_off = (size - thumb.height) // 2
-                square.paste(thumb, (x_off, y_off))
-                thumb = square
-
-            buf = io.BytesIO()
-            thumb.save(buf, format="WEBP", quality=quality, lossless=False)
-            thumbnails[size] = buf.getvalue()
-            logger.debug(f"Generated {size}px thumbnail ({len(thumbnails[size])} bytes)")
-
-        except Exception as e:
-            logger.error(f"Failed to generate {size}px thumbnail: {e}")
-
-    return thumbnails
+        logger.error(f"Photo processing failed: {e}")
+        return ProcessedPhoto(error=str(e))

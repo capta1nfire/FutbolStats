@@ -41,6 +41,10 @@ async def remove_background(image_bytes: bytes) -> Optional[bytes]:
                 api_url,
                 headers={"x-api-key": api_key},
                 files={"image_file": ("photo.png", image_bytes, "image/png")},
+                data={
+                    "format": "png",
+                    "size": "full",
+                },
             )
             resp.raise_for_status()
 

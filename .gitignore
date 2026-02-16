@@ -57,5 +57,8 @@ scripts/output/
 # OddsPortal raw scraping data (re-scrapeable, large JSON files)
 data/oddsportal_raw/
 
+# Transfermarkt scraping outputs (ABE P0: no commit)
+data/tm_*
+
 # Local screenshots / scratch assets
 ios/FutbolStats/FutbolStats/capta.PNG

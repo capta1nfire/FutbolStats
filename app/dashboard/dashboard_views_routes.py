@@ -5085,3 +5085,94 @@ async def dashboard_coverage_map(
         "data": data,
     }
 
+
+# ---------------------------------------------------------------------------
+# Photo Review Endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/dashboard/photos/candidates.json")
+async def dashboard_photo_candidates(
+    request: Request,
+    status: str = Query("pending_review"),
+    team_id: int = Query(None, ge=1),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Get photo candidates for review, optionally filtered by team (internal ID)."""
+    _check_token(request)
+
+    sql = text("""
+        SELECT pa.id, pa.player_external_id, pa.source, pa.quality_score,
+               pa.review_status, pa.photo_meta, pa.run_id, pa.created_at
+        FROM player_photo_assets pa
+        LEFT JOIN players p ON p.external_id = pa.player_external_id
+        WHERE pa.asset_type = 'candidate'
+          AND pa.review_status = :status
+          AND (CAST(:team_id AS INTEGER) IS NULL OR p.team_id = :team_id)
+        ORDER BY pa.quality_score DESC NULLS LAST, pa.created_at DESC
+    """)
+    result = await session.execute(sql, {"status": status, "team_id": team_id})
+    rows = result.mappings().all()
+
+    candidates = []
+    for r in rows:
+        meta = r["photo_meta"] or {}
+        candidates.append({
+            "id": r["id"],
+            "player_external_id": r["player_external_id"],
+            "player_name": meta.get("player_name", ""),
+            "team_name": meta.get("team_name", ""),
+            "team_external_id": meta.get("team_external_id"),
+            "source": r["source"],
+            "quality_score": r["quality_score"],
+            "candidate_url": meta.get("candidate_url", ""),
+            "current_url": meta.get("current_url", ""),
+            "width": meta.get("width"),
+            "height": meta.get("height"),
+            "identity_score": meta.get("identity_score"),
+            "review_status": r["review_status"],
+            "run_id": r["run_id"],
+        })
+
+    return {
+        "total": len(candidates),
+        "status_filter": status,
+        "candidates": candidates,
+    }
+
+
+@router.post("/dashboard/photos/review/{candidate_id}")
+async def dashboard_photo_review_action(
+    request: Request,
+    candidate_id: int,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Approve or reject a photo candidate."""
+    _check_token(request)
+
+    body = await request.json()
+    action = body.get("action")  # "approve" or "reject"
+
+    if action not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="action must be 'approve' or 'reject'")
+
+    new_status = "approved" if action == "approve" else "rejected"
+
+    sql = text("""
+        UPDATE player_photo_assets
+        SET review_status = :status, changed_by = 'manual', updated_at = NOW()
+        WHERE id = :id AND asset_type = 'candidate'
+        RETURNING id, player_external_id, review_status
+    """)
+    result = await session.execute(sql, {"status": new_status, "id": candidate_id})
+    row = result.mappings().first()
+    await session.commit()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    return {
+        "id": row["id"],
+        "player_external_id": row["player_external_id"],
+        "review_status": row["review_status"],
+    }
+

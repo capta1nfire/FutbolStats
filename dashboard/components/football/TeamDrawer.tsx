@@ -14,7 +14,6 @@ import {
   Users,
   MapPin,
   Shirt,
-  Trophy,
   TrendingUp,
   BarChart3,
   Image as ImageIcon,
@@ -34,6 +33,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { TeamLogoSettings } from "./TeamLogoSettings";
+import { TeamPhotoReview } from "./TeamPhotoReview";
 import { TeamEnrichmentSettings } from "./TeamEnrichmentSettings";
 import type { TeamEnrichmentHandle, EnrichmentFormState } from "./TeamEnrichmentSettings";
 import { TeamWikiSettings } from "./TeamWikiSettings";
@@ -68,21 +68,6 @@ function TeamInfoSection({ team }: { team: TeamInfo }) {
           </p>
           {team.venue_city && (
             <p className="text-xs text-muted-foreground">{team.venue_city}</p>
-          )}
-        </div>
-      )}
-      {/* Kit Supplier */}
-      {team.kit_supplier && (
-        <div className="bg-muted/50 rounded-lg p-3">
-          <DevRef path="dashboard/components/football/TeamDrawer.tsx:TeamInfoSection:KitSupplier">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-              <Shirt className="h-3 w-3" />
-              <span>Kit Supplier</span>
-            </div>
-          </DevRef>
-          <p className="text-sm text-foreground">{team.kit_supplier}</p>
-          {team.kit_supplier_since && (
-            <p className="text-xs text-muted-foreground">{team.kit_supplier_since}</p>
           )}
         </div>
       )}
@@ -154,19 +139,15 @@ function LeaguesSection({ leagues }: { leagues: TeamLeague[] }) {
   }
 
   return (
-    <div className="space-y-3">
+    <div>
       <DevRef path="dashboard/components/football/TeamDrawer.tsx:LeaguesSection">
-        <h4 className="text-sm font-medium text-foreground flex items-center gap-2">
-          <Trophy className="h-4 w-4 text-primary" />
+        <h4 className="text-xs font-medium text-muted-foreground mb-1.5">
           Competitions ({leagues.length})
         </h4>
       </DevRef>
-      <div className="space-y-2">
+      <div className="bg-muted/50 rounded-lg p-3 space-y-2">
         {leagues.slice(0, 5).map((league) => (
-          <div
-            key={league.league_id}
-            className="bg-muted/50 rounded-lg p-2 flex items-center justify-between gap-2"
-          >
+          <div key={league.league_id} className="flex items-center justify-between gap-2">
             <div className="flex-1 min-w-0">
               <p className="text-sm text-foreground truncate">{league.name}</p>
               <p className="text-xs text-muted-foreground">
@@ -176,8 +157,8 @@ function LeaguesSection({ leagues }: { leagues: TeamLeague[] }) {
           </div>
         ))}
         {leagues.length > 5 && (
-          <p className="text-xs text-muted-foreground text-center">
-            +{leagues.length - 5} more competitions
+          <p className="text-xs text-muted-foreground text-center pt-1">
+            +{leagues.length - 5} more
           </p>
         )}
       </div>
@@ -358,6 +339,20 @@ export function TeamPanelContent({ teamId }: { teamId: number | null }) {
         {activeTab === "overview" && (
           <>
             {data.stats && <StatsSummarySection stats={data.stats} />}
+            {data.team?.kit_supplier && (
+              <div className="bg-muted/50 rounded-lg p-3">
+                <DevRef path="dashboard/components/football/TeamDrawer.tsx:Overview:KitSupplier">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+                    <Shirt className="h-3 w-3" />
+                    <span>Kit Supplier</span>
+                  </div>
+                </DevRef>
+                <p className="text-sm text-foreground">{data.team.kit_supplier}</p>
+                {data.team.kit_supplier_since && (
+                  <p className="text-xs text-muted-foreground">{data.team.kit_supplier_since}</p>
+                )}
+              </div>
+            )}
             {data.leagues_played && <LeaguesSection leagues={data.leagues_played} />}
             {data.recent_form && <RecentFormSection form={data.recent_form} />}
             {data.team?.team_id && (
@@ -372,6 +367,10 @@ export function TeamPanelContent({ teamId }: { teamId: number | null }) {
               teamId={data.team.team_id}
               teamName={data.team.name}
               fallbackLogoUrl={data.team.logo_url || undefined}
+            />
+            <TeamPhotoReview
+              teamId={data.team.team_id}
+              teamName={data.team.name}
             />
           </div>
         )}
@@ -487,7 +486,16 @@ export function TeamPanelContent({ teamId }: { teamId: number | null }) {
   return (
     <>
       {/* Header */}
-      <div className="h-14 flex items-center justify-center px-4 shrink-0">
+      <div className="h-14 flex items-center justify-center gap-2 px-4 shrink-0">
+        {data?.team?.logo_url && (
+          <img
+            src={data.team.logo_url}
+            alt=""
+            width={18}
+            height={18}
+            className="shrink-0"
+          />
+        )}
         <h2 className="text-sm font-semibold text-foreground truncate">
           {titleContent}
         </h2>
