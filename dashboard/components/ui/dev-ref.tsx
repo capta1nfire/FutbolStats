@@ -1,6 +1,6 @@
 "use client";
 
-import { toast } from "sonner";
+import { useState, useCallback } from "react";
 
 interface DevRefProps {
   /** Component path, e.g. "dashboard/components/football/TeamDrawer.tsx:TeamInfoSection" */
@@ -10,20 +10,23 @@ interface DevRefProps {
 
 /**
  * Invisible dev helper — copies component path to clipboard on click.
- * No visual change: same cursor, no underline, no color.
- * Shows a subtle toast on copy.
+ * Brief opacity flash as feedback, no toast/popup.
  */
 export function DevRef({ path, children }: DevRefProps) {
-  const handleClick = (e: React.MouseEvent) => {
-    // Only fire on the element itself, not bubbled from children with their own handlers
-    if (e.detail === 1) {
-      navigator.clipboard.writeText(path);
-      toast.success(path, { duration: 1500 });
-    }
-  };
+  const [copied, setCopied] = useState(false);
+
+  const handleClick = useCallback(() => {
+    navigator.clipboard.writeText(path);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 600);
+  }, [path]);
 
   return (
-    <span onClick={handleClick} className="select-none">
+    <span
+      onClick={handleClick}
+      className="select-none transition-opacity duration-300"
+      style={{ opacity: copied ? 0.4 : 1 }}
+    >
       {children}
     </span>
   );
