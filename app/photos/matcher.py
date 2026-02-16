@@ -101,6 +101,7 @@ def fuzzy_name_score(candidate_name: str, db_name: str, db_firstname: Optional[s
     1. Full name vs full name
     2. Candidate vs firstname+lastname
     3. Candidate vs lastname only (common in LATAM)
+    4. Initial+lastname pattern (API-Football "J. Ramírez" vs club "Juan Carlos Ramírez")
 
     Returns best score (0.0-1.0).
     """
@@ -121,6 +122,20 @@ def fuzzy_name_score(candidate_name: str, db_name: str, db_firstname: Optional[s
     if db_lastname:
         ln = normalize_name(db_lastname)
         scores.append(SequenceMatcher(None, c, ln).ratio())
+
+    # Initial+lastname pattern: "J. Ramírez" vs "Juan Carlos Ramírez Mejía"
+    # If DB lastname is contained in candidate AND first initials match → high score
+    if db_lastname and db_firstname:
+        ln = normalize_name(db_lastname)
+        fn_initial = normalize_name(db_firstname)[:1]
+        c_tokens = c.split()
+        if c_tokens and fn_initial and c_tokens[0][:1] == fn_initial:
+            # First initial matches, check if any candidate token matches lastname
+            for token in c_tokens:
+                token_sim = SequenceMatcher(None, token, ln).ratio()
+                if token_sim >= 0.85:
+                    scores.append(0.95)  # Strong match: initial + lastname
+                    break
 
     return max(scores) if scores else 0.0
 

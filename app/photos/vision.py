@@ -32,9 +32,9 @@ VALIDATION_PROMPT = """Analyze this image and respond with a JSON object (no mar
 }
 
 Criteria:
-- is_headshot: True if this is a portrait/headshot photo (face clearly visible, shoulders up)
-- single_person: True if exactly one person is visible
-- professional_quality: True if studio/official quality (not blurry, not cropped badly, not a selfie)
+- is_headshot: True if this is a portrait or upper-body photo of a person (face clearly visible). Includes headshots, half-body portraits, and photos showing the person from the waist up. Action shots, full-body standing photos, and celebration photos should be false.
+- single_person: True if exactly one person is the main subject (minor background figures are OK)
+- professional_quality: True if official/studio quality (not blurry, not cropped badly, not a selfie, not a low-res thumbnail)
 - confidence: Your confidence in the assessment
 - reasoning: Brief explanation of your assessment"""
 

@@ -21,6 +21,10 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
+# Firecrawl API for WAF-protected sites (fallback when httpx gets 403)
+FIRECRAWL_API_KEY = os.environ.get("FIRECRAWL_API_KEY", "")
+FIRECRAWL_API_URL = "https://api.firecrawl.dev/v1/scrape"
+
 # Path to config (relative to project root)
 CONFIG_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
@@ -177,7 +181,8 @@ def _parse_wordpress_grid(html, base_url):
         ".elementor-team-member, .wp-block-group, "
         "article.staff, .sp-template-player-gallery .gallery-item, "
         "div.sc_blogger_item.sp_player, "
-        "article.eael-grid-post"
+        "article.eael-grid-post, "
+        ".flipbox-container"
     )
 
     if containers:
@@ -188,6 +193,17 @@ def _parse_wordpress_grid(html, base_url):
 
     if players:
         return players
+
+    # Build a set of "staff section" elements so we can skip non-player images
+    # (e.g. "CUERPO TÉCNICO" section headings)
+    staff_section_elements = set()
+    for heading in soup.find_all(["h1", "h2", "h3"]):
+        text = heading.get_text(strip=True).lower()
+        if any(kw in text for kw in ["cuerpo t", "staff", "director", "preparador"]):
+            # Mark all siblings after this heading as staff
+            parent = heading.find_parent(["section", "div"])
+            if parent:
+                staff_section_elements.add(id(parent))
 
     # Strategy 2: Elementor pattern — image widget followed by sibling section/div with h2s
     # Nacional uses: <div widget_type="image.default"> as sibling of <section> containing h2 name/position/number
@@ -216,6 +232,16 @@ def _parse_wordpress_grid(html, base_url):
         photo_imgs.append(img)
 
     for img in photo_imgs:
+        # Skip images inside staff/cuerpo técnico sections
+        if staff_section_elements:
+            in_staff = False
+            for ancestor in img.parents:
+                if id(ancestor) in staff_section_elements:
+                    in_staff = True
+                    break
+            if in_staff:
+                continue
+
         src = img.get("src") or ""
         if src.startswith("data:"):
             src = ""
@@ -430,6 +456,40 @@ def _parse_individual_page(html, base_url):
 
 
 # ---------------------------------------------------------------------------
+# Firecrawl fallback (WAF bypass)
+# ---------------------------------------------------------------------------
+
+async def _fetch_html_firecrawl(url, timeout=30.0):
+    """Fetch HTML via Firecrawl API when httpx is blocked by WAF.
+
+    Returns HTML string or None if Firecrawl is not configured or fails.
+    """
+    if not FIRECRAWL_API_KEY:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                FIRECRAWL_API_URL,
+                json={"url": url, "formats": ["html"], "onlyMainContent": True},
+                headers={
+                    "Authorization": f"Bearer {FIRECRAWL_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            html = data.get("data", {}).get("html", "")
+            if html:
+                logger.info(f"  Firecrawl fallback OK for {url} ({len(html)} chars)")
+                return html
+            logger.warning(f"  Firecrawl returned no HTML for {url}")
+            return None
+    except Exception as e:
+        logger.warning(f"  Firecrawl fallback failed for {url}: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Main scrape function
 # ---------------------------------------------------------------------------
 
@@ -478,28 +538,50 @@ async def scrape_club_squad(
 
     headers = {**DEFAULT_HEADERS, **custom_headers}
 
+    html = None
+    used_firecrawl = False
+
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             resp = await client.get(squad_url, headers=headers)
             resp.raise_for_status()
             html = resp.text
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 403 and FIRECRAWL_API_KEY:
+            logger.info(f"  httpx 403 for {squad_url}, trying Firecrawl fallback...")
+            html = await _fetch_html_firecrawl(squad_url)
+            used_firecrawl = True
+        if not html:
+            return ClubSiteScrapeResult(
+                team_external_id=team_external_id,
+                team_name=team_name or team_cfg.get("team_name", "?"),
+                squad_url=squad_url,
+                error=f"HTTP error: {e}",
+            )
+    except Exception as e:
+        return ClubSiteScrapeResult(
+            team_external_id=team_external_id,
+            team_name=team_name or team_cfg.get("team_name", "?"),
+            squad_url=squad_url,
+            error=f"HTTP error: {e}",
+        )
 
-            # Parse based on strategy (inside async with to keep client alive)
-            if strategy == "wordpress_grid":
-                players = _parse_wordpress_grid(html, squad_url)
-            elif strategy == "individual_pages":
-                # Discover individual player page URLs from the index
-                soup = BeautifulSoup(html, "html.parser")
-                player_links = []
-                link_pattern = team_cfg.get("player_link_pattern", "/staff/")
-                for a in soup.find_all("a", href=True):
-                    href = a["href"]
-                    if link_pattern in href:
-                        full_url = urljoin(squad_url, href)
-                        if full_url not in player_links:
-                            player_links.append(full_url)
+    try:
+        if strategy == "wordpress_grid":
+            players = _parse_wordpress_grid(html, squad_url)
+        elif strategy == "individual_pages":
+            soup = BeautifulSoup(html, "html.parser")
+            player_links = []
+            link_pattern = team_cfg.get("player_link_pattern", "/staff/")
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                if link_pattern in href:
+                    full_url = urljoin(squad_url, href)
+                    if full_url not in player_links:
+                        player_links.append(full_url)
 
-                players = []
+            players = []
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
                 for purl in player_links:
                     try:
                         resp2 = await client.get(purl, headers=headers)
@@ -507,17 +589,16 @@ async def scrape_club_squad(
                         p = _parse_individual_page(resp2.text, purl)
                         if p:
                             players.append(p)
-                    except Exception as e:
-                        logger.debug(f"  Failed to fetch {purl}: {e}")
-            else:
-                # Default: try wordpress_grid
-                players = _parse_wordpress_grid(html, squad_url)
+                    except Exception as e2:
+                        logger.debug(f"  Failed to fetch {purl}: {e2}")
+        else:
+            players = _parse_wordpress_grid(html, squad_url)
     except Exception as e:
         return ClubSiteScrapeResult(
             team_external_id=team_external_id,
             team_name=team_name or team_cfg.get("team_name", "?"),
             squad_url=squad_url,
-            error=f"HTTP error: {e}",
+            error=f"Parse error: {e}",
         )
 
     return ClubSiteScrapeResult(
