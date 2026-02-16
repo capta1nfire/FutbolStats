@@ -804,6 +804,7 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
     team_query_v2 = text("""
         SELECT
             id, external_id, name, country, team_type, logo_url,
+            kit_supplier, kit_supplier_since,
             wiki_url, wikidata_id, wiki_title, wiki_lang,
             wiki_url_cached, wiki_source, wiki_confidence, wiki_matched_at
         FROM teams
@@ -815,7 +816,8 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
     except ProgrammingError:
         wiki_supported = False
         team_query_v1 = text("""
-            SELECT id, external_id, name, country, team_type, logo_url
+            SELECT id, external_id, name, country, team_type, logo_url,
+                   kit_supplier, kit_supplier_since
             FROM teams
             WHERE id = :tid
         """)
@@ -1028,6 +1030,8 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
             "country": team_row.country,
             "team_type": team_row.team_type,
             "logo_url": team_row.logo_url,
+            "kit_supplier": getattr(team_row, "kit_supplier", None),
+            "kit_supplier_since": getattr(team_row, "kit_supplier_since", None),
         },
         "leagues_played": leagues_played,
         "stats_by_season": stats_by_season,

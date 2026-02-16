@@ -389,6 +389,8 @@ export interface TeamInfo {
   venue_name: string | null;
   venue_city: string | null;
   logo_url: string | null;
+  kit_supplier?: string | null;
+  kit_supplier_since?: string | null;
   wiki?: TeamWikiInfo;
 }
 

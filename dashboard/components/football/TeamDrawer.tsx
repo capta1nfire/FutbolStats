@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   Users,
   MapPin,
+  Shirt,
   Trophy,
   TrendingUp,
   BarChart3,
@@ -64,6 +65,19 @@ function TeamInfoSection({ team }: { team: TeamInfo }) {
           </p>
           {team.venue_city && (
             <p className="text-xs text-muted-foreground">{team.venue_city}</p>
+          )}
+        </div>
+      )}
+      {/* Kit Supplier */}
+      {team.kit_supplier && (
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+            <Shirt className="h-3 w-3" />
+            <span>Kit Supplier</span>
+          </div>
+          <p className="text-sm text-foreground">{team.kit_supplier}</p>
+          {team.kit_supplier_since && (
+            <p className="text-xs text-muted-foreground">{team.kit_supplier_since}</p>
           )}
         </div>
       )}
