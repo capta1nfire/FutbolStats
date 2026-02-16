@@ -38,6 +38,7 @@ import { TeamEnrichmentSettings } from "./TeamEnrichmentSettings";
 import type { TeamEnrichmentHandle, EnrichmentFormState } from "./TeamEnrichmentSettings";
 import { TeamWikiSettings } from "./TeamWikiSettings";
 import { ManagerCard, InjuryList } from "@/components/squad";
+import { DevRef } from "@/components/ui/dev-ref";
 
 interface TeamDrawerProps {
   teamId: number | null;
@@ -56,10 +57,12 @@ function TeamInfoSection({ team }: { team: TeamInfo }) {
       {/* Venue Info */}
       {(team.venue_name || team.venue_city) && (
         <div className="bg-muted/50 rounded-lg p-3">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-            <MapPin className="h-3 w-3" />
-            <span>Home Venue</span>
-          </div>
+          <DevRef path="dashboard/components/football/TeamDrawer.tsx:TeamInfoSection:Venue">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+              <MapPin className="h-3 w-3" />
+              <span>Home Venue</span>
+            </div>
+          </DevRef>
           <p className="text-sm text-foreground">
             {team.venue_name || "Unknown venue"}
           </p>
@@ -71,10 +74,12 @@ function TeamInfoSection({ team }: { team: TeamInfo }) {
       {/* Kit Supplier */}
       {team.kit_supplier && (
         <div className="bg-muted/50 rounded-lg p-3">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-            <Shirt className="h-3 w-3" />
-            <span>Kit Supplier</span>
-          </div>
+          <DevRef path="dashboard/components/football/TeamDrawer.tsx:TeamInfoSection:KitSupplier">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+              <Shirt className="h-3 w-3" />
+              <span>Kit Supplier</span>
+            </div>
+          </DevRef>
           <p className="text-sm text-foreground">{team.kit_supplier}</p>
           {team.kit_supplier_since && (
             <p className="text-xs text-muted-foreground">{team.kit_supplier_since}</p>
@@ -96,10 +101,12 @@ function StatsSummarySection({ stats }: { stats: TeamStats }) {
 
   return (
     <div className="space-y-3">
-      <h4 className="text-sm font-medium text-foreground flex items-center gap-2">
-        <BarChart3 className="h-4 w-4 text-muted-foreground" />
-        Statistics
-      </h4>
+      <DevRef path="dashboard/components/football/TeamDrawer.tsx:StatsSummarySection">
+        <h4 className="text-sm font-medium text-foreground flex items-center gap-2">
+          <BarChart3 className="h-4 w-4 text-muted-foreground" />
+          Statistics
+        </h4>
+      </DevRef>
       <div className="grid grid-cols-3 gap-3">
         <div className="bg-card border border-border rounded-lg p-2 text-center">
           <p className="text-lg font-semibold text-foreground">{stats.total_matches}</p>
@@ -148,10 +155,12 @@ function LeaguesSection({ leagues }: { leagues: TeamLeague[] }) {
 
   return (
     <div className="space-y-3">
-      <h4 className="text-sm font-medium text-foreground flex items-center gap-2">
-        <Trophy className="h-4 w-4 text-primary" />
-        Competitions ({leagues.length})
-      </h4>
+      <DevRef path="dashboard/components/football/TeamDrawer.tsx:LeaguesSection">
+        <h4 className="text-sm font-medium text-foreground flex items-center gap-2">
+          <Trophy className="h-4 w-4 text-primary" />
+          Competitions ({leagues.length})
+        </h4>
+      </DevRef>
       <div className="space-y-2">
         {leagues.slice(0, 5).map((league) => (
           <div
@@ -192,10 +201,12 @@ function RecentFormSection({ form }: { form: TeamFormMatch[] }) {
 
   return (
     <div className="space-y-3">
-      <h4 className="text-sm font-medium text-foreground flex items-center gap-2">
-        <TrendingUp className="h-4 w-4 text-muted-foreground" />
-        Recent Form
-      </h4>
+      <DevRef path="dashboard/components/football/TeamDrawer.tsx:RecentFormSection">
+        <h4 className="text-sm font-medium text-foreground flex items-center gap-2">
+          <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          Recent Form
+        </h4>
+      </DevRef>
       {/* Form badges */}
       <div className="flex items-center gap-1">
         {form.slice(0, 5).map((match, idx) => (
@@ -528,15 +539,19 @@ function TeamSquadOverview({ teamId }: { teamId: number }) {
     <div className="space-y-3">
       {hasManager && (
         <div>
-          <h4 className="text-xs font-medium text-muted-foreground mb-1.5">Manager</h4>
+          <DevRef path="dashboard/components/football/TeamDrawer.tsx:TeamSquadOverview:Manager">
+            <h4 className="text-xs font-medium text-muted-foreground mb-1.5">Manager</h4>
+          </DevRef>
           <ManagerCard manager={data.current_manager!} />
         </div>
       )}
       {hasInjuries && (
         <div>
-          <h4 className="text-xs font-medium text-muted-foreground mb-1.5">
-            Absences ({data.current_injuries.length})
-          </h4>
+          <DevRef path="dashboard/components/football/TeamDrawer.tsx:TeamSquadOverview:Absences">
+            <h4 className="text-xs font-medium text-muted-foreground mb-1.5">
+              Absences ({data.current_injuries.length})
+            </h4>
+          </DevRef>
           <InjuryList injuries={data.current_injuries} compact />
         </div>
       )}
