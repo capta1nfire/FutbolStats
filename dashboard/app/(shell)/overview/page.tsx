@@ -1,11 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import {
   useOpsOverview,
   useTodayMatches,
   useActiveIncidentsApi,
+  useTeamSearch,
 } from "@/lib/hooks";
+import { useDebounce } from "@/lib/hooks/use-debounce";
 import {
   mockApiBudget,
   mockActiveIncidents,
@@ -33,9 +36,10 @@ import {
 } from "@/components/overview";
 import { useOverviewDrawer } from "@/lib/hooks/use-overview-drawer";
 import { OverviewPanel } from "@/lib/overview-drawer";
-import { AlertCircle, Calendar, ChevronLeft, ChevronRight, LayoutDashboard } from "lucide-react";
+import { AlertCircle, Calendar, ChevronLeft, ChevronRight, LayoutDashboard, Users } from "lucide-react";
 import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
+import { SearchInput } from "@/components/ui/search-input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Tooltip,
@@ -135,6 +139,39 @@ export default function OverviewPage() {
 
   // Left rail collapse state
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
+
+  // Team search
+  const router = useRouter();
+  const [teamSearchQuery, setTeamSearchQuery] = useState("");
+  const [showTeamResults, setShowTeamResults] = useState(false);
+  const teamSearchRef = useRef<HTMLDivElement>(null);
+  const debouncedTeamSearch = useDebounce(teamSearchQuery, 200);
+  const { data: teamSearchData, isLoading: isTeamSearching } = useTeamSearch(
+    debouncedTeamSearch,
+    showTeamResults
+  );
+
+  const handleTeamSearchChange = useCallback((value: string) => {
+    setTeamSearchQuery(value);
+    setShowTeamResults(value.length >= 2);
+  }, []);
+
+  const handleTeamClick = useCallback((teamId: number) => {
+    setTeamSearchQuery("");
+    setShowTeamResults(false);
+    router.push(`/football?team=${teamId}`);
+  }, [router]);
+
+  // Close team search results when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (teamSearchRef.current && !teamSearchRef.current.contains(event.target as Node)) {
+        setShowTeamResults(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   // Loading state
   if (isLoading) {
@@ -245,6 +282,60 @@ export default function OverviewPage() {
             >
               <ChevronLeft className="h-4 w-4" strokeWidth={1.5} />
             </Button>
+          </div>
+
+          {/* Team Search */}
+          <div className="px-3 pt-3 pb-2 relative shrink-0" ref={teamSearchRef}>
+            <SearchInput
+              placeholder="Search teams..."
+              value={teamSearchQuery}
+              onChange={handleTeamSearchChange}
+              onFocus={() => teamSearchQuery.length >= 2 && setShowTeamResults(true)}
+            />
+            {showTeamResults && (
+              <div className="absolute left-0 right-0 top-full mt-1 bg-popover border border-border rounded-md shadow-lg z-50 max-h-64 overflow-y-auto">
+                {isTeamSearching ? (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader size="sm" />
+                  </div>
+                ) : teamSearchData?.teams && teamSearchData.teams.length > 0 ? (
+                  <div className="py-1">
+                    {teamSearchData.teams.map((team) => (
+                      <button
+                        key={team.team_id}
+                        onClick={() => handleTeamClick(team.team_id)}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted text-left"
+                      >
+                        {team.logo_url ? (
+                          <img
+                            src={team.logo_url}
+                            alt=""
+                            className="w-5 h-5 object-contain"
+                          />
+                        ) : (
+                          <Users className="w-5 h-5 text-muted-foreground" />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="truncate text-foreground">{team.display_name}</p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {team.country} · {team.team_type}
+                          </p>
+                        </div>
+                      </button>
+                    ))}
+                    {teamSearchData.pagination.has_more && (
+                      <div className="px-3 py-1.5 text-xs text-muted-foreground text-center border-t border-border">
+                        +{Math.max(0, teamSearchData.pagination.total - teamSearchData.teams.length)} more
+                      </div>
+                    )}
+                  </div>
+                ) : debouncedTeamSearch.length >= 2 ? (
+                  <div className="py-4 text-sm text-muted-foreground text-center">
+                    No teams found
+                  </div>
+                ) : null}
+              </div>
+            )}
           </div>
 
           {/* Content - min-h-0 allows flex child to shrink below content size */}
