@@ -27,6 +27,7 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
@@ -420,6 +421,19 @@ class TitanRunner:
             except PITViolationError as e:
                 logger.error(f"PIT violation for match {external_id}: {e}")
                 return {"status": "pit_violation", "reason": str(e)}
+            except IntegrityError as e:
+                err_msg = str(e.orig) if hasattr(e, "orig") else str(e)
+                if "pit_valid" in err_msg:
+                    logger.error(
+                        f"DB pit_valid check failed for match {external_id} "
+                        f"(likely kickoff reschedule): {err_msg}"
+                    )
+                    try:
+                        await self.session.rollback()
+                    except Exception:
+                        pass
+                    return {"status": "pit_violation", "reason": err_msg}
+                raise
 
         return {"status": "extracted", "materialized": False, "dry_run": True}
 
@@ -663,6 +677,19 @@ class TitanRunner:
             )
         except PITViolationError as e:
             logger.error(f"Remat PIT violation for match {external_id}: {e}")
+        except IntegrityError as e:
+            err_msg = str(e.orig) if hasattr(e, "orig") else str(e)
+            if "pit_valid" in err_msg:
+                logger.error(
+                    f"Remat DB pit_valid check failed for match {external_id} "
+                    f"(likely kickoff reschedule): {err_msg}"
+                )
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    pass
+            else:
+                raise
 
         return result
 

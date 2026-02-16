@@ -1054,6 +1054,11 @@ class FeatureMatrixMaterializer:
                 :pit_max_captured_at, :tier1_complete, :tier1b_complete, :tier1c_complete, :tier1d_complete, :tier2_complete, :tier3_complete
             )
             ON CONFLICT (match_id) DO UPDATE SET
+                kickoff_utc = GREATEST(EXCLUDED.kickoff_utc, {self.schema}.feature_matrix.kickoff_utc),
+                competition_id = COALESCE(EXCLUDED.competition_id, {self.schema}.feature_matrix.competition_id),
+                season = COALESCE(EXCLUDED.season, {self.schema}.feature_matrix.season),
+                home_team_id = COALESCE(EXCLUDED.home_team_id, {self.schema}.feature_matrix.home_team_id),
+                away_team_id = COALESCE(EXCLUDED.away_team_id, {self.schema}.feature_matrix.away_team_id),
                 odds_home_close = COALESCE(EXCLUDED.odds_home_close, {self.schema}.feature_matrix.odds_home_close),
                 odds_draw_close = COALESCE(EXCLUDED.odds_draw_close, {self.schema}.feature_matrix.odds_draw_close),
                 odds_away_close = COALESCE(EXCLUDED.odds_away_close, {self.schema}.feature_matrix.odds_away_close),

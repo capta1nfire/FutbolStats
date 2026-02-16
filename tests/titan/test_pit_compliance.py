@@ -4,15 +4,22 @@ Verifies:
 1. pit_max_captured_at < kickoff_utc constraint
 2. PITViolationError raised when constraint would be violated
 3. Insertion policy respects PIT requirements
+4. Kickoff reschedule: UPSERT updates kickoff_utc via GREATEST
 """
+
+import inspect
 
 import pytest
 from datetime import datetime, timedelta
 from decimal import Decimal
+from unittest.mock import AsyncMock, MagicMock
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.titan.materializers.feature_matrix import (
     PITViolationError,
     InsertionPolicyViolation,
+    FeatureMatrixMaterializer,
     OddsFeatures,
     FormFeatures,
     H2HFeatures,
@@ -288,3 +295,119 @@ class TestImpliedProbabilities:
         assert abs(home - Decimal("0.3333")) < Decimal("0.001")
         assert abs(draw - Decimal("0.3333")) < Decimal("0.001")
         assert abs(away - Decimal("0.3333")) < Decimal("0.001")
+
+
+class TestRescheduleUpsertPIT:
+    """Test PIT compliance when a match is rescheduled.
+
+    Scenario (production bug):
+    1. Initial insert: kickoff_old=Feb15 15:45, pit_max_old=Feb15 10:00
+       → Valid: pit_max_old < kickoff_old ✓
+    2. Match rescheduled to Feb17 19:00. New data captured at Feb16 12:00.
+       → pit_max_new=Feb16 12:00 > kickoff_old=Feb15 15:45  (DB constraint fails!)
+       → pit_max_new=Feb16 12:00 < kickoff_new=Feb17 19:00  (should be valid)
+
+    Fix: UPSERT uses GREATEST(EXCLUDED.kickoff_utc, existing.kickoff_utc) so
+    the DB row's kickoff_utc is updated to the new (later) kickoff.
+    """
+
+    # Fixtures
+    KICKOFF_OLD = datetime(2026, 2, 15, 15, 45, 0)
+    KICKOFF_NEW = datetime(2026, 2, 17, 19, 0, 0)
+    PIT_MAX_OLD = datetime(2026, 2, 15, 10, 0, 0)
+    PIT_MAX_NEW = datetime(2026, 2, 16, 12, 0, 0)  # > KICKOFF_OLD but < KICKOFF_NEW
+
+    def test_initial_insert_pit_valid(self):
+        """Initial insert: pit_max_old < kickoff_old → valid."""
+        assert self.PIT_MAX_OLD < self.KICKOFF_OLD
+
+    def test_reschedule_pit_invalid_with_old_kickoff(self):
+        """After reschedule, pit_max_new > kickoff_old → would violate DB constraint."""
+        assert self.PIT_MAX_NEW > self.KICKOFF_OLD
+
+    def test_reschedule_pit_valid_with_new_kickoff(self):
+        """After reschedule, pit_max_new < kickoff_new → valid with updated kickoff."""
+        assert self.PIT_MAX_NEW < self.KICKOFF_NEW
+
+    def test_python_pit_check_uses_new_kickoff(self):
+        """Python PIT check passes because runner uses kickoff from matches table (new)."""
+        odds = OddsFeatures(
+            odds_home_close=Decimal("2.10"),
+            odds_draw_close=Decimal("3.40"),
+            odds_away_close=Decimal("3.20"),
+            implied_prob_home=Decimal("0.4651"),
+            implied_prob_draw=Decimal("0.2874"),
+            implied_prob_away=Decimal("0.3053"),
+            captured_at=self.PIT_MAX_NEW,
+        )
+        pit_max = compute_pit_max(odds=odds, form=None, h2h=None)
+
+        # With old kickoff → would raise PITViolationError
+        assert pit_max >= self.KICKOFF_OLD
+
+        # With new kickoff → valid
+        assert pit_max < self.KICKOFF_NEW
+
+    def test_upsert_sql_includes_greatest_kickoff(self):
+        """UPSERT SQL must use GREATEST for kickoff_utc to handle reschedules."""
+        source = inspect.getsource(FeatureMatrixMaterializer.insert_row)
+        assert "GREATEST(EXCLUDED.kickoff_utc" in source, (
+            "UPSERT must use GREATEST for kickoff_utc to handle rescheduled matches"
+        )
+
+    @pytest.mark.asyncio
+    async def test_insert_row_reschedule_passes_pit_check(self):
+        """Full insert_row call with rescheduled kickoff passes PIT validation."""
+        mock_session = AsyncMock(spec=AsyncSession)
+        materializer = FeatureMatrixMaterializer(mock_session)
+
+        odds = OddsFeatures(
+            odds_home_close=Decimal("2.10"),
+            odds_draw_close=Decimal("3.40"),
+            odds_away_close=Decimal("3.20"),
+            implied_prob_home=Decimal("0.4651"),
+            implied_prob_draw=Decimal("0.2874"),
+            implied_prob_away=Decimal("0.3053"),
+            captured_at=self.PIT_MAX_NEW,
+        )
+
+        # With new kickoff, PIT check should pass (no PITViolationError)
+        result = await materializer.insert_row(
+            match_id=1381072,
+            kickoff_utc=self.KICKOFF_NEW,
+            competition_id=128,
+            season=2025,
+            home_team_id=100,
+            away_team_id=200,
+            odds=odds,
+        )
+        assert result is True
+        mock_session.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_insert_row_old_kickoff_raises_pit_violation(self):
+        """insert_row with stale kickoff (pre-reschedule) raises PITViolationError."""
+        mock_session = AsyncMock(spec=AsyncSession)
+        materializer = FeatureMatrixMaterializer(mock_session)
+
+        odds = OddsFeatures(
+            odds_home_close=Decimal("2.10"),
+            odds_draw_close=Decimal("3.40"),
+            odds_away_close=Decimal("3.20"),
+            implied_prob_home=Decimal("0.4651"),
+            implied_prob_draw=Decimal("0.2874"),
+            implied_prob_away=Decimal("0.3053"),
+            captured_at=self.PIT_MAX_NEW,  # Feb 16 12:00
+        )
+
+        # With old kickoff (Feb 15), pit_max (Feb 16) >= kickoff → PITViolationError
+        with pytest.raises(PITViolationError, match="PIT violation"):
+            await materializer.insert_row(
+                match_id=1381072,
+                kickoff_utc=self.KICKOFF_OLD,  # Stale kickoff
+                competition_id=128,
+                season=2025,
+                home_team_id=100,
+                away_team_id=200,
+                odds=odds,
+            )
