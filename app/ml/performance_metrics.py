@@ -282,19 +282,28 @@ async def fetch_prediction_records(
     """
     cutoff = datetime.utcnow() - timedelta(days=window_days)
 
-    # ABE P0-2: Default to the ACTIVE model_version from model_snapshots (canonical source)
-    # Fallback: most recent prediction if no active snapshot exists (degraded integrity)
+    # GDT SSOT: resolve model_version from model_snapshots.is_active=true (canonical)
+    # Fallback: most recent prediction if no active snapshot (degraded integrity)
+    cohort_resolution = "explicit"  # caller passed model_version
     if model_version is None:
         active_query = text("""
-            SELECT model_version FROM model_snapshots
+            SELECT model_version, COUNT(*) OVER() as n_active
+            FROM model_snapshots
             WHERE is_active = true
-            ORDER BY created_at DESC LIMIT 1
+            ORDER BY created_at DESC
         """)
         active_result = await session.execute(active_query)
-        active_row = active_result.fetchone()
-        if active_row:
-            model_version = active_row.model_version
-            logger.info(f"Using active snapshot model_version={model_version} for performance report")
+        active_rows = active_result.fetchall()
+        if active_rows:
+            if len(active_rows) > 1:
+                logger.error(
+                    f"Multiple active snapshots detected ({len(active_rows)}): "
+                    f"{[r.model_version for r in active_rows]} — using most recent"
+                )
+                cohort_resolution = "ssot_degraded_multi_active"
+            else:
+                cohort_resolution = "ssot"
+            model_version = active_rows[0].model_version
         else:
             # Fallback: most recent prediction (degraded — no active snapshot)
             fallback_query = text("""
@@ -306,10 +315,12 @@ async def fetch_prediction_records(
             fallback_row = fallback_result.fetchone()
             if fallback_row:
                 model_version = fallback_row.model_version
-                logger.warning(
-                    f"No active snapshot found — falling back to most recent prediction "
-                    f"model_version={model_version} (integrity=degraded)"
-                )
+                cohort_resolution = "fallback_recent_prediction"
+            else:
+                cohort_resolution = "none"
+        logger.info(
+            f"Cohort resolution: {cohort_resolution}, model_version={model_version}"
+        )
 
     query = text("""
         SELECT DISTINCT ON (m.id)

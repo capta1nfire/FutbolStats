@@ -1109,16 +1109,21 @@ async def run_evaluation(
                 model_version_counts[mv] = model_version_counts.get(mv, 0) + 1
             pred_metadata['model_versions_available'] = model_version_counts
 
-            # ABE P0-1: Auto-select model_version from model_snapshots.is_active (canonical)
-            # Fallback: most recent created_at if no active snapshot (degraded integrity)
-            if not model_version and len(model_version_counts) > 1:
-                active_row = await conn.fetchrow(
+            # GDT SSOT: Always resolve model_version from model_snapshots.is_active
+            # when --model-version not specified (even with single version in predictions)
+            if not model_version:
+                active_rows = await conn.fetch(
                     "SELECT model_version FROM model_snapshots "
-                    "WHERE is_active = true ORDER BY created_at DESC LIMIT 1"
+                    "WHERE is_active = true ORDER BY created_at DESC"
                 )
-                if active_row:
-                    auto_selected = active_row['model_version']
-                    pred_metadata['model_version_source'] = 'model_snapshots.is_active'
+                if active_rows:
+                    if len(active_rows) > 1:
+                        print(f"[ERROR] Multiple active snapshots: {[r['model_version'] for r in active_rows]} — using most recent")
+                        pred_metadata['cohort_resolution'] = 'ssot_degraded_multi_active'
+                    else:
+                        pred_metadata['cohort_resolution'] = 'ssot'
+                    model_version = active_rows[0]['model_version']
+                    pred_metadata['model_version_resolution'] = 'ssot:model_snapshots.is_active'
                 else:
                     # Fallback: most recent created_at in predictions (degraded)
                     latest_by_version = {}
@@ -1127,13 +1132,17 @@ async def run_evaluation(
                         cat = p.get('created_at')
                         if cat and (mv not in latest_by_version or cat > latest_by_version[mv]):
                             latest_by_version[mv] = cat
-                    auto_selected = max(latest_by_version, key=latest_by_version.get) if latest_by_version else max(model_version_counts, key=model_version_counts.get)
-                    pred_metadata['model_version_source'] = 'fallback_most_recent'
+                    if latest_by_version:
+                        model_version = max(latest_by_version, key=latest_by_version.get)
+                    else:
+                        model_version = max(model_version_counts, key=model_version_counts.get)
+                    pred_metadata['cohort_resolution'] = 'fallback_recent_prediction'
+                    pred_metadata['model_version_resolution'] = 'fallback:most_recent_created_at'
                     print(f"[WARNING] No active snapshot found — using fallback (integrity=degraded)")
-                print(f"[WARNING] Multiple model_versions detected: {model_version_counts}")
-                print(f"[WARNING] Auto-selecting: {auto_selected} (source: {pred_metadata.get('model_version_source', 'unknown')})")
-                print(f"[WARNING] Use --model-version to explicitly choose a cohort.")
-                model_version = auto_selected
+
+                if len(model_version_counts) > 1:
+                    print(f"[INFO] Multiple model_versions in predictions: {model_version_counts}")
+                print(f"[INFO] SSOT resolved: model_version={model_version} (source: {pred_metadata.get('cohort_resolution')})")
                 pred_metadata['model_version_auto_selected'] = True
 
             # Filter by model_version if specified (or auto-selected)
@@ -1630,6 +1639,12 @@ async def run_evaluation(
                 'n_with_pit_safe_predictions': len(pit_with_preds),
                 'n_no_prediction_asof': n_no_prediction_asof,
             },
+            # GDT Mandato 2: Horizonte PIT — rango exacto evaluado
+            'pit_horizon': {
+                'pit_valid_snapshot_start_at': min((s['snapshot_at'] for s in valid_pit), default=None),
+                'pit_valid_snapshot_end_at': max((s['snapshot_at'] for s in valid_pit), default=None),
+                'n_valid_pit': n_valid_10_90,
+            },
             'timing_distribution': timing_dist,
             'breakdown_by_league': [{'league_id': lid, 'n': n} for lid, n in top_leagues],
             'breakdown_by_bookmaker': [{'bookmaker': bm, 'n': n} for bm, n in top_bookmakers],
@@ -1687,6 +1702,14 @@ def print_summary(report: dict):
         print(f"  Skill vs uniform:    {brier.get('skill_vs_uniform', 0):.2%}")
         print(f"  Skill vs market:     {brier.get('skill_vs_market', 0):.2%}")
 
+    # GDT Mandato 2: PIT Horizon
+    pit_horizon = report.get('pit_horizon', {})
+    if pit_horizon.get('pit_valid_snapshot_start_at'):
+        print(f"\nPIT Horizon (baseline range):")
+        print(f"  Start:               {pit_horizon['pit_valid_snapshot_start_at']}")
+        print(f"  End:                 {pit_horizon['pit_valid_snapshot_end_at']}")
+        print(f"  N valid:             {pit_horizon['n_valid_pit']}")
+
     betting = report.get('betting', {})
     print(f"\nBetting (primary - observable metrics):")
     print(f"  N bets:              {betting.get('n_bets', 0)}")
@@ -1721,6 +1744,36 @@ def print_summary(report: dict):
         for note in interpretation.get('bullet_notes', []):
             print(f"  • {note}")
     print("=" * 60)
+
+
+async def _discover_min_pit_date(league_ids=None):
+    """Query earliest PIT-valid snapshot date (10-90 min pre-KO, lineup_confirmed)."""
+    db_url = os.environ.get("DATABASE_URL", "")
+    if not db_url:
+        return None
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+    # asyncpg needs postgresql:// without +asyncpg
+    db_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
+    try:
+        conn = await asyncpg.connect(db_url)
+        where = "WHERE os.snapshot_type = 'lineup_confirmed'"
+        if league_ids:
+            ids_str = ",".join(str(lid) for lid in league_ids)
+            where += f" AND m.league_id IN ({ids_str})"
+        row = await conn.fetchrow(f"""
+            SELECT MIN(os.snapshot_at) as min_snap
+            FROM odds_snapshots os
+            JOIN matches m ON m.id = os.match_id
+            {where}
+              AND os.delta_to_kickoff_seconds BETWEEN 600 AND 5400
+        """)
+        await conn.close()
+        if row and row['min_snap']:
+            return row['min_snap'].strftime('%Y-%m-%d')
+    except Exception as e:
+        print(f"  [WARNING] Auto-detect failed: {e}")
+    return None
 
 
 async def main():
@@ -1835,6 +1888,12 @@ async def main():
         default=None,
         help='Optional CSV output path for --compare table.'
     )
+    parser.add_argument(
+        '--auto-min-snapshot-date',
+        action='store_true',
+        help='Auto-detect earliest PIT-valid snapshot and use as min_snapshot_date. '
+             'Useful for baseline reset without guessing dates.'
+    )
     args = parser.parse_args()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1862,6 +1921,16 @@ async def main():
 
     if args.model_version:
         print(f"Filtering predictions to model_version: {args.model_version}")
+
+    # GDT Mandato 2: --auto-min-snapshot-date discovers earliest PIT-valid snapshot
+    if args.auto_min_snapshot_date and not args.min_snapshot_date:
+        print("Auto-detecting earliest PIT-valid snapshot date...")
+        _auto_min = await _discover_min_pit_date(league_ids)
+        if _auto_min:
+            args.min_snapshot_date = _auto_min
+            print(f"  Auto-detected: --min-snapshot-date {_auto_min}")
+        else:
+            print("  [WARNING] No PIT-valid snapshots found, running without date filter")
 
     if args.min_snapshot_date:
         print(f"Running PIT evaluation (live odds only, snapshot >= {args.min_snapshot_date})...")

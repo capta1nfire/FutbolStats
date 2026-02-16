@@ -1,6 +1,7 @@
 """Model persistence functions for PostgreSQL storage."""
 
 import logging
+import re
 from typing import Optional
 
 from sqlalchemy import select, update
@@ -10,6 +11,43 @@ from app.models import ModelSnapshot
 from app.ml.engine import XGBoostEngine
 
 logger = logging.getLogger(__name__)
+
+# GDT Mandato 4: Nomenclatura V2 estricta (Phase 4+)
+# Valid patterns:
+#   v1.0.0, v1.0.1-league-only         (legacy, grandfathered)
+#   v1.1.0-twostage                     (legacy shadow, grandfathered)
+#   v2.0-tier1-aegis                    (Phase 4+ tier-specific)
+#   v2.0-tier3-mtv                      (Phase 4+ MTV models)
+#   v2.0-tier3-mtv+microstructure       (Phase 4+ compound)
+# Ambiguous names rejected: "v2.0", "shadow", "twostage" (bare)
+_MODEL_VERSION_PATTERN = re.compile(
+    r'^v\d+\.\d+(\.\d+)?(-[a-z0-9][a-z0-9_+.-]*)?$'
+)
+_V2_TIER_PATTERN = re.compile(r'^v2\.\d+(-tier\d+-)')
+
+
+def validate_model_version(model_version: str) -> bool:
+    """
+    Validate model_version naming convention.
+
+    Returns True if valid, logs warning if V2+ without tier prefix.
+    """
+    if not _MODEL_VERSION_PATTERN.match(model_version):
+        logger.warning(
+            f"model_version '{model_version}' does not match naming convention "
+            f"(expected vX.Y.Z-descriptor). Allowing but flagging."
+        )
+        return False
+
+    # V2+: require tier prefix
+    if model_version.startswith('v2.') and not _V2_TIER_PATTERN.match(model_version):
+        logger.warning(
+            f"V2+ model_version '{model_version}' missing tier prefix. "
+            f"Expected format: v2.X-tierN-name (e.g., v2.0-tier3-mtv)"
+        )
+        return False
+
+    return True
 
 
 async def persist_model_snapshot(
@@ -38,6 +76,9 @@ async def persist_model_snapshot(
     Returns:
         The ID of the created snapshot.
     """
+    # GDT Mandato 4: Validate naming convention (warn, don't abort)
+    validate_model_version(engine.model_version)
+
     # Get model bytes
     model_blob = engine.save_to_bytes()
 

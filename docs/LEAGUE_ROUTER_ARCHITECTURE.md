@@ -255,7 +255,33 @@ Criterio GO: Brier Family S < Brier Baseline en >=7/10 ligas.
 
 ---
 
-## 7. Limitaciones Conocidas
+## 7. Nomenclatura V2 (GDT Mandato 4)
+
+### Convencion obligatoria para Phase 4+
+
+| Patron | Ejemplo | Uso |
+|--------|---------|-----|
+| `vX.Y.Z-descriptor` | `v1.0.1-league-only` | Legacy (grandfathered) |
+| `v2.X-tierN-name` | `v2.0-tier1-aegis` | Phase 4+ (obligatorio) |
+| `v2.X-tierN-name+ext` | `v2.0-tier3-mtv+microstructure` | Compound |
+
+### Nombres rechazados
+- `v2.0` (sin tier/descriptor)
+- `shadow`, `twostage` (sueltos, sin version)
+- Cualquier v2+ sin prefijo `-tierN-`
+
+### Guardrail
+`app/ml/persistence.py:validate_model_version()` — valida en `persist_model_snapshot`.
+Para v2+, requiere prefijo `v2.X-tierN-`. Log warning si falla (no abort en serving).
+
+### SSOT de cohorte
+`model_snapshots.is_active=true` es la UNICA fuente canonica para resolver el modelo activo.
+`performance_metrics.py` y `evaluate_pit_v3.py` lo consultan como default.
+Fallback a "prediccion mas reciente" solo si no hay snapshot activo (integrity=degraded).
+
+---
+
+## 8. Limitaciones Conocidas
 
 1. **Family S no entrenado**: El router clasifica pero no bifurca predicciones hasta que
    exista un modelo entrenado con features MTV.
