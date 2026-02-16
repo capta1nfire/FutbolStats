@@ -1523,6 +1523,51 @@ class Player(SQLModel, table=True):
     created_at: Optional[datetime] = Field(default_factory=datetime.utcnow, description="Row creation timestamp")
 
 
+class PlayerPhotoAsset(SQLModel, table=True):
+    """HQ player photo asset stored in R2.
+
+    Supports global headshots (context_team_id=NULL) and
+    contextual composed cards (context_team_id=team_id).
+    Immutable R2 keys via content_hash prefix.
+    """
+
+    __tablename__ = "player_photo_assets"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    player_external_id: int = Field(index=True, description="API-Football player ID")
+    context_team_id: Optional[int] = Field(default=None, description="NULL=global headshot, team_id=contextual")
+    season: Optional[str] = Field(default=None, max_length=20, description="e.g. 2025, 2025-2026")
+    role: Optional[str] = Field(default=None, max_length=10, description="field | gk")
+    kit_variant: Optional[str] = Field(default=None, max_length=10, description="home | away | third")
+
+    # Asset dimensions (fix #3: separate asset_type + style)
+    asset_type: str = Field(max_length=10, description="card | thumb")
+    style: str = Field(default="raw", max_length=20, description="raw | segmented | composed")
+
+    # Storage (fix #1: content_hash in key for immutability)
+    r2_key: str = Field(max_length=500, description="R2 object key")
+    cdn_url: str = Field(max_length=500, description="Full CDN URL")
+    content_hash: str = Field(max_length=64, description="SHA-256 hex digest")
+    revision: int = Field(default=1)
+
+    # Provenance
+    source: str = Field(max_length=50, description="sofascore | api_football | wikimedia | club_site")
+    processor: Optional[str] = Field(default=None, max_length=50, description="photoroom | rembg | none")
+    quality_score: Optional[int] = Field(default=None, description="0-100 identity + vision score")
+    photo_meta: Optional[dict] = Field(default=None, sa_column=Column(JSONB))
+
+    # Lifecycle
+    review_status: str = Field(default="pending_review", max_length=20, description="pending_review | approved | rejected | superseded")
+    is_active: bool = Field(default=False)
+    activated_at: Optional[datetime] = Field(default=None)
+    deactivated_at: Optional[datetime] = Field(default=None)
+    changed_by: Optional[str] = Field(default=None, max_length=20, description="pipeline | manual | rollback")
+    run_id: Optional[str] = Field(default=None, max_length=36)
+
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    updated_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+
+
 class MatchLineup(SQLModel, table=True):
     """
     API-Football lineup per match/team.

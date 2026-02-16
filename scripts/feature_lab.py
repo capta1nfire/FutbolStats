@@ -212,6 +212,12 @@ EFFICIENCY_FEATURES = ["finish_eff_home", "finish_eff_away",
 # ─── Wave 10: XI Continuity (ATI) ─────────────────────────────
 XI_CONTINUITY_FEATURES = ["xi_continuity_home", "xi_continuity_away", "xi_continuity_diff"]
 
+# ─── Wave 12: MTV (Match Talent Variance) ────────────────────
+MTV_FEATURES = [
+    "home_talent_delta", "away_talent_delta",
+    "talent_delta_diff", "shock_magnitude",
+]
+
 # ─── Wave 11: Geographic Features (FS-09) ────────────────────
 GEO_FEATURES = [
     "altitude_home_m",
@@ -447,6 +453,22 @@ TESTS = {
     "V0_geo_standings":     GEO_FEATURES + STANDINGS_FEATURES,
     "V1_geo_standings_elo": GEO_FEATURES + STANDINGS_FEATURES + ELO_FEATURES,
     "V2_geo_standings_full": GEO_FEATURES + STANDINGS_FEATURES + DEFENSE_PAIR + ELO_FEATURES + ODDS_FEATURES,
+
+    # ═══════════════════════════════════════════════════════════
+    # SECTION S: MTV (Match Talent Variance — historical talent_delta)
+    # talent_delta = PTS(XI_real) - PTS(XI_expected); shock_magnitude = max(|h|,|a|)
+    # Requires pre-computed parquet: data/historical_mtv_features.parquet
+    # ═══════════════════════════════════════════════════════════
+    "S0_mtv_only":        MTV_FEATURES,
+    "S1_mtv_elo":         MTV_FEATURES + ELO_FEATURES,
+    "S2_mtv_elo_form":    MTV_FEATURES + ELO_FEATURES + FORM_CORE,
+    "S3_mtv_defense_elo": MTV_FEATURES + DEFENSE_PAIR + ELO_FEATURES,
+    "S4_mtv_odds":        MTV_FEATURES + ODDS_FEATURES,
+    "S5_mtv_elo_odds":    MTV_FEATURES + ELO_FEATURES + ODDS_FEATURES,
+    "S6_mtv_full":        MTV_FEATURES + DEFENSE_PAIR + ELO_FEATURES + FORM_CORE + ODDS_FEATURES,
+    "S7_mtv_xi_elo":      MTV_FEATURES + XI_CONTINUITY_FEATURES + ELO_FEATURES,
+    "S8_mtv_xg_elo_odds": MTV_FEATURES + XG_CORE + ELO_FEATURES + ODDS_FEATURES,
+    "S9_m2_plus_mtv":     ARG_SIGNAL + ELO_FEATURES + INTERACTION_FEATURES + MTV_FEATURES,
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -464,6 +486,8 @@ RESIDUAL_TESTS = {
     "R4_residual_full":         NO_REST_FEATURES + ELO_FEATURES + DEFENSE_PAIR + FORM_CORE + OPP_ADJ_FEATURES,
     "R5_residual_xg":           NO_REST_FEATURES + ELO_FEATURES + XG_CORE,
     "R6_residual_kitchen_sink": NO_REST_FEATURES + ELO_FEATURES + DEFENSE_PAIR + FORM_CORE + OPP_ADJ_FEATURES + XG_CORE + XG_DEFENSE,
+    "R7_residual_mtv":          NO_REST_FEATURES + ELO_FEATURES + MTV_FEATURES,
+    "R8_residual_mtv_full":     NO_REST_FEATURES + ELO_FEATURES + DEFENSE_PAIR + FORM_CORE + MTV_FEATURES,
 }
 
 # ─── Section O: Optuna candidates (top performers to re-tune) ────
@@ -1757,6 +1781,7 @@ def compute_all_experimental_features(df: pd.DataFrame) -> pd.DataFrame:
 _ODDS_SET = set(ODDS_FEATURES)
 _XG_SET = set(XG_ALL)  # XG_CORE + XG_DEFENSE + XG_OVERPERF
 _XI_SET = set(XI_CONTINUITY_FEATURES)
+_MTV_SET = set(MTV_FEATURES)
 
 
 def classify_test_universe(feature_names: list) -> str:
@@ -1765,7 +1790,10 @@ def classify_test_universe(feature_names: list) -> str:
     needs_odds = bool(feats & _ODDS_SET)
     needs_xg = bool(feats & _XG_SET)
     needs_xi = bool(feats & _XI_SET)
+    needs_mtv = bool(feats & _MTV_SET)
     parts = []
+    if needs_mtv:
+        parts.append("mtv")
     if needs_xi:
         parts.append("xi")
     if needs_odds:
@@ -1782,17 +1810,24 @@ def compute_universes(df: pd.DataFrame, tests_dict: dict) -> dict:
     with NaN-free base features. Tests within the same universe share identical
     N, split_idx, and split_date.
 
-    Universes (2^3 possible, only those needed are populated):
-      - base:        all non-optional features present
-      - odds:        base ∩ valid odds triplet (odds_home > 1.0)
-      - xg:          base ∩ xG core present
-      - odds_xg:     base ∩ odds ∩ xG
-      - xi:          base ∩ xi_continuity present
-      - xi_odds:     base ∩ xi ∩ odds
-      - xi_xg:       base ∩ xi ∩ xG
-      - xi_odds_xg:  base ∩ xi ∩ odds ∩ xG
+    Universes (2^4 possible, only those needed are populated):
+      - base:            all non-optional features present
+      - odds:            base ∩ valid odds triplet (odds_home > 1.0)
+      - xg:              base ∩ xG core present
+      - odds_xg:         base ∩ odds ∩ xG
+      - xi:              base ∩ xi_continuity present
+      - xi_odds:         base ∩ xi ∩ odds
+      - xi_xg:           base ∩ xi ∩ xG
+      - xi_odds_xg:      base ∩ xi ∩ odds ∩ xG
+      - mtv:             base ∩ talent_delta present
+      - mtv_odds:        base ∩ mtv ∩ odds
+      - mtv_xg:          base ∩ mtv ∩ xG
+      - mtv_odds_xg:     base ∩ mtv ∩ odds ∩ xG
+      - mtv_xi:          base ∩ mtv ∩ xi
+      - mtv_xi_odds:     base ∩ mtv ∩ xi ∩ odds
+      - mtv_xi_odds_xg:  base ∩ mtv ∩ xi ∩ odds ∩ xG
     """
-    _ALL_OPTIONAL = _ODDS_SET | _XG_SET | _XI_SET
+    _ALL_OPTIONAL = _ODDS_SET | _XG_SET | _XI_SET | _MTV_SET
 
     # Collect all "base" features (non-optional) across all tests
     all_base_feats = set()
@@ -1828,6 +1863,9 @@ def compute_universes(df: pd.DataFrame, tests_dict: dict) -> dict:
     xi_cols = [c for c in XI_CONTINUITY_FEATURES if c in df_base.columns]
     xi_mask = df_base[xi_cols].notna().all(axis=1) if xi_cols else pd.Series(False, index=df_base.index)
 
+    mtv_cols = [c for c in MTV_FEATURES if c in df_base.columns]
+    mtv_mask = df_base[mtv_cols].notna().all(axis=1) if mtv_cols else pd.Series(False, index=df_base.index)
+
     # Build universes
     universes: dict[str, pd.DataFrame] = {"base": df_base}
 
@@ -1842,6 +1880,13 @@ def compute_universes(df: pd.DataFrame, tests_dict: dict) -> dict:
     _add("xi_odds", xi_mask & odds_mask)
     _add("xi_xg", xi_mask & xg_mask)
     _add("xi_odds_xg", xi_mask & odds_mask & xg_mask)
+    _add("mtv", mtv_mask)
+    _add("mtv_odds", mtv_mask & odds_mask)
+    _add("mtv_xg", mtv_mask & xg_mask)
+    _add("mtv_odds_xg", mtv_mask & odds_mask & xg_mask)
+    _add("mtv_xi", mtv_mask & xi_mask)
+    _add("mtv_xi_odds", mtv_mask & xi_mask & odds_mask)
+    _add("mtv_xi_odds_xg", mtv_mask & xi_mask & odds_mask & xg_mask)
 
     # Report
     for uid, udf in universes.items():
@@ -3764,6 +3809,11 @@ SHAP_TESTS = {
                                           "home_goals_conceded_avg", "draw_elo_interaction"]),
     "S7_abe_elo":           ("ABE + Elo", OPP_ADJ_FEATURES + OVERPERF_FEATURES + DRAW_AWARE_FEATURES + HOME_BIAS_FEATURES + ELO_FEATURES),
     "S8_abe_elo_odds":      ("ABE + Elo + Odds", OPP_ADJ_FEATURES + OVERPERF_FEATURES + DRAW_AWARE_FEATURES + HOME_BIAS_FEATURES + ELO_FEATURES + ODDS_FEATURES),
+    # MTV SHAP tests (GDT Mandato 3)
+    "S9_mtv_elo":           ("MTV + Elo", MTV_FEATURES + ELO_FEATURES),
+    "S10_mtv_elo_odds":     ("MTV + Elo + Odds", MTV_FEATURES + ELO_FEATURES + ODDS_FEATURES),
+    "S11_mtv_xg_elo_odds":  ("MTV + xG + Elo + Odds", MTV_FEATURES + XG_CORE + ELO_FEATURES + ODDS_FEATURES),
+    "S12_mtv_full":         ("MTV + DEF + Elo + FORM + Odds", MTV_FEATURES + DEFENSE_PAIR + ELO_FEATURES + FORM_CORE + ODDS_FEATURES),
 }
 
 
@@ -3977,6 +4027,9 @@ def main():
     parser.add_argument("--calibrate", type=str, default=None,
                         choices=["isotonic", "platt"],
                         help="Calibration test: isotonic or platt vs none")
+    parser.add_argument("--strict-mtv", action="store_true",
+                        help="GDT strict mode: drop matches without MTV data before universes "
+                             "(forces apples-to-apples temporal overlap)")
     args = parser.parse_args()
 
     league_ids = args.league or [128, 94]
@@ -4027,6 +4080,8 @@ def main():
         mode_label += "+OPENING"
     if _CALIBRATE:
         mode_label += "+CAL_%s" % _CALIBRATE.upper()
+    if args.strict_mtv:
+        mode_label += "+STRICT_MTV"
 
     print(f"\n  FEATURE LAB ({mode_label})")
     print(f"  {'=' * 50}")
@@ -4056,6 +4111,30 @@ def main():
             df = compute_elo_goals(df)
             df = compute_all_experimental_features(df)
             print(f"  Loaded {len(df)} rows, {len(df.columns)} columns")
+
+        # MTV: Merge historical talent_delta features from pre-computed parquet
+        mtv_path = Path("data/historical_mtv_features.parquet")
+        if mtv_path.exists():
+            mtv_df = pd.read_parquet(mtv_path, columns=[
+                "match_id", "home_talent_delta", "away_talent_delta",
+                "talent_delta_diff", "shock_magnitude", "talent_delta_missing",
+            ])
+            df["match_id"] = df["match_id"].astype("Int64")
+            mtv_df["match_id"] = mtv_df["match_id"].astype("Int64")
+            df = df.merge(mtv_df, on="match_id", how="left")
+            n_mtv = int(df["home_talent_delta"].notna().sum())
+            print(f"  MTV merged: {n_mtv}/{len(df)} ({100*n_mtv/len(df):.1f}%)")
+        else:
+            print(f"  MTV: parquet not found at {mtv_path}, skipping")
+            for col in MTV_FEATURES + ["talent_delta_missing"]:
+                df[col] = None
+
+        # GDT Mandato 2: Strict MTV mode — force apples-to-apples temporal overlap
+        if args.strict_mtv:
+            initial_len = len(df)
+            df = df.dropna(subset=["home_talent_delta"]).reset_index(drop=True)
+            print(f"  [GDT STRICT MODE] Dropped {initial_len - len(df)} matches "
+                  f"to force exact temporal overlap ({len(df)} remain, 2023+)")
 
         if args.min_date:
             cutoff = pd.Timestamp(args.min_date)

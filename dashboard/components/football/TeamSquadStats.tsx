@@ -314,7 +314,7 @@ export function TeamSquadStats({ teamId, season, onPlayerSelect }: TeamSquadStat
                   <td className="px-3 py-2 min-w-[180px] sticky left-[28px] z-[5] bg-background group-hover/row:bg-accent/50 transition-colors">
                     <div className="flex items-center gap-2">
                       <Image
-                        src={playerPhotoUrl(p.player_external_id)}
+                        src={p.photo_url_thumb_hq || p.photo_url || playerPhotoUrl(p.player_external_id)}
                         alt=""
                         width={26}
                         height={26}

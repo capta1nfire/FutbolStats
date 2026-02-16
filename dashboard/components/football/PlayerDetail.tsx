@@ -125,7 +125,7 @@ export function PlayerDetail({ player, teamName }: PlayerDetailProps) {
       <div className="flex items-center gap-4">
         {!imgError ? (
           <Image
-            src={player.photo_url || playerPhotoUrl(player.player_external_id)}
+            src={player.photo_url_card_hq || player.photo_url || playerPhotoUrl(player.player_external_id)}
             alt={player.player_name}
             width={64}
             height={64}

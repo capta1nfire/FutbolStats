@@ -1071,7 +1071,20 @@ async def dashboard_admin_team_squad_stats(
                         MAX(p.nationality) AS nationality,
                         MAX(p.height) AS height,
                         MAX(p.weight) AS weight,
-                        MAX(p.photo_url) AS photo_url
+                        MAX(p.photo_url) AS photo_url,
+                        -- HQ photo URLs: best available (contextual > global)
+                        (SELECT a.cdn_url FROM player_photo_assets a
+                         WHERE a.player_external_id = mps.player_external_id
+                           AND a.is_active = true AND a.asset_type = 'thumb'
+                           AND a.style IN ('segmented', 'raw')
+                         ORDER BY (a.context_team_id = :team_id)::int DESC, a.updated_at DESC
+                         LIMIT 1) AS photo_url_thumb_hq,
+                        (SELECT a.cdn_url FROM player_photo_assets a
+                         WHERE a.player_external_id = mps.player_external_id
+                           AND a.is_active = true AND a.asset_type = 'card'
+                           AND a.style IN ('segmented', 'raw')
+                         ORDER BY (a.context_team_id = :team_id)::int DESC, a.updated_at DESC
+                         LIMIT 1) AS photo_url_card_hq
                     FROM match_player_stats mps
                     JOIN matches m ON m.id = mps.match_id
                     LEFT JOIN players p ON p.external_id = mps.player_external_id
@@ -1081,13 +1094,15 @@ async def dashboard_admin_team_squad_stats(
                     HAVING SUM(COALESCE(mps.minutes, 0)) > 0
                     ORDER BY appearances DESC, total_minutes DESC
                 """),
-                {"team_ext": team_external_id, "season": selected_season},
+                {"team_ext": team_external_id, "season": selected_season, "team_id": team_id},
             )
             for r in result.fetchall():
                 players.append({
                     "player_external_id": int(r.player_external_id),
                     "player_name": r.player_name or f"Player#{int(r.player_external_id)}",
                     "photo_url": r.photo_url,
+                    "photo_url_thumb_hq": r.photo_url_thumb_hq,
+                    "photo_url_card_hq": r.photo_url_card_hq,
                     "position": r.position,
                     "jersey_number": int(r.jersey_number) if r.jersey_number is not None else None,
                     "appearances": int(r.appearances or 0),

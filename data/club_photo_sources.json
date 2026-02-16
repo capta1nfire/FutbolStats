@@ -1,0 +1,94 @@
+{
+  "1137": {
+    "team_name": "Atletico Nacional",
+    "squad_url": "https://atlnacional.com.co/categorias-de-equipo-profesional-masculino/plantel-profesional-masculino/",
+    "strategy": "wordpress_grid",
+    "quality_cap": 95,
+    "notes": "WordPress Elementor, individual pages at /plantel-profesional/{slug}"
+  },
+  "1142": {
+    "team_name": "Deportes Tolima",
+    "squad_url": "https://clubdeportestolima.com.co/plantilla-2/",
+    "strategy": "wordpress_grid",
+    "quality_cap": 90,
+    "notes": "WP+SportsPress, names in filenames, Feb 2026 photos"
+  },
+  "1128": {
+    "team_name": "Independiente Medellin",
+    "squad_url": "https://dimoficial.com/equipo/",
+    "strategy": "wordpress_grid",
+    "quality_cap": 95,
+    "notes": "WP+Elementor, i0.wp.com CDN, up to 2832x4240, names+numbers+instagram"
+  },
+  "1129": {
+    "team_name": "Envigado",
+    "squad_url": "https://envigadofc.co/equipo-profesional/",
+    "strategy": "wordpress_grid",
+    "quality_cap": 90,
+    "notes": "WP+Divi, names in filenames, positions by section headers"
+  },
+  "1133": {
+    "team_name": "Jaguares de Cordoba",
+    "squad_url": "https://jaguaresfc.com.co/jugadores",
+    "strategy": "wordpress_grid",
+    "quality_cap": 90,
+    "notes": "Drupal, sites/default/files/, structured data with names+numbers+positions"
+  },
+  "1127": {
+    "team_name": "Deportivo Cali",
+    "squad_url": "https://deportivocali.com.co/primer-equipo/",
+    "strategy": "wordpress_grid",
+    "quality_cap": 90,
+    "notes": "WP+SportsPress+Elementor, h6 link names, positions as text, high-quality 380x495 photos"
+  },
+  "1139": {
+    "team_name": "Independiente Santa Fe",
+    "squad_url": "https://independientesantafe.com/primer-equipo/",
+    "strategy": "wordpress_grid",
+    "quality_cap": 90,
+    "notes": "WP+SportsPress, names+positions, no numbers"
+  },
+  "1138": {
+    "team_name": "America de Cali",
+    "squad_url": "https://www.americadecali.com/pages/equipo-masculino",
+    "strategy": "wordpress_grid",
+    "quality_cap": 95,
+    "notes": "Shopify CDN (cdn.shopify.com), high-res studio photos, names in alt text, sections by position"
+  },
+  "1125": {
+    "team_name": "Millonarios",
+    "squad_url": "https://millonarios.com.co/equipo-masculino/",
+    "strategy": "wordpress_grid",
+    "quality_cap": 95,
+    "notes": "WP+Elementor+SportsPress, lazy-loading with data-lazy-src, wp-content/uploads/2026/01/"
+  },
+  "1462": {
+    "team_name": "Deportivo Pereira",
+    "squad_url": "https://deportivopereira.com.co/somos/equipo-masculino/",
+    "strategy": "wordpress_grid",
+    "quality_cap": 90,
+    "notes": "WP+AIOSEO+WooCommerce, 32 jugadores, nombres+DOB+posiciones, fotos wp-content/uploads/2025/03/"
+  },
+  "1144": {
+    "team_name": "Aguilas Doradas",
+    "squad_url": "https://aguilasdoradas.com.co/equipo-profesional/",
+    "strategy": "wordpress_grid",
+    "quality_cap": 90,
+    "notes": "WP+Elementor+WooCommerce, 22 jugadores, fotos directas PNG, wp-content/uploads/2026/"
+  },
+  "1136": {
+    "team_name": "Once Caldas",
+    "squad_url": "https://www.oncecaldas.com.co/plantel",
+    "strategy": "individual_pages",
+    "player_link_pattern": "/jugadores/",
+    "quality_cap": 90,
+    "notes": "WP+SportsPress+Elementor, /plantel only renders 1 player in static scrape, individual /jugadores/{slug} pages have og:image with i2.wp.com CDN"
+  },
+  "1132": {
+    "team_name": "Boyaca Chico FC",
+    "squad_url": "https://chicofutbolclub.com/equipo-masculino/",
+    "strategy": "wordpress_grid",
+    "quality_cap": 85,
+    "notes": "WP+Divi+SportsPress, carousel/slider with photos, wp-content/uploads/2023/, may be outdated"
+  }
+}

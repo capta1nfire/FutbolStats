@@ -63,62 +63,71 @@ Con regularizacion fuerte (max_depth=2, reg_alpha=0.1, reg_lambda=1.0), si no ex
 
 **Ejecucion**: `python3 scripts/feature_lab.py --league <ID> --extract --residual`
 
-### Resultados Consolidados (23 ligas, 2026-02-13)
+### Resultados Consolidados (23 ligas, actualizado 2026-02-15 post-MTV v2)
 
-| Liga | ID | N_test | Tests R | Direccion | Mejor Delta | Veredicto |
-|------|----|--------|---------|-----------|-------------|-----------|
-| Argentina | 128 | 265 | 7/7 | POSITIVO | +0.01265 | EFICIENTE |
-| Colombia | 239 | 495 | 7/7 | POSITIVO | +0.00361 | EFICIENTE |
-| Ecuador | 242 | 338 | 5/5 | POSITIVO | +0.00495 | EFICIENTE |
-| Venezuela | 299 | 250 | 5/5 | POSITIVO | +0.01213 | EFICIENTE |
-| Peru | 281 | 417 | 5/5 | POSITIVO | +0.00589 | EFICIENTE |
-| Bolivia | 344 | 378 | 5/5 | POSITIVO | +0.00160 | EFICIENTE |
-| Chile | 265 | 343 | 5/5 | POSITIVO | +0.02735 | EFICIENTE |
-| Brasil | 71 | 234 | 7/7 | POSITIVO | +0.00717 | EFICIENTE |
-| Paraguay | 250 | 314 | 5/5 | POSITIVO | +0.00042 | EFICIENTE |
-| Uruguay | 268 | 377 | 5/5 | POSITIVO | +0.00252 | EFICIENTE |
-| Mexico | 262 | 381 | 7/7 | POSITIVO | +0.00498 | EFICIENTE |
-| MLS | 253 | 313 | 7/7 | POSITIVO | +0.01522 | EFICIENTE |
-| Premier League | 39 | 812 | 7/7 | POSITIVO | +0.00060 | EFICIENTE |
-| La Liga | 140 | 806 | 7/7 | POSITIVO | +0.01196 | EFICIENTE |
-| Ligue 1 | 61 | 748 | 7/7 | POSITIVO | +0.01525 | EFICIENTE |
-| Bundesliga | 78 | 650 | 7/7 | POSITIVO | +0.00509 | EFICIENTE |
-| Serie A | 135 | 808 | 7/7 | POSITIVO | +0.00140 | EFICIENTE |
-| Eredivisie | 88 | 575 | 7/7 | MIXTO | -0.00343 | AMBIGUO |
-| Belgian Pro | 144 | 393 | 7/7 | POSITIVO | +0.00365 | EFICIENTE |
-| Primeira Liga | 94 | 578 | 7/7 | MIXTO | -0.00041 | AMBIGUO |
-| **Turquia** | **203** | **567** | **7/7** | **NEGATIVO** | **-0.00327** | **INEFICIENTE** |
-| Championship | 40 | 70 | 7/7 | POSITIVO | +0.01970 | EFICIENTE |
-| Saudi Pro | 307 | 0 | 0/0 | N/A | N/A | INSUFFICIENT_ODDS |
+> **Nota**: 19 ligas re-evaluadas el 2026-02-15 tras Operacion Native Talent (motor MTV v2 con `match_player_stats`). Ligas marcadas con \* conservan resultados del 2026-02-13 (pre-MTV v2). Cambios principales vs run anterior: Mexico pasa de EFICIENTE a INEFICIENTE, Primeira Liga de AMBIGUO a INEFICIENTE.
+
+| Liga | ID | Tests R | Direccion | Mejor Delta | Veredicto |
+|------|----|---------|-----------|-------------|-----------|
+| Argentina | 128 | 7/7 | POSITIVO | +0.01574 | EFICIENTE |
+| Colombia | 239 | 7/7 | POSITIVO | +0.00440 | EFICIENTE |
+| Ecuador | 242 | 5/5 | MIXTO | -0.00312 | AMBIGUO |
+| Venezuela | 299 | 5/5 | MIXTO | -0.00005 | AMBIGUO |
+| Peru | 281 | 5/5 | POSITIVO | +0.00504 | EFICIENTE |
+| Bolivia | 344 | 0/0 | N/A | N/A | INSUFFICIENT_ODDS |
+| Chile | 265 | 5/5 | POSITIVO | +0.01814 | EFICIENTE |
+| Brasil | 71 | 7/7 | POSITIVO | +0.00959 | EFICIENTE |
+| Paraguay | 250 | 5/5 | MIXTO | -0.00177 | AMBIGUO |
+| Uruguay | 268 | 5/5 | POSITIVO | +0.00849 | EFICIENTE |
+| **Mexico** | **262** | **7/7** | **NEGATIVO** | **-0.01073** | **INEFICIENTE** |
+| MLS | 253 | 7/7 | MIXTO | -0.00159 | AMBIGUO |
+| Premier League | 39 | 7/7 | POSITIVO | +0.00125 | EFICIENTE |
+| La Liga | 140 | 7/7 | POSITIVO | +0.00704 | EFICIENTE |
+| Ligue 1 | 61 | 7/7 | POSITIVO | +0.01401 | EFICIENTE |
+| Bundesliga | 78 | 7/7 | POSITIVO | +0.00097 | EFICIENTE |
+| Serie A | 135 | 7/7 | POSITIVO | +0.01301 | EFICIENTE |
+| Eredivisie\* | 88 | 7/7 | MIXTO | -0.00343 | AMBIGUO |
+| Belgian Pro\* | 144 | 7/7 | POSITIVO | +0.00365 | EFICIENTE |
+| **Primeira Liga** | **94** | **7/7** | **MIXTO** | **-0.01573** | **INEFICIENTE (xG)** |
+| **Turquia** | **203** | **7/7** | **NEGATIVO** | **-0.01214** | **INEFICIENTE** |
+| Championship\* | 40 | 7/7 | POSITIVO | +0.01970 | EFICIENTE |
+| Saudi Pro\* | 307 | 0/0 | N/A | N/A | INSUFFICIENT_ODDS |
 
 ### Resumen
 
 | Categoria | Ligas | Total |
 |-----------|-------|-------|
-| EFICIENTE (mercado gana) | ARG, COL, ECU, VEN, PER, BOL, CHI, BRA, PAR, URU, MEX, MLS, EPL, ESP, FRA, GER, ITA, BEL, ENG2 | 19/22 |
-| INEFICIENTE (modelo gana) | **Turquia** | 1/22 |
-| AMBIGUO (mixto) | Eredivisie (2/7 neg solo en xG), Primeira Liga (1/7 neg, ~0) | 2/22 |
-| N/A (sin odds) | Saudi Pro | 1/23 |
+| EFICIENTE (mercado gana) | ARG, COL, PER, CHI, BRA, URU, EPL, ESP, FRA, GER, ITA, BEL\*, ENG2\* | 13/21 |
+| INEFICIENTE (modelo gana) | **Turquia**, **Mexico**, **Primeira Liga (xG)** | 3/21 |
+| AMBIGUO (mixto) | ECU, VEN, PAR, MLS, Eredivisie\* | 5/21 |
+| N/A (sin odds) | Bolivia, Saudi Pro\* | 2/23 |
 
-### Hallazgo clave: Ecuador como falso positivo
+### Hallazgo clave: MTV v2 desbloquea 3 ligas ineficientes
 
-Ecuador es el caso mas instructivo. El modelo directo mostraba -1.4% vs mercado (aparentemente el modelo ganaba). Sin embargo, Section R revelo 5/5 deltas positivos — las features no corrigen al mercado. Esto indica que el alpha observado en el modelo directo era **varianza muestral** (N=338, CIs anchos), no edge real.
+La re-evaluacion post-MTV v2 (2026-02-15) produjo el cambio mas significativo desde la creacion de Section R: **3 ligas pasaron a INEFICIENTE**, frente a solo 1 (Turquia) en el run anterior.
 
-| Metodo | Ecuador | Turquia |
-|--------|---------|---------|
-| Modelo directo vs market | Modelo gana (-1.4%) | Modelo gana (-1.5%) |
-| Section R (residual) | Mercado gana (5/5 positivo) | Modelo gana (7/7 negativo) |
-| Ambos coinciden? | **No** — falso positivo | **Si** — alpha real |
+| Liga | Antes (02-13) | Ahora (02-15) | Cambio |
+|------|---------------|---------------|--------|
+| **Mexico** | +0.00498 EFICIENTE | **-0.01073 INEFICIENTE** | Flip completo. 7/7 negativos |
+| **Primeira Liga** | -0.00041 AMBIGUO | **-0.01573 INEFICIENTE** | R5/R6 (xG) dan el salto |
+| **Turquia** | -0.00327 INEFICIENTE | **-0.01214 INEFICIENTE** | Senal 3.7x mas fuerte |
+| Ecuador | +0.00495 EFICIENTE | -0.00312 AMBIGUO | Ya no es "falso positivo" claro |
+| Paraguay | +0.00042 EFICIENTE | -0.00177 AMBIGUO | Se movio a zona neutral |
 
-**Regla**: Un modelo directo que "supera" al mercado no es suficiente. Section R debe confirmar que las features contienen informacion no incorporada en el precio. Si ambos metodos coinciden, el alpha es robusto. Si se contradicen, es sospechoso.
+**Causa**: Operacion Native Talent reemplazo el motor de talent_delta (de Sofascore 49K rows a match_player_stats 1.1M rows). Las features `talent_delta_*` ahora tienen mayor cobertura y precision, lo que permite al residual detectar sesgos de mercado que antes quedaban enmascarados por datos incompletos.
+
+**Patron de ineficiencia**: Las 3 ligas INEFICIENTES comparten un rasgo comun — son mercados secundarios con menor volumen de apuestas. Turquia, Liga MX y Primeira Liga tienen menos incentivo de pricing perfecto por parte de las casas de apuestas, dejando sesgos sistematicos explotables.
+
+**Regla vigente**: Un modelo directo que "supera" al mercado no es suficiente. Section R debe confirmar que las features contienen informacion no incorporada en el precio. Si ambos metodos coinciden, el alpha es robusto.
 
 ### Uso para calibracion de Market Anchor
 
-| Resultado Section R | Alpha recomendado | Justificacion |
-|---------------------|-------------------|---------------|
-| Todos deltas positivos | alpha >= 0.8 | Mercado eficiente, usar Market Anchor |
-| Todos deltas negativos | alpha = 0.0 | Mercado ineficiente, usar modelo directo |
-| Mixto / contradice modelo directo | alpha = 0.5 | Zona gris, blend conservador |
+| Resultado Section R | Alpha recomendado | Ligas (2026-02-15) | Justificacion |
+|---------------------|-------------------|--------------------|---------------|
+| Todos deltas positivos | alpha >= 0.8 | ARG, COL, PER, CHI, BRA, URU, EPL, ESP, FRA, GER, ITA | Mercado eficiente, usar Market Anchor |
+| Todos deltas negativos | alpha = 0.0 | **TUR, MEX** | Mercado ineficiente, usar modelo directo |
+| Mixto con xG negativo | alpha = 0.3 | **POR** | xG corrige mercado, blend agresivo |
+| Mixto / zona neutral | alpha = 0.5 | ECU, VEN, PAR, MLS, ERE | Zona gris, blend conservador |
 
 ### Notas sobre los deltas
 
@@ -126,16 +135,25 @@ Los deltas positivos no son uniformes. Revelan cuanto dano hacen las features co
 
 | Categoria | Ligas | Delta tipico | Interpretacion |
 |-----------|-------|-------------|----------------|
-| g(x) converge a cero | Paraguay (+0.0004), EPL (+0.001), Serie A (+0.001) | < +0.002 | Regularizacion funciona, features neutras |
-| Features agregan ruido moderado | Colombia, Bolivia, Uruguay, Mexico, Bundesliga | +0.003 a +0.007 | Features no daninas pero inutiles |
-| Features activamente daninas | Chile (+0.027), MLS (+0.015), Ligue 1 (+0.015) | > +0.010 | Features empujan en direccion equivocada |
+| Features corrigen mercado | Turquia (-0.012), Mexico (-0.011), Primeira (-0.016) | < -0.005 | Alpha genuino, mercado ineficiente |
+| g(x) converge a cero | Bundesliga (+0.001), EPL (+0.001), Paraguay (-0.002), Venezuela (~0) | |Δ| < 0.005 | Regularizacion funciona, features neutras |
+| Features agregan ruido moderado | Colombia (+0.004), Peru (+0.005), La Liga (+0.007) | +0.003 a +0.010 | Features no daninas pero inutiles |
+| Features activamente daninas | Chile (+0.018), Argentina (+0.016), Ligue 1 (+0.014), Serie A (+0.013) | > +0.010 | Features empujan en direccion equivocada |
 
 ### Re-evaluacion
 
 Section R debe re-ejecutarse:
 - Cada vez que se agreguen nuevas features al laboratorio
+- Tras cambios en el motor de features (ej: MTV v1→v2 causo 3 reclasificaciones)
 - Si una liga cambia de eficiencia de mercado (nuevo bookmaker, cambio de liquidez)
 - Como paso obligatorio antes de desactivar Market Anchor (alpha < 0.5) en cualquier liga
+
+### Historial de ejecuciones
+
+| Fecha | Motor | Cambios vs anterior |
+|-------|-------|---------------------|
+| 2026-02-13 | MTV v1 (Sofascore) | Run inicial 23 ligas. Solo Turquia INEFICIENTE |
+| 2026-02-15 | MTV v2 (match_player_stats) | 19 ligas re-run. Mexico y Primeira Liga pasan a INEFICIENTE. 4 ligas pasan a AMBIGUO |
 
 ---
 
@@ -2155,13 +2173,13 @@ Mexico es la **unica liga LATAM donde xG aporta señal complementaria**:
 - P5_xg_odds (standard): 0.57685 — competitivo
 - Pero FAIR xG+odds es SIGNIFICATIVO (+1.9-2.3%): el mercado sigue ganando incluso con xG
 
-### 11.10 Recomendaciones (ACTUALIZADAS)
+### 11.10 Recomendaciones (ACTUALIZADAS 2026-02-15)
 
-1. **Market Anchor VIABLE** — mercado gana +1.0% (no sig standard, pero sig con xG+odds)
+1. **Section R INEFICIENTE** — post-MTV v2, 7/7 tests negativos (Δ=-0.01073). El modelo corrige al mercado
 2. **xG vale la pena** — unica liga LATAM donde xG+odds combinadas dan señal (OE=0.58210)
 3. **Best sin odds**: O2_defense_form_elo (0.60075, 8 feats) — viable para matches sin odds
 4. **N_test suficiente** — 381 matches (post-migracion) vs 178 antes. Resultados ahora confiables
-5. **Market Anchor α recomendado**: 0.6-0.8 (gap menor que Chile/MLS, xG aporta algo)
+5. **Market Anchor α recomendado**: 0.0 (mercado ineficiente confirmado por Section R). Candidata a modelo directo
 
 ### 11.11 Backfill Status
 
@@ -3675,11 +3693,11 @@ FAIR (OC vs mkt):   +0.00585 CI[-0.009, +0.019] — NO SIGNIFICATIVO
 
 | Decisión | Recomendación |
 |----------|---------------|
-| Tier | **Ultra-efficient** — mercado MAS eficiente (Δ +0.59%) |
-| Market Anchor α | **0.5-0.7** (modelo empata, mercado excelente) |
+| Tier | **INEFICIENTE (xG)** — Section R 2026-02-15: Δ=-0.01573 (R5/R6 con xG superan mercado) |
+| Market Anchor α | **0.3** (xG corrige mercado, blend agresivo) |
 | Features | OC_xg_all_elo_odds (15f) si xG disponible, S2_elo_odds (6f) sin xG |
-| xG | **Aporta con Optuna**: OC (0.537) vs OF (0.544) = -0.007 |
-| Prioridad | Baja — modelo opera en eficiencia maxima |
+| xG | **Critico**: R5/R6 (con xG) son los que superan al mercado. Sin xG el modelo es neutro |
+| Prioridad | Alta — candidata a modelo residual en produccion |
 | depth=2 confirmado | todos los Optuna convergen a depth=2 (excepto O9) |
 
 ### 20.8 Archivos
@@ -3798,11 +3816,11 @@ CI95 casi excluye cero: [-0.034, +0.002].
 
 | Decisión | Recomendación |
 |----------|---------------|
-| Tier | **Model-competitive** — UNICA liga donde modelo bate mercado (Standard Y Optuna) |
+| Tier | **INEFICIENTE** — Section R 2026-02-15: Δ=-0.01214, 7/7 negativos. Senal 3.7x mas fuerte post-MTV v2 |
 | Market Anchor α | **0.0** (NO aplicar — el modelo aporta valor propio) |
 | Features | OE_xg_defense_odds (11f) campeon Optuna, P8 campeon standard (misma composicion) |
 | xG | **CRITICO** — xG es la señal diferencial. Top-3 Optuna son todos xG+odds |
-| Prioridad | **ALTA** — oportunidad de alpha positivo |
+| Prioridad | **ALTA** — alpha confirmado por Section R y modelo directo |
 | depth=2 confirmado | todos excepto OB (depth=5) |
 
 ### 21.8 Archivos

@@ -756,7 +756,7 @@ async def load_batch_pts_from_match_player_stats(
                 WHERE mps.player_external_id = ANY(:player_ids)
                   AND m.date < :before_date
                   AND mps.rating IS NOT NULL
-                  AND (:exclude_match_id IS NULL OR mps.match_id != :exclude_match_id)
+                  AND (CAST(:exclude_match_id AS INTEGER) IS NULL OR mps.match_id != CAST(:exclude_match_id AS INTEGER))
             )
             SELECT
                 player_external_id,
