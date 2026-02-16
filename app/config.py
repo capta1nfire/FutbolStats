@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     MARKET_ANCHOR_LEAGUE_OVERRIDES: str = "128:1.0"  # "league_id:alpha" — explicit low-signal leagues
     MARKET_ANCHOR_MIN_SAMPLES: int = 200  # Min FT with odds before accepting per-league α
 
+    # League Router: Asymmetric prediction routing (GDT M3 2026-02-15)
+    LEAGUE_ROUTER_ENABLED: bool = True        # Enable tier classification + logging
+    LEAGUE_ROUTER_MTV_ENABLED: bool = False   # Gate MTV feature injection for Tier 3
+    # Requires trained Family S model. Keep False until model deployed.
+
     # SOTA: FotMob xG provider (ABE P0 2026-02-08)
     FOTMOB_REFS_ENABLED: bool = False         # Flag refs sync (Phase A)
     FOTMOB_XG_ENABLED: bool = False           # Flag xG backfill (Phase B) — requires refs

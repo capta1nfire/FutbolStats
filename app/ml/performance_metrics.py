@@ -268,18 +268,51 @@ def calculate_skill_vs_market(model_brier: float, market_brier: float) -> Option
 async def fetch_prediction_records(
     session: AsyncSession,
     window_days: int,
-    min_n: int = 10
+    min_n: int = 10,
+    model_version: Optional[str] = None,
 ) -> list[PredictionRecord]:
     """
     Fetch prediction records for evaluation from database.
 
     Joins matches, predictions, and prediction_outcomes for finished matches.
     Uses COALESCE(finished_at, date) for window calculation.
+
+    ABE P0-2: Filters by model_version to prevent mixing cohorts and uses
+    DISTINCT ON to deduplicate (1 match = 1 row, latest prediction wins).
     """
     cutoff = datetime.utcnow() - timedelta(days=window_days)
 
+    # ABE P0-2: Default to the ACTIVE model_version from model_snapshots (canonical source)
+    # Fallback: most recent prediction if no active snapshot exists (degraded integrity)
+    if model_version is None:
+        active_query = text("""
+            SELECT model_version FROM model_snapshots
+            WHERE is_active = true
+            ORDER BY created_at DESC LIMIT 1
+        """)
+        active_result = await session.execute(active_query)
+        active_row = active_result.fetchone()
+        if active_row:
+            model_version = active_row.model_version
+            logger.info(f"Using active snapshot model_version={model_version} for performance report")
+        else:
+            # Fallback: most recent prediction (degraded — no active snapshot)
+            fallback_query = text("""
+                SELECT model_version FROM predictions
+                WHERE asof_timestamp IS NOT NULL
+                ORDER BY asof_timestamp DESC LIMIT 1
+            """)
+            fallback_result = await session.execute(fallback_query)
+            fallback_row = fallback_result.fetchone()
+            if fallback_row:
+                model_version = fallback_row.model_version
+                logger.warning(
+                    f"No active snapshot found — falling back to most recent prediction "
+                    f"model_version={model_version} (integrity=degraded)"
+                )
+
     query = text("""
-        SELECT
+        SELECT DISTINCT ON (m.id)
             m.id as match_id,
             m.league_id,
             COALESCE(m.finished_at, m.date) as finished_at,
@@ -300,10 +333,11 @@ async def fetch_prediction_records(
           AND m.away_goals IS NOT NULL
           AND COALESCE(m.finished_at, m.date) >= :cutoff
           AND COALESCE(m.finished_at, m.date) <= NOW()
-        ORDER BY COALESCE(m.finished_at, m.date) DESC
+          AND (:model_version IS NULL OR p.model_version = :model_version)
+        ORDER BY m.id, p.asof_timestamp DESC NULLS LAST
     """)
 
-    result = await session.execute(query, {"cutoff": cutoff})
+    result = await session.execute(query, {"cutoff": cutoff, "model_version": model_version})
     rows = result.fetchall()
 
     records = []
@@ -335,7 +369,7 @@ async def fetch_prediction_records(
             odds_away=row.odds_away,
         ))
 
-    logger.info(f"Fetched {len(records)} prediction records for {window_days}d window")
+    logger.info(f"Fetched {len(records)} prediction records for {window_days}d window (model_version={model_version})")
     return records
 
 

@@ -2128,6 +2128,16 @@ async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
         # =================================================================
         # PHASE 2: Make predictions (CPU-bound, no DB connection needed)
         # =================================================================
+        # ABE P2: Capture PIT boundary BEFORE predicting — all information
+        # used for these predictions was available at this timestamp.
+        asof_timestamp = datetime.utcnow()
+
+        # League Router: log tier distribution for observability (GDT M3)
+        from app.ml.league_router import get_league_tier
+        if "league_id" in df.columns:
+            tier_counts = df["league_id"].apply(get_league_tier).value_counts().to_dict()
+            logger.info(f"[DAILY-SAVE] League Router tiers: {tier_counts}")
+
         predictions = engine.predict(df)
 
         # PHASE 2b: Market anchor — blend with market for low-signal leagues
@@ -2173,6 +2183,7 @@ async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
                             continue
 
                         # Upsert prediction
+                        # ABE P2: Include asof_timestamp for PIT attribution
                         await upsert(
                             session,
                             Prediction,
@@ -2182,9 +2193,10 @@ async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
                                 "home_prob": probs["home"],
                                 "draw_prob": probs["draw"],
                                 "away_prob": probs["away"],
+                                "asof_timestamp": asof_timestamp,
                             },
                             conflict_columns=["match_id", "model_version"],
-                            update_columns=["home_prob", "draw_prob", "away_prob"],
+                            update_columns=["home_prob", "draw_prob", "away_prob", "asof_timestamp"],
                         )
                         saved += 1
 

@@ -1,23 +1,27 @@
 """
 Cascade handler for LINEUP_CONFIRMED events.
 
-Phase 2, P2-10.
+Phase 2, P2-10. Asymmetric League-Router (GDT M3).
 
 Flow:
 1. Validate match NS + prediction not frozen
 2. Get features for match via FeatureEngineer
-3. Re-predict with XGBoost (Phase 1 model)
-4. Try compute_talent_delta (5s timeout) — forward data collection only
-5. Apply Market Anchor with fresh odds
-6. UPSERT prediction with new asof_timestamp
+3. Classify league tier (T1/T2/T3) via league_router
+4. For T3 + MTV enabled: compute talent_delta BEFORE prediction, inject features
+5. Re-predict with XGBoost (Phase 1 or Family S model)
+6. For T1/T2: compute talent_delta AFTER prediction (SteamChaser logging)
+7. Apply Market Anchor with fresh odds
+8. UPSERT prediction with new asof_timestamp
 
 Steel degradation (ATI #3):
-- talent_delta timeout/error: skip, proceed with Phase 1 model (no MTV features yet)
+- talent_delta timeout/error: skip, proceed with baseline (no MTV features)
 - Feature fetch / model fail: ABORT entirely, daily prediction stays active
 - Total crash: Sweeper Queue finds match in next 2min cycle
 
-Current value: Market Anchor uses fresh T-60m odds instead of stale T-24h batch odds.
-Future value: talent_delta feeds model v2 when MTV features are trained.
+Tier routing (GDT M3):
+- T1 (Big 5): Baseline + high market anchor. talent_delta = SteamChaser log only.
+- T2 (Peripheral neutral): Baseline + moderate market anchor. talent_delta = SteamChaser log.
+- T3 (MTV winners): Family S model + MTV injection (when enabled). talent_delta = injection.
 """
 
 import asyncio
@@ -65,6 +69,8 @@ async def cascade_handler(event: Event):
             compute_line_movement_features,
         )
         from app.ml.policy import apply_market_anchor, get_policy_config
+        from app.ml.league_router import get_prediction_strategy
+        from app.config import get_settings
 
         # ── Step 1: Validate match is still NS and prediction is not frozen ──
         async with get_session_with_retry(max_retries=2, retry_delay=0.5) as session:
@@ -130,43 +136,89 @@ async def cascade_handler(event: Event):
 
         df_match = df[df["match_id"] == match_id].reset_index(drop=True)
 
-        # ── Step 4: Predict with Phase 1 model ──────────────────────────────
+        # ── Step 3b: League Router — classify tier ─────────────────────────
+        league_id = row.league_id
+        _settings = get_settings()
+        strategy = get_prediction_strategy(
+            league_id, mtv_enabled=_settings.LEAGUE_ROUTER_MTV_ENABLED
+        )
+        logger.info(
+            f"[CASCADE] Router match_id={match_id} league={league_id}: "
+            f"tier={strategy['tier']} strategy={strategy['label']} "
+            f"mtv_purpose={strategy['talent_delta_purpose']}"
+        )
+
+        # ── Step 4a: For T3 + MTV enabled, compute talent_delta BEFORE prediction
+        talent_delta_result = None
+        if strategy["inject_mtv"]:
+            try:
+                async with get_session_with_retry(max_retries=1, retry_delay=0.5) as session:
+                    match_obj = (await session.execute(
+                        select(Match).where(Match.id == match_id)
+                    )).scalar_one_or_none()
+
+                    if match_obj:
+                        talent_delta_result = await asyncio.wait_for(
+                            compute_match_talent_delta_features(session, match_obj),
+                            timeout=TALENT_DELTA_TIMEOUT_S,
+                        )
+                        # Inject MTV features into df_match for Family S model
+                        for mtv_col in ["home_talent_delta", "away_talent_delta",
+                                        "talent_delta_diff", "shock_magnitude"]:
+                            df_match[mtv_col] = talent_delta_result.get(mtv_col)
+                        logger.info(
+                            f"[CASCADE] T3 MTV INJECTED match_id={match_id}: "
+                            f"home={talent_delta_result.get('home_talent_delta')}, "
+                            f"away={talent_delta_result.get('away_talent_delta')}, "
+                            f"shock={talent_delta_result.get('shock_magnitude')}"
+                        )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"[CASCADE] T3 talent_delta TIMEOUT ({TALENT_DELTA_TIMEOUT_S}s) "
+                    f"for match {match_id}, falling back to baseline"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[CASCADE] T3 talent_delta failed for match {match_id}: {e}, "
+                    f"falling back to baseline"
+                )
+
+        # ── Step 4b: Predict ──────────────────────────────────────────────
         predictions = engine.predict(df_match)
         if not predictions or not predictions[0].get("probabilities"):
             logger.error(f"[CASCADE] Model returned no prediction for match {match_id}")
             return
 
-        # ── Step 5: Talent delta (5s timeout — ATI #3) ──────────────────────
-        # Forward data collection only — v1.0.0 model does not use MTV features.
-        # Log result for future analysis / model v2 training.
-        talent_delta_result = None
-        try:
-            async with get_session_with_retry(max_retries=1, retry_delay=0.5) as session:
-                match_obj = (await session.execute(
-                    select(Match).where(Match.id == match_id)
-                )).scalar_one_or_none()
+        # ── Step 5: For T1/T2, compute talent_delta AFTER prediction (SteamChaser)
+        if not strategy["inject_mtv"]:
+            try:
+                async with get_session_with_retry(max_retries=1, retry_delay=0.5) as session:
+                    match_obj = (await session.execute(
+                        select(Match).where(Match.id == match_id)
+                    )).scalar_one_or_none()
 
-                if match_obj:
-                    talent_delta_result = await asyncio.wait_for(
-                        compute_match_talent_delta_features(session, match_obj),
-                        timeout=TALENT_DELTA_TIMEOUT_S,
-                    )
-                    logger.info(
-                        f"[CASCADE] talent_delta match_id={match_id}: "
-                        f"home={talent_delta_result.get('home_talent_delta')}, "
-                        f"away={talent_delta_result.get('away_talent_delta')}, "
-                        f"shock={talent_delta_result.get('shock_magnitude')}"
-                    )
-        except asyncio.TimeoutError:
-            logger.warning(
-                f"[CASCADE] talent_delta TIMEOUT ({TALENT_DELTA_TIMEOUT_S}s) "
-                f"for match {match_id}, proceeding without MTV"
-            )
-        except Exception as e:
-            logger.warning(
-                f"[CASCADE] talent_delta failed for match {match_id}: {e}, "
-                f"proceeding without MTV"
-            )
+                    if match_obj:
+                        talent_delta_result = await asyncio.wait_for(
+                            compute_match_talent_delta_features(session, match_obj),
+                            timeout=TALENT_DELTA_TIMEOUT_S,
+                        )
+                        logger.info(
+                            f"[CASCADE] SteamChaser talent_delta match_id={match_id} "
+                            f"(tier={strategy['tier']}): "
+                            f"home={talent_delta_result.get('home_talent_delta')}, "
+                            f"away={talent_delta_result.get('away_talent_delta')}, "
+                            f"shock={talent_delta_result.get('shock_magnitude')}"
+                        )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"[CASCADE] talent_delta TIMEOUT ({TALENT_DELTA_TIMEOUT_S}s) "
+                    f"for match {match_id}, proceeding without MTV"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[CASCADE] talent_delta failed for match {match_id}: {e}, "
+                    f"proceeding without MTV"
+                )
 
         # ── Step 5b: Line movement features (PIT-safe — ATI Sprint 3) ────────
         # Forward data collection only — not yet in model.
@@ -216,11 +268,15 @@ async def cascade_handler(event: Event):
 
         elapsed_ms = (time.time() - start_time) * 1000
         anchor_applied = anchor_meta.get("anchored", 0) > 0
+        mtv_status = "INJECTED" if strategy["inject_mtv"] and talent_delta_result else (
+            "OK" if talent_delta_result else "SKIP"
+        )
         logger.info(
-            f"[CASCADE] Complete match_id={match_id}: "
+            f"[CASCADE] Complete match_id={match_id} "
+            f"tier={strategy['tier']} strategy={strategy['label']}: "
             f"H={probs['home']:.4f} D={probs['draw']:.4f} A={probs['away']:.4f} "
             f"asof={asof.isoformat()} "
-            f"mtv={'OK' if talent_delta_result else 'SKIP'} "
+            f"mtv={mtv_status} "
             f"lm={'OK' if line_movement and line_movement.get('line_drift_magnitude') is not None else 'SKIP'} "
             f"anchor={'YES' if anchor_applied else 'NO'} "
             f"elapsed={elapsed_ms:.0f}ms"

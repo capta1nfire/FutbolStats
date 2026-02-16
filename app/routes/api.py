@@ -1958,10 +1958,13 @@ async def get_predictions(
     #   Full: days_back=7, days_ahead=7 → 15-day window (~300 matches)
     _t0 = time.time()
     feature_engineer = FeatureEngineer(session=session)
+    # ABE P1: league_only=True prevents "Exeter mode" where cup matches
+    # inflate rolling averages. Must be consistent with daily_save_predictions.
     df = await feature_engineer.get_upcoming_matches_features(
         league_ids=league_id_list,
         include_recent_days=fetch_days_back,  # Past N days for finished matches
         days_ahead=fetch_days_ahead,  # Future N days for upcoming matches
+        league_only=True,
     )
     _stage_times["features_ms"] = (time.time() - _t0) * 1000
     logger.info(f"Predictions query: days_back={fetch_days_back}, days_ahead={fetch_days_ahead}, matches={len(df)}")

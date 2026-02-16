@@ -1109,7 +1109,34 @@ async def run_evaluation(
                 model_version_counts[mv] = model_version_counts.get(mv, 0) + 1
             pred_metadata['model_versions_available'] = model_version_counts
 
-            # Filter by model_version if specified
+            # ABE P0-1: Auto-select model_version from model_snapshots.is_active (canonical)
+            # Fallback: most recent created_at if no active snapshot (degraded integrity)
+            if not model_version and len(model_version_counts) > 1:
+                active_row = await conn.fetchrow(
+                    "SELECT model_version FROM model_snapshots "
+                    "WHERE is_active = true ORDER BY created_at DESC LIMIT 1"
+                )
+                if active_row:
+                    auto_selected = active_row['model_version']
+                    pred_metadata['model_version_source'] = 'model_snapshots.is_active'
+                else:
+                    # Fallback: most recent created_at in predictions (degraded)
+                    latest_by_version = {}
+                    for p in predictions_list:
+                        mv = p.get('model_version', 'unknown')
+                        cat = p.get('created_at')
+                        if cat and (mv not in latest_by_version or cat > latest_by_version[mv]):
+                            latest_by_version[mv] = cat
+                    auto_selected = max(latest_by_version, key=latest_by_version.get) if latest_by_version else max(model_version_counts, key=model_version_counts.get)
+                    pred_metadata['model_version_source'] = 'fallback_most_recent'
+                    print(f"[WARNING] No active snapshot found — using fallback (integrity=degraded)")
+                print(f"[WARNING] Multiple model_versions detected: {model_version_counts}")
+                print(f"[WARNING] Auto-selecting: {auto_selected} (source: {pred_metadata.get('model_version_source', 'unknown')})")
+                print(f"[WARNING] Use --model-version to explicitly choose a cohort.")
+                model_version = auto_selected
+                pred_metadata['model_version_auto_selected'] = True
+
+            # Filter by model_version if specified (or auto-selected)
             if model_version:
                 predictions_list = [p for p in predictions_list if p.get('model_version') == model_version]
                 pred_metadata['model_version_filter'] = model_version
