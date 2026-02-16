@@ -24,16 +24,20 @@ from app.models import (
     PredictionOutcome,
     PostMatchAudit,
 )
-from app.config import get_settings
+from app.config import get_settings, get_ia_features_config, should_generate_narratives
 
 logger = logging.getLogger(__name__)
 
 
-def _get_llm_enabled() -> bool:
-    """Check if LLM narrative is enabled."""
+async def _get_llm_enabled(session: AsyncSession) -> bool:
+    """Check if LLM narrative is enabled (env + dashboard toggle)."""
     try:
         settings = get_settings()
-        return settings.NARRATIVE_LLM_ENABLED and bool(settings.RUNPOD_API_KEY)
+        if not settings.NARRATIVE_LLM_ENABLED or not settings.RUNPOD_API_KEY:
+            return False
+        # Respect dashboard toggle (ops_settings.narratives_enabled)
+        ia_config = await get_ia_features_config(session)
+        return should_generate_narratives(ia_config, settings)
     except Exception:
         return False
 
@@ -421,7 +425,7 @@ class PostMatchAuditService:
         )
 
         # Generate LLM narrative (best-effort, doesn't block audit)
-        if _get_llm_enabled():
+        if await _get_llm_enabled(self.session):
             try:
                 llm_result = await self._generate_llm_narrative(
                     match=match,
