@@ -629,15 +629,16 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
     _setTeamTab(v);
     try { localStorage.setItem("fs:teamTab", v); } catch {}
   }, []);
-  const [squadSeason, setSquadSeason] = useState<number | null>(null);
+  const [selectedSeason, setSelectedSeason] = useState<number | undefined>(undefined);
   // Reset selected team when league changes (let auto-select pick first team)
   useEffect(() => {
     setSelectedTeamId(initialTeamId ?? null);
     setStandingsSubTab("standings");
     setSelectedGroup(undefined);
+    setSelectedSeason(undefined);
   }, [leagueId, initialTeamId]);
   const { data, isLoading, error, refetch } = useFootballLeague(leagueId);
-  const { data: standingsData, isLoading: isStandingsLoading } = useStandings(leagueId, { group: selectedGroup });
+  const { data: standingsData, isLoading: isStandingsLoading } = useStandings(leagueId, { group: selectedGroup, season: selectedSeason });
 
   // Auto-select first team in standings when data loads and no team is selected
   useEffect(() => {
@@ -653,9 +654,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
   const selectedTeamSquad = useTeamSquad(selectedTeamId ?? 0, !!selectedTeamId);
 
   // Squad stats — shares TanStack cache key with TeamSquadStats (no duplicate fetch)
-  const squadStatsQuery = useTeamSquadStats(selectedTeamId, squadSeason, teamTab === "squad");
-  const squadSeasons = squadStatsQuery.data?.available_seasons ?? [];
-  const squadDisplaySeason = squadSeason ?? squadStatsQuery.data?.season ?? null;
+  const squadStatsQuery = useTeamSquadStats(selectedTeamId, selectedSeason ?? null, teamTab === "squad");
 
   // MUST be called on every render (Rules of Hooks). Keep defensive for loading/error.
   const nextMatches = useMemo(() => {
@@ -684,7 +683,6 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
   const handleTeamSelect = useCallback(
     (teamId: number) => {
       setSelectedTeamId(teamId);
-      setSquadSeason(null);
       onTeamSelect(teamId);
     },
     [onTeamSelect]
@@ -849,6 +847,47 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                     </span>
                   )}
                 </div>
+                {/* Season coverage badges */}
+                {stats_by_season && stats_by_season.length > 0 && (
+                  <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                    {[...stats_by_season].reverse().map((s) => {
+                      const avg = ((s.with_stats_pct ?? 0) + (s.with_odds_pct ?? 0)) / 2;
+                      const isActive = selectedSeason === s.season;
+                      const isCurrent = selectedSeason === undefined && s.season === stats_by_season[0].season;
+                      const color = isActive || isCurrent
+                        ? "bg-primary text-primary-foreground"
+                        : avg >= 80 ? "bg-[var(--status-success-bg)] text-[var(--status-success-text)]"
+                        : avg >= 40 ? "bg-[var(--status-warning-bg)] text-[var(--status-warning-text)]"
+                        : "bg-muted text-muted-foreground";
+                      return (
+                        <Tooltip key={s.season}>
+                          <TooltipTrigger asChild>
+                            <button
+                              onClick={() => {
+                                const newSeason = (isActive || isCurrent) ? undefined : s.season;
+                                setSelectedSeason(newSeason);
+                                setStandingsSubTab("standings");
+                              }}
+                              className={cn(
+                                "px-1.5 py-0.5 rounded text-[10px] font-medium tabular-nums transition-colors",
+                                "hover:ring-1 hover:ring-primary/50",
+                                color
+                              )}
+                            >
+                              {s.season}
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom" className="text-xs">
+                            <div className="space-y-0.5">
+                              <div>{s.finished}/{s.total_matches} matches</div>
+                              <div>Stats {s.with_stats_pct?.toFixed(0) ?? 0}% · Odds {s.with_odds_pct?.toFixed(0) ?? 0}%</div>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
               {(() => {
                 const current = stats_by_season?.[0];
@@ -1184,38 +1223,6 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                 {TEAM_DETAIL_TABS.map((tab) => {
                   const isActive = teamTab === tab.id;
 
-                  // Squad tab: inline season selector
-                  if (tab.id === "squad" && isActive && squadSeasons.length > 1) {
-                    return (
-                      <div
-                        key={tab.id}
-                        className="inline-flex items-center text-foreground border-b-2 border-primary"
-                      >
-                        <button
-                          onClick={() => setTeamTab(tab.id)}
-                          className="px-4 py-2 text-sm font-medium whitespace-nowrap"
-                        >
-                          {tab.label}
-                        </button>
-                        <Select
-                          value={squadDisplaySeason ? String(squadDisplaySeason) : ""}
-                          onValueChange={(v) => setSquadSeason(Number(v))}
-                        >
-                          <SelectTrigger className="h-auto border-0 bg-transparent! shadow-none! px-0 pr-1 py-0 text-xs text-muted-foreground gap-0.5 ring-0! outline-none! [&>svg]:h-3 [&>svg]:w-3">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent align="start">
-                            {squadSeasons.map((s) => (
-                              <SelectItem key={s} value={String(s)}>
-                                {s}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    );
-                  }
-
                   return (
                     <button
                       key={tab.id}
@@ -1456,7 +1463,7 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
               )}
 
               {teamTab === "squad" && selectedTeamId && (
-                <TeamSquadStats teamId={selectedTeamId} season={squadSeason} onPlayerSelect={onPlayerSelect} />
+                <TeamSquadStats teamId={selectedTeamId} season={selectedSeason ?? null} onPlayerSelect={onPlayerSelect} />
               )}
 
               {teamTab === "matches" && (

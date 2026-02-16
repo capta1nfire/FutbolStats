@@ -92,6 +92,7 @@ export interface TeamSquadStatsData {
   team_name: string;
   season: number | null;
   available_seasons: number[];
+  team_matches_played: number;
   players: TeamSquadPlayerSeasonStats[];
 }
 

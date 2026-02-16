@@ -1022,6 +1022,21 @@ async def dashboard_admin_team_squad_stats(
                 detail=f"Season {selected_season} not available for team {team_id}.",
             )
 
+        # Total finished matches for this team in the season
+        team_matches_played = 0
+        if selected_season is not None:
+            tm_result = await session.execute(
+                text("""
+                    SELECT COUNT(*) AS cnt
+                    FROM matches
+                    WHERE (home_team_id = :tid OR away_team_id = :tid)
+                      AND season = :season
+                      AND status = 'FT'
+                """),
+                {"tid": team_id, "season": selected_season},
+            )
+            team_matches_played = int(tm_result.scalar() or 0)
+
         players = []
         if selected_season is not None:
             result = await session.execute(
@@ -1144,6 +1159,7 @@ async def dashboard_admin_team_squad_stats(
         "team_name": team.name,
         "season": selected_season,
         "available_seasons": available_seasons,
+        "team_matches_played": team_matches_played,
         "players": players,
     }
     result_obj = {"generated_at": datetime.utcnow().isoformat() + "Z", "data": data}
