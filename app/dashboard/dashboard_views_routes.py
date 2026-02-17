@@ -5358,11 +5358,6 @@ async def dashboard_photo_face_preview(
         img = PILImage.open(_io.BytesIO(image_bytes))
         if img.mode != "RGBA":
             img = img.convert("RGBA")
-
-        # Apply rotation before cropping (negative for PIL which rotates CCW)
-        if rot and abs(rot) > 0.1:
-            img = img.rotate(-rot, resample=PILImage.Resampling.BICUBIC, expand=True, fillcolor=(0, 0, 0, 0))
-
         aw, ah = img.size
 
         # Scale coordinates if source dims differ from actual
@@ -5379,7 +5374,25 @@ async def dashboard_photo_face_preview(
         scaled_x = min(scaled_x, max(0, aw - scaled_size))
         scaled_y = min(scaled_y, max(0, ah - scaled_size))
 
-        cropped = img.crop((scaled_x, scaled_y, scaled_x + scaled_size, scaled_y + scaled_size))
+        if rot and abs(rot) > 0.1:
+            import math
+            # Crop an expanded region, rotate it, then center-crop to final size.
+            # This matches the CSS: rotate around the crop-frame center.
+            rad = math.radians(rot)
+            margin = abs(math.cos(rad)) + abs(math.sin(rad))
+            expanded_size = min(int(math.ceil(scaled_size * margin)), min(aw, ah))
+            cx_center = scaled_x + scaled_size / 2
+            cy_center = scaled_y + scaled_size / 2
+            ex = max(0, int(cx_center - expanded_size / 2))
+            ey = max(0, int(cy_center - expanded_size / 2))
+            ex = min(ex, max(0, aw - expanded_size))
+            ey = min(ey, max(0, ah - expanded_size))
+            expanded = img.crop((ex, ey, ex + expanded_size, ey + expanded_size))
+            rotated = expanded.rotate(-rot, resample=PILImage.Resampling.BICUBIC, expand=False, fillcolor=(0, 0, 0, 0))
+            off = (expanded_size - scaled_size) // 2
+            cropped = rotated.crop((off, off, off + scaled_size, off + scaled_size))
+        else:
+            cropped = img.crop((scaled_x, scaled_y, scaled_x + scaled_size, scaled_y + scaled_size))
         cropped = cropped.resize((512, 512), PILImage.Resampling.LANCZOS)
         buf = _io.BytesIO()
         cropped.save(buf, format="PNG", optimize=True)
