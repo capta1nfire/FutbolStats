@@ -5102,7 +5102,8 @@ async def dashboard_photo_candidates(
 
     sql = text("""
         SELECT pa.id, pa.player_external_id, pa.source, pa.quality_score,
-               pa.review_status, pa.photo_meta, pa.run_id, pa.created_at
+               pa.review_status, pa.photo_meta, pa.run_id, pa.created_at,
+               p.firstname, p.lastname, p.name as player_short_name
         FROM player_photo_assets pa
         LEFT JOIN players p ON p.external_id = pa.player_external_id
         WHERE pa.asset_type = 'candidate'
@@ -5116,10 +5117,14 @@ async def dashboard_photo_candidates(
     candidates = []
     for r in rows:
         meta = r["photo_meta"] or {}
+        # Full name: firstname + lastname from players table, fallback to photo_meta
+        fn = (r.get("firstname") or "").strip()
+        ln = (r.get("lastname") or "").strip()
+        full_name = f"{fn} {ln}".strip() if (fn or ln) else meta.get("player_name", "")
         candidates.append({
             "id": r["id"],
             "player_external_id": r["player_external_id"],
-            "player_name": meta.get("player_name", ""),
+            "player_name": full_name or meta.get("player_name", ""),
             "team_name": meta.get("team_name", ""),
             "team_external_id": meta.get("team_external_id"),
             "source": r["source"],

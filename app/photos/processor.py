@@ -124,20 +124,13 @@ def crop_face(image_bytes: bytes, output_size: int = 512, player_name: str = "",
         # Take top 30% of CONTENT height (tighter face crop)
         face_h = int(content_h * 0.30)
 
-        # Find horizontal center of face region using geometric midpoint
-        # (not center of mass, which gets pulled by shoulders/body)
-        alpha = np.array(img.split()[3])
-        face_region_alpha = alpha[content_top:content_top + face_h, :]
-        cols_opaque = np.sum(face_region_alpha > 128, axis=0)
-        face_cols = np.where(cols_opaque > 0)[0]
-
-        if len(face_cols) > 0:
-            face_center_x = int((face_cols[0] + face_cols[-1]) / 2)
-        else:
-            face_center_x = content_left + content_w // 2
+        # Center horizontally on the content bounding box.
+        # For transparent-bg images, this centers on the person silhouette.
+        # For opaque images (pre-PhotoRoom), this centers on the full image.
+        content_center_x = content_left + content_w // 2
 
         crop_size = min(content_w, face_h)
-        left = max(0, face_center_x - crop_size // 2)
+        left = max(0, content_center_x - crop_size // 2)
         left = min(left, w - crop_size)  # clamp to image bounds
         top = content_top
 
