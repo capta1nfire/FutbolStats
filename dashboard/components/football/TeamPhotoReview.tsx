@@ -111,7 +111,8 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
 
   // Reset per-candidate UI state + revoke blob + fetch face data
   useEffect(() => {
-    setAdjustMode(false);
+    // Keep adjust mode active during fullscreen review session
+    if (fullscreen) setAdjustMode(true);
     setManualCrop(null);
     setCleanLoading(false);
     setCleanPreviewUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
@@ -119,9 +120,9 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
     if (!current?.id) return;
     let cancelled = false;
     fetch(`/api/photos/face-detect?id=${current.id}`)
-      .then((r) => r.ok ? r.json() : null)
-      .then((d) => { if (!cancelled && d) setFaceData(d); })
-      .catch(() => {});
+      .then((r) => { console.log("[face-detect] status:", r.status); return r.ok ? r.json() : null; })
+      .then((d) => { console.log("[face-detect] data:", d); if (!cancelled && d) setFaceData(d); })
+      .catch((e) => { console.error("[face-detect] error:", e); });
     return () => { cancelled = true; };
   }, [current?.id]);
 
@@ -148,7 +149,6 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
         }));
         setCurrentIndex((i) => i + 1);
         setImgErrors({});
-        setAdjustMode(false);
         setManualCrop(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Action failed");
@@ -215,13 +215,21 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
     setCleanLoading(true);
     setCleanPreviewUrl(null);
     const qs = `id=${current.id}&cx=${Math.round(crop.x)}&cy=${Math.round(crop.y)}&cs=${Math.round(crop.size)}&sw=${crop.source_width}&sh=${crop.source_height}&clean=1`;
+    console.log("[clean-preview] fetching:", `/api/photos/preview?${qs}`);
     fetch(`/api/photos/preview?${qs}`)
       .then((res) => {
+        console.log("[clean-preview] status:", res.status);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.blob();
       })
-      .then((blob) => setCleanPreviewUrl(URL.createObjectURL(blob)))
-      .catch(() => setCleanPreviewUrl(null))
+      .then((blob) => {
+        console.log("[clean-preview] got blob:", blob.size, "bytes");
+        setCleanPreviewUrl(URL.createObjectURL(blob));
+      })
+      .catch((err) => {
+        console.error("[clean-preview] error:", err);
+        setCleanPreviewUrl(null);
+      })
       .finally(() => setCleanLoading(false));
   }, [CROP_FRAME, adjNat, adjZoom, adjPan, current]);
 
@@ -526,6 +534,15 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
                   ) : (
                     <div className="flex items-center justify-center h-full text-white/30 text-sm">No image</div>
                   )}
+                  {/* Reference grid 6×6 */}
+                  <div className="absolute inset-0 pointer-events-none z-[4]">
+                    {[1,2,3,4,5].map((i) => (
+                      <div key={`v${i}`} className="absolute top-0 bottom-0" style={{ left: `${(i/6)*100}%`, width: 1, background: "rgba(255,255,255,0.10)" }} />
+                    ))}
+                    {[1,2,3,4,5].map((i) => (
+                      <div key={`h${i}`} className="absolute left-0 right-0" style={{ top: `${(i/6)*100}%`, height: 1, background: "rgba(255,255,255,0.10)" }} />
+                    ))}
+                  </div>
                   {/* Face detection overlay */}
                   {faceData?.detected && faceData.keypoints && adjNat.w > 0 && (() => {
                     const ds = (CROP_FRAME / adjNat.w) * adjZoom;
@@ -557,16 +574,26 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
                             boxShadow: `0 0 4px ${d.c}`,
                           }} />
                         ))}
-                        {/* Face bbox */}
-                        {faceData.bbox && (
-                          <div className="absolute rounded" style={{
-                            left: toX(faceData.bbox.x),
-                            top: toY(faceData.bbox.y),
-                            width: faceData.bbox.w * adjNat.w * ds,
-                            height: faceData.bbox.h * adjNat.h * ds,
-                            border: "1px solid rgba(0,200,255,0.3)",
-                          }} />
-                        )}
+                        {/* Head bbox (face bbox extended upward for forehead/hair) */}
+                        {faceData.bbox && (() => {
+                          const b = faceData.bbox;
+                          const extraTop = b.h * 0.35;  // extend 35% upward for forehead+hair
+                          const extraSide = b.w * 0.08;  // slight horizontal padding
+                          const hx = b.x - extraSide;
+                          const hy = b.y - extraTop;
+                          const hw = b.w + extraSide * 2;
+                          const hh = b.h + extraTop;
+                          return (
+                            <div className="absolute rounded" style={{
+                              left: toX(hx),
+                              top: toY(hy),
+                              width: hw * adjNat.w * ds,
+                              height: hh * adjNat.h * ds,
+                              border: "1.5px solid rgba(0,200,255,0.35)",
+                              borderRadius: "50% 50% 45% 45% / 55% 55% 45% 45%",
+                            }} />
+                          );
+                        })()}
                       </div>
                     );
                   })()}
