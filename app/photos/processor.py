@@ -134,7 +134,7 @@ def crop_face(image_bytes: bytes, output_size: int = 512, player_name: str = "",
         left = min(left, w - crop_size)  # clamp to image bounds
         top = content_top
 
-        logger.debug(f"Face center X: {face_center_x}, crop left: {left}, crop_size: {crop_size}")
+        logger.debug(f"Content center X: {content_center_x}, crop left: {left}, crop_size: {crop_size}")
 
         face_region = img.crop((left, top, left + crop_size, top + crop_size))
         face_img = face_region.resize((output_size, output_size), Image.Resampling.LANCZOS)
