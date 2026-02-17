@@ -219,14 +219,14 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName }: Player
           )}
 
           {/* Hero stats */}
-          <div className="grid grid-cols-4 gap-2">
-            <div className="rounded-lg border border-border px-3 py-2 text-center">
+          <div className={`grid gap-2 ${isGK ? "grid-cols-5" : "grid-cols-4"}`}>
+            <div className="rounded-lg border border-border px-2 py-2 text-center">
               <p className="text-lg font-bold text-foreground tabular-nums">
                 {player.avg_rating != null ? player.avg_rating.toFixed(1) : "—"}
               </p>
               <p className="text-[10px] text-muted-foreground">Rating</p>
             </div>
-            <div className="rounded-lg border border-border px-3 py-2 text-center">
+            <div className="rounded-lg border border-border px-2 py-2 text-center">
               <p className="text-lg font-bold text-foreground tabular-nums">
                 {player.appearances}
                 {teamMatchesPlayed > 0 && (
@@ -235,18 +235,29 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName }: Player
               </p>
               <p className="text-[10px] text-muted-foreground">Apps</p>
             </div>
-            <div className="rounded-lg border border-border px-3 py-2 text-center">
+            <div className="rounded-lg border border-border px-2 py-2 text-center">
               <p className="text-lg font-bold text-foreground tabular-nums">
                 {player.total_minutes.toLocaleString()}
               </p>
               <p className="text-[10px] text-muted-foreground">Minutes</p>
             </div>
-            <div className="rounded-lg border border-border px-3 py-2 text-center">
-              <p className="text-lg font-bold text-foreground tabular-nums">
-                {isGK ? player.saves : player.goals}
-              </p>
-              <p className="text-[10px] text-muted-foreground">{isGK ? "Saves" : "Goals"}</p>
-            </div>
+            {isGK ? (
+              <>
+                <div className="rounded-lg border border-border px-2 py-2 text-center">
+                  <p className="text-lg font-bold text-foreground tabular-nums">{player.saves}</p>
+                  <p className="text-[10px] text-muted-foreground">Saves</p>
+                </div>
+                <div className="rounded-lg border border-border px-2 py-2 text-center">
+                  <p className="text-lg font-bold text-foreground tabular-nums">{player.goals_conceded}</p>
+                  <p className="text-[10px] text-muted-foreground">Conc.</p>
+                </div>
+              </>
+            ) : (
+              <div className="rounded-lg border border-border px-2 py-2 text-center">
+                <p className="text-lg font-bold text-foreground tabular-nums">{player.goals}</p>
+                <p className="text-[10px] text-muted-foreground">Goals</p>
+              </div>
+            )}
           </div>
         </div>
       )}

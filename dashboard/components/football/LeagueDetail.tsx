@@ -25,7 +25,6 @@ import {
   Trophy,
   Globe,
   Calendar,
-  BarChart3,
   TrendingUp,
   MapPin,
   ShieldUser,
@@ -41,6 +40,7 @@ import { TeamLogo } from "@/components/ui/team-logo";
 import { CoverageDetailContent } from "@/components/coverage-map/CoverageDetail";
 import { FeatureCoverageSection } from "./FeatureCoverageSection";
 import { TeamSquadStats } from "./TeamSquadStats";
+import { TeamPerformanceCharts } from "./TeamPerformanceCharts";
 import type { TeamSquadPlayerSeasonStats } from "@/lib/types/squad";
 
 const TEAM_DETAIL_TABS = [
@@ -1471,11 +1471,8 @@ export function LeagueDetail({ leagueId, onBack, onTeamSelect, onSettingsClick, 
                 </div>
               )}
 
-              {teamTab === "stats" && (
-                <div className="px-4 py-8 text-center">
-                  <BarChart3 className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-                  <p className="text-sm text-muted-foreground">Stats coming soon</p>
-                </div>
+              {teamTab === "stats" && selectedTeamId && (
+                <TeamPerformanceCharts teamId={selectedTeamId} leagueId={leagueId} season={selectedSeason ?? null} />
               )}
 
               {teamTab === "coverage" && (

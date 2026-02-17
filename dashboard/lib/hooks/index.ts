@@ -76,3 +76,5 @@ export * from "./use-players-view";
 export * from "./use-managers-view";
 // Coverage Map
 export * from "./use-coverage-map";
+// Team Performance Charts
+export * from "./use-team-performance";

@@ -58,6 +58,7 @@ export interface TeamSquadPlayerSeasonStats {
   goals: number;
   assists: number;
   saves: number;
+  goals_conceded: number;
   yellows: number;
   reds: number;
   key_passes: number;

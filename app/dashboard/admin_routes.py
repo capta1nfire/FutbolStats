@@ -27,6 +27,7 @@ _admin_cache = {
     "team_squad": {},  # keyed by team_id
     "team_squad_stats": {},  # keyed by team_id:season
     "players_managers": {},  # keyed by view:league_id:limit
+    "team_performance": {},  # keyed by team_id:league_id:season
 }
 
 
@@ -1077,6 +1078,7 @@ async def dashboard_admin_team_squad_stats(
                         SUM(COALESCE(mps.dribbles_success, 0)) AS dribbles_success,
                         SUM(COALESCE(mps.fouls_drawn, 0)) AS fouls_drawn,
                         SUM(COALESCE(mps.fouls_committed, 0)) AS fouls_committed,
+                        SUM(COALESCE((mps.raw_json #>> '{statistics,goals,conceded}')::int, 0)) AS goals_conceded,
                         BOOL_OR(COALESCE(mps.is_captain, false)) AS ever_captain,
                         -- Bio fields from players table (prefer record with most data)
                         MAX(p.firstname) AS firstname,
@@ -1143,6 +1145,7 @@ async def dashboard_admin_team_squad_stats(
                     "dribbles_success": int(r.dribbles_success or 0),
                     "fouls_drawn": int(r.fouls_drawn or 0),
                     "fouls_committed": int(r.fouls_committed or 0),
+                    "goals_conceded": int(r.goals_conceded or 0),
                     "ever_captain": bool(r.ever_captain),
                     "firstname": r.firstname,
                     "lastname": r.lastname,
@@ -1437,4 +1440,220 @@ async def _build_managers_view(session, league_id=None, limit=1000) -> dict:
         "managers": managers,
         "total_managers": global_total,
         "new_managers_count": global_new,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Team Performance — match-by-match stats for charts
+# ---------------------------------------------------------------------------
+
+@router.get("/team/{team_id}/performance.json")
+async def dashboard_admin_team_performance(
+    request: Request,
+    team_id: int,
+    league_id: int = None,
+    season: int = None,
+):
+    """
+    Team performance: per-match results, xG, and ratings for charts.
+
+    xG policy: fixed source per league (Understat for top-5 EUR, FotMob for confirmed leagues, null otherwise).
+    Rating: starters only (is_substitute=false), weighted by minutes, null if <7 ratings.
+    """
+    from app.etl.sota_constants import UNDERSTAT_SUPPORTED_LEAGUES, FOTMOB_CONFIRMED_XG_LEAGUES
+
+    _check_token(request)
+
+    if league_id is None:
+        raise HTTPException(status_code=400, detail="league_id is required")
+
+    now = time.time()
+
+    async with AsyncSessionLocal() as session:
+        # Resolve team
+        team_result = await session.execute(
+            text("SELECT id, name, external_id FROM teams WHERE id = :tid"),
+            {"tid": team_id},
+        )
+        team = team_result.fetchone()
+        if not team:
+            raise HTTPException(status_code=404, detail=f"Team {team_id} not found.")
+
+        team_external_id = team.external_id
+
+        # Resolve season (default to latest available)
+        if season is None:
+            latest = await session.execute(
+                text("""
+                    SELECT MAX(m.season) FROM matches m
+                    WHERE (m.home_team_id = :tid OR m.away_team_id = :tid)
+                      AND m.league_id = :lid
+                      AND m.status IN ('FT','AET','PEN')
+                """),
+                {"tid": team_id, "lid": league_id},
+            )
+            season = latest.scalar()
+            if season is None:
+                return {
+                    "generated_at": datetime.utcnow().isoformat() + "Z",
+                    "cached": False,
+                    "cache_age_seconds": None,
+                    "data": {
+                        "team_id": team_id, "team_name": team.name,
+                        "league_id": league_id, "season": None,
+                        "xg_source": None, "rating_method": "starters_weighted_minutes",
+                        "matches": [],
+                    },
+                }
+            season = int(season)
+
+        # Cache check
+        cache_key = f"{team_id}:{league_id}:{season}"
+        cache = _admin_cache["team_performance"]
+        if cache_key in cache and cache[cache_key]["data"] and (now - cache[cache_key]["timestamp"]) < 120:
+            cached = cache[cache_key]
+            return {
+                "generated_at": cached["data"]["generated_at"],
+                "cached": True,
+                "cache_age_seconds": round(now - cached["timestamp"], 1),
+                "data": cached["data"]["data"],
+            }
+
+        # xG policy: fixed source per league
+        if league_id in UNDERSTAT_SUPPORTED_LEAGUES:
+            xg_source = "understat"
+            xg_join = "LEFT JOIN match_understat_team xg ON xg.match_id = m.id"
+            xg_cols = """
+                CASE WHEN m.home_team_id = :tid THEN xg.xg_home ELSE xg.xg_away END AS xg_for,
+                CASE WHEN m.home_team_id = :tid THEN xg.xg_away ELSE xg.xg_home END AS xg_against,
+            """
+        elif league_id in FOTMOB_CONFIRMED_XG_LEAGUES:
+            xg_source = "fotmob"
+            xg_join = "LEFT JOIN match_fotmob_stats xg ON xg.match_id = m.id"
+            xg_cols = """
+                CASE WHEN m.home_team_id = :tid THEN xg.xg_home ELSE xg.xg_away END AS xg_for,
+                CASE WHEN m.home_team_id = :tid THEN xg.xg_away ELSE xg.xg_home END AS xg_against,
+            """
+        else:
+            xg_source = None
+            xg_join = ""
+            xg_cols = "NULL::double precision AS xg_for, NULL::double precision AS xg_against,"
+
+        # Build rating subquery with coverage fallback
+        rating_condition = "(ps.team_id = :tid)"
+        if team_external_id is not None:
+            rating_condition = f"(ps.team_id = :tid OR ps.team_external_id = :team_ext)"
+
+        sql = f"""
+            SELECT
+                m.id AS match_id,
+                TO_CHAR(m.date, 'YYYY-MM-DD') AS match_date,
+                m.round,
+                CASE WHEN m.home_team_id = :tid THEN at.name ELSE ht.name END AS opponent_name,
+                CASE WHEN m.home_team_id = :tid THEN at.logo_url ELSE ht.logo_url END AS opponent_logo,
+                (m.home_team_id = :tid) AS is_home,
+                CASE WHEN m.home_team_id = :tid THEN m.home_goals ELSE m.away_goals END AS goals_for,
+                CASE WHEN m.home_team_id = :tid THEN m.away_goals ELSE m.home_goals END AS goals_against,
+                {xg_cols}
+                (SELECT ROUND(SUM(ps.rating * ps.minutes) / NULLIF(SUM(ps.minutes), 0), 2)
+                 FROM match_player_stats ps
+                 WHERE ps.match_id = m.id
+                   AND {rating_condition}
+                   AND COALESCE(ps.is_substitute, false) = false
+                   AND ps.rating IS NOT NULL
+                 HAVING COUNT(*) >= 7
+                ) AS avg_team_rating
+            FROM matches m
+            JOIN teams ht ON ht.id = m.home_team_id
+            JOIN teams at ON at.id = m.away_team_id
+            {xg_join}
+            WHERE (m.home_team_id = :tid OR m.away_team_id = :tid)
+              AND m.league_id = :lid
+              AND m.season = :season
+              AND m.status IN ('FT', 'AET', 'PEN')
+              AND m.home_goals IS NOT NULL
+              AND m.away_goals IS NOT NULL
+            ORDER BY m.date ASC
+        """
+
+        params = {"tid": team_id, "lid": league_id, "season": season}
+        if team_external_id is not None:
+            params["team_ext"] = team_external_id
+
+        result = await session.execute(text(sql), params)
+        rows = result.fetchall()
+
+    # Post-process: derive result, points, cumulative values
+    matches = []
+    cum_pts = 0
+    cum_gf = 0
+    cum_gc = 0
+    cum_xg_for = 0.0
+    cum_xg_against = 0.0
+    has_any_xg = False
+
+    for r in rows:
+        gf = int(r.goals_for)
+        gc = int(r.goals_against)
+        if gf > gc:
+            result_str = "W"
+            pts = 3
+        elif gf == gc:
+            result_str = "D"
+            pts = 1
+        else:
+            result_str = "L"
+            pts = 0
+
+        cum_pts += pts
+        cum_gf += gf
+        cum_gc += gc
+
+        xg_f = float(r.xg_for) if r.xg_for is not None else None
+        xg_a = float(r.xg_against) if r.xg_against is not None else None
+
+        if xg_f is not None:
+            cum_xg_for += xg_f
+            has_any_xg = True
+        if xg_a is not None:
+            cum_xg_against += xg_a
+            has_any_xg = True
+
+        matches.append({
+            "match_id": r.match_id,
+            "match_date": r.match_date,
+            "round": r.round,
+            "opponent_name": r.opponent_name,
+            "opponent_logo": r.opponent_logo,
+            "is_home": bool(r.is_home),
+            "goals_for": gf,
+            "goals_against": gc,
+            "result": result_str,
+            "points": pts,
+            "cumulative_points": cum_pts,
+            "xg_for": round(xg_f, 2) if xg_f is not None else None,
+            "xg_against": round(xg_a, 2) if xg_a is not None else None,
+            "cumulative_xg_for": round(cum_xg_for, 2) if has_any_xg else None,
+            "cumulative_xg_against": round(cum_xg_against, 2) if has_any_xg else None,
+            "avg_team_rating": float(r.avg_team_rating) if r.avg_team_rating is not None else None,
+        })
+
+    data = {
+        "team_id": team_id,
+        "team_name": team.name,
+        "league_id": league_id,
+        "season": season,
+        "xg_source": xg_source,
+        "rating_method": "starters_weighted_minutes",
+        "matches": matches,
+    }
+
+    result_obj = {"generated_at": datetime.utcnow().isoformat() + "Z", "data": data}
+    cache[cache_key] = {"data": result_obj, "timestamp": now}
+
+    return {
+        "generated_at": result_obj["generated_at"],
+        "cached": False,
+        "cache_age_seconds": None,
+        "data": data,
     }
