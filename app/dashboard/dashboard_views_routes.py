@@ -5191,23 +5191,34 @@ async def dashboard_photo_review_action(
             "source_height": sh,
         })
 
-    sql = text("""
-        UPDATE player_photo_assets
-        SET review_status = :status,
-            changed_by = 'manual',
-            updated_at = NOW(),
-            photo_meta = CASE
-                WHEN :manual_crop IS NULL THEN photo_meta
-                ELSE COALESCE(photo_meta, '{}'::jsonb)
-                     || jsonb_build_object('manual_crop', CAST(:manual_crop AS jsonb))
-            END
-        WHERE id = :id AND asset_type = 'candidate'
-        RETURNING id, player_external_id, review_status
-    """)
-    result = await session.execute(
-        sql,
-        {"status": new_status, "id": candidate_id, "manual_crop": manual_crop_json},
-    )
+    if manual_crop_json:
+        sql = text("""
+            UPDATE player_photo_assets
+            SET review_status = :status,
+                changed_by = 'manual',
+                updated_at = NOW(),
+                photo_meta = COALESCE(photo_meta, '{}'::jsonb)
+                             || jsonb_build_object('manual_crop', CAST(:manual_crop AS jsonb))
+            WHERE id = :id AND asset_type = 'candidate'
+            RETURNING id, player_external_id, review_status
+        """)
+        result = await session.execute(
+            sql,
+            {"status": new_status, "id": candidate_id, "manual_crop": manual_crop_json},
+        )
+    else:
+        sql = text("""
+            UPDATE player_photo_assets
+            SET review_status = :status,
+                changed_by = 'manual',
+                updated_at = NOW()
+            WHERE id = :id AND asset_type = 'candidate'
+            RETURNING id, player_external_id, review_status
+        """)
+        result = await session.execute(
+            sql,
+            {"status": new_status, "id": candidate_id},
+        )
     row = result.mappings().first()
     await session.commit()
 
