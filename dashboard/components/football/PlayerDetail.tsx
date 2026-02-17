@@ -118,7 +118,6 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogo
   const [imgUrl, setImgUrl] = useState("");
   const [imgSubmitting, setImgSubmitting] = useState(false);
   const [imgMsg, setImgMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
-  const [candidateId, setCandidateId] = useState<number | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [pastePreview, setPastePreview] = useState<string | null>(null);
@@ -129,7 +128,6 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogo
   useEffect(() => {
     setImgUrl("");
     setImgMsg(null);
-    setCandidateId(null);
     setReviewOpen(false);
     setPastePreview(null);
   }, [player.player_external_id]);
@@ -151,10 +149,9 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogo
         setImgMsg({ type: "err", text: data.error || `HTTP ${res.status}` });
         return;
       }
-      setCandidateId(data.id);
-      setImgMsg({ type: "ok", text: `Candidate #${data.id} created` });
       setImgUrl("");
       setPastePreview(null);
+      setReviewOpen(true);
     } catch (e) {
       setImgMsg({ type: "err", text: e instanceof Error ? e.message : "Failed" });
     } finally {
@@ -496,34 +493,6 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogo
             )}
           </SurfaceCard>
 
-          {/* Candidate created — open review */}
-          {candidateId && (
-            <SurfaceCard className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Candidate #{candidateId}
-                </h4>
-                <span className="text-[10px] text-green-500">ready for review</span>
-              </div>
-              <div className="flex justify-center">
-                <div className="relative w-36 h-48 rounded-lg bg-muted overflow-hidden border border-border">
-                  <Image
-                    src={`/api/photos/preview?id=${candidateId}`}
-                    alt="Candidate"
-                    fill
-                    className="object-contain"
-                    unoptimized
-                  />
-                </div>
-              </div>
-              <button
-                onClick={() => setReviewOpen(true)}
-                className="w-full py-2 rounded-lg bg-primary/10 border border-primary/30 text-sm text-primary hover:bg-primary/20 transition-colors"
-              >
-                Open Review (crop + PhotoRoom)
-              </button>
-            </SurfaceCard>
-          )}
         </div>
       )}
 
