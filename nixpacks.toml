@@ -1,7 +1,0 @@
-[phases.setup]
-# Must include python312 explicitly when defining nixPkgs (otherwise Nix replaces it)
-nixPkgs = ["python312", "libglvnd", "libGL", "glib", "stdenv.cc.cc.lib"]
-
-[variables]
-# Let the Nix-installed libGL be found at runtime
-LD_LIBRARY_PATH = "$LD_LIBRARY_PATH:$NIX_LD_LIBRARY_PATH"
