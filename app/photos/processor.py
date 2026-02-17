@@ -91,11 +91,12 @@ def _find_content_bbox(img):
 def crop_face(image_bytes: bytes, output_size: int = 512, player_name: str = "", player_ext_id: int = 0) -> Optional[bytes]:
     """Crop face close-up from a player portrait.
 
-    Detects the actual content area (skipping transparent padding),
-    then takes the top 35% of the content height for the face region.
+    Two modes:
+    - Transparent bg: detect content bbox, find head center via alpha
+    - Opaque bg: assume centered portrait, crop top-center square
 
     Args:
-        image_bytes: Source image bytes (should have transparent bg)
+        image_bytes: Source image bytes
         output_size: Output square size in pixels
         player_name: Player name for embedded metadata attribution
         player_ext_id: API-Football player ID for cross-referencing
@@ -109,41 +110,42 @@ def crop_face(image_bytes: bytes, output_size: int = 512, player_name: str = "",
             img = img.convert("RGBA")
 
         w, h = img.size
+        is_transparent = has_transparent_background(image_bytes)
 
-        # Find where the actual content starts (skip transparent padding)
-        content_top, content_bottom, content_left, content_right = _find_content_bbox(img)
-        content_h = content_bottom - content_top
-        content_w = content_right - content_left
+        if is_transparent:
+            # --- Transparent mode: find content, crop head region ---
+            content_top, content_bottom, content_left, content_right = _find_content_bbox(img)
+            content_h = content_bottom - content_top
+            content_w = content_right - content_left
 
-        logger.debug(f"Content bbox: top={content_top} bottom={content_bottom} ({content_h}px h), left={content_left} right={content_right} ({content_w}px w)")
+            if content_h < 50 or content_w < 50:
+                logger.warning(f"Content area too small ({content_w}x{content_h})")
+                return None
 
-        if content_h < 50 or content_w < 50:
-            logger.warning(f"Content area too small ({content_w}x{content_h})")
-            return None
+            face_h = int(content_h * 0.30)
+            head_bottom = content_top + face_h
+            alpha = np.array(img.split()[3])
+            head_strip = alpha[content_top:head_bottom, :]
+            head_cols = np.any(head_strip > 128, axis=0)
+            if np.any(head_cols):
+                head_left = int(np.argmax(head_cols))
+                head_right = int(w - np.argmax(head_cols[::-1]))
+                head_center_x = (head_left + head_right) // 2
+            else:
+                head_center_x = content_left + content_w // 2
 
-        # Take top 30% of CONTENT height (tighter face crop)
-        face_h = int(content_h * 0.30)
-
-        # Center horizontally on the HEAD region only (top portion),
-        # not the full body bbox — arms/pose can shift the body center
-        # away from where the head actually is.
-        head_bottom = content_top + face_h
-        alpha = np.array(img.split()[3])
-        head_strip = alpha[content_top:head_bottom, :]
-        head_cols = np.any(head_strip > 128, axis=0)
-        if np.any(head_cols):
-            head_left = int(np.argmax(head_cols))
-            head_right = int(w - np.argmax(head_cols[::-1]))
-            head_center_x = (head_left + head_right) // 2
+            crop_size = min(content_w, face_h)
+            left = max(0, head_center_x - crop_size // 2)
+            left = min(left, w - crop_size)
+            top = content_top
         else:
-            head_center_x = content_left + content_w // 2
+            # --- Opaque mode: simple center crop of top portion ---
+            # Portrait photos: face is in top ~40%, centered horizontally
+            crop_size = min(w, int(h * 0.45))
+            left = max(0, (w - crop_size) // 2)
+            top = 0
 
-        crop_size = min(content_w, face_h)
-        left = max(0, head_center_x - crop_size // 2)
-        left = min(left, w - crop_size)  # clamp to image bounds
-        top = content_top
-
-        logger.debug(f"Head center X: {head_center_x}, crop left: {left}, crop_size: {crop_size}")
+        logger.debug(f"crop_face: transparent={is_transparent}, crop=({left},{top},{crop_size}x{crop_size})")
 
         face_region = img.crop((left, top, left + crop_size, top + crop_size))
         face_img = face_region.resize((output_size, output_size), Image.Resampling.LANCZOS)

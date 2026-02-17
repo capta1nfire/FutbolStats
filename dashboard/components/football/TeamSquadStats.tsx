@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import Image from "next/image";
 import { useCallback, useMemo, useState } from "react";
 import { useTeamSquadStats } from "@/lib/hooks";
@@ -8,6 +9,7 @@ import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, RefreshCw, ChevronUp, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { JerseyIcon } from "@/components/ui/jersey-icon";
 
 function playerPhotoUrl(externalId: number): string {
   return `https://media.api-sports.io/football/players/${externalId}.png`;
@@ -53,6 +55,15 @@ const POS_BADGE: Record<string, string> = {
   M: "bg-blue-500/15 text-blue-400",
   F: "bg-blue-800/15 text-blue-300",
   U: "bg-muted text-muted-foreground",
+};
+
+// Jersey icon fill by position
+const POS_JERSEY_COLOR: Record<string, string> = {
+  G: "#94a3b8",  // slate-400
+  D: "#7dd3fc",  // sky-300
+  M: "#3b82f6",  // blue-500
+  F: "#1e3a5f",  // blue-800ish
+  U: "#6b7280",  // gray-500
 };
 
 // Position sort order: G=0, D=1, M=2, F=3, U=4
@@ -179,30 +190,34 @@ export function TeamSquadStats({ teamId, season, onPlayerSelect }: TeamSquadStat
               <tr className="border-b border-border">
                 <th className="text-center py-2 text-xs font-medium text-muted-foreground sticky left-0 z-20 bg-background" style={{ width: 28, minWidth: 28, maxWidth: 28 }}>#</th>
                 {COLUMNS.map((col) => (
-                  <th
-                    key={col.key}
-                    onClick={() => handleSort(col.key)}
-                    className={cn(
-                      "py-2 text-xs font-medium select-none cursor-pointer transition-colors hover:text-foreground whitespace-nowrap",
-                      col.align === "left" ? "px-3 text-left" : "px-2 text-center",
-                      col.key === "name" && "min-w-[180px] sticky left-[28px] z-20 bg-background",
-                      sortKey === col.key ? "text-foreground" : "text-muted-foreground"
+                  <React.Fragment key={col.key}>
+                    <th
+                      onClick={() => handleSort(col.key)}
+                      className={cn(
+                        "py-2 text-xs font-medium select-none cursor-pointer transition-colors hover:text-foreground whitespace-nowrap",
+                        col.align === "left" ? "px-3 text-left" : "px-2 text-center",
+                        col.key === "name" && "min-w-[180px] sticky left-[28px] z-20 bg-background",
+                        sortKey === col.key ? "text-foreground" : "text-muted-foreground"
+                      )}
+                    >
+                      <span className="inline-flex items-center gap-0.5">
+                        {col.label}
+                        {col.key === "app" && teamMatchesPlayed > 0 && (
+                          <span className="text-[9px] tabular-nums text-muted-foreground bg-muted px-1 py-px rounded ml-0.5">
+                            {teamMatchesPlayed}
+                          </span>
+                        )}
+                        {sortKey === col.key && (
+                          sortDir === "asc"
+                            ? <ChevronUp className="w-3 h-3" />
+                            : <ChevronDown className="w-3 h-3" />
+                        )}
+                      </span>
+                    </th>
+                    {col.key === "name" && (
+                      <th className="py-2 px-1 text-center text-xs font-medium text-muted-foreground" style={{ width: 32 }}>Kit</th>
                     )}
-                  >
-                    <span className="inline-flex items-center gap-0.5">
-                      {col.label}
-                      {col.key === "app" && teamMatchesPlayed > 0 && (
-                        <span className="text-[9px] tabular-nums text-muted-foreground bg-muted px-1 py-px rounded ml-0.5">
-                          {teamMatchesPlayed}
-                        </span>
-                      )}
-                      {sortKey === col.key && (
-                        sortDir === "asc"
-                          ? <ChevronUp className="w-3 h-3" />
-                          : <ChevronDown className="w-3 h-3" />
-                      )}
-                    </span>
-                  </th>
+                  </React.Fragment>
                 ))}
               </tr>
             </thead>
@@ -238,11 +253,6 @@ export function TeamSquadStats({ teamId, season, onPlayerSelect }: TeamSquadStat
                           <span className="text-sm font-medium text-foreground truncate">
                             {p.player_name}
                           </span>
-                          {p.jersey_number != null && (
-                            <span className="text-[10px] tabular-nums text-muted-foreground bg-muted px-1 py-px rounded shrink-0">
-                              {p.jersey_number}
-                            </span>
-                          )}
                           {p.ever_captain && (
                             <span className="text-[9px] font-medium text-muted-foreground bg-muted px-1 py-px rounded shrink-0">
                               c
@@ -261,6 +271,19 @@ export function TeamSquadStats({ teamId, season, onPlayerSelect }: TeamSquadStat
                         )}
                       </div>
                     </div>
+                  </td>
+                  {/* Kit */}
+                  <td className="px-1 py-1.5 text-center group-hover/row:bg-accent/50 transition-colors" style={{ width: 32 }}>
+                    {p.jersey_number != null ? (
+                      <JerseyIcon
+                        number={p.jersey_number}
+                        numberColor="#000"
+                        size={20}
+                        className="mx-auto"
+                      />
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground/30">—</span>
+                    )}
                   </td>
                   {/* Position */}
                   <td className="px-3 py-2 text-left group-hover/row:bg-accent/50 transition-colors">
