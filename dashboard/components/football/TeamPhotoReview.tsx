@@ -49,6 +49,7 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState({ approved: 0, rejected: 0 });
   const [imgErrors, setImgErrors] = useState<Record<string, boolean>>({});
@@ -129,7 +130,8 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
 
   const handleAction = useCallback(
     async (action: "approve" | "reject") => {
-      if (!current) return;
+      if (!current || submitting) return;
+      setSubmitting(true);
       try {
         const res = await fetch("/api/photos/review", {
           method: "POST",
@@ -153,9 +155,11 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
         setManualCrop(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Action failed");
+      } finally {
+        setSubmitting(false);
       }
     },
-    [current, manualCrop, faceData]
+    [current, manualCrop, faceData, submitting]
   );
 
   // Scoped keyboard handler (only when container has focus)
@@ -497,7 +501,7 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
           <div className="flex flex-col items-center gap-4">
             <button
               onClick={() => handleAction("reject")}
-              disabled={adjustMode}
+              disabled={adjustMode || submitting}
               className="w-16 h-16 rounded-full bg-red-500/20 border-2 border-red-500/60 flex items-center justify-center hover:bg-red-500/30 transition-colors disabled:opacity-40"
               title="Reject (← Left Arrow)"
             >
@@ -505,7 +509,7 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
             </button>
             <button
               onClick={beginAdjust}
-              disabled={adjustMode || !current.candidate_url}
+              disabled={adjustMode || submitting || !current.candidate_url}
               className="w-12 h-12 rounded-full bg-white/10 border border-white/20 flex items-center justify-center hover:bg-white/20 transition-colors disabled:opacity-40"
               title="Ajustar crop"
             >
@@ -513,11 +517,15 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
             </button>
             <button
               onClick={() => handleAction("approve")}
-              disabled={adjustMode}
+              disabled={adjustMode || submitting}
               className="w-16 h-16 rounded-full bg-green-500/20 border-2 border-green-500/60 flex items-center justify-center hover:bg-green-500/30 transition-colors disabled:opacity-40"
               title="Approve (→ Right Arrow)"
             >
-              <CheckCircle className="h-8 w-8 text-green-400" />
+              {submitting ? (
+                <div className="h-8 w-8 border-2 border-green-400 border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <CheckCircle className="h-8 w-8 text-green-400" />
+              )}
             </button>
           </div>
 

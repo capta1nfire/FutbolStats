@@ -5235,11 +5235,29 @@ async def dashboard_photo_review_action(
     if not row:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
-    return {
+    response = {
         "id": row["id"],
         "player_external_id": row["player_external_id"],
         "review_status": row["review_status"],
     }
+
+    # Auto-promote on approve: crop → PhotoRoom → R2 → activate
+    if action == "approve":
+        try:
+            from app.photos.promote import promote_candidate
+            promo = await promote_candidate(candidate_id, session)
+            if "error" in promo:
+                logger.warning(f"Photo promote #{candidate_id} failed: {promo['error']}")
+                response["promote_error"] = promo["error"]
+            else:
+                response["cdn_url"] = promo["cdn_url"]
+                response["card_id"] = promo["card_id"]
+                logger.info(f"Photo promote #{candidate_id} → card #{promo['card_id']}")
+        except Exception as e:
+            logger.error(f"Photo promote #{candidate_id} exception: {e}")
+            response["promote_error"] = str(e)
+
+    return response
 
 
 @router.get("/dashboard/photos/preview/{candidate_id}")

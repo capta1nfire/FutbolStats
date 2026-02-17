@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
     `/dashboard/photos/review/${id}`,
     "POST",
     payload,
-    { prefix: "photos-review" }
+    { prefix: "photos-review", timeoutMs: 30000 }
   );
 
   return NextResponse.json(data, {
