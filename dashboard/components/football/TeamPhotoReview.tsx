@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SurfaceCard } from "@/components/ui/surface-card";
-import { CheckCircle, Crop, ImageIcon, XCircle } from "lucide-react";
+import { CheckCircle, Crop, ImageIcon, Link2, Loader2, XCircle } from "lucide-react";
 
 interface Candidate {
   id: number;
@@ -75,6 +75,12 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
     bbox?: { x: number; y: number; w: number; h: number };
     keypoints?: Record<string, { x: number; y: number }>;
   } | null>(null);
+
+  // Manual URL add
+  const [urlInput, setUrlInput] = useState("");
+  const [urlPlayerExtId, setUrlPlayerExtId] = useState("");
+  const [urlSubmitting, setUrlSubmitting] = useState(false);
+  const [urlMessage, setUrlMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
   // Fetch candidates for this team
   useEffect(() => {
@@ -161,6 +167,44 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
     },
     [current, manualCrop, faceData, submitting]
   );
+
+  // ── Add candidate from URL ──────────────────────────────────────────
+  const handleAddUrl = useCallback(async () => {
+    const url = urlInput.trim();
+    const extId = urlPlayerExtId.trim();
+    if (!url || !extId) return;
+    if (!url.startsWith("http")) {
+      setUrlMessage({ type: "err", text: "URL must start with http" });
+      return;
+    }
+    setUrlSubmitting(true);
+    setUrlMessage(null);
+    try {
+      const res = await fetch("/api/photos/add-candidate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ player_external_id: Number(extId), image_url: url }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setUrlMessage({ type: "err", text: data.error || `HTTP ${res.status}` });
+        return;
+      }
+      setUrlMessage({ type: "ok", text: `Added #${data.id} — ${data.player_name}` });
+      setUrlInput("");
+      setUrlPlayerExtId("");
+      // Reload candidates to include the new one
+      const reload = await fetch(`/api/photos/review?status=pending_review&team_id=${teamId}`);
+      if (reload.ok) {
+        const rData = await reload.json();
+        setCandidates(rData.candidates || []);
+      }
+    } catch (e) {
+      setUrlMessage({ type: "err", text: e instanceof Error ? e.message : "Failed" });
+    } finally {
+      setUrlSubmitting(false);
+    }
+  }, [urlInput, urlPlayerExtId, teamId]);
 
   // Scoped keyboard handler (only when container has focus)
   const handleKeyDown = useCallback(
@@ -457,8 +501,41 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
     <>
       {summaryCard}
       <div className="fixed inset-0 z-[9999] bg-black/90 flex flex-col">
-        {/* Slim top bar — stats + close only */}
-        <div className="flex items-center justify-end px-6 py-2 border-b border-white/10">
+        {/* Slim top bar — URL add + stats + close */}
+        <div className="flex items-center justify-between px-6 py-2 border-b border-white/10">
+          {/* Left: add candidate by URL */}
+          <div className="flex items-center gap-2">
+            <Link2 className="h-3.5 w-3.5 text-white/40" />
+            <input
+              type="text"
+              placeholder="Player ext ID"
+              value={urlPlayerExtId || (current ? String(current.player_external_id) : "")}
+              onChange={(e) => setUrlPlayerExtId(e.target.value)}
+              onFocus={() => { if (!urlPlayerExtId && current) setUrlPlayerExtId(String(current.player_external_id)); }}
+              className="w-24 bg-white/5 border border-white/15 rounded px-2 py-1 text-xs text-white placeholder:text-white/30 outline-none focus:border-white/30"
+            />
+            <input
+              type="text"
+              placeholder="Paste image URL..."
+              value={urlInput}
+              onChange={(e) => { setUrlInput(e.target.value); setUrlMessage(null); }}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); handleAddUrl(); } }}
+              className="w-80 bg-white/5 border border-white/15 rounded px-2 py-1 text-xs text-white placeholder:text-white/30 outline-none focus:border-white/30"
+            />
+            <button
+              onClick={handleAddUrl}
+              disabled={urlSubmitting || !urlInput.trim() || !urlPlayerExtId.trim()}
+              className="px-2.5 py-1 rounded bg-primary/80 text-primary-foreground text-[11px] hover:bg-primary disabled:opacity-40 flex items-center gap-1"
+            >
+              {urlSubmitting ? <Loader2 className="h-3 w-3 animate-spin" /> : "Add"}
+            </button>
+            {urlMessage && (
+              <span className={`text-[11px] ${urlMessage.type === "ok" ? "text-green-400" : "text-red-400"}`}>
+                {urlMessage.text}
+              </span>
+            )}
+          </div>
+          {/* Right: stats + close */}
           <div className="flex items-center gap-5">
             <span className="text-green-400 text-sm tabular-nums">{stats.approved} ok</span>
             <span className="text-red-400 text-sm tabular-nums">{stats.rejected} no</span>
@@ -492,7 +569,7 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
           <div className="flex flex-col items-center gap-3">
             <p className="text-white/50 text-xs uppercase tracking-widest">Current</p>
             <div className="relative w-[384px] h-[384px] rounded-xl border border-white/10 bg-white/5 overflow-hidden">
-              {!imgErrors["current"] ? (
+              {!imgErrors["current"] && current.current_url ? (
                 <Image
                   src={current.current_url}
                   alt="Current"
@@ -552,7 +629,7 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
                   style={{ width: CROP_FRAME, height: CROP_FRAME }}
                   onMouseDown={onAdjustDrag}
                 >
-                  {!imgErrors["candidate"] ? (
+                  {!imgErrors["candidate"] && current.candidate_url ? (
                     <img
                       src={current.candidate_url}
                       alt="Adjust"
@@ -688,6 +765,27 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
                 )}
               </div>
             )}
+          </div>
+
+          {/* Source — full original image */}
+          <div className="flex flex-col items-center gap-3">
+            <p className="text-white/50 text-xs uppercase tracking-widest">Source</p>
+            <div className="relative w-[384px] h-[512px] rounded-xl border border-white/10 bg-white/5 overflow-hidden">
+              {!imgErrors["source"] && current.candidate_url ? (
+                <Image
+                  src={current.candidate_url}
+                  alt="Source"
+                  fill
+                  className="object-contain"
+                  unoptimized
+                  onError={() => setImgErrors((e) => ({ ...e, source: true }))}
+                />
+              ) : (
+                <div className="flex items-center justify-center h-full text-white/30 text-sm">
+                  No source
+                </div>
+              )}
+            </div>
           </div>
           </div>
 

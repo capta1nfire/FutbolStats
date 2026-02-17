@@ -150,7 +150,7 @@ export function RightPanel({
         )}
         {activeTab === "player" && selectedPlayer && (
           <ScrollArea data-dev-ref="RightPanel:PlayerTab" className="flex-1 min-h-0">
-            <PlayerDetail player={selectedPlayer} teamMatchesPlayed={teamMatchesPlayed ?? 0} teamName={teamName} teamLogoUrl={teamLogoUrl} />
+            <PlayerDetail player={selectedPlayer} teamMatchesPlayed={teamMatchesPlayed ?? 0} teamName={teamName} teamLogoUrl={teamLogoUrl} teamId={teamId} />
           </ScrollArea>
         )}
       </div>

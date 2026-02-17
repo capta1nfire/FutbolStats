@@ -1,12 +1,13 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { TeamSquadPlayerSeasonStats } from "@/lib/types/squad";
 import { IconTabs } from "@/components/ui/icon-tabs";
 import { SurfaceCard } from "@/components/ui/surface-card";
-import { Info, BarChart3 } from "lucide-react";
+import { Info, BarChart3, ImageIcon, Loader2, CheckCircle, XCircle, Upload } from "lucide-react";
 import { JerseyIcon } from "@/components/ui/jersey-icon";
+import { TeamPhotoReview } from "./TeamPhotoReview";
 
 function playerPhotoUrl(externalId: number): string {
   return `https://media.api-sports.io/football/players/${externalId}.png`;
@@ -97,19 +98,131 @@ interface PlayerDetailProps {
   teamMatchesPlayed?: number;
   teamName?: string;
   teamLogoUrl?: string;
+  teamId?: number | null;
 }
 
 const PLAYER_TABS = [
   { id: "overview", icon: <Info />, label: "Overview" },
   { id: "stats", icon: <BarChart3 />, label: "Stats" },
+  { id: "images", icon: <ImageIcon />, label: "Images" },
 ];
 
-export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogoUrl }: PlayerDetailProps) {
+export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogoUrl, teamId }: PlayerDetailProps) {
   const [imgError, setImgError] = useState(false);
   const [photoModal, setPhotoModal] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
   const pos = (player.position || "U").toUpperCase();
   const isGK = pos === "G";
+
+  // ── Images tab state ──
+  const [imgUrl, setImgUrl] = useState("");
+  const [imgSubmitting, setImgSubmitting] = useState(false);
+  const [imgMsg, setImgMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [candidateId, setCandidateId] = useState<number | null>(null);
+  const [candidateUrl, setCandidateUrl] = useState<string | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [pastePreview, setPastePreview] = useState<string | null>(null);
+  const dropZoneRef = useRef<HTMLDivElement>(null);
+
+  // Reset images state when player changes
+  useEffect(() => {
+    setImgUrl("");
+    setImgMsg(null);
+    setCandidateId(null);
+    setCandidateUrl(null);
+    setReviewOpen(false);
+    setPastePreview(null);
+  }, [player.player_external_id]);
+
+  const submitCandidate = useCallback(async (payload: { image_url?: string; image_base64?: string }) => {
+    setImgSubmitting(true);
+    setImgMsg(null);
+    try {
+      const res = await fetch("/api/photos/add-candidate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          player_external_id: player.player_external_id,
+          ...payload,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setImgMsg({ type: "err", text: data.error || `HTTP ${res.status}` });
+        return;
+      }
+      setCandidateId(data.id);
+      setCandidateUrl(data.candidate_url);
+      setImgMsg({ type: "ok", text: `Candidate #${data.id} created` });
+      setImgUrl("");
+      setPastePreview(null);
+    } catch (e) {
+      setImgMsg({ type: "err", text: e instanceof Error ? e.message : "Failed" });
+    } finally {
+      setImgSubmitting(false);
+    }
+  }, [player.player_external_id]);
+
+  const handleAddUrl = useCallback(() => {
+    const url = imgUrl.trim();
+    if (!url || !url.startsWith("http")) {
+      setImgMsg({ type: "err", text: "Paste a valid HTTP URL" });
+      return;
+    }
+    submitCandidate({ image_url: url });
+  }, [imgUrl, submitCandidate]);
+
+  const handleImageFile = useCallback((file: File) => {
+    if (!file.type.startsWith("image/")) {
+      setImgMsg({ type: "err", text: "Not an image file" });
+      return;
+    }
+    if (file.size > 10_000_000) {
+      setImgMsg({ type: "err", text: "Image too large (max 10MB)" });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setPastePreview(dataUrl);
+      // Extract base64 part (after "data:image/...;base64,")
+      const b64 = dataUrl.split(",")[1];
+      if (b64) submitCandidate({ image_base64: b64 });
+    };
+    reader.readAsDataURL(file);
+  }, [submitCandidate]);
+
+  // Paste handler for images
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith("image/")) {
+        e.preventDefault();
+        const file = items[i].getAsFile();
+        if (file) handleImageFile(file);
+        return;
+      }
+    }
+    // If no image in clipboard, let the text paste through to the URL input
+  }, [handleImageFile]);
+
+  // Drop handler
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      handleImageFile(file);
+      return;
+    }
+    // Check for dropped URL
+    const url = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain");
+    if (url && url.startsWith("http")) {
+      submitCandidate({ image_url: url.trim() });
+    }
+  }, [handleImageFile, submitCandidate]);
   const sections = buildSections(player);
 
   // Full name from firstname + lastname if available
@@ -289,6 +402,125 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogo
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {activeTab === "images" && (
+        <div className="space-y-4" onPaste={handlePaste}>
+          {/* Current photo */}
+          <SurfaceCard className="space-y-2">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Current Photo
+            </h4>
+            <div className="flex justify-center">
+              <div className="relative w-32 h-32 rounded-lg bg-muted overflow-hidden">
+                <Image
+                  src={player.photo_url_card_hq || player.photo_url || playerPhotoUrl(player.player_external_id)}
+                  alt={player.player_name}
+                  fill
+                  className="object-cover"
+                  unoptimized={!(player.photo_url_card_hq)}
+                />
+              </div>
+            </div>
+            <p className="text-[10px] text-muted-foreground text-center tabular-nums">
+              ext_id: {player.player_external_id}
+              {player.photo_url_card_hq && " · HQ card"}
+            </p>
+          </SurfaceCard>
+
+          {/* Drop zone + URL input */}
+          <SurfaceCard className="space-y-3">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Add Image
+            </h4>
+            {/* Drop zone */}
+            <div
+              ref={dropZoneRef}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              className={`border-2 border-dashed rounded-lg p-4 text-center transition-colors cursor-pointer ${
+                dragOver ? "border-primary bg-primary/5" : "border-border hover:border-muted-foreground/40"
+              }`}
+              onClick={() => {
+                const input = document.createElement("input");
+                input.type = "file";
+                input.accept = "image/*";
+                input.onchange = () => { if (input.files?.[0]) handleImageFile(input.files[0]); };
+                input.click();
+              }}
+            >
+              {pastePreview ? (
+                <div className="flex justify-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={pastePreview} alt="Preview" className="max-h-32 rounded" />
+                </div>
+              ) : (
+                <>
+                  <Upload className="h-5 w-5 mx-auto text-muted-foreground/50 mb-1.5" />
+                  <p className="text-xs text-muted-foreground">
+                    Drop image, paste (Ctrl+V), or click to browse
+                  </p>
+                </>
+              )}
+            </div>
+            {/* URL input */}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Or paste image URL..."
+                value={imgUrl}
+                onChange={(e) => { setImgUrl(e.target.value); setImgMsg(null); }}
+                onKeyDown={(e) => { if (e.key === "Enter") handleAddUrl(); }}
+                className="flex-1 min-w-0 bg-muted border border-border rounded px-2.5 py-1.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50"
+              />
+              <button
+                onClick={handleAddUrl}
+                disabled={imgSubmitting || !imgUrl.trim()}
+                className="px-3 py-1.5 rounded bg-primary text-primary-foreground text-sm hover:bg-primary/90 disabled:opacity-40 flex items-center gap-1.5 shrink-0"
+              >
+                {imgSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Add"}
+              </button>
+            </div>
+            {imgMsg && (
+              <p className={`text-xs ${imgMsg.type === "ok" ? "text-green-500" : "text-red-500"}`}>
+                {imgMsg.text}
+              </p>
+            )}
+          </SurfaceCard>
+
+          {/* Candidate created — open review */}
+          {candidateId && (
+            <SurfaceCard className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Candidate #{candidateId}
+                </h4>
+                <span className="text-[10px] text-green-500">ready for review</span>
+              </div>
+              {candidateUrl && (
+                <div className="flex justify-center">
+                  <div className="relative w-36 h-48 rounded-lg bg-muted overflow-hidden border border-border">
+                    <Image src={candidateUrl} alt="Candidate" fill className="object-contain" unoptimized />
+                  </div>
+                </div>
+              )}
+              <button
+                onClick={() => setReviewOpen(true)}
+                className="w-full py-2 rounded-lg bg-primary/10 border border-primary/30 text-sm text-primary hover:bg-primary/20 transition-colors"
+              >
+                Open Review (crop + PhotoRoom)
+              </button>
+            </SurfaceCard>
+          )}
+        </div>
+      )}
+
+      {/* Team photo review — renders inline summary, opens its own fullscreen */}
+      {reviewOpen && teamId && teamName && (
+        <div className="px-4 pb-4">
+          <TeamPhotoReview teamId={teamId} teamName={teamName} />
         </div>
       )}
     </div>

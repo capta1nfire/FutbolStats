@@ -5442,3 +5442,116 @@ async def dashboard_photo_face_detect(
 
     return face_data
 
+
+@router.post("/dashboard/photos/create-candidate")
+async def dashboard_photo_create_candidate(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Create a candidate photo asset from a URL or pasted image.
+
+    Body: { player_external_id: int, image_url?: str, image_base64?: str }
+    Accepts either an image URL or base64-encoded image data.
+    If base64, uploads to R2 as temp source and uses the CDN URL.
+    """
+    _check_token(request)
+    import json as _json
+    import base64 as _b64
+
+    body = await request.json()
+    player_ext_id = body.get("player_external_id")
+    image_url = (body.get("image_url") or "").strip()
+    image_b64 = (body.get("image_base64") or "").strip()
+
+    if not player_ext_id:
+        raise HTTPException(status_code=400, detail="player_external_id required")
+    if not image_url and not image_b64:
+        raise HTTPException(status_code=400, detail="image_url or image_base64 required")
+
+    # If base64 provided, upload to R2 as temp source
+    if image_b64:
+        try:
+            image_bytes = _b64.b64decode(image_b64)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid base64 image data")
+
+        if len(image_bytes) < 1000:
+            raise HTTPException(status_code=400, detail="Image too small (< 1KB)")
+        if len(image_bytes) > 10_000_000:
+            raise HTTPException(status_code=400, detail="Image too large (> 10MB)")
+
+        from app.photos.config import compute_content_hash
+        from app.logos.r2_client import get_logos_r2_client
+        from app.logos.config import get_logos_settings
+
+        content_hash = compute_content_hash(image_bytes)
+        r2_key = f"temp/players/{player_ext_id}/{content_hash[:12]}.png"
+
+        r2 = get_logos_r2_client()
+        if not r2:
+            raise HTTPException(status_code=503, detail="R2 storage not available")
+
+        ok = await r2.put_object(r2_key, image_bytes, "image/png")
+        if not ok:
+            raise HTTPException(status_code=502, detail="Failed to upload image to R2")
+
+        cdn_base = get_logos_settings().LOGOS_CDN_BASE_URL.rstrip("/")
+        image_url = f"{cdn_base}/{r2_key}"
+        source_label = "manual_paste"
+    else:
+        if not image_url.startswith("http"):
+            raise HTTPException(status_code=400, detail="image_url must be a valid HTTP(S) URL")
+        source_label = "manual_url"
+
+    # Look up player info
+    player_row = (await session.execute(text("""
+        SELECT p.external_id, p.name, p.firstname, p.lastname,
+               t.name AS team_name, t.external_id AS team_external_id
+        FROM players p
+        LEFT JOIN teams t ON t.id = p.team_id
+        WHERE p.external_id = :ext_id
+        LIMIT 1
+    """), {"ext_id": int(player_ext_id)})).mappings().first()
+
+    if not player_row:
+        raise HTTPException(status_code=404, detail=f"Player with external_id={player_ext_id} not found")
+
+    fn = (player_row.get("firstname") or "").strip()
+    ln = (player_row.get("lastname") or "").strip()
+    full_name = f"{fn} {ln}".strip() if (fn or ln) else (player_row["name"] or "")
+    team_name = player_row["team_name"] or ""
+    team_ext_id = player_row["team_external_id"]
+
+    current_url = f"https://media.api-sports.io/football/players/{player_ext_id}.png"
+
+    photo_meta = _json.dumps({
+        "candidate_url": image_url,
+        "current_url": current_url,
+        "player_name": full_name,
+        "team_name": team_name,
+        "team_external_id": team_ext_id,
+        "identity_score": None,
+    })
+
+    result = await session.execute(text("""
+        INSERT INTO player_photo_assets
+            (player_external_id, asset_type, source, r2_key, cdn_url, content_hash,
+             review_status, photo_meta, changed_by)
+        VALUES
+            (:ext_id, 'candidate', :source, '', '', 'pending',
+             'pending_review', CAST(:meta AS jsonb), 'dashboard_ui')
+        RETURNING id, player_external_id, review_status
+    """), {"ext_id": int(player_ext_id), "meta": photo_meta, "source": source_label})
+    row = result.mappings().first()
+    await session.commit()
+
+    logger.info(f"Created {source_label} candidate #{row['id']} for player {player_ext_id}")
+
+    return {
+        "id": row["id"],
+        "player_external_id": row["player_external_id"],
+        "review_status": row["review_status"],
+        "player_name": full_name,
+        "candidate_url": image_url,
+    }
+
