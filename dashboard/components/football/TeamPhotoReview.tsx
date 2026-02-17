@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SurfaceCard } from "@/components/ui/surface-card";
-import { CheckCircle, Crop, ImageIcon, Link2, Loader2, XCircle } from "lucide-react";
+import { CheckCircle, Crop, ImageIcon, Link2, Loader2, RotateCcw, RotateCw, XCircle } from "lucide-react";
 
 interface Candidate {
   id: number;
@@ -31,6 +31,7 @@ type ManualCrop = {
   size: number;
   source_width: number;
   source_height: number;
+  rotation?: number;
 };
 
 function clamp(n: number, min: number, max: number) {
@@ -70,6 +71,9 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false }:
   const adjRef = useRef({ zoom: 1.0, panX: 0, panY: 0, natW: 0, natH: 0 });
   adjRef.current = { zoom: adjZoom, panX: adjPan.x, panY: adjPan.y, natW: adjNat.w, natH: adjNat.h };
   const [fullscreen, setFullscreen] = useState(initialFullscreen);
+  const [adjRotation90, setAdjRotation90] = useState(0);
+  const [adjRotationFine, setAdjRotationFine] = useState(0);
+  const totalRotation = adjRotation90 + adjRotationFine;
   const [faceData, setFaceData] = useState<{
     detected: boolean;
     confidence?: number;
@@ -122,6 +126,8 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false }:
     // Keep adjust mode active during fullscreen review session
     if (fullscreen) setAdjustMode(true);
     setManualCrop(null);
+    setAdjRotation90(0);
+    setAdjRotationFine(0);
     setImgErrors({});
     setCleanLoading(false);
     setCleanPreviewUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
@@ -271,12 +277,14 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false }:
       source_width: adjNat.w,
       source_height: adjNat.h,
     });
-    setManualCrop(crop);
+    const cropWithRot = totalRotation !== 0 ? { ...crop, rotation: totalRotation } : crop;
+    setManualCrop(cropWithRot);
     setAdjustMode(false);
     // Fetch clean preview (crop + PhotoRoom bg removal)
     setCleanLoading(true);
     setCleanPreviewUrl(null);
-    const qs = `id=${current.id}&cx=${Math.round(crop.x)}&cy=${Math.round(crop.y)}&cs=${Math.round(crop.size)}&sw=${crop.source_width}&sh=${crop.source_height}&clean=1`;
+    const rotParam = totalRotation !== 0 ? `&rot=${totalRotation}` : "";
+    const qs = `id=${current.id}&cx=${Math.round(crop.x)}&cy=${Math.round(crop.y)}&cs=${Math.round(crop.size)}&sw=${crop.source_width}&sh=${crop.source_height}&clean=1${rotParam}`;
     console.log("[clean-preview] fetching:", `/api/photos/preview?${qs}`);
     fetch(`/api/photos/preview?${qs}`)
       .then((res) => {
@@ -293,7 +301,7 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false }:
         setCleanPreviewUrl(null);
       })
       .finally(() => setCleanLoading(false));
-  }, [CROP_FRAME, adjNat, adjZoom, adjPan, current]);
+  }, [CROP_FRAME, adjNat, adjZoom, adjPan, current, totalRotation]);
 
   const onAdjustImageLoad = useCallback(
     (e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -355,6 +363,28 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false }:
       window.addEventListener("mouseup", onUp);
     },
     [adjPan, adjNat, adjZoom, clampPanFn]
+  );
+
+  // ── Ruler drag for fine rotation ─────────────────────────────────
+  const onRulerDrag = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startFine = adjRotationFine;
+      const onMove = (ev: MouseEvent) => {
+        const dx = ev.clientX - startX;
+        const degsPerPx = 90 / 280;
+        const next = clamp(startFine - dx * degsPerPx, -45, 45);
+        setAdjRotationFine(Math.round(next * 2) / 2);
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [adjRotationFine]
   );
 
   // Native wheel listener (passive: false) — React onWheel is passive and ignores preventDefault
@@ -643,6 +673,8 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false }:
                         width: CROP_FRAME * adjZoom,
                         left: adjPan.x,
                         top: adjPan.y,
+                        transform: totalRotation !== 0 ? `rotate(${totalRotation}deg)` : undefined,
+                        transformOrigin: totalRotation !== 0 ? `${CROP_FRAME / 2 - adjPan.x}px ${CROP_FRAME / 2 - adjPan.y}px` : undefined,
                       }}
                     />
                   ) : (
@@ -713,7 +745,7 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false }:
                   })()}
                   {/* Floating controls inside frame */}
                   <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-3 py-2 bg-gradient-to-t from-black/70 to-transparent pointer-events-auto z-10" onMouseDown={(e) => e.stopPropagation()}>
-                    <span className="text-white/50 text-[10px]">Scroll zoom · Drag to move · <span className="text-white">{Math.round(adjZoom * 100)}%</span></span>
+                    <span className="text-white/50 text-[10px]">Scroll zoom · Drag pan · <span className="text-white">{Math.round(adjZoom * 100)}%</span>{totalRotation !== 0 && <span className="text-yellow-400 ml-1">{totalRotation.toFixed(1)}°</span>}</span>
                     <div className="flex items-center gap-2">
                       <button onClick={cancelAdjust} className="px-2.5 py-1 rounded border border-white/30 text-[11px] text-white/80 hover:bg-white/10">
                         Cancel
@@ -723,6 +755,58 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false }:
                       </button>
                     </div>
                   </div>
+                </div>
+                {/* Rotation toolbar — iOS-style */}
+                <div className="flex items-center justify-center gap-2 mt-3" style={{ width: CROP_FRAME }}>
+                  <button
+                    onClick={() => setAdjRotation90((r) => r - 90)}
+                    className="w-8 h-8 rounded-full bg-white/10 border border-white/20 flex items-center justify-center hover:bg-white/20 transition-colors shrink-0"
+                    title="Rotate 90° left"
+                  >
+                    <RotateCcw className="h-4 w-4 text-white/70" />
+                  </button>
+                  {/* Fine rotation ruler */}
+                  <div
+                    className="relative flex-1 h-10 overflow-hidden cursor-ew-resize select-none"
+                    onMouseDown={onRulerDrag}
+                  >
+                    {/* Fixed center indicator */}
+                    <div className="absolute left-1/2 top-1 bottom-1 w-0.5 bg-yellow-400 z-10" style={{ transform: "translateX(-50%)" }} />
+                    {/* Scrolling tick marks */}
+                    <div
+                      className="absolute top-0 bottom-0 flex items-center"
+                      style={{ transform: `translateX(calc(50% - ${(adjRotationFine + 45) * 3}px))` }}
+                    >
+                      {Array.from({ length: 91 }, (_, i) => {
+                        const deg = i - 45;
+                        const isZero = deg === 0;
+                        const isMajor = deg % 10 === 0;
+                        const isMid = deg % 5 === 0;
+                        const h = isZero ? 20 : isMajor ? 14 : isMid ? 10 : 6;
+                        const color = isZero ? "rgba(255,255,255,0.9)" : isMajor ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.2)";
+                        return (
+                          <div key={deg} className="flex flex-col items-center justify-center shrink-0" style={{ width: 3 }}>
+                            <div style={{ width: 1, height: h, backgroundColor: color }} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {/* Degree display / reset */}
+                  <button
+                    onClick={() => { setAdjRotation90(0); setAdjRotationFine(0); }}
+                    className="w-10 h-8 rounded-full bg-white/10 border border-white/20 flex items-center justify-center hover:bg-white/20 transition-colors shrink-0"
+                    title="Reset rotation"
+                  >
+                    <span className="text-[11px] text-white/70 tabular-nums">{Math.round(totalRotation)}°</span>
+                  </button>
+                  <button
+                    onClick={() => setAdjRotation90((r) => r + 90)}
+                    className="w-8 h-8 rounded-full bg-white/10 border border-white/20 flex items-center justify-center hover:bg-white/20 transition-colors shrink-0"
+                    title="Rotate 90° right"
+                  >
+                    <RotateCw className="h-4 w-4 text-white/70" />
+                  </button>
                 </div>
               </>
             ) : (
@@ -748,7 +832,7 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false }:
                   <>
                     <Image
                       src={manualCrop
-                        ? `/api/photos/preview?id=${current.id}&cx=${Math.round(manualCrop.x)}&cy=${Math.round(manualCrop.y)}&cs=${Math.round(manualCrop.size)}&sw=${manualCrop.source_width}&sh=${manualCrop.source_height}`
+                        ? `/api/photos/preview?id=${current.id}&cx=${Math.round(manualCrop.x)}&cy=${Math.round(manualCrop.y)}&cs=${Math.round(manualCrop.size)}&sw=${manualCrop.source_width}&sh=${manualCrop.source_height}${manualCrop.rotation ? `&rot=${manualCrop.rotation}` : ""}`
                         : `/api/photos/preview?id=${current.id}`
                       }
                       alt="Candidate"
