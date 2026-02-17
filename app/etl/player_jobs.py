@@ -532,6 +532,7 @@ async def sync_squads(
         "teams_attempted": 0,
         "teams_ok": 0,
         "players_upserted": 0,
+        "squad_only_upserted": 0,
         "errors": 0,
         "error_details": [],
     }
@@ -625,6 +626,64 @@ async def sync_squads(
                     await session.execute(text("ROLLBACK TO SAVEPOINT sp_squad"))
                     raise
 
+                # Complement with /players/squads for players missing from
+                # season-filtered endpoint (injured, new signings, no apps yet)
+                if season:
+                    full_ids = {p["id"] for p in players if p.get("id")}
+                    try:
+                        squad_players = await provider.get_players_squad(team_ext_id)
+                    except Exception as e:
+                        logger.warning(f"[SQUAD_SYNC] Squad complement failed for {team_name}: {e}")
+                        squad_players = []
+
+                    squad_only = [sp for sp in squad_players if sp.get("id") and sp["id"] not in full_ids]
+                    if squad_only:
+                        logger.info(
+                            f"[SQUAD_SYNC] {team_name}: full={len(full_ids)}, "
+                            f"squad={len(squad_players)}, squad_only={len(squad_only)}"
+                        )
+                        await session.execute(text("SAVEPOINT sp_squad_complement"))
+                        try:
+                            for sp in squad_only:
+                                await session.execute(
+                                    text("""
+                                        INSERT INTO players
+                                            (external_id, name, position,
+                                             team_id, team_external_id,
+                                             jersey_number, age, photo_url,
+                                             last_synced_at)
+                                        VALUES
+                                            (:ext_id, :name, :position,
+                                             :team_id, :team_ext_id,
+                                             :number, :age, :photo, NOW())
+                                        ON CONFLICT (external_id) DO UPDATE SET
+                                            name = COALESCE(players.name, EXCLUDED.name),
+                                            position = EXCLUDED.position,
+                                            team_id = EXCLUDED.team_id,
+                                            team_external_id = EXCLUDED.team_external_id,
+                                            jersey_number = EXCLUDED.jersey_number,
+                                            age = COALESCE(EXCLUDED.age, players.age),
+                                            photo_url = EXCLUDED.photo_url,
+                                            last_synced_at = NOW()
+                                    """),
+                                    {
+                                        "ext_id": sp["id"],
+                                        "name": sp.get("name", "Unknown"),
+                                        "position": sp.get("position"),
+                                        "team_id": team_id,
+                                        "team_ext_id": team_ext_id,
+                                        "number": sp.get("number"),
+                                        "age": sp.get("age"),
+                                        "photo": sp.get("photo"),
+                                    },
+                                )
+                                metrics["squad_only_upserted"] += 1
+
+                            await session.execute(text("RELEASE SAVEPOINT sp_squad_complement"))
+                        except Exception:
+                            await session.execute(text("ROLLBACK TO SAVEPOINT sp_squad_complement"))
+                            raise
+
                 metrics["teams_ok"] += 1
 
             except Exception as e:
@@ -646,7 +705,8 @@ async def sync_squads(
 
     logger.info(
         f"[SQUAD_SYNC] Complete: teams={metrics['teams_ok']}/{metrics['teams_attempted']}, "
-        f"players={metrics['players_upserted']}, errors={metrics['errors']}"
+        f"players={metrics['players_upserted']}, squad_only={metrics['squad_only_upserted']}, "
+        f"errors={metrics['errors']}"
     )
     return metrics
 
