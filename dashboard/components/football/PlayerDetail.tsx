@@ -129,15 +129,17 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName }: Player
       {/* Player header — always visible */}
       <div className="flex items-center gap-4">
         {!imgError ? (
-          <Image
-            src={player.photo_url_card_hq || player.photo_url || playerPhotoUrl(player.player_external_id)}
-            alt={player.player_name}
-            width={96}
-            height={96}
-            className="h-24 w-24 rounded-full object-cover shrink-0"
-            unoptimized={!(player.photo_url_card_hq)}
-            onError={() => setImgError(true)}
-          />
+          <div className="w-24 h-24 rounded-full shrink-0 bg-white/10 overflow-hidden">
+            <Image
+              src={player.photo_url_card_hq || player.photo_url || playerPhotoUrl(player.player_external_id)}
+              alt={player.player_name}
+              width={96}
+              height={96}
+              className="h-24 w-24 rounded-full object-cover"
+              unoptimized={!(player.photo_url_card_hq)}
+              onError={() => setImgError(true)}
+            />
+          </div>
         ) : (
           <div className="w-24 h-24 rounded-full bg-muted flex items-center justify-center shrink-0">
             <span className="text-lg font-semibold text-muted-foreground">
