@@ -101,6 +101,56 @@ def _detect_face_mediapipe(rgb_array: np.ndarray) -> Optional[Tuple[int, int, in
         return None
 
 
+def detect_face_with_keypoints(image_bytes: bytes) -> Optional[dict]:
+    """Detect face and return bbox + 6 keypoints (normalized 0-1).
+
+    Uses MediaPipe Face Detection. Returns None if no face found.
+    Keypoints: RIGHT_EYE, LEFT_EYE, NOSE_TIP, MOUTH_CENTER,
+               RIGHT_EAR_TRAGION, LEFT_EAR_TRAGION.
+    """
+    global _mp_face_detection
+    try:
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        rgb_array = np.array(img)
+
+        if _mp_face_detection is None:
+            import mediapipe as mp
+            _mp_face_detection = mp.solutions.face_detection.FaceDetection(
+                model_selection=1,
+                min_detection_confidence=0.5,
+            )
+        results = _mp_face_detection.process(rgb_array)
+        if not results.detections:
+            return None
+
+        det = max(results.detections, key=lambda d: d.score[0])
+        bbox = det.location_data.relative_bounding_box
+
+        kp_names = [
+            "RIGHT_EYE", "LEFT_EYE", "NOSE_TIP",
+            "MOUTH_CENTER", "RIGHT_EAR_TRAGION", "LEFT_EAR_TRAGION",
+        ]
+        keypoints = {}
+        for i, name in enumerate(kp_names):
+            kp = det.location_data.relative_keypoints[i]
+            keypoints[name] = {"x": round(float(kp.x), 4), "y": round(float(kp.y), 4)}
+
+        return {
+            "detected": True,
+            "confidence": round(float(det.score[0]), 3),
+            "bbox": {
+                "x": round(float(bbox.xmin), 4),
+                "y": round(float(bbox.ymin), 4),
+                "w": round(float(bbox.width), 4),
+                "h": round(float(bbox.height), 4),
+            },
+            "keypoints": keypoints,
+        }
+    except Exception as e:
+        logger.warning(f"Face detection with keypoints failed: {e}")
+        return None
+
+
 # ── OpenCV Haar Cascade face detection (secondary fallback) ───────────
 
 

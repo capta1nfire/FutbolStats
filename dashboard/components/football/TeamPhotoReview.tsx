@@ -60,7 +60,7 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
   const [cleanPreviewUrl, setCleanPreviewUrl] = useState<string | null>(null);
   const [cleanLoading, setCleanLoading] = useState(false);
   // Pan/zoom adjust state (fixed frame, move image)
-  const CROP_FRAME = 300;
+  const CROP_FRAME = 360;
   const [adjZoom, setAdjZoom] = useState(1.0);
   const [adjPan, setAdjPan] = useState({ x: 0, y: 0 });
   const [adjNat, setAdjNat] = useState({ w: 0, h: 0 });
@@ -68,6 +68,12 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
   const adjRef = useRef({ zoom: 1.0, panX: 0, panY: 0, natW: 0, natH: 0 });
   adjRef.current = { zoom: adjZoom, panX: adjPan.x, panY: adjPan.y, natW: adjNat.w, natH: adjNat.h };
   const [fullscreen, setFullscreen] = useState(false);
+  const [faceData, setFaceData] = useState<{
+    detected: boolean;
+    confidence?: number;
+    bbox?: { x: number; y: number; w: number; h: number };
+    keypoints?: Record<string, { x: number; y: number }>;
+  } | null>(null);
 
   // Fetch candidates for this team
   useEffect(() => {
@@ -103,12 +109,20 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
   const current = candidates[currentIndex];
   const remaining = candidates.length - currentIndex;
 
-  // Reset per-candidate UI state + revoke blob
+  // Reset per-candidate UI state + revoke blob + fetch face data
   useEffect(() => {
     setAdjustMode(false);
     setManualCrop(null);
     setCleanLoading(false);
     setCleanPreviewUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
+    setFaceData(null);
+    if (!current?.id) return;
+    let cancelled = false;
+    fetch(`/api/photos/face-detect?id=${current.id}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (!cancelled && d) setFaceData(d); })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [current?.id]);
 
   const handleAction = useCallback(
@@ -228,9 +242,9 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
         const initZ = 2.3;
         const ds = (CROP_FRAME / w) * initZ;
         const imgH = h * ds;
-        // Center horizontally, bias toward top third (face area)
+        // Center horizontally, bias toward face area
         const panX = -(w * ds - CROP_FRAME) / 2;
-        const panY = -(imgH - CROP_FRAME) * 0.2;
+        const panY = -(imgH - CROP_FRAME) * 0.18;
         setAdjZoom(initZ);
         setAdjPan(clampPanFn(panX, panY, w, h, initZ));
       }
@@ -437,7 +451,7 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
           {/* Current photo */}
           <div className="flex flex-col items-center gap-3">
             <p className="text-white/50 text-xs uppercase tracking-widest">Current</p>
-            <div className="relative w-[320px] h-[320px] rounded-xl border border-white/10 bg-white/5 overflow-hidden">
+            <div className="relative w-[384px] h-[384px] rounded-xl border border-white/10 bg-white/5 overflow-hidden">
               {!imgErrors["current"] ? (
                 <Image
                   src={current.current_url}
@@ -511,15 +525,50 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
                   ) : (
                     <div className="flex items-center justify-center h-full text-white/30 text-sm">No image</div>
                   )}
-                  {/* 6x6 grid overlay */}
-                  <div className="absolute inset-0 pointer-events-none z-[5]">
-                    {[1,2,3,4,5].map(i => (
-                      <div key={`v${i}`} className="absolute top-0 bottom-0" style={{ left: `${(i/6)*100}%`, width: 1, backgroundColor: "rgba(255,255,255,0.25)" }} />
-                    ))}
-                    {[1,2,3,4,5].map(i => (
-                      <div key={`h${i}`} className="absolute left-0 right-0" style={{ top: `${(i/6)*100}%`, height: 1, backgroundColor: "rgba(255,255,255,0.25)" }} />
-                    ))}
-                  </div>
+                  {/* Face detection overlay */}
+                  {faceData?.detected && faceData.keypoints && adjNat.w > 0 && (() => {
+                    const ds = (CROP_FRAME / adjNat.w) * adjZoom;
+                    const toX = (nx: number) => nx * adjNat.w * ds + adjPan.x;
+                    const toY = (ny: number) => ny * adjNat.h * ds + adjPan.y;
+                    const kp = faceData.keypoints!;
+                    const re = kp.RIGHT_EYE, le = kp.LEFT_EYE, nose = kp.NOSE_TIP, mouth = kp.MOUTH_CENTER;
+                    const eyeMidX = toX((re.x + le.x) / 2);
+                    const eyeMidY = toY((re.y + le.y) / 2);
+                    return (
+                      <div className="absolute inset-0 pointer-events-none z-[5]">
+                        {/* Eye line */}
+                        <svg className="absolute inset-0 w-full h-full overflow-visible">
+                          <line x1={toX(re.x)} y1={toY(re.y)} x2={toX(le.x)} y2={toY(le.y)} stroke="rgba(0,200,255,0.5)" strokeWidth="1" />
+                          {/* Vertical center: eye midpoint to mouth */}
+                          <line x1={eyeMidX} y1={eyeMidY} x2={toX(mouth.x)} y2={toY(mouth.y)} stroke="rgba(0,200,255,0.35)" strokeWidth="1" strokeDasharray="4,4" />
+                        </svg>
+                        {/* Keypoint dots */}
+                        {[
+                          { p: re, c: "rgba(0,200,255,0.7)" },
+                          { p: le, c: "rgba(0,200,255,0.7)" },
+                          { p: nose, c: "rgba(255,200,0,0.7)" },
+                          { p: mouth, c: "rgba(255,100,100,0.7)" },
+                        ].map((d, i) => (
+                          <div key={i} className="absolute rounded-full" style={{
+                            width: 6, height: 6,
+                            left: toX(d.p.x) - 3, top: toY(d.p.y) - 3,
+                            backgroundColor: d.c,
+                            boxShadow: `0 0 4px ${d.c}`,
+                          }} />
+                        ))}
+                        {/* Face bbox */}
+                        {faceData.bbox && (
+                          <div className="absolute rounded" style={{
+                            left: toX(faceData.bbox.x),
+                            top: toY(faceData.bbox.y),
+                            width: faceData.bbox.w * adjNat.w * ds,
+                            height: faceData.bbox.h * adjNat.h * ds,
+                            border: "1px solid rgba(0,200,255,0.3)",
+                          }} />
+                        )}
+                      </div>
+                    );
+                  })()}
                   {/* Floating controls inside frame */}
                   <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-3 py-2 bg-gradient-to-t from-black/70 to-transparent pointer-events-auto z-10" onMouseDown={(e) => e.stopPropagation()}>
                     <span className="text-white/50 text-[10px]">Scroll zoom · Drag to move · <span className="text-white">{Math.round(adjZoom * 100)}%</span></span>
@@ -535,7 +584,7 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
                 </div>
               </>
             ) : (
-              <div className="relative w-[320px] h-[320px] rounded-xl border border-white/10 bg-white/5 overflow-hidden">
+              <div className="relative w-[384px] h-[384px] rounded-xl border border-white/10 bg-white/5 overflow-hidden">
                 {cleanLoading ? (
                   <div className="flex flex-col items-center justify-center h-full gap-2">
                     <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
