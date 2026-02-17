@@ -94,6 +94,15 @@ def normalize_name(name: str) -> str:
     return name
 
 
+def _first_token_is_initial(name: str) -> bool:
+    """Check if first token looks like an initial: 'J.', 'J', single char."""
+    tokens = name.split()
+    if not tokens:
+        return False
+    t = tokens[0].rstrip(".")
+    return len(t) == 1
+
+
 def fuzzy_name_score(candidate_name: str, db_name: str, db_firstname: Optional[str] = None, db_lastname: Optional[str] = None) -> float:
     """Compute fuzzy name similarity.
 
@@ -101,7 +110,9 @@ def fuzzy_name_score(candidate_name: str, db_name: str, db_firstname: Optional[s
     1. Full name vs full name
     2. Candidate vs firstname+lastname
     3. Candidate vs lastname only (common in LATAM)
-    4. Initial+lastname pattern (API-Football "J. Ramírez" vs club "Juan Carlos Ramírez")
+    4. Initial+lastname pattern (candidate "J. Ramírez" vs DB "Juan Ramírez")
+    5. Reverse initial+lastname (DB "J. Soto" vs candidate "Jorge Soto")
+    6. Candidate firstname vs DB firstname + candidate lastname contains DB first-lastname
 
     Returns best score (0.0-1.0).
     """
@@ -117,36 +128,69 @@ def fuzzy_name_score(candidate_name: str, db_name: str, db_firstname: Optional[s
     if db_firstname and db_lastname:
         fl = normalize_name(f"{db_firstname} {db_lastname}")
         scores.append(SequenceMatcher(None, c, fl).ratio())
+        # Also try firstname + first token of lastname (compound surnames)
+        first_ln = normalize_name(db_lastname).split()[0] if db_lastname else ""
+        if first_ln:
+            fl_short = normalize_name(db_firstname) + " " + first_ln
+            scores.append(SequenceMatcher(None, c, fl_short).ratio())
 
     # Lastname only (common for LATAM mononyms: "Falcao", "James")
-    # Only use this path when candidate is a single token (mononym) to avoid
-    # false positives like "Marcos Mina" matching lastname "Garcés Mina".
     if db_lastname:
         ln = normalize_name(db_lastname)
         c_tokens = c.split()
         if len(c_tokens) == 1:
-            # Mononym: compare directly
             scores.append(SequenceMatcher(None, c, ln).ratio())
         else:
-            # Multi-word candidate: require very high similarity (>=0.90)
-            # to prevent partial surname overlaps from inflating score
             sim = SequenceMatcher(None, c, ln).ratio()
             if sim >= 0.90:
                 scores.append(sim)
 
-    # Initial+lastname pattern: "J. Ramírez" vs "Juan Carlos Ramírez Mejía"
-    # If DB lastname is contained in candidate AND first initials match → high score
+    # Pattern 4: Candidate has initial, DB has full name
+    # "J. Ramírez" (candidate) vs firstname="Juan", lastname="Ramírez Mejía" (DB)
     if db_lastname and db_firstname:
         ln = normalize_name(db_lastname)
+        ln_first = ln.split()[0] if ln else ""
         fn_initial = normalize_name(db_firstname)[:1]
         c_tokens = c.split()
         if c_tokens and fn_initial and c_tokens[0][:1] == fn_initial:
-            # First initial matches, check if any candidate token matches lastname
             for token in c_tokens:
-                token_sim = SequenceMatcher(None, token, ln).ratio()
-                if token_sim >= 0.85:
-                    scores.append(0.95)  # Strong match: initial + lastname
+                if SequenceMatcher(None, token, ln).ratio() >= 0.85:
+                    scores.append(0.95)
                     break
+                if ln_first and SequenceMatcher(None, token, ln_first).ratio() >= 0.85:
+                    scores.append(0.93)
+                    break
+
+    # Pattern 5: DB has initial, candidate has full name (REVERSE)
+    # DB="J. Soto" vs candidate="Jorge Soto", DB firstname="Jorge Iván"
+    d_tokens = d.split()
+    c_tokens = c.split()
+    if len(d_tokens) >= 2 and _first_token_is_initial(d):
+        db_initial = d_tokens[0].rstrip(".")
+        db_rest = " ".join(d_tokens[1:])
+        if len(c_tokens) >= 2 and c_tokens[0][:1] == db_initial:
+            c_rest = " ".join(c_tokens[1:])
+            rest_sim = SequenceMatcher(None, c_rest, db_rest).ratio()
+            if rest_sim >= 0.80:
+                scores.append(0.95)
+            elif rest_sim >= 0.60:
+                scores.append(0.88)
+        # Also check with db_firstname if available
+        if db_firstname:
+            fn = normalize_name(db_firstname)
+            if fn and c_tokens[0][:1] == fn[:1]:
+                c_rest = " ".join(c_tokens[1:])
+                rest_sim = SequenceMatcher(None, c_rest, db_rest).ratio()
+                if rest_sim >= 0.70:
+                    scores.append(0.95)
+
+    # Pattern 6: Candidate full name vs DB firstname only (mononyms like "Falcao", "Jean")
+    if db_firstname:
+        fn = normalize_name(db_firstname)
+        # "Jean Fernandes" vs firstname="Jean Paulo" — compare first tokens
+        if c_tokens and fn.split():
+            if c_tokens[0] == fn.split()[0] and len(c_tokens[0]) > 2:
+                scores.append(0.88)
 
     return max(scores) if scores else 0.0
 
