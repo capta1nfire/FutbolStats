@@ -253,13 +253,28 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
         const imgH = h * ds;
         // Center horizontally, bias toward face area
         const panX = -(w * ds - CROP_FRAME) / 2;
-        const panY = -(imgH - CROP_FRAME) * 0.18;
+        const panY = -(imgH - CROP_FRAME) * 0.28;
         setAdjZoom(initZ);
         setAdjPan(clampPanFn(panX, panY, w, h, initZ));
       }
     },
     [CROP_FRAME, manualCrop, clampPanFn]
   );
+
+  // Re-center on detected face when faceData arrives
+  useEffect(() => {
+    if (!faceData?.detected || !faceData.bbox || !adjustMode || adjNat.w === 0 || manualCrop) return;
+    const b = faceData.bbox;
+    const faceCX = b.x + b.w / 2;
+    const faceCY = b.y + b.h / 2;
+    // Shift up slightly so face is in upper third (head framing)
+    const targetY = faceCY - b.h * 0.15;
+    const z = adjZoom;
+    const ds = (CROP_FRAME / adjNat.w) * z;
+    const panX = CROP_FRAME / 2 - faceCX * adjNat.w * ds;
+    const panY = CROP_FRAME / 2 - targetY * adjNat.h * ds;
+    setAdjPan(clampPanFn(panX, panY, adjNat.w, adjNat.h, z));
+  }, [faceData, adjustMode, adjNat, adjZoom, manualCrop, clampPanFn, CROP_FRAME]);
 
   const onAdjustDrag = useCallback(
     (e: React.MouseEvent) => {
@@ -522,6 +537,8 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
                       src={current.candidate_url}
                       alt="Adjust"
                       className="absolute select-none pointer-events-none max-w-none"
+                      referrerPolicy="no-referrer"
+                      crossOrigin="anonymous"
                       draggable={false}
                       onLoad={onAdjustImageLoad}
                       onError={() => setImgErrors((e) => ({ ...e, candidate: true }))}
