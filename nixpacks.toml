@@ -1,5 +1,4 @@
-[phases.setup]
-aptPkgs = ["libgl1"]
-
-[variables]
-LD_LIBRARY_PATH = "/usr/lib/x86_64-linux-gnu"
+[phases.install]
+cmds = [
+    "python -m venv --copies /opt/venv && . /opt/venv/bin/activate && pip install -r requirements.txt && (pip uninstall -y opencv-python opencv-contrib-python 2>/dev/null || true) && pip install --no-deps opencv-python-headless>=4.8.0",
+]
