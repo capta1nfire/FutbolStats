@@ -262,11 +262,11 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false, p
   );
 
   const beginAdjust = useCallback(() => {
-    if (!current?.candidate_url) return;
+    if (!current?.id) return;
     setError(null);
     setImgErrors((e) => ({ ...e, candidate: false }));
     setAdjustMode(true);
-  }, [current?.candidate_url]);
+  }, [current?.id]);
 
   const cancelAdjust = useCallback(() => {
     setAdjustMode(false);
@@ -634,7 +634,7 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false, p
             </button>
             <button
               onClick={beginAdjust}
-              disabled={adjustMode || submitting || !current.candidate_url}
+              disabled={adjustMode || submitting || !current.id}
               className="w-12 h-12 rounded-full bg-white/10 border border-white/20 flex items-center justify-center hover:bg-white/20 transition-colors disabled:opacity-40"
               title="Ajustar crop"
             >
@@ -665,9 +665,9 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false, p
                   style={{ width: CROP_FRAME, height: CROP_FRAME }}
                   onMouseDown={onAdjustDrag}
                 >
-                  {!imgErrors["candidate"] && current.candidate_url ? (
+                  {!imgErrors["candidate"] && current.id ? (
                     <img
-                      src={current.candidate_url}
+                      src={`/api/photos/preview?id=${current.id}`}
                       alt="Adjust"
                       className="absolute select-none pointer-events-none max-w-none"
                       referrerPolicy="no-referrer"
@@ -861,9 +861,9 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false, p
           <div className="flex flex-col items-center gap-3">
             <p className="text-white/50 text-xs uppercase tracking-widest">Source</p>
             <div className="relative w-[384px] h-[512px] rounded-xl border border-white/10 bg-white/5 overflow-hidden">
-              {!imgErrors["source"] && current.candidate_url ? (
+              {!imgErrors["source"] && current.id ? (
                 <Image
-                  src={current.candidate_url}
+                  src={`/api/photos/preview?id=${current.id}`}
                   alt="Source"
                   fill
                   className="object-contain"
