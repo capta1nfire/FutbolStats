@@ -22,6 +22,7 @@ interface Candidate {
 interface TeamPhotoReviewProps {
   teamId: number;
   teamName: string;
+  initialFullscreen?: boolean;
 }
 
 type ManualCrop = {
@@ -45,7 +46,7 @@ function clampCrop(crop: ManualCrop): ManualCrop {
   return { ...crop, x, y, size };
 }
 
-export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
+export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false }: TeamPhotoReviewProps) {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -68,7 +69,7 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
   // Ref to avoid stale closures in native wheel handler
   const adjRef = useRef({ zoom: 1.0, panX: 0, panY: 0, natW: 0, natH: 0 });
   adjRef.current = { zoom: adjZoom, panX: adjPan.x, panY: adjPan.y, natW: adjNat.w, natH: adjNat.h };
-  const [fullscreen, setFullscreen] = useState(false);
+  const [fullscreen, setFullscreen] = useState(initialFullscreen);
   const [faceData, setFaceData] = useState<{
     detected: boolean;
     confidence?: number;

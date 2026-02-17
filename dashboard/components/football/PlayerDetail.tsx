@@ -520,7 +520,7 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogo
       {/* Team photo review — renders inline summary, opens its own fullscreen */}
       {reviewOpen && teamId && teamName && (
         <div className="px-4 pb-4">
-          <TeamPhotoReview teamId={teamId} teamName={teamName} />
+          <TeamPhotoReview teamId={teamId} teamName={teamName} initialFullscreen />
         </div>
       )}
     </div>
