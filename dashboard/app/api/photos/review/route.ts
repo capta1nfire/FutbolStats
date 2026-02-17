@@ -10,6 +10,8 @@ export async function GET(request: NextRequest) {
   const params = new URLSearchParams({ status });
   const teamId = request.nextUrl.searchParams.get("team_id");
   if (teamId) params.set("team_id", teamId);
+  const playerExtId = request.nextUrl.searchParams.get("player_external_id");
+  if (playerExtId) params.set("player_external_id", playerExtId);
   const { data, status: httpStatus, requestId } = await proxyFetch(
     "/dashboard/photos/candidates.json",
     params,

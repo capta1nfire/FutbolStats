@@ -23,6 +23,7 @@ interface TeamPhotoReviewProps {
   teamId: number;
   teamName: string;
   initialFullscreen?: boolean;
+  playerExternalId?: number;
 }
 
 type ManualCrop = {
@@ -47,7 +48,7 @@ function clampCrop(crop: ManualCrop): ManualCrop {
   return { ...crop, x, y, size };
 }
 
-export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false }: TeamPhotoReviewProps) {
+export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false, playerExternalId }: TeamPhotoReviewProps) {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -98,9 +99,10 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false }:
 
     async function load() {
       try {
-        const res = await fetch(
-          `/api/photos/review?status=pending_review&team_id=${teamId}`
-        );
+        const qs = playerExternalId
+          ? `status=pending_review&player_external_id=${playerExternalId}`
+          : `status=pending_review&team_id=${teamId}`;
+        const res = await fetch(`/api/photos/review?${qs}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (!cancelled) {
@@ -201,7 +203,10 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false }:
       setUrlInput("");
       setUrlPlayerExtId("");
       // Reload candidates to include the new one
-      const reload = await fetch(`/api/photos/review?status=pending_review&team_id=${teamId}`);
+      const reloadQs = playerExternalId
+        ? `status=pending_review&player_external_id=${playerExternalId}`
+        : `status=pending_review&team_id=${teamId}`;
+      const reload = await fetch(`/api/photos/review?${reloadQs}`);
       if (reload.ok) {
         const rData = await reload.json();
         setCandidates(rData.candidates || []);

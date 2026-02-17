@@ -5095,9 +5095,10 @@ async def dashboard_photo_candidates(
     request: Request,
     status: str = Query("pending_review"),
     team_id: int = Query(None, ge=1),
+    player_external_id: int = Query(None, ge=1),
     session: AsyncSession = Depends(get_async_session),
 ):
-    """Get photo candidates for review, optionally filtered by team (internal ID)."""
+    """Get photo candidates for review, optionally filtered by team or player."""
     _check_token(request)
 
     sql = text("""
@@ -5110,9 +5111,10 @@ async def dashboard_photo_candidates(
           AND pa.review_status = :status
           AND pa.source != 'api_football'
           AND (CAST(:team_id AS INTEGER) IS NULL OR p.team_id = :team_id)
+          AND (CAST(:player_ext_id AS INTEGER) IS NULL OR pa.player_external_id = :player_ext_id)
         ORDER BY pa.quality_score DESC NULLS LAST, pa.created_at DESC
     """)
-    result = await session.execute(sql, {"status": status, "team_id": team_id})
+    result = await session.execute(sql, {"status": status, "team_id": team_id, "player_ext_id": player_external_id})
     rows = result.mappings().all()
 
     candidates = []

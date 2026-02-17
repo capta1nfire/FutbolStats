@@ -123,6 +123,7 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogo
   const [reviewOpen, setReviewOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [pastePreview, setPastePreview] = useState<string | null>(null);
+  const [currentPhotoDims, setCurrentPhotoDims] = useState<{ w: number; h: number } | null>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
 
   // Reset images state when player changes
@@ -286,6 +287,9 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogo
           {teamName && (
             <p className="text-xs text-muted-foreground mt-0.5">{teamName}</p>
           )}
+          <p className="text-xs text-muted-foreground/50 mt-0.5">
+            ID {player.player_external_id}
+          </p>
         </div>
       </div>
 
@@ -420,11 +424,16 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogo
                   fill
                   className="object-cover"
                   unoptimized={!(player.photo_url_card_hq)}
+                  onLoad={(e) => {
+                    const img = e.currentTarget as HTMLImageElement;
+                    if (img.naturalWidth && img.naturalHeight) setCurrentPhotoDims({ w: img.naturalWidth, h: img.naturalHeight });
+                  }}
                 />
               </div>
             </div>
             <p className="text-[10px] text-muted-foreground text-center tabular-nums">
               ext_id: {player.player_external_id}
+              {currentPhotoDims && ` · ${currentPhotoDims.w}×${currentPhotoDims.h}`}
               {player.photo_url_card_hq && " · HQ card"}
             </p>
           </SurfaceCard>
@@ -520,7 +529,7 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogo
       {/* Team photo review — renders inline summary, opens its own fullscreen */}
       {reviewOpen && teamId && teamName && (
         <div className="px-4 pb-4">
-          <TeamPhotoReview teamId={teamId} teamName={teamName} initialFullscreen />
+          <TeamPhotoReview teamId={teamId} teamName={teamName} initialFullscreen playerExternalId={player.player_external_id} />
         </div>
       )}
     </div>
