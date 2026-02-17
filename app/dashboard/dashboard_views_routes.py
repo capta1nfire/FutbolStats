@@ -5331,6 +5331,7 @@ async def dashboard_photo_face_preview(
     sh: int = Query(None, description="Source height at crop time"),
     clean: int = Query(0, description="1 = also run PhotoRoom background removal"),
     rot: float = Query(0, description="Rotation in degrees (CW positive)"),
+    flip: int = Query(0, description="1 = mirror image horizontally"),
     session: AsyncSession = Depends(get_async_session),
 ):
     """Return a face-crop preview PNG for a photo candidate.
@@ -5339,6 +5340,7 @@ async def dashboard_photo_face_preview(
     If manual crop params (cx, cy, cs, sw, sh) are provided, applies that
     exact crop instead of auto-detect — what you see is what you get.
     If rot != 0, rotates the image before cropping.
+    If flip=1, mirrors the image horizontally before cropping.
     If clean=1, also runs PhotoRoom background removal on the cropped result.
     """
     _check_token(request)
@@ -5386,6 +5388,9 @@ async def dashboard_photo_face_preview(
         img = PILImage.open(_io.BytesIO(image_bytes))
         if img.mode != "RGBA":
             img = img.convert("RGBA")
+        if flip:
+            from PIL import ImageOps
+            img = ImageOps.mirror(img)
         aw, ah = img.size
 
         # Scale coordinates if source dims differ from actual

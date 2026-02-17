@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SurfaceCard } from "@/components/ui/surface-card";
-import { CheckCircle, Crop, ImageIcon, Link2, Loader2, RotateCcw, RotateCw, XCircle } from "lucide-react";
+import { CheckCircle, Crop, FlipHorizontal2, ImageIcon, Link2, Loader2, RotateCcw, RotateCw, XCircle } from "lucide-react";
 
 interface Candidate {
   id: number;
@@ -33,6 +33,7 @@ type ManualCrop = {
   source_width: number;
   source_height: number;
   rotation?: number;
+  flip_h?: boolean;
 };
 
 function clamp(n: number, min: number, max: number) {
@@ -75,6 +76,7 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false, p
   const [adjRotation90, setAdjRotation90] = useState(0);
   const [adjRotationFine, setAdjRotationFine] = useState(0);
   const totalRotation = adjRotation90 + adjRotationFine;
+  const [adjFlipH, setAdjFlipH] = useState(false);
   const [faceData, setFaceData] = useState<{
     detected: boolean;
     confidence?: number;
@@ -130,6 +132,7 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false, p
     setManualCrop(null);
     setAdjRotation90(0);
     setAdjRotationFine(0);
+    setAdjFlipH(false);
     setImgErrors({});
     setCleanLoading(false);
     setCleanPreviewUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
@@ -282,14 +285,19 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false, p
       source_width: adjNat.w,
       source_height: adjNat.h,
     });
-    const cropWithRot = totalRotation !== 0 ? { ...crop, rotation: totalRotation } : crop;
-    setManualCrop(cropWithRot);
+    const cropFinal = {
+      ...crop,
+      ...(totalRotation !== 0 ? { rotation: totalRotation } : {}),
+      ...(adjFlipH ? { flip_h: true } : {}),
+    };
+    setManualCrop(cropFinal);
     setAdjustMode(false);
     // Fetch clean preview (crop + PhotoRoom bg removal)
     setCleanLoading(true);
     setCleanPreviewUrl(null);
     const rotParam = totalRotation !== 0 ? `&rot=${totalRotation}` : "";
-    const qs = `id=${current.id}&cx=${Math.round(crop.x)}&cy=${Math.round(crop.y)}&cs=${Math.round(crop.size)}&sw=${crop.source_width}&sh=${crop.source_height}&clean=1${rotParam}`;
+    const flipParam = adjFlipH ? "&flip=1" : "";
+    const qs = `id=${current.id}&cx=${Math.round(crop.x)}&cy=${Math.round(crop.y)}&cs=${Math.round(crop.size)}&sw=${crop.source_width}&sh=${crop.source_height}&clean=1${rotParam}${flipParam}`;
     console.log("[clean-preview] fetching:", `/api/photos/preview?${qs}`);
     fetch(`/api/photos/preview?${qs}`)
       .then((res) => {
@@ -306,7 +314,7 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false, p
         setCleanPreviewUrl(null);
       })
       .finally(() => setCleanLoading(false));
-  }, [CROP_FRAME, adjNat, adjZoom, adjPan, current, totalRotation]);
+  }, [CROP_FRAME, adjNat, adjZoom, adjPan, current, totalRotation, adjFlipH]);
 
   const onAdjustImageLoad = useCallback(
     (e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -677,8 +685,11 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false, p
                         width: CROP_FRAME * adjZoom,
                         left: adjPan.x,
                         top: adjPan.y,
-                        transform: totalRotation !== 0 ? `rotate(${totalRotation}deg)` : undefined,
-                        transformOrigin: totalRotation !== 0 ? `${CROP_FRAME / 2 - adjPan.x}px ${CROP_FRAME / 2 - adjPan.y}px` : undefined,
+                        transform: [
+                          adjFlipH ? "scaleX(-1)" : "",
+                          totalRotation !== 0 ? `rotate(${totalRotation}deg)` : "",
+                        ].filter(Boolean).join(" ") || undefined,
+                        transformOrigin: (totalRotation !== 0 || adjFlipH) ? `${CROP_FRAME / 2 - adjPan.x}px ${CROP_FRAME / 2 - adjPan.y}px` : undefined,
                       }}
                     />
                   ) : (
@@ -760,8 +771,15 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false, p
                     </div>
                   </div>
                 </div>
-                {/* Rotation toolbar — iOS-style */}
+                {/* Transform toolbar — iOS-style */}
                 <div className="flex items-center justify-center gap-2 mt-3" style={{ width: CROP_FRAME }}>
+                  <button
+                    onClick={() => setAdjFlipH((f) => !f)}
+                    className={`w-8 h-8 rounded-full border flex items-center justify-center hover:bg-white/20 transition-colors shrink-0 ${adjFlipH ? "bg-primary/30 border-primary/60" : "bg-white/10 border-white/20"}`}
+                    title="Flip horizontal"
+                  >
+                    <FlipHorizontal2 className="h-4 w-4 text-white/70" />
+                  </button>
                   <button
                     onClick={() => setAdjRotation90((r) => r - 90)}
                     className="w-8 h-8 rounded-full bg-white/10 border border-white/20 flex items-center justify-center hover:bg-white/20 transition-colors shrink-0"
@@ -836,7 +854,7 @@ export function TeamPhotoReview({ teamId, teamName, initialFullscreen = false, p
                   <>
                     <Image
                       src={manualCrop
-                        ? `/api/photos/preview?id=${current.id}&cx=${Math.round(manualCrop.x)}&cy=${Math.round(manualCrop.y)}&cs=${Math.round(manualCrop.size)}&sw=${manualCrop.source_width}&sh=${manualCrop.source_height}${manualCrop.rotation ? `&rot=${manualCrop.rotation}` : ""}`
+                        ? `/api/photos/preview?id=${current.id}&cx=${Math.round(manualCrop.x)}&cy=${Math.round(manualCrop.y)}&cs=${Math.round(manualCrop.size)}&sw=${manualCrop.source_width}&sh=${manualCrop.source_height}${manualCrop.rotation ? `&rot=${manualCrop.rotation}` : ""}${manualCrop.flip_h ? "&flip=1" : ""}`
                         : `/api/photos/preview?id=${current.id}`
                       }
                       alt="Candidate"

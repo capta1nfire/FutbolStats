@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
 
   // Forward optional manual crop params
   const cropParams = new URLSearchParams();
-  for (const key of ["cx", "cy", "cs", "sw", "sh", "clean", "rot", "raw"]) {
+  for (const key of ["cx", "cy", "cs", "sw", "sh", "clean", "rot", "flip", "raw"]) {
     const val = request.nextUrl.searchParams.get(key);
     if (val) cropParams.set(key, val);
   }
