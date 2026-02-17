@@ -1,1 +1,2 @@
-# Intentionally empty — use default Nixpacks Python build
+[phases.setup]
+nixPkgs = ["libGL"]
