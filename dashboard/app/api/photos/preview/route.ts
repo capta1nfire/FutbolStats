@@ -17,8 +17,16 @@ export async function GET(request: NextRequest) {
 
   const requestId = generateRequestId("photo-preview");
 
+  // Forward optional manual crop params
+  const cropParams = new URLSearchParams();
+  for (const key of ["cx", "cy", "cs", "sw", "sh"]) {
+    const val = request.nextUrl.searchParams.get(key);
+    if (val) cropParams.set(key, val);
+  }
+  const qs = cropParams.toString();
+
   try {
-    const url = `${BACKEND_BASE_URL}/dashboard/photos/preview/${candidateId}`;
+    const url = `${BACKEND_BASE_URL}/dashboard/photos/preview/${candidateId}${qs ? `?${qs}` : ""}`;
     const resp = await fetchWithTimeout(
       url,
       {

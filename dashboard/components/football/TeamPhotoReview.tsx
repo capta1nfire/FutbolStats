@@ -68,8 +68,6 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
   const [imgErrors, setImgErrors] = useState<Record<string, boolean>>({});
   const containerRef = useRef<HTMLDivElement>(null);
   const candidateAdjustImgRef = useRef<HTMLImageElement>(null);
-  const candidateManualPreviewRef = useRef<HTMLDivElement>(null);
-  const [manualPreviewPx, setManualPreviewPx] = useState<number>(0);
 
   const [adjustMode, setAdjustMode] = useState(false);
   const [manualCrop, setManualCrop] = useState<ManualCrop | null>(null); // committed
@@ -114,20 +112,7 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
     setAdjustMode(false);
     setManualCrop(null);
     setDraftCrop(null);
-    setManualPreviewPx(0);
   }, [current?.id]);
-
-  // Track preview square size for manual-crop rendering (no backend call)
-  useEffect(() => {
-    const el = candidateManualPreviewRef.current;
-    if (!el) return;
-    const obs = new ResizeObserver((entries) => {
-      const rect = entries[0]?.contentRect;
-      if (rect?.width) setManualPreviewPx(rect.width);
-    });
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [current?.id, manualCrop, adjustMode]);
 
   const handleAction = useCallback(
     async (action: "approve" | "reject") => {
@@ -661,37 +646,15 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
               </div>
             ) : (
               <div
-                ref={candidateManualPreviewRef}
                 className="relative w-full aspect-square rounded-lg border border-green-500/20 bg-muted overflow-hidden"
               >
                 {!imgErrors["candidate"] ? (
-                  manualCrop && current.candidate_url && manualPreviewPx > 0 ? (
-                    <>
-                      <img
-                        src={current.candidate_url}
-                        alt="Candidate (manual crop)"
-                        className="absolute left-0 top-0 select-none"
-                        draggable={false}
-                        onDragStart={(e) => e.preventDefault()}
-                        onError={() =>
-                          setImgErrors((e) => ({ ...e, candidate: true }))
-                        }
-                        style={(() => {
-                          const scale = manualPreviewPx / manualCrop.size;
-                          return {
-                            width: `${manualCrop.source_width * scale}px`,
-                            height: `${manualCrop.source_height * scale}px`,
-                            transform: `translate(${-manualCrop.x * scale}px, ${-manualCrop.y * scale}px)`,
-                          };
-                        })()}
-                      />
-                      <div className="absolute bottom-1 right-1 bg-black/40 text-white text-[9px] px-1 rounded">
-                        manual
-                      </div>
-                    </>
-                  ) : (
+                  <>
                     <Image
-                      src={`/api/photos/preview?id=${current.id}`}
+                      src={manualCrop
+                        ? `/api/photos/preview?id=${current.id}&cx=${Math.round(manualCrop.x)}&cy=${Math.round(manualCrop.y)}&cs=${Math.round(manualCrop.size)}&sw=${manualCrop.source_width}&sh=${manualCrop.source_height}`
+                        : `/api/photos/preview?id=${current.id}`
+                      }
                       alt="Candidate"
                       fill
                       className="object-cover"
@@ -700,7 +663,12 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
                         setImgErrors((e) => ({ ...e, candidate: true }))
                       }
                     />
-                  )
+                    {manualCrop && (
+                      <div className="absolute bottom-1 right-1 bg-black/40 text-white text-[9px] px-1 rounded">
+                        manual
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <div className="flex items-center justify-center h-full text-muted-foreground text-[10px]">
                     No image

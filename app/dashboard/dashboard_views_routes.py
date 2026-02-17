@@ -5225,12 +5225,18 @@ async def dashboard_photo_review_action(
 async def dashboard_photo_face_preview(
     request: Request,
     candidate_id: int,
+    cx: int = Query(None, description="Manual crop X"),
+    cy: int = Query(None, description="Manual crop Y"),
+    cs: int = Query(None, description="Manual crop size"),
+    sw: int = Query(None, description="Source width at crop time"),
+    sh: int = Query(None, description="Source height at crop time"),
     session: AsyncSession = Depends(get_async_session),
 ):
     """Return a face-crop preview PNG for a photo candidate.
 
     Downloads the candidate image, runs crop_face(), and streams the result.
-    Used by the dashboard review UI to show the final crop before approve/reject.
+    If manual crop params (cx, cy, cs, sw, sh) are provided, applies that
+    exact crop instead of auto-detect — what you see is what you get.
     """
     _check_token(request)
 
@@ -5261,6 +5267,39 @@ async def dashboard_photo_face_preview(
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"Image download failed: {e}")
 
+    # Manual crop: apply exact coordinates (scaled to actual resolution)
+    if cx is not None and cy is not None and cs is not None and cs > 0:
+        from PIL import Image as PILImage
+        import io as _io
+
+        img = PILImage.open(_io.BytesIO(image_bytes))
+        if img.mode != "RGBA":
+            img = img.convert("RGBA")
+        aw, ah = img.size
+
+        # Scale coordinates if source dims differ from actual
+        if sw and sh and sw > 0 and sh > 0:
+            scale_x = aw / sw
+            scale_y = ah / sh
+        else:
+            scale_x = scale_y = 1.0
+
+        scaled_x = max(0, int(round(cx * scale_x)))
+        scaled_y = max(0, int(round(cy * scale_y)))
+        scaled_size = max(1, int(round(cs * min(scale_x, scale_y))))
+        scaled_size = min(scaled_size, aw, ah)
+        scaled_x = min(scaled_x, max(0, aw - scaled_size))
+        scaled_y = min(scaled_y, max(0, ah - scaled_size))
+
+        cropped = img.crop((scaled_x, scaled_y, scaled_x + scaled_size, scaled_y + scaled_size))
+        cropped = cropped.resize((256, 256), PILImage.Resampling.LANCZOS)
+        buf = _io.BytesIO()
+        cropped.save(buf, format="PNG", optimize=True)
+        return Response(content=buf.getvalue(), media_type="image/png", headers={
+            "Cache-Control": "no-cache",
+        })
+
+    # Auto crop
     face_bytes = crop_face(
         image_bytes,
         output_size=256,
