@@ -24,16 +24,19 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { id, action } = body;
+  const { id, action, manual_crop } = body;
 
   if (!id || !action) {
     return NextResponse.json({ error: "id and action required" }, { status: 400 });
   }
 
+  const payload: Record<string, unknown> = { action };
+  if (manual_crop) payload.manual_crop = manual_crop;
+
   const { data, status, requestId } = await proxyFetchMutation(
     `/dashboard/photos/review/${id}`,
     "POST",
-    { action },
+    payload,
     { prefix: "photos-review" }
   );
 

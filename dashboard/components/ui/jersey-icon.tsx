@@ -31,15 +31,14 @@ export function JerseyIcon({
   number,
   primaryColor = "#666",
   secondaryColor,
-  numberColor = "#000",
+  numberColor = "rgba(255,255,255,0.5)",
   size = 32,
   className,
 }: JerseyIconProps) {
   const gradientId = secondaryColor ? `jersey-grad-${number}-${size}` : undefined;
   const fill = gradientId ? `url(#${gradientId})` : primaryColor;
   const label = Math.max(1, Math.min(99, Math.round(number))).toString();
-  // Adjust font size: single digit gets larger text
-  const fontSize = label.length === 1 ? 38 : 32;
+  const fontSize = 46;
 
   return (
     <svg
@@ -61,22 +60,30 @@ export function JerseyIcon({
       )}
       {/* T-shirt silhouette */}
       <path
-        d="M28 14 C33 6 47 6 52 14 L74 22 L74 36 L62 30 L62 72 L18 72 L18 30 L6 36 L6 22 Z"
-        fill="#b7bcc2"
-        stroke="#b7bcc2"
-        strokeWidth={4}
-        strokeLinejoin="round"
+        d="M28 14 C33 6 47 6 52 14 L74 18 Q76 27 74 36 Q68 36 62 40 L62 66 Q62 72 56 72 Q48 76 40 76 Q32 76 24 72 Q18 72 18 66 L18 40 Q12 36 6 36 Q4 27 6 18 Z"
+        fill="rgba(255,255,255,0.15)"
+        stroke="none"
+        filter="url(#shirt-shadow)"
       />
+      <defs>
+        <filter id="shirt-shadow" x="-5%" y="-5%" width="110%" height="110%">
+          <feDropShadow dx="0" dy="0.5" stdDeviation="0.5" floodColor="#000" floodOpacity="0.4" />
+        </filter>
+        <filter id="num-shadow" x="-10%" y="-10%" width="120%" height="120%">
+          <feDropShadow dx="0" dy="1" stdDeviation="1.5" floodColor="#000" floodOpacity="0.6" />
+        </filter>
+      </defs>
       {/* Number */}
       <text
         x="40"
-        y="50"
+        y="42"
         textAnchor="middle"
         dominantBaseline="central"
         fill={numberColor}
         fontSize={fontSize}
         fontFamily="'Barlow Condensed', 'Arial Narrow', sans-serif"
-        fontWeight="600"
+        fontWeight="400"
+        filter="url(#num-shadow)"
         style={{ userSelect: "none" }}
       >
         {label}

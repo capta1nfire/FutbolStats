@@ -5156,19 +5156,58 @@ async def dashboard_photo_review_action(
 
     body = await request.json()
     action = body.get("action")  # "approve" or "reject"
+    manual_crop = body.get("manual_crop") if action == "approve" else None
 
     if action not in ("approve", "reject"):
         raise HTTPException(status_code=400, detail="action must be 'approve' or 'reject'")
 
     new_status = "approved" if action == "approve" else "rejected"
 
+    manual_crop_json = None
+    if manual_crop is not None:
+        # Validate and normalize manual crop payload
+        import json as _json
+        try:
+            x = int(manual_crop.get("x"))
+            y = int(manual_crop.get("y"))
+            size = int(manual_crop.get("size"))
+            sw = int(manual_crop.get("source_width"))
+            sh = int(manual_crop.get("source_height"))
+        except Exception:
+            raise HTTPException(status_code=400, detail="manual_crop must include x,y,size,source_width,source_height (ints)")
+
+        if sw <= 0 or sh <= 0 or size <= 0:
+            raise HTTPException(status_code=400, detail="manual_crop dims must be > 0")
+        if x < 0 or y < 0:
+            raise HTTPException(status_code=400, detail="manual_crop x/y must be >= 0")
+        if x + size > sw or y + size > sh:
+            raise HTTPException(status_code=400, detail="manual_crop must fit within source_width/source_height")
+
+        manual_crop_json = _json.dumps({
+            "x": x,
+            "y": y,
+            "size": size,
+            "source_width": sw,
+            "source_height": sh,
+        })
+
     sql = text("""
         UPDATE player_photo_assets
-        SET review_status = :status, changed_by = 'manual', updated_at = NOW()
+        SET review_status = :status,
+            changed_by = 'manual',
+            updated_at = NOW(),
+            photo_meta = CASE
+                WHEN :manual_crop IS NULL THEN photo_meta
+                ELSE COALESCE(photo_meta, '{}'::jsonb)
+                     || jsonb_build_object('manual_crop', CAST(:manual_crop AS jsonb))
+            END
         WHERE id = :id AND asset_type = 'candidate'
         RETURNING id, player_external_id, review_status
     """)
-    result = await session.execute(sql, {"status": new_status, "id": candidate_id})
+    result = await session.execute(
+        sql,
+        {"status": new_status, "id": candidate_id, "manual_crop": manual_crop_json},
+    )
     row = result.mappings().first()
     await session.commit()
 

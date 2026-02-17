@@ -6,6 +6,7 @@ import type { TeamSquadPlayerSeasonStats } from "@/lib/types/squad";
 import { IconTabs } from "@/components/ui/icon-tabs";
 import { SurfaceCard } from "@/components/ui/surface-card";
 import { Info, BarChart3 } from "lucide-react";
+import { JerseyIcon } from "@/components/ui/jersey-icon";
 
 function playerPhotoUrl(externalId: number): string {
   return `https://media.api-sports.io/football/players/${externalId}.png`;
@@ -93,6 +94,7 @@ function computeAge(birthDateStr: string): number {
 
 interface PlayerDetailProps {
   player: TeamSquadPlayerSeasonStats;
+  teamMatchesPlayed?: number;
   teamName?: string;
 }
 
@@ -101,7 +103,7 @@ const PLAYER_TABS = [
   { id: "stats", icon: <BarChart3 />, label: "Stats" },
 ];
 
-export function PlayerDetail({ player, teamName }: PlayerDetailProps) {
+export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName }: PlayerDetailProps) {
   const [imgError, setImgError] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
   const pos = (player.position || "U").toUpperCase();
@@ -130,14 +132,14 @@ export function PlayerDetail({ player, teamName }: PlayerDetailProps) {
           <Image
             src={player.photo_url_card_hq || player.photo_url || playerPhotoUrl(player.player_external_id)}
             alt={player.player_name}
-            width={64}
-            height={64}
-            className="rounded-full object-cover shrink-0"
+            width={96}
+            height={96}
+            className="h-24 w-24 rounded-full object-cover shrink-0"
             unoptimized={!(player.photo_url_card_hq)}
             onError={() => setImgError(true)}
           />
         ) : (
-          <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center shrink-0">
+          <div className="w-24 h-24 rounded-full bg-muted flex items-center justify-center shrink-0">
             <span className="text-lg font-semibold text-muted-foreground">
               {player.player_name.charAt(0)}
             </span>
@@ -148,12 +150,14 @@ export function PlayerDetail({ player, teamName }: PlayerDetailProps) {
             {fullName}
           </h3>
           <div className="flex items-center gap-2 text-sm text-muted-foreground mt-0.5 flex-wrap">
-            {player.jersey_number != null && (
-              <span className="text-xs tabular-nums bg-muted px-1.5 py-0.5 rounded">
-                #{player.jersey_number}
-              </span>
-            )}
             <span>{POS_LABELS[pos] || pos}</span>
+            {player.jersey_number != null && (
+              <JerseyIcon
+                number={player.jersey_number}
+                numberColor="rgba(255,255,255,0.5)"
+                size={20}
+              />
+            )}
             {player.ever_captain && (
               <span className="text-xs font-medium bg-muted px-1.5 py-0.5 rounded">Captain</span>
             )}
@@ -177,37 +181,37 @@ export function PlayerDetail({ player, teamName }: PlayerDetailProps) {
         <div className="space-y-4">
           {/* Bio info */}
           {(player.nationality || player.birth_date || player.height) && (
-            <SurfaceCard className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+            <SurfaceCard className="space-y-2.5">
               {player.nationality && (
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">Nationality</span>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-sm text-muted-foreground">Nationality</span>
                   <span className="text-sm text-foreground">{player.nationality}</span>
                 </div>
               )}
               {player.birth_date && (
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">Born</span>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-sm text-muted-foreground">Born</span>
                   <span className="text-sm text-foreground tabular-nums">
-                    {new Date(player.birth_date + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                    {new Date(player.birth_date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
                     {age != null && ` (${age})`}
                   </span>
                 </div>
               )}
               {birthLocation && (
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">Birthplace</span>
-                  <span className="text-sm text-foreground truncate ml-2">{birthLocation}</span>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-sm text-muted-foreground shrink-0">Birthplace</span>
+                  <span className="text-sm text-foreground text-right ml-4">{birthLocation}</span>
                 </div>
               )}
               {player.height && (
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">Height</span>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-sm text-muted-foreground">Height</span>
                   <span className="text-sm text-foreground tabular-nums">{player.height} cm</span>
                 </div>
               )}
               {player.weight && (
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">Weight</span>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-sm text-muted-foreground">Weight</span>
                   <span className="text-sm text-foreground tabular-nums">{player.weight} kg</span>
                 </div>
               )}
@@ -223,7 +227,12 @@ export function PlayerDetail({ player, teamName }: PlayerDetailProps) {
               <p className="text-[10px] text-muted-foreground">Rating</p>
             </div>
             <div className="rounded-lg border border-border px-3 py-2 text-center">
-              <p className="text-lg font-bold text-foreground tabular-nums">{player.appearances}</p>
+              <p className="text-lg font-bold text-foreground tabular-nums">
+                {player.appearances}
+                {teamMatchesPlayed > 0 && (
+                  <span className="text-muted-foreground/40">/{teamMatchesPlayed}</span>
+                )}
+              </p>
               <p className="text-[10px] text-muted-foreground">Apps</p>
             </div>
             <div className="rounded-lg border border-border px-3 py-2 text-center">

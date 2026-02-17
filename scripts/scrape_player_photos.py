@@ -637,7 +637,42 @@ async def main():
                 content_hash = compute_content_hash(original_bytes)
 
                 # Face crop
-                face_bytes = crop_face(original_bytes, output_size=512, player_name=player_name, player_ext_id=ext_id)
+                face_bytes = None
+                manual_crop = meta.get("manual_crop")
+                if isinstance(manual_crop, dict):
+                    try:
+                        mx = int(manual_crop.get("x"))
+                        my = int(manual_crop.get("y"))
+                        msize = int(manual_crop.get("size"))
+                        sw = int(manual_crop.get("source_width") or manual_crop.get("sourceWidth"))
+                        sh = int(manual_crop.get("source_height") or manual_crop.get("sourceHeight"))
+
+                        if sw > 0 and sh > 0 and msize > 0:
+                            aw, ah = img.size
+                            sx = aw / sw
+                            sy = ah / sh
+                            size_w = msize * sx
+                            size_h = msize * sy
+                            scaled_size = int(round(min(size_w, size_h)))
+                            scaled_x = int(round(mx * sx))
+                            scaled_y = int(round(my * sy))
+
+                            # Clamp to bounds
+                            scaled_size = max(1, min(scaled_size, aw, ah))
+                            scaled_x = max(0, min(scaled_x, aw - scaled_size))
+                            scaled_y = max(0, min(scaled_y, ah - scaled_size))
+
+                            manual_crop_img = img.crop(
+                                (scaled_x, scaled_y, scaled_x + scaled_size, scaled_y + scaled_size)
+                            ).resize((512, 512), resample=PILImage.LANCZOS)
+                            buf = io.BytesIO()
+                            manual_crop_img.save(buf, format="PNG", optimize=True)
+                            face_bytes = buf.getvalue()
+                    except Exception as e:
+                        logger.warning(f"  {player_name}: manual_crop invalid, falling back to auto-crop ({e})")
+
+                if not face_bytes:
+                    face_bytes = crop_face(original_bytes, output_size=512, player_name=player_name, player_ext_id=ext_id)
 
                 style = "segmented" if processor == "photoroom" else "raw"
                 review_status = "approved"
@@ -648,6 +683,7 @@ async def main():
                     "processor": processor, "source_url": candidate_url,
                     "player_name": player_name,
                     "team_name": meta.get("team_name"),
+                    "manual_crop": manual_crop if isinstance(manual_crop, dict) else None,
                 })
 
                 # Upload to R2

@@ -103,7 +103,7 @@ const COLUMNS: ColDef[] = [
 interface TeamSquadStatsProps {
   teamId: number;
   season: number | null;
-  onPlayerSelect?: (player: TeamSquadPlayerSeasonStats) => void;
+  onPlayerSelect?: (player: TeamSquadPlayerSeasonStats, matchesPlayed?: number) => void;
 }
 
 export function TeamSquadStats({ teamId, season, onPlayerSelect }: TeamSquadStatsProps) {
@@ -188,7 +188,7 @@ export function TeamSquadStats({ teamId, season, onPlayerSelect }: TeamSquadStat
           <table className="w-full">
             <thead className="sticky top-0 z-10 bg-background">
               <tr className="border-b border-border">
-                <th className="text-center py-2 text-xs font-medium text-muted-foreground sticky left-0 z-20 bg-background" style={{ width: 28, minWidth: 28, maxWidth: 28 }}>#</th>
+                <th className="text-center py-2 text-xs font-medium text-muted-foreground sticky left-0 z-20 bg-background w-7">#</th>
                 {COLUMNS.map((col) => (
                   <React.Fragment key={col.key}>
                     <th
@@ -196,7 +196,7 @@ export function TeamSquadStats({ teamId, season, onPlayerSelect }: TeamSquadStat
                       className={cn(
                         "py-2 text-xs font-medium select-none cursor-pointer transition-colors hover:text-foreground whitespace-nowrap",
                         col.align === "left" ? "px-3 text-left" : "px-2 text-center",
-                        col.key === "name" && "min-w-[180px] sticky left-[28px] z-20 bg-background",
+                        col.key === "name" && "sticky left-[28px] z-20 bg-background",
                         sortKey === col.key ? "text-foreground" : "text-muted-foreground"
                       )}
                     >
@@ -215,7 +215,7 @@ export function TeamSquadStats({ teamId, season, onPlayerSelect }: TeamSquadStat
                       </span>
                     </th>
                     {col.key === "name" && (
-                      <th className="py-2 px-1 text-center text-xs font-medium text-muted-foreground" style={{ width: 32 }}>Kit</th>
+                      <th className="py-2 px-1 text-center text-xs font-medium text-muted-foreground">Kit</th>
                     )}
                   </React.Fragment>
                 ))}
@@ -227,18 +227,18 @@ export function TeamSquadStats({ teamId, season, onPlayerSelect }: TeamSquadStat
                   key={`${p.player_external_id}-${idx}`}
                   role={onPlayerSelect ? "button" : undefined}
                   tabIndex={onPlayerSelect ? 0 : undefined}
-                  onClick={() => onPlayerSelect?.(p)}
-                  onKeyDown={onPlayerSelect ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPlayerSelect(p); } } : undefined}
+                  onClick={() => onPlayerSelect?.(p, teamMatchesPlayed)}
+                  onKeyDown={onPlayerSelect ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPlayerSelect(p, teamMatchesPlayed); } } : undefined}
                   className={cn(
                     "group/row border-b border-border",
                     onPlayerSelect && "cursor-pointer"
                   )}
                 >
-                  <td className="text-center py-1.5 text-[11px] text-muted-foreground/50 tabular-nums sticky left-0 z-[5] bg-background group-hover/row:bg-accent/50 transition-colors" style={{ width: 28, minWidth: 28, maxWidth: 28 }}>
+                  <td className="text-center py-1.5 text-[11px] text-muted-foreground/50 tabular-nums sticky left-0 z-[5] bg-background group-hover/row:bg-accent/50 transition-colors w-7">
                     {idx + 1}
                   </td>
                   {/* Player name — sticky */}
-                  <td className="px-3 py-2 min-w-[180px] sticky left-[28px] z-[5] bg-background group-hover/row:bg-accent/50 transition-colors">
+                  <td className="px-3 py-2 sticky left-[28px] z-[5] bg-background group-hover/row:bg-accent/50 transition-colors overflow-hidden">
                     <div className="flex items-center gap-2">
                       <Image
                         src={p.photo_url_thumb_hq || p.photo_url || playerPhotoUrl(p.player_external_id)}
@@ -273,12 +273,12 @@ export function TeamSquadStats({ teamId, season, onPlayerSelect }: TeamSquadStat
                     </div>
                   </td>
                   {/* Kit */}
-                  <td className="px-1 py-1.5 text-center group-hover/row:bg-accent/50 transition-colors" style={{ width: 32 }}>
+                  <td className="px-1 py-1.5 text-center group-hover/row:bg-accent/50 transition-colors">
                     {p.jersey_number != null ? (
                       <JerseyIcon
                         number={p.jersey_number}
-                        numberColor="#000"
-                        size={20}
+                        numberColor="rgba(255,255,255,0.5)"
+                        size={26}
                         className="mx-auto"
                       />
                     ) : (

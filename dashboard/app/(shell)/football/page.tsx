@@ -124,9 +124,11 @@ function FootballPageContent() {
 
   // Player detail state
   const [selectedPlayer, setSelectedPlayer] = useState<TeamSquadPlayerSeasonStats | null>(null);
+  const [teamMatchesPlayed, setTeamMatchesPlayed] = useState(0);
 
-  const handlePlayerSelect = useCallback((player: TeamSquadPlayerSeasonStats) => {
+  const handlePlayerSelect = useCallback((player: TeamSquadPlayerSeasonStats, matchesPlayed?: number) => {
     setSelectedPlayer(player);
+    if (matchesPlayed != null) setTeamMatchesPlayed(matchesPlayed);
     setPanelTabs(prev => prev.includes("player") ? prev : [...prev, "player"]);
     setActivePanel("player");
   }, []);
@@ -502,6 +504,7 @@ function FootballPageContent() {
         league={leagueData?.league}
         leagueId={leagueId}
         selectedPlayer={selectedPlayer}
+        teamMatchesPlayed={teamMatchesPlayed}
         teamName={teamData?.team?.name}
       />
     </div>

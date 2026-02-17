@@ -106,7 +106,7 @@ interface LeagueDetailProps {
   /** Called when user switches to a different league via dropdown */
   onLeagueChange?: (leagueId: number) => void;
   /** Called when user clicks a player row in Squad tab */
-  onPlayerSelect?: (player: TeamSquadPlayerSeasonStats) => void;
+  onPlayerSelect?: (player: TeamSquadPlayerSeasonStats, matchesPlayed?: number) => void;
 }
 
 /**

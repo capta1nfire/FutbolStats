@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SurfaceCard } from "@/components/ui/surface-card";
-import { CheckCircle, ImageIcon, XCircle } from "lucide-react";
+import { CheckCircle, Crop, ImageIcon, XCircle } from "lucide-react";
 
 interface Candidate {
   id: number;
@@ -14,14 +14,49 @@ interface Candidate {
   quality_score: number;
   candidate_url: string;
   current_url: string;
-  width: number;
-  height: number;
-  identity_score: number;
+  width: number | null;
+  height: number | null;
+  identity_score: number | null;
 }
 
 interface TeamPhotoReviewProps {
   teamId: number;
   teamName: string;
+}
+
+type ManualCrop = {
+  x: number;
+  y: number;
+  size: number;
+  source_width: number;
+  source_height: number;
+};
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function buildDefaultCrop(sourceWidth: number, sourceHeight: number): ManualCrop {
+  const base = Math.min(sourceWidth, sourceHeight);
+  const size = Math.max(64, Math.round(base * 0.62));
+  const x = Math.round((sourceWidth - size) / 2);
+  const y = Math.round((sourceHeight - size) * 0.12);
+  return {
+    x: clamp(x, 0, Math.max(0, sourceWidth - size)),
+    y: clamp(y, 0, Math.max(0, sourceHeight - size)),
+    size,
+    source_width: sourceWidth,
+    source_height: sourceHeight,
+  };
+}
+
+function clampCrop(crop: ManualCrop): ManualCrop {
+  const minSize = 64;
+  const maxSize = Math.max(1, Math.min(crop.source_width, crop.source_height));
+  const size = clamp(Math.round(crop.size), minSize, maxSize);
+  const x = clamp(Math.round(crop.x), 0, Math.max(0, crop.source_width - size));
+  const y = clamp(Math.round(crop.y), 0, Math.max(0, crop.source_height - size));
+  return { ...crop, x, y, size };
 }
 
 export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
@@ -32,6 +67,13 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
   const [stats, setStats] = useState({ approved: 0, rejected: 0 });
   const [imgErrors, setImgErrors] = useState<Record<string, boolean>>({});
   const containerRef = useRef<HTMLDivElement>(null);
+  const candidateAdjustImgRef = useRef<HTMLImageElement>(null);
+  const candidateManualPreviewRef = useRef<HTMLDivElement>(null);
+  const [manualPreviewPx, setManualPreviewPx] = useState<number>(0);
+
+  const [adjustMode, setAdjustMode] = useState(false);
+  const [manualCrop, setManualCrop] = useState<ManualCrop | null>(null); // committed
+  const [draftCrop, setDraftCrop] = useState<ManualCrop | null>(null); // edit-in-progress
 
   // Fetch candidates for this team
   useEffect(() => {
@@ -67,6 +109,26 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
   const current = candidates[currentIndex];
   const remaining = candidates.length - currentIndex;
 
+  // Reset per-candidate UI state
+  useEffect(() => {
+    setAdjustMode(false);
+    setManualCrop(null);
+    setDraftCrop(null);
+    setManualPreviewPx(0);
+  }, [current?.id]);
+
+  // Track preview square size for manual-crop rendering (no backend call)
+  useEffect(() => {
+    const el = candidateManualPreviewRef.current;
+    if (!el) return;
+    const obs = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (rect?.width) setManualPreviewPx(rect.width);
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [current?.id, manualCrop, adjustMode]);
+
   const handleAction = useCallback(
     async (action: "approve" | "reject") => {
       if (!current) return;
@@ -74,7 +136,11 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
         const res = await fetch("/api/photos/review", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: current.id, action }),
+          body: JSON.stringify({
+            id: current.id,
+            action,
+            manual_crop: action === "approve" ? manualCrop : undefined,
+          }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
@@ -85,16 +151,20 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
         }));
         setCurrentIndex((i) => i + 1);
         setImgErrors({});
+        setAdjustMode(false);
+        setManualCrop(null);
+        setDraftCrop(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Action failed");
       }
     },
-    [current]
+    [current, manualCrop]
   );
 
   // Scoped keyboard handler (only when container has focus)
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (adjustMode) return;
       if (e.key === "ArrowRight" || e.key === "Enter") {
         e.preventDefault();
         e.stopPropagation();
@@ -105,7 +175,234 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
         handleAction("reject");
       }
     },
-    [handleAction]
+    [adjustMode, handleAction]
+  );
+
+  const beginAdjust = useCallback(() => {
+    if (!current?.candidate_url) return;
+    setError(null);
+    setImgErrors((e) => ({ ...e, candidate: false }));
+    setAdjustMode(true);
+    setDraftCrop(manualCrop);
+  }, [current?.candidate_url, manualCrop]);
+
+  const cancelAdjust = useCallback(() => {
+    setAdjustMode(false);
+    setDraftCrop(null);
+  }, []);
+
+  const applyAdjust = useCallback(() => {
+    if (!draftCrop) return;
+    setManualCrop(clampCrop(draftCrop));
+    setAdjustMode(false);
+    setDraftCrop(null);
+  }, [draftCrop]);
+
+  // Interaction: drag/resize overlay in adjust mode
+  type Interaction =
+    | {
+        kind: "move";
+        startClientX: number;
+        startClientY: number;
+        startCrop: ManualCrop;
+        scale: number;
+      }
+    | {
+        kind: "resize";
+        corner: "nw" | "ne" | "sw" | "se";
+        startClientX: number;
+        startClientY: number;
+        startCrop: ManualCrop;
+        scale: number;
+      };
+
+  const interactionRef = useRef<Interaction | null>(null);
+
+  const getAdjustScale = useCallback((): number | null => {
+    if (!candidateAdjustImgRef.current) return null;
+    if (!draftCrop) return null;
+    const rect = candidateAdjustImgRef.current.getBoundingClientRect();
+    if (!rect.width || !draftCrop.source_width) return null;
+    return rect.width / draftCrop.source_width;
+  }, [draftCrop]);
+
+  const endInteraction = useCallback(() => {
+    interactionRef.current = null;
+    window.removeEventListener("mousemove", onWindowMouseMove);
+  }, []);
+
+  const onWindowMouseMove = useCallback(
+    (e: MouseEvent) => {
+      const interaction = interactionRef.current;
+      if (!interaction) return;
+      setDraftCrop((prev) => {
+        const base = prev ?? interaction.startCrop;
+        const crop = interaction.startCrop;
+        if (!crop) return base;
+        const dx = (e.clientX - interaction.startClientX) / interaction.scale;
+        const dy = (e.clientY - interaction.startClientY) / interaction.scale;
+
+        const sw = crop.source_width;
+        const sh = crop.source_height;
+
+        if (interaction.kind === "move") {
+          const next = clampCrop({
+            ...crop,
+            x: crop.x + dx,
+            y: crop.y + dy,
+          });
+          // Ensure bounds even if source dims are tiny/invalid
+          return {
+            ...next,
+            x: clamp(next.x, 0, Math.max(0, sw - next.size)),
+            y: clamp(next.y, 0, Math.max(0, sh - next.size)),
+          };
+        }
+
+        // Resize
+        const corner = interaction.corner;
+        const start = crop;
+        const minSize = 64;
+        const maxSize = Math.max(1, Math.min(sw, sh));
+
+        let nextSize = start.size;
+        let nextX = start.x;
+        let nextY = start.y;
+
+        const dominant = (a: number, b: number) =>
+          Math.abs(a) >= Math.abs(b) ? a : b;
+
+        if (corner === "se") {
+          const delta = dominant(dx, dy);
+          nextSize = start.size + delta;
+        } else if (corner === "nw") {
+          const delta = dominant(dx, dy);
+          nextSize = start.size - delta;
+          const shift = start.size - nextSize;
+          nextX = start.x + shift;
+          nextY = start.y + shift;
+        } else if (corner === "ne") {
+          const delta = dominant(dx, -dy);
+          nextSize = start.size + delta;
+          const shift = start.size - nextSize;
+          nextY = start.y + shift;
+        } else if (corner === "sw") {
+          const delta = dominant(-dx, dy);
+          nextSize = start.size + delta;
+          const shift = start.size - nextSize;
+          nextX = start.x + shift;
+        }
+
+        nextSize = clamp(nextSize, minSize, maxSize);
+        const next = clampCrop({
+          ...start,
+          x: nextX,
+          y: nextY,
+          size: nextSize,
+        });
+        return next;
+      });
+    },
+    [setDraftCrop]
+  );
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => () => endInteraction(), [endInteraction]);
+
+  const startMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!draftCrop) return;
+      const scale = getAdjustScale();
+      if (!scale) return;
+      e.preventDefault();
+      e.stopPropagation();
+      interactionRef.current = {
+        kind: "move",
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        startCrop: draftCrop,
+        scale,
+      };
+      window.addEventListener("mousemove", onWindowMouseMove);
+      window.addEventListener("mouseup", endInteraction, { once: true });
+    },
+    [draftCrop, endInteraction, getAdjustScale, onWindowMouseMove]
+  );
+
+  const startResize = useCallback(
+    (corner: "nw" | "ne" | "sw" | "se") =>
+      (e: React.MouseEvent) => {
+        if (!draftCrop) return;
+        const scale = getAdjustScale();
+        if (!scale) return;
+        e.preventDefault();
+        e.stopPropagation();
+        interactionRef.current = {
+          kind: "resize",
+          corner,
+          startClientX: e.clientX,
+          startClientY: e.clientY,
+          startCrop: draftCrop,
+          scale,
+        };
+        window.addEventListener("mousemove", onWindowMouseMove);
+        window.addEventListener("mouseup", endInteraction, { once: true });
+      },
+    [draftCrop, endInteraction, getAdjustScale, onWindowMouseMove]
+  );
+
+  const onAdjustWheel = useCallback(
+    (e: React.WheelEvent) => {
+      if (!draftCrop) return;
+      const dir = e.deltaY < 0 ? -1 : 1; // scroll up = zoom in (smaller crop)
+      e.preventDefault();
+      const step = Math.max(8, Math.round(draftCrop.size * 0.05));
+      const nextSize = draftCrop.size + dir * step;
+      const cx = draftCrop.x + draftCrop.size / 2;
+      const cy = draftCrop.y + draftCrop.size / 2;
+      const next = clampCrop({
+        ...draftCrop,
+        size: nextSize,
+        x: cx - nextSize / 2,
+        y: cy - nextSize / 2,
+      });
+      setDraftCrop(next);
+    },
+    [draftCrop]
+  );
+
+  const onAdjustImageLoad = useCallback(
+    (e: React.SyntheticEvent<HTMLImageElement>) => {
+      const img = e.currentTarget;
+      const w = img.naturalWidth || current?.width || 0;
+      const h = img.naturalHeight || current?.height || 0;
+      if (!w || !h) return;
+
+      setDraftCrop((prev) => {
+        if (prev) {
+          // If dims changed (rare), scale crop to keep relative framing.
+          if (
+            prev.source_width !== w ||
+            prev.source_height !== h
+          ) {
+            const sx = w / prev.source_width;
+            const sy = h / prev.source_height;
+            const s = (sx + sy) / 2;
+            return clampCrop({
+              ...prev,
+              x: prev.x * sx,
+              y: prev.y * sy,
+              size: prev.size * s,
+              source_width: w,
+              source_height: h,
+            });
+          }
+          return prev;
+        }
+        return buildDefaultCrop(w, h);
+      });
+    },
+    [current?.height, current?.width]
   );
 
   if (loading) {
@@ -239,14 +536,24 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
           <div className="flex flex-col items-center gap-2">
             <button
               onClick={() => handleAction("reject")}
-              className="w-10 h-10 rounded-full bg-red-500/10 border border-red-500/40 flex items-center justify-center hover:bg-red-500/20 transition-colors"
+              disabled={adjustMode}
+              className="w-10 h-10 rounded-full bg-red-500/10 border border-red-500/40 flex items-center justify-center hover:bg-red-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               title="Reject (Left Arrow)"
             >
               <XCircle className="h-5 w-5 text-red-500" />
             </button>
             <button
+              onClick={beginAdjust}
+              disabled={adjustMode || !current.candidate_url}
+              className="w-10 h-10 rounded-full bg-muted border border-border flex items-center justify-center hover:bg-muted/70 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Ajustar crop (manual)"
+            >
+              <Crop className="h-5 w-5 text-foreground/80" />
+            </button>
+            <button
               onClick={() => handleAction("approve")}
-              className="w-10 h-10 rounded-full bg-green-500/10 border border-green-500/40 flex items-center justify-center hover:bg-green-500/20 transition-colors"
+              disabled={adjustMode}
+              className="w-10 h-10 rounded-full bg-green-500/10 border border-green-500/40 flex items-center justify-center hover:bg-green-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               title="Approve (Right Arrow)"
             >
               <CheckCircle className="h-5 w-5 text-green-500" />
@@ -258,24 +565,149 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
             <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
               Candidate
             </p>
-            <div className="relative w-full aspect-square rounded-lg border border-green-500/20 bg-muted overflow-hidden">
-              {!imgErrors["candidate"] ? (
-                <Image
-                  src={`/api/photos/preview?id=${current.id}`}
-                  alt="Candidate"
-                  fill
-                  className="object-cover"
-                  unoptimized
-                  onError={() =>
-                    setImgErrors((e) => ({ ...e, candidate: true }))
-                  }
-                />
-              ) : (
-                <div className="flex items-center justify-center h-full text-muted-foreground text-[10px]">
-                  No image
-                </div>
-              )}
-            </div>
+            {adjustMode ? (
+              <div className="w-full rounded-lg border border-border bg-muted overflow-hidden">
+                {!imgErrors["candidate"] ? (
+                  <div className="p-2">
+                    <div className="max-h-[340px] overflow-auto">
+                      <div className="relative">
+                        <img
+                          ref={candidateAdjustImgRef}
+                          src={current.candidate_url}
+                          alt="Candidate original"
+                          className="block w-full h-auto select-none"
+                          draggable={false}
+                          onDragStart={(e) => e.preventDefault()}
+                          onError={() =>
+                            setImgErrors((e) => ({ ...e, candidate: true }))
+                          }
+                          onLoad={onAdjustImageLoad}
+                        />
+
+                        {draftCrop ? (() => {
+                          const scale = getAdjustScale() || 1;
+                          const left = draftCrop.x * scale;
+                          const top = draftCrop.y * scale;
+                          const size = draftCrop.size * scale;
+                          return (
+                            <div
+                              className="absolute border-2 border-primary/80 bg-white/5 cursor-move"
+                              style={{
+                                left,
+                                top,
+                                width: size,
+                                height: size,
+                                boxShadow: "0 0 0 9999px rgba(0,0,0,0.35)",
+                              }}
+                              onMouseDown={startMove}
+                              onWheel={onAdjustWheel}
+                              title="Drag para mover · Scroll para zoom"
+                            >
+                              {/* Resize handles */}
+                              <div
+                                className="absolute -left-1.5 -top-1.5 h-3 w-3 bg-primary border border-white cursor-nwse-resize"
+                                onMouseDown={startResize("nw")}
+                              />
+                              <div
+                                className="absolute -right-1.5 -top-1.5 h-3 w-3 bg-primary border border-white cursor-nesw-resize"
+                                onMouseDown={startResize("ne")}
+                              />
+                              <div
+                                className="absolute -left-1.5 -bottom-1.5 h-3 w-3 bg-primary border border-white cursor-nesw-resize"
+                                onMouseDown={startResize("sw")}
+                              />
+                              <div
+                                className="absolute -right-1.5 -bottom-1.5 h-3 w-3 bg-primary border border-white cursor-nwse-resize"
+                                onMouseDown={startResize("se")}
+                              />
+                            </div>
+                          );
+                        })() : null}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 mt-2">
+                      <button
+                        onClick={cancelAdjust}
+                        className="px-2 py-1 rounded border border-border text-[10px] hover:bg-muted/70"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        onClick={applyAdjust}
+                        disabled={!draftCrop}
+                        className="px-2 py-1 rounded bg-primary text-primary-foreground text-[10px] disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Aplicar
+                      </button>
+                    </div>
+
+                    {draftCrop ? (
+                      <p className="text-[10px] text-muted-foreground mt-1 tabular-nums">
+                        x={Math.round(draftCrop.x)} y={Math.round(draftCrop.y)} size={Math.round(draftCrop.size)} ·
+                        src={draftCrop.source_width}x{draftCrop.source_height}
+                      </p>
+                    ) : (
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        Cargando…
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center h-40 text-muted-foreground text-[10px]">
+                    No image
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div
+                ref={candidateManualPreviewRef}
+                className="relative w-full aspect-square rounded-lg border border-green-500/20 bg-muted overflow-hidden"
+              >
+                {!imgErrors["candidate"] ? (
+                  manualCrop && current.candidate_url && manualPreviewPx > 0 ? (
+                    <>
+                      <img
+                        src={current.candidate_url}
+                        alt="Candidate (manual crop)"
+                        className="absolute left-0 top-0 select-none"
+                        draggable={false}
+                        onDragStart={(e) => e.preventDefault()}
+                        onError={() =>
+                          setImgErrors((e) => ({ ...e, candidate: true }))
+                        }
+                        style={(() => {
+                          const scale = manualPreviewPx / manualCrop.size;
+                          return {
+                            width: `${manualCrop.source_width * scale}px`,
+                            height: `${manualCrop.source_height * scale}px`,
+                            transform: `translate(${-manualCrop.x * scale}px, ${-manualCrop.y * scale}px)`,
+                          };
+                        })()}
+                      />
+                      <div className="absolute bottom-1 right-1 bg-black/40 text-white text-[9px] px-1 rounded">
+                        manual
+                      </div>
+                    </>
+                  ) : (
+                    <Image
+                      src={`/api/photos/preview?id=${current.id}`}
+                      alt="Candidate"
+                      fill
+                      className="object-cover"
+                      unoptimized
+                      onError={() =>
+                        setImgErrors((e) => ({ ...e, candidate: true }))
+                      }
+                    />
+                  )
+                ) : (
+                  <div className="flex items-center justify-center h-full text-muted-foreground text-[10px]">
+                    No image
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
