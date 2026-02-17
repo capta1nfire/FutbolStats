@@ -7239,3 +7239,133 @@ async def patch_incident(
     _incidents_cache["timestamp"] = 0
 
     return {"ok": True, "status": new_status, "updated_at": now_iso}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TEMPORARY: Family S training endpoint (remove after first training)
+# ═══════════════════════════════════════════════════════════════════════════
+
+_training_status = {"running": False, "result": None, "error": None, "started_at": None}
+
+
+@router.post("/ops/train-family-s")
+async def train_family_s_endpoint(request: Request):
+    """One-off Family S training inside Railway container (fast DB access).
+
+    Protected by dashboard token. Returns immediately, runs in background.
+    Check status with GET /ops/train-family-s/status.
+
+    TEMPORARY — remove after Mandato D training completes.
+    """
+    _check_token(request)
+
+    if _training_status["running"]:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "Training already in progress", "started_at": _training_status["started_at"]},
+        )
+
+    async def _run_training():
+        import traceback as _tb
+        _training_status["running"] = True
+        _training_status["result"] = None
+        _training_status["error"] = None
+        _training_status["started_at"] = datetime.utcnow().isoformat()
+
+        try:
+            import pandas as pd
+            from app.features.engineering import FeatureEngineer
+            from app.ml.family_s import FamilySEngine
+            from app.ml.persistence import persist_family_s_snapshot
+
+            MODEL_VERSION = "v2.0-tier3-family_s"
+            TIER_3_LEAGUES = [94, 265, 88, 203, 144]
+            MTV_COLS = ["home_talent_delta", "away_talent_delta", "talent_delta_diff", "shock_magnitude"]
+            min_dt = datetime(2023, 1, 1)
+
+            # Step 1: Build features
+            logger.info("[TRAIN-FAMILY-S] Building features via FeatureEngineer...")
+            async with AsyncSessionLocal() as session:
+                fe = FeatureEngineer(session=session)
+                df = await fe.build_training_dataset(
+                    league_only=True,
+                    league_ids=TIER_3_LEAGUES,
+                    min_date=min_dt,
+                )
+            logger.info(f"[TRAIN-FAMILY-S] FeatureEngineer returned {len(df)} rows")
+
+            # Step 2: Merge MTV from parquet
+            parquet_path = Path("data/historical_mtv_features_tm_hiconf_padded.parquet")
+            if not parquet_path.exists():
+                raise FileNotFoundError(f"MTV parquet not found: {parquet_path}")
+
+            mtv = pd.read_parquet(parquet_path)
+            mtv = mtv[mtv["league_id"].isin(TIER_3_LEAGUES)]
+            logger.info(f"[TRAIN-FAMILY-S] MTV parquet: {len(mtv)} rows for Tier 3")
+
+            df = df.merge(mtv[["match_id"] + MTV_COLS], on="match_id", how="left")
+            for col in MTV_COLS:
+                df[col] = df[col].fillna(0.0)
+
+            # Step 3: Filter odds
+            before = len(df)
+            df = df[df["odds_home"].notna() & df["odds_draw"].notna() & df["odds_away"].notna()].reset_index(drop=True)
+            logger.info(f"[TRAIN-FAMILY-S] Odds filter: {before} → {len(df)} rows")
+
+            # Step 4: Train
+            engine = FamilySEngine(model_version=MODEL_VERSION)
+            missing = [c for c in engine.FEATURE_COLUMNS if c not in df.columns]
+            if missing:
+                raise ValueError(f"Missing features: {missing}")
+
+            logger.info(f"[TRAIN-FAMILY-S] Training with {len(df)} samples, {len(engine.FEATURE_COLUMNS)} features...")
+            result = engine.train(df, n_splits=3)
+            brier = result.get("brier_score", 0)
+            cv_scores = result.get("cv_brier_scores", [])
+            logger.info(f"[TRAIN-FAMILY-S] Brier={brier:.4f}, CV={cv_scores}")
+
+            # Step 5: Persist
+            training_config = {
+                "league_ids": TIER_3_LEAGUES,
+                "league_only": True,
+                "min_date": "2023-01-01",
+                "feature_set_name": "core17+odds3+mtv4",
+                "feature_columns": engine.FEATURE_COLUMNS,
+                "mtv_source": "tm_hiconf_padded",
+                "n_features": len(engine.FEATURE_COLUMNS),
+            }
+            async with AsyncSessionLocal() as session:
+                snapshot_id = await persist_family_s_snapshot(
+                    session=session,
+                    engine=engine,
+                    brier_score=brier,
+                    cv_scores=cv_scores,
+                    samples_trained=len(df),
+                    training_config=training_config,
+                )
+
+            _training_status["result"] = {
+                "snapshot_id": snapshot_id,
+                "brier_score": round(brier, 4),
+                "cv_scores": [round(s, 4) for s in cv_scores],
+                "samples": len(df),
+                "model_version": MODEL_VERSION,
+                "is_active": False,
+            }
+            logger.info(f"[TRAIN-FAMILY-S] DONE. snapshot_id={snapshot_id}, brier={brier:.4f}")
+
+        except Exception as e:
+            _training_status["error"] = f"{type(e).__name__}: {e}"
+            logger.error(f"[TRAIN-FAMILY-S] FAILED: {e}", exc_info=True)
+        finally:
+            _training_status["running"] = False
+
+    asyncio.ensure_future(_run_training())
+    return {"ok": True, "message": "Family S training started in background", "check_status": "/ops/train-family-s/status"}
+
+
+@router.get("/ops/train-family-s/status")
+async def train_family_s_status(request: Request):
+    """Check Family S training status. TEMPORARY."""
+    _check_token(request)
+    return _training_status

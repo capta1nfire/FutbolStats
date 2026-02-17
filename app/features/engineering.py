@@ -2385,9 +2385,16 @@ class FeatureEngineer:
 
         # Build features for each match
         rows = []
+        _t0 = __import__("time").time()
         for i, match in enumerate(matches):
-            if (i + 1) % 500 == 0:
-                logger.info(f"Processing match {i + 1}/{len(matches)}")
+            if (i + 1) % 250 == 0:
+                _elapsed = __import__("time").time() - _t0
+                _rate = (i + 1) / _elapsed
+                _eta = (len(matches) - i - 1) / _rate if _rate > 0 else 0
+                logger.info(
+                    f"Processing match {i + 1}/{len(matches)} "
+                    f"({_elapsed:.0f}s elapsed, ~{_eta:.0f}s remaining, {_rate:.1f} match/s)"
+                )
 
             try:
                 features = await self.get_match_features(match, league_only=league_only)
