@@ -1,22 +1,22 @@
 """
-Asymmetric League-Router — GDT Mandato M3.
+Asymmetric League-Router — GDT Mandato M3 / Mandato D.
 
 Routes predictions through different strategies based on league tier:
   - TIER 1 (Big 5 European): Baseline model, high market anchor alpha
   - TIER 2 (Peripheral, MTV-neutral): Baseline model, moderate market anchor
   - TIER 3 (Peripheral, MTV-positive): Family S model (MTV features injected)
 
-The 10 Tier 3 leagues are the GDT-identified winners where MTV statistically
-improves predictions (Δ=-0.00668 ***, N=1,802, 10/10 consistent).
+Tier 3 pruned from 10 to 5 leagues (Mandato D, 2026-02-17) based on
+PIT-padded Feature Lab results: strongest MTV signal + best data coverage.
 
 SteamChaser: For T1/T2, talent_delta is computed and logged (forward data
 collection) but NOT injected into predictions. For T3, talent_delta is
 injected into the feature set when available.
 
-Status: INFRASTRUCTURE READY. Family S model not yet trained.
+Status: INFRASTRUCTURE READY.
   - Router classification: ACTIVE
   - MTV feature injection: GATED behind LEAGUE_ROUTER_MTV_ENABLED flag
-  - Family S model: NOT YET TRAINED (requires separate training pipeline)
+  - Family S model: v2.0-tier3-family_s (loaded via app.ml.family_s)
 """
 
 import logging
@@ -37,20 +37,14 @@ TIER_1 = {
     140,  # La Liga (Spain)
 }
 
-# Tier 3: GDT-identified MTV winners — 10 leagues where MTV improves Brier
-# Mega-Pool V2: Pair B Δ=-0.00668 [CI: -0.01116, -0.00214] ***
-# All 10 leagues show MTV HELPS (100% consistency)
+# Tier 3: Family S — 5 leagues with strongest MTV signal (Mandato D, 2026-02-17)
+# Pruned from 10 to 5 based on PIT-padded Feature Lab + odds/MTV coverage
 TIER_3 = {
     88,   # Eredivisie (Netherlands)     Δ=-0.00987
     94,   # Primeira Liga (Portugal)     Δ=-0.01085
+    144,  # Belgian Pro League           (strong odds+MTV coverage)
     203,  # Süper Lig (Turkey)           Δ=-0.00624
-    242,  # LigaPro Serie A (Ecuador)    Δ=-0.00094
-    262,  # Liga MX (Mexico)             Δ=-0.00160
     265,  # Primera División (Chile)     Δ=-0.01719 (best)
-    268,  # Primera División (Uruguay)   Δ=-0.01074
-    281,  # Liga 1 (Peru)               Δ=-0.00496
-    299,  # Primera División (Venezuela) Δ=-0.00306
-    344,  # División Profesional (Bolivia) Δ=-0.00178
 }
 
 # Tier 2: Everything else (peripheral leagues where MTV was neutral/negative,

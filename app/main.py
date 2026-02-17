@@ -302,6 +302,14 @@ async def lifespan(app: FastAPI):
         if shadow_initialized:
             logger.info("Shadow engine initialized (two-stage model for A/B comparison)")
 
+    # Initialize Family S engine (Mandato D: Tier 3 MTV model)
+    # P1: Load always so flipping LEAGUE_ROUTER_MTV_ENABLED doesn't need redeploy
+    async with AsyncSessionLocal() as session:
+        from app.ml.family_s import init_family_s_engine
+        family_s_ok = await init_family_s_engine(session)
+        if family_s_ok:
+            logger.info("Family S engine loaded (activates when LEAGUE_ROUTER_MTV_ENABLED=true)")
+
     # Start background scheduler for weekly sync/train
     start_scheduler(ml_engine)
 

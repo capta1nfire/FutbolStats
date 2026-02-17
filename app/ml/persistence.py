@@ -189,6 +189,48 @@ async def activate_snapshot(session: AsyncSession, snapshot_id: int) -> bool:
         return False
 
 
+async def persist_family_s_snapshot(
+    session: AsyncSession,
+    engine: XGBoostEngine,
+    brier_score: float,
+    cv_scores: list,
+    samples_trained: int,
+    training_config: Optional[dict] = None,
+) -> int:
+    """Save Family S model to DB WITHOUT deactivating the active baseline.
+
+    P0-3: Unlike persist_model_snapshot(), this does NOT touch is_active
+    on any existing snapshot. Family S is always is_active=False.
+
+    Returns the ID of the created snapshot.
+    """
+    validate_model_version(engine.model_version)
+
+    model_blob = engine.save_to_bytes()
+
+    snapshot = ModelSnapshot(
+        model_version=engine.model_version,
+        model_blob=model_blob,
+        model_path="db_stored",
+        brier_score=brier_score,
+        cv_brier_scores=cv_scores,
+        samples_trained=samples_trained,
+        training_config=training_config,
+        is_active=False,
+        is_baseline=False,
+    )
+    session.add(snapshot)
+    await session.commit()
+    await session.refresh(snapshot)
+
+    logger.info(
+        f"Family S snapshot saved: version={engine.model_version}, "
+        f"brier={brier_score:.4f}, size={len(model_blob)} bytes, "
+        f"id={snapshot.id}, is_active=False"
+    )
+    return snapshot.id
+
+
 async def get_latest_snapshot(session: AsyncSession) -> Optional[ModelSnapshot]:
     """
     Get the most recent model snapshot (regardless of active status).

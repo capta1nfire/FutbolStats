@@ -61,7 +61,7 @@ async def cascade_handler(event: Event):
     try:
         from app.database import get_session_with_retry
         from app.db_utils import upsert
-        from app.ml import XGBoostEngine
+        from app.state import ml_engine
         from app.models import Prediction, Match
         from app.features.engineering import (
             FeatureEngineer,
@@ -70,6 +70,7 @@ async def cascade_handler(event: Event):
         )
         from app.ml.policy import apply_market_anchor, get_policy_config
         from app.ml.league_router import get_prediction_strategy
+        from app.ml.family_s import is_family_s_loaded, get_family_s_engine
         from app.config import get_settings
 
         # ── Step 1: Validate match is still NS and prediction is not frozen ──
@@ -119,10 +120,10 @@ async def cascade_handler(event: Event):
         # Prefer lineup_detected_at if provided; fallback to now.
         asof = lineup_detected_at if isinstance(lineup_detected_at, datetime) else datetime.utcnow()
 
-        # ── Step 2: Load ML engine ───────────────────────────────────────────
-        engine = XGBoostEngine()
-        if not engine.load_model():
-            logger.error(f"[CASCADE] Could not load ML model for match {match_id}")
+        # ── Step 2: Use baseline ML engine (P0-4 SSOT singleton) ────────────
+        engine = ml_engine
+        if not engine.is_loaded:
+            logger.error(f"[CASCADE] Baseline ML engine not loaded for match {match_id}")
             return
 
         # ── Step 3: Get features for this match ─────────────────────────────
@@ -183,8 +184,39 @@ async def cascade_handler(event: Event):
                     f"falling back to baseline"
                 )
 
-        # ── Step 4b: Predict ──────────────────────────────────────────────
-        predictions = engine.predict(df_match)
+        # ── Step 4b: Select engine (Family S for T3 + MTV, else baseline) ──
+        prediction_engine = engine  # baseline SSOT (default)
+        used_family_s = False
+
+        if (strategy["inject_mtv"]
+                and talent_delta_result
+                and is_family_s_loaded()
+                and "odds_home" in df_match.columns
+                and df_match["odds_home"].notna().all()):
+            family_s = get_family_s_engine()
+            if family_s:
+                prediction_engine = family_s
+                used_family_s = True
+                logger.info(
+                    f"[CASCADE] Using Family S engine for T3 match {match_id} "
+                    f"(odds + MTV available)"
+                )
+
+        # ── Step 4c: Predict (steel degradation on Family S failure) ─────
+        try:
+            predictions = prediction_engine.predict(df_match)
+        except Exception as pred_err:
+            if used_family_s:
+                logger.warning(
+                    f"[CASCADE] Family S predict failed for match {match_id}: {pred_err}, "
+                    f"falling back to baseline"
+                )
+                predictions = engine.predict(df_match)
+                prediction_engine = engine
+                used_family_s = False
+            else:
+                raise
+
         if not predictions or not predictions[0].get("probabilities"):
             logger.error(f"[CASCADE] Model returned no prediction for match {match_id}")
             return
@@ -255,7 +287,7 @@ async def cascade_handler(event: Event):
                 Prediction,
                 values={
                     "match_id": match_id,
-                    "model_version": engine.model_version,
+                    "model_version": prediction_engine.model_version,
                     "home_prob": probs["home"],
                     "draw_prob": probs["draw"],
                     "away_prob": probs["away"],
@@ -275,6 +307,8 @@ async def cascade_handler(event: Event):
             f"[CASCADE] Complete match_id={match_id} "
             f"tier={strategy['tier']} strategy={strategy['label']}: "
             f"H={probs['home']:.4f} D={probs['draw']:.4f} A={probs['away']:.4f} "
+            f"model={prediction_engine.model_version} "
+            f"family_s={'YES' if used_family_s else 'NO'} "
             f"asof={asof.isoformat()} "
             f"mtv={mtv_status} "
             f"lm={'OK' if line_movement and line_movement.get('line_drift_magnitude') is not None else 'SKIP'} "
