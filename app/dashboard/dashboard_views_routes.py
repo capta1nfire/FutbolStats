@@ -5255,6 +5255,25 @@ async def dashboard_photo_review_action(
                 response["cdn_url"] = promo["cdn_url"]
                 response["card_id"] = promo["card_id"]
                 logger.info(f"Photo promote #{candidate_id} → card #{promo['card_id']}")
+
+            # Auto-reject remaining pending candidates for same player
+            player_ext_id = row["player_external_id"]
+            rej_result = await session.execute(text("""
+                UPDATE player_photo_assets
+                SET review_status = 'rejected',
+                    changed_by = 'auto_superseded',
+                    updated_at = NOW()
+                WHERE player_external_id = :peid
+                  AND asset_type = 'candidate'
+                  AND review_status = 'pending_review'
+                  AND id != :approved_id
+                RETURNING id
+            """), {"peid": player_ext_id, "approved_id": candidate_id})
+            superseded = [r["id"] for r in rej_result.mappings().all()]
+            if superseded:
+                await session.commit()
+                response["superseded"] = superseded
+                logger.info(f"Photo approve #{candidate_id}: auto-rejected {len(superseded)} siblings {superseded}")
         except Exception as e:
             logger.error(f"Photo promote #{candidate_id} exception: {e}")
             response["promote_error"] = str(e)
