@@ -139,9 +139,9 @@ def crop_face(image_bytes: bytes, output_size: int = 512, player_name: str = "",
             left = min(left, w - crop_size)
             top = content_top
         else:
-            # --- Opaque mode: simple center crop of top portion ---
-            # Portrait photos: face is in top ~40%, centered horizontally
-            crop_size = min(w, int(h * 0.45))
+            # --- Opaque mode: tight headshot from top-center ---
+            # Portrait photos: face is in top ~20%, centered horizontally
+            crop_size = min(w, int(h * 0.22))
             left = max(0, (w - crop_size) // 2)
             top = 0
 
