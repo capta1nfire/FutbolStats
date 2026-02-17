@@ -5323,6 +5323,7 @@ async def dashboard_photo_promote_pending(
 async def dashboard_photo_face_preview(
     request: Request,
     candidate_id: int,
+    raw: int = Query(0, description="1 = return original image without any crop"),
     cx: int = Query(None, description="Manual crop X"),
     cy: int = Query(None, description="Manual crop Y"),
     cs: int = Query(None, description="Manual crop size"),
@@ -5368,6 +5369,14 @@ async def dashboard_photo_face_preview(
             image_bytes = resp.content
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"Image download failed: {e}")
+
+    # Raw mode: return original image as-is (for crop editor / source view)
+    if raw:
+        from fastapi.responses import Response as RawResp
+        ct = resp.headers.get("content-type", "image/jpeg")
+        return RawResp(content=image_bytes, media_type=ct, headers={
+            "Cache-Control": "public, max-age=3600",
+        })
 
     # Manual crop: apply exact coordinates (scaled to actual resolution)
     if cx is not None and cy is not None and cs is not None and cs > 0:

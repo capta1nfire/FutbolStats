@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
 
   // Forward optional manual crop params
   const cropParams = new URLSearchParams();
-  for (const key of ["cx", "cy", "cs", "sw", "sh", "clean", "rot"]) {
+  for (const key of ["cx", "cy", "cs", "sw", "sh", "clean", "rot", "raw"]) {
     const val = request.nextUrl.searchParams.get(key);
     if (val) cropParams.set(key, val);
   }
@@ -46,10 +46,11 @@ export async function GET(request: NextRequest) {
     }
 
     const imageBuffer = await resp.arrayBuffer();
+    const contentType = resp.headers.get("content-type") || "image/png";
     return new NextResponse(imageBuffer, {
       status: 200,
       headers: {
-        "Content-Type": "image/png",
+        "Content-Type": contentType,
         "Cache-Control": "public, max-age=3600",
         "x-request-id": requestId,
       },
