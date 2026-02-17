@@ -7,7 +7,7 @@ Flow:
 4. From original, crop face close-up as "face"
 5. Next.js <Image> handles on-demand sizing (no pre-generated thumbnails)
 
-Face detection: MediaPipe (primary) -> heuristic fallback (skin-tone + silhouette).
+Face detection: OpenCV Haar Cascade (primary) -> heuristic fallback (skin-tone + silhouette).
 """
 
 import io
@@ -27,8 +27,8 @@ _SKIN_CB_MAX = 127
 _SKIN_CR_MIN = 133
 _SKIN_CR_MAX = 173
 
-# Lazy-loaded MediaPipe face detector (singleton)
-_mp_face_detection = None
+# Lazy-loaded OpenCV Haar Cascade face detector (singleton)
+_cv2_face_cascade = None
 
 
 @dataclass
@@ -65,38 +65,45 @@ def has_transparent_background(image_bytes: bytes, threshold: float = 0.15) -> b
         return False
 
 
-# ── MediaPipe face detection (primary) ──────────────────────────────────
+# ── OpenCV Haar Cascade face detection (primary) ──────────────────────
 
 
-def _detect_face_mediapipe(rgb_array: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
-    """Detect face using MediaPipe Face Detection.
+def _detect_face_opencv(rgb_array: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
+    """Detect face using OpenCV Haar Cascade (frontal face).
 
     Returns (top, bottom, left, right) in pixels, or None if no face found.
     """
-    global _mp_face_detection
+    global _cv2_face_cascade
     try:
-        if _mp_face_detection is None:
-            import mediapipe as mp
-            _mp_face_detection = mp.solutions.face_detection.FaceDetection(
-                model_selection=1,  # Full-range model (works up to ~5m)
-                min_detection_confidence=0.5,
-            )
-        results = _mp_face_detection.process(rgb_array)
-        if not results.detections:
+        import cv2
+
+        if _cv2_face_cascade is None:
+            cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            _cv2_face_cascade = cv2.CascadeClassifier(cascade_path)
+            if _cv2_face_cascade.empty():
+                logger.warning("OpenCV: failed to load Haar cascade")
+                return None
+
+        gray = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2GRAY)
+        gray = cv2.equalizeHist(gray)
+
+        faces = _cv2_face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(30, 30),
+            flags=cv2.CASCADE_SCALE_IMAGE,
+        )
+
+        if len(faces) == 0:
             return None
-        # Use highest-confidence detection
-        det = max(results.detections, key=lambda d: d.score[0])
-        bbox = det.location_data.relative_bounding_box
-        img_h, img_w = rgb_array.shape[:2]
-        x = max(0, int(bbox.xmin * img_w))
-        y = max(0, int(bbox.ymin * img_h))
-        bw = min(int(bbox.width * img_w), img_w - x)
-        bh = min(int(bbox.height * img_h), img_h - y)
-        if bw < 20 or bh < 20:
-            return None
-        return (y, y + bh, x, x + bw)  # (top, bottom, left, right)
+
+        # Pick largest face by area
+        x, y, bw, bh = max(faces, key=lambda f: f[2] * f[3])
+        return (int(y), int(y + bh), int(x), int(x + bw))  # (top, bottom, left, right)
+
     except Exception as e:
-        logger.warning(f"MediaPipe face detection failed: {e}")
+        logger.warning(f"OpenCV face detection failed: {e}")
         return None
 
 
@@ -138,7 +145,7 @@ def _compute_crop_from_face_box(
     return _clamp_crop(crop_left, crop_top, size, w, h)
 
 
-# ── Heuristic helpers (fallback when MediaPipe fails) ───────────────────
+# ── Heuristic helpers (fallback when OpenCV fails) ────────────────────
 
 
 def _mask_bbox(
@@ -317,8 +324,8 @@ def crop_face(
 ) -> Optional[bytes]:
     """Crop face close-up from a player portrait.
 
-    Primary: MediaPipe face detection (works on any pose/angle).
-    Fallback: Heuristic (skin-tone + silhouette) when MediaPipe fails.
+    Primary: OpenCV Haar Cascade face detection.
+    Fallback: Heuristic (skin-tone + silhouette) when OpenCV fails.
 
     Args:
         image_bytes: Source image bytes
@@ -342,13 +349,13 @@ def crop_face(
         w, h = img.size
         rgb_array = np.array(img.convert("RGB"))
 
-        # Primary: MediaPipe face detection
-        face_box = _detect_face_mediapipe(rgb_array)
+        # Primary: OpenCV Haar Cascade face detection
+        face_box = _detect_face_opencv(rgb_array)
         if face_box:
             crop_left, crop_top, crop_size = _compute_crop_from_face_box(
                 face_box=face_box, w=w, h=h, scale=3.5, y_bias=0.42,
             )
-            method = "mediapipe"
+            method = "opencv"
         else:
             # Fallback: heuristic (skin-tone + silhouette)
             result = _heuristic_face_crop(img, w, h)
