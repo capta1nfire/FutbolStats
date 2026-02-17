@@ -96,6 +96,7 @@ interface PlayerDetailProps {
   player: TeamSquadPlayerSeasonStats;
   teamMatchesPlayed?: number;
   teamName?: string;
+  teamLogoUrl?: string;
 }
 
 const PLAYER_TABS = [
@@ -103,8 +104,9 @@ const PLAYER_TABS = [
   { id: "stats", icon: <BarChart3 />, label: "Stats" },
 ];
 
-export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName }: PlayerDetailProps) {
+export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogoUrl }: PlayerDetailProps) {
   const [imgError, setImgError] = useState(false);
+  const [photoModal, setPhotoModal] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
   const pos = (player.position || "U").toUpperCase();
   const isGK = pos === "G";
@@ -125,11 +127,15 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName }: Player
     .join(", ");
 
   return (
+    <>
     <div data-dev-ref="PlayerDetail" className="px-4 py-4 space-y-4">
       {/* Player header — always visible */}
       <div className="flex items-center gap-4">
         {!imgError ? (
-          <div className="w-24 h-24 rounded-full shrink-0 bg-white/10 overflow-hidden">
+          <div
+            className="w-24 h-24 rounded-full shrink-0 bg-white/10 overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all"
+            onClick={() => setPhotoModal(true)}
+          >
             <Image
               src={player.photo_url_card_hq || player.photo_url || playerPhotoUrl(player.player_external_id)}
               alt={player.player_name}
@@ -286,5 +292,35 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName }: Player
         </div>
       )}
     </div>
+
+      {/* Photo modal */}
+      {photoModal && !imgError && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/20"
+          onClick={() => setPhotoModal(false)}
+        >
+          <div className="relative max-w-sm w-full mx-4" onClick={(e) => e.stopPropagation()}>
+            <div className="absolute bottom-0 left-0 right-0 h-1/2 bg-black rounded-2xl shadow-tooltip" />
+            <div className="relative rounded-2xl overflow-hidden bg-gradient-to-b from-neutral-800 to-neutral-950 shadow-tooltip mb-10">
+              <Image
+                src={player.photo_url_card_hq || player.photo_url || playerPhotoUrl(player.player_external_id)}
+                alt={player.player_name}
+                width={512}
+                height={512}
+                className="w-full h-auto object-contain"
+                unoptimized={!(player.photo_url_card_hq)}
+              />
+            </div>
+            <div className="absolute bottom-0 left-0 right-0 px-4 py-2.5 flex items-center justify-center gap-2">
+              {teamLogoUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={teamLogoUrl} alt="" className="w-5 h-5 shrink-0 object-contain" />
+              )}
+              <p className="text-white/80 text-sm font-medium">{fullName}</p>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

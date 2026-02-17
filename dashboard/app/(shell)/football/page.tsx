@@ -506,6 +506,7 @@ function FootballPageContent() {
         selectedPlayer={selectedPlayer}
         teamMatchesPlayed={teamMatchesPlayed}
         teamName={teamData?.team?.name}
+        teamLogoUrl={teamData?.team?.logo_url}
       />
     </div>
   );

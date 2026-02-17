@@ -43,6 +43,7 @@ interface RightPanelProps {
   selectedPlayer?: TeamSquadPlayerSeasonStats | null;
   teamMatchesPlayed?: number;
   teamName?: string;
+  teamLogoUrl?: string;
 }
 
 /**
@@ -62,6 +63,7 @@ export function RightPanel({
   selectedPlayer,
   teamMatchesPlayed,
   teamName,
+  teamLogoUrl,
 }: RightPanelProps) {
   return (
     <aside
@@ -148,7 +150,7 @@ export function RightPanel({
         )}
         {activeTab === "player" && selectedPlayer && (
           <ScrollArea data-dev-ref="RightPanel:PlayerTab" className="flex-1 min-h-0">
-            <PlayerDetail player={selectedPlayer} teamMatchesPlayed={teamMatchesPlayed ?? 0} teamName={teamName} />
+            <PlayerDetail player={selectedPlayer} teamMatchesPlayed={teamMatchesPlayed ?? 0} teamName={teamName} teamLogoUrl={teamLogoUrl} />
           </ScrollArea>
         )}
       </div>
