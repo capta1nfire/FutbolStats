@@ -124,15 +124,15 @@ def crop_face(image_bytes: bytes, output_size: int = 512, player_name: str = "",
         # Take top 30% of CONTENT height (tighter face crop)
         face_h = int(content_h * 0.30)
 
-        # Find horizontal center of mass in the face region
-        # This centers the crop on the actual face, not the body
+        # Find horizontal center of face region using geometric midpoint
+        # (not center of mass, which gets pulled by shoulders/body)
         alpha = np.array(img.split()[3])
         face_region_alpha = alpha[content_top:content_top + face_h, :]
         cols_opaque = np.sum(face_region_alpha > 128, axis=0)
+        face_cols = np.where(cols_opaque > 0)[0]
 
-        if cols_opaque.sum() > 0:
-            col_indices = np.arange(len(cols_opaque))
-            face_center_x = int(np.average(col_indices, weights=cols_opaque))
+        if len(face_cols) > 0:
+            face_center_x = int((face_cols[0] + face_cols[-1]) / 2)
         else:
             face_center_x = content_left + content_w // 2
 
