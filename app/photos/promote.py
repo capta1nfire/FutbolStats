@@ -141,7 +141,7 @@ async def promote_candidate(candidate_id: int, session: AsyncSession) -> dict:
         ) VALUES (
             :ext_id, :team_id, :season, :role, :kit,
             'card', 'segmented', :r2_key, :cdn_url, :hash, 1,
-            :source, 'photoroom', :quality, :meta::jsonb,
+            :source, 'photoroom', :quality, CAST(:meta AS jsonb),
             'approved', true, NOW(), 'manual',
             NOW(), NOW()
         )

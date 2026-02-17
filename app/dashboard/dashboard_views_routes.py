@@ -5290,6 +5290,7 @@ async def dashboard_photo_promote_pending(
             promo = await promote_candidate(cid, session)
             results.append({"candidate_id": cid, **promo})
         except Exception as e:
+            await session.rollback()
             results.append({"candidate_id": cid, "error": str(e)})
 
     ok = sum(1 for r in results if "cdn_url" in r)
