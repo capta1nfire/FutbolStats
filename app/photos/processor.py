@@ -388,7 +388,7 @@ def crop_face(
         face_box = _detect_face_mediapipe(rgb_array)
         if face_box:
             crop_left, crop_top, crop_size = _compute_crop_from_face_box(
-                face_box=face_box, w=w, h=h, scale=2.2, y_bias=0.35,
+                face_box=face_box, w=w, h=h, scale=2.4, y_bias=0.45,
             )
             method = "mediapipe"
         else:
@@ -396,7 +396,7 @@ def crop_face(
             face_box = _detect_face_opencv(rgb_array)
             if face_box:
                 crop_left, crop_top, crop_size = _compute_crop_from_face_box(
-                    face_box=face_box, w=w, h=h, scale=2.2, y_bias=0.35,
+                    face_box=face_box, w=w, h=h, scale=2.4, y_bias=0.45,
                 )
                 method = "opencv"
             else:
