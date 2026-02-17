@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { id, action, manual_crop } = body;
+  const { id, action, manual_crop, face_detect } = body;
 
   if (!id || !action) {
     return NextResponse.json({ error: "id and action required" }, { status: 400 });
@@ -32,6 +32,7 @@ export async function POST(request: NextRequest) {
 
   const payload: Record<string, unknown> = { action };
   if (manual_crop) payload.manual_crop = manual_crop;
+  if (face_detect) payload.face_detect = face_detect;
 
   const { data, status, requestId } = await proxyFetchMutation(
     `/dashboard/photos/review/${id}`,

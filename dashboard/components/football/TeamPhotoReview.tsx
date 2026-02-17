@@ -136,6 +136,7 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
             id: current.id,
             action,
             manual_crop: action === "approve" ? manualCrop : undefined,
+            face_detect: action === "approve" && faceData?.detected ? faceData : undefined,
           }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -153,7 +154,7 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
         setError(e instanceof Error ? e.message : "Action failed");
       }
     },
-    [current, manualCrop]
+    [current, manualCrop, faceData]
   );
 
   // Scoped keyboard handler (only when container has focus)

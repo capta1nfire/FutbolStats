@@ -5158,6 +5158,7 @@ async def dashboard_photo_review_action(
     body = await request.json()
     action = body.get("action")  # "approve" or "reject"
     manual_crop = body.get("manual_crop") if action == "approve" else None
+    face_detect = body.get("face_detect") if action == "approve" else None
 
     if action not in ("approve", "reject"):
         raise HTTPException(status_code=400, detail="action must be 'approve' or 'reject'")
@@ -5192,21 +5193,29 @@ async def dashboard_photo_review_action(
             "source_height": sh,
         })
 
+    face_detect_json = None
+    if face_detect and isinstance(face_detect, dict) and face_detect.get("detected"):
+        face_detect_json = _json.dumps(face_detect)
+
     if manual_crop_json:
-        sql = text("""
+        # Build JSONB merge with manual_crop + optional face_detect
+        meta_expr = "jsonb_build_object('manual_crop', CAST(:manual_crop AS jsonb))"
+        if face_detect_json:
+            meta_expr = f"{meta_expr} || jsonb_build_object('face_detect', CAST(:face_detect AS jsonb))"
+        sql = text(f"""
             UPDATE player_photo_assets
             SET review_status = :status,
                 changed_by = 'manual',
                 updated_at = NOW(),
-                photo_meta = COALESCE(photo_meta, '{}'::jsonb)
-                             || jsonb_build_object('manual_crop', CAST(:manual_crop AS jsonb))
+                photo_meta = COALESCE(photo_meta, '{{}}'::jsonb)
+                             || {meta_expr}
             WHERE id = :id AND asset_type = 'candidate'
             RETURNING id, player_external_id, review_status
         """)
-        result = await session.execute(
-            sql,
-            {"status": new_status, "id": candidate_id, "manual_crop": manual_crop_json},
-        )
+        params = {"status": new_status, "id": candidate_id, "manual_crop": manual_crop_json}
+        if face_detect_json:
+            params["face_detect"] = face_detect_json
+        result = await session.execute(sql, params)
     else:
         sql = text("""
             UPDATE player_photo_assets
