@@ -114,6 +114,7 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
     // Keep adjust mode active during fullscreen review session
     if (fullscreen) setAdjustMode(true);
     setManualCrop(null);
+    setImgErrors({});
     setCleanLoading(false);
     setCleanPreviewUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
     setFaceData(null);
@@ -124,7 +125,7 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
       .then((d) => { console.log("[face-detect] data:", d); if (!cancelled && d) setFaceData(d); })
       .catch((e) => { console.error("[face-detect] error:", e); });
     return () => { cancelled = true; };
-  }, [current?.id]);
+  }, [current?.id, fullscreen]);
 
   const handleAction = useCallback(
     async (action: "approve" | "reject") => {
@@ -247,7 +248,6 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
         setAdjPan(clampPanFn(-manualCrop.x * ds, -manualCrop.y * ds, w, h, z));
       } else {
         // Start at 230% zoom so face is prominent
-        const minZ = Math.max(1.0, w / h);
         const initZ = 2.3;
         const ds = (CROP_FRAME / w) * initZ;
         const imgH = h * ds;
