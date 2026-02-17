@@ -45,4 +45,4 @@ prometheus-client==0.19.0
 sentry-sdk[fastapi]==1.40.0
 Pillow>=10.0.0
 cairosvg>=2.7.0  # SVG to PNG conversion for logo uploads
-opencv-python-headless>=4.8.0  # Face detection (Haar Cascade) for player photo crops
+mediapipe>=0.10.9  # Face detection for player photo crops
