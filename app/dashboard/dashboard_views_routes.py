@@ -5260,6 +5260,43 @@ async def dashboard_photo_review_action(
     return response
 
 
+@router.post("/dashboard/photos/promote-pending")
+async def dashboard_photo_promote_pending(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Batch-promote all approved candidates that don't have a card yet."""
+    _check_token(request)
+
+    from app.photos.promote import promote_candidate
+
+    rows = (await session.execute(text("""
+        SELECT pa.id
+        FROM player_photo_assets pa
+        WHERE pa.asset_type = 'candidate'
+          AND pa.review_status = 'approved'
+          AND NOT EXISTS (
+              SELECT 1 FROM player_photo_assets c
+              WHERE c.asset_type = 'card'
+                AND c.photo_meta->>'promoted_from' = pa.id::text
+          )
+        ORDER BY pa.id
+    """))).fetchall()
+
+    results = []
+    for row in rows:
+        cid = row[0]
+        try:
+            promo = await promote_candidate(cid, session)
+            results.append({"candidate_id": cid, **promo})
+        except Exception as e:
+            results.append({"candidate_id": cid, "error": str(e)})
+
+    ok = sum(1 for r in results if "cdn_url" in r)
+    logger.info(f"promote-pending: {ok}/{len(results)} promoted")
+    return {"total": len(results), "promoted": ok, "results": results}
+
+
 @router.get("/dashboard/photos/preview/{candidate_id}")
 async def dashboard_photo_face_preview(
     request: Request,
