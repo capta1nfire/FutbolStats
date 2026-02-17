@@ -13,6 +13,10 @@ Usage:
     source .env
     python scripts/build_historical_mtv.py --league 39              # Canary EPL
     python scripts/build_historical_mtv.py --resume --concurrency 10 # Full run
+
+TM Injuries integration (offline, explicit):
+    python scripts/build_historical_mtv.py --league 39 \
+        --tm-injuries data/tm_injuries_by_match.parquet
 """
 
 import argparse
@@ -23,6 +27,7 @@ import os
 import statistics
 import sys
 import time
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -41,6 +46,9 @@ from app.models import Match
 # -- ABE P0-1: Named constants, registered in metadata --
 XI_WINDOW = 15    # Matches recientes para predecir expected XI
 PTS_LIMIT = 10    # Matches con rating para calcular PTS rolling
+
+# -- TM confidence threshold (ABE: hiConf vs midConf) --
+TM_HI_CONF_THRESHOLD = 0.95
 
 logging.basicConfig(
     level=logging.INFO,
@@ -115,7 +123,133 @@ def load_existing_ids(output_path):
         return set()
 
 
-async def process_match(session_maker, match_id, semaphore):
+def load_tm_exclusions(parquet_path, mapping_path=None):
+    """Load TM injury exclusions per match x team (ABE: offline/explicit).
+
+    Args:
+        parquet_path: Path to tm_injuries_by_match.parquet
+        mapping_path: Optional path to tm_player_mapping.json for confidence
+
+    Returns:
+        exclusions: {(match_id, team_id): set(player_external_ids)}
+        conf_map: {player_external_id: 'hi'|'mid'} confidence classification
+    """
+    pq = Path(parquet_path)
+    if not pq.exists():
+        raise FileNotFoundError(f"TM injuries parquet not found: {pq}")
+
+    df = pd.read_parquet(pq)
+    logger.info(
+        "TM injuries loaded: %d records from %s", len(df), pq.name
+    )
+
+    exclusions = {}
+    for _, row in df.iterrows():
+        key = (int(row["match_id"]), int(row["team_id"]))
+        if key not in exclusions:
+            exclusions[key] = set()
+        exclusions[key].add(int(row["player_external_id"]))
+
+    # Confidence map from player mapping
+    conf_map = {}
+    mp = Path(mapping_path) if mapping_path else None
+    if mp and mp.exists():
+        with open(mp) as f:
+            mapping = json.load(f)
+        for entry in mapping.get("mappings", []):
+            af_id = entry["af_id"]
+            score = entry.get("score", 0)
+            conf_map[af_id] = "hi" if score >= TM_HI_CONF_THRESHOLD else "mid"
+        logger.info(
+            "TM confidence map: %d players (%d hi, %d mid)",
+            len(conf_map),
+            sum(1 for v in conf_map.values() if v == "hi"),
+            sum(1 for v in conf_map.values() if v == "mid"),
+        )
+    else:
+        logger.info("TM confidence map: not available (no mapping file)")
+
+    return exclusions, conf_map
+
+
+def log_tm_coverage(records, tm_exclusions, conf_map, all_matches):
+    """Log TM injury coverage per league (ABE: coverage logging).
+
+    Reports: %matches with >=1 exclusion, avg_excluded, hiConf vs midConf.
+    """
+    if not tm_exclusions:
+        return {}
+
+    # Group matches by league
+    by_league = defaultdict(list)
+    for mid, lid, _ in all_matches:
+        by_league[lid].append(mid)
+
+    # Build per-match TM stats from records
+    tm_stats_by_match = {}
+    for r in records:
+        mid = r["match_id"]
+        h_exc = r.get("tm_home_excluded", 0)
+        a_exc = r.get("tm_away_excluded", 0)
+        tm_stats_by_match[mid] = h_exc + a_exc
+
+    # Classify exclusions by confidence
+    all_hi = 0
+    all_mid = 0
+    for key, player_ids in tm_exclusions.items():
+        for pid in player_ids:
+            c = conf_map.get(pid, "mid")
+            if c == "hi":
+                all_hi += 1
+            else:
+                all_mid += 1
+
+    logger.info("=" * 60)
+    logger.info("TM INJURY COVERAGE BY LEAGUE:")
+    logger.info(
+        "%-8s %8s %8s %8s %10s",
+        "League", "Matches", "w/Excl", "%Cover", "AvgExcl",
+    )
+    logger.info("-" * 50)
+
+    coverage_report = {}
+    for lid in sorted(by_league.keys()):
+        match_ids = by_league[lid]
+        n_total = len(match_ids)
+        n_with_excl = 0
+        total_excl = 0
+        for mid in match_ids:
+            exc = tm_stats_by_match.get(mid, 0)
+            if exc > 0:
+                n_with_excl += 1
+                total_excl += exc
+
+        pct = 100 * n_with_excl / n_total if n_total > 0 else 0
+        avg = total_excl / n_with_excl if n_with_excl > 0 else 0
+
+        logger.info(
+            "%-8d %8d %8d %7.1f%% %9.1f",
+            lid, n_total, n_with_excl, pct, avg,
+        )
+        coverage_report[str(lid)] = {
+            "matches": n_total,
+            "with_exclusions": n_with_excl,
+            "coverage_pct": round(pct, 1),
+            "avg_excluded": round(avg, 2),
+        }
+
+    logger.info("-" * 50)
+    logger.info(
+        "Confidence: %d hiConf (score>=%.2f), %d midConf",
+        all_hi, TM_HI_CONF_THRESHOLD, all_mid,
+    )
+    logger.info("=" * 60)
+
+    coverage_report["_confidence"] = {"hi": all_hi, "mid": all_mid}
+    return coverage_report
+
+
+async def process_match(session_maker, match_id, semaphore, tm_exclusions=None):
     """Process a single match using EXACT production functions."""
     async with semaphore:
         try:
@@ -132,6 +266,17 @@ async def process_match(session_maker, match_id, semaphore):
                 # Build Match model from row data
                 match = Match(**{k: row[k] for k in row.keys()})
 
+                # TM exclusions: team-scoped (ABE P0)
+                home_extra = None
+                away_extra = None
+                if tm_exclusions:
+                    home_extra = tm_exclusions.get(
+                        (match_id, row["home_team_id"])
+                    )
+                    away_extra = tm_exclusions.get(
+                        (match_id, row["away_team_id"])
+                    )
+
                 # EXACT production function call
                 # ABE P0-1: window=XI_WINDOW (15), limit_matches=PTS_LIMIT (10)
                 features = await compute_match_talent_delta_features(
@@ -140,14 +285,22 @@ async def process_match(session_maker, match_id, semaphore):
                     window=XI_WINDOW,
                     limit_matches=PTS_LIMIT,
                     include_doubtful=False,
+                    home_extra_excluded=home_extra,
+                    away_extra_excluded=away_extra,
                 )
 
-                return {
+                out = {
                     "match_id": match_id,
                     "league_id": row["league_id"],
                     "date": row["date"],
                     **features,
                 }
+                # Track TM exclusion counts for coverage logging
+                if tm_exclusions is not None:
+                    out["tm_home_excluded"] = len(home_extra) if home_extra else 0
+                    out["tm_away_excluded"] = len(away_extra) if away_extra else 0
+
+                return out
         except Exception as e:
             logger.warning("Match %d: %s", match_id, str(e)[:200])
             return {"match_id": match_id, "error": str(e)[:200]}
@@ -163,6 +316,15 @@ async def run(args):
 
     # Ensure output directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Load TM exclusions if provided (ABE: offline/explicit CLI flag)
+    tm_exclusions = None
+    tm_conf_map = {}
+    if args.tm_injuries:
+        mapping_path = Path(args.tm_injuries).parent / "tm_player_mapping.json"
+        tm_exclusions, tm_conf_map = load_tm_exclusions(
+            args.tm_injuries, str(mapping_path)
+        )
 
     # Load match IDs
     logger.info("Loading eligible matches...")
@@ -200,7 +362,8 @@ async def run(args):
         batch_t0 = time.time()
 
         tasks = [
-            process_match(session_maker, mid, semaphore) for mid, _, _ in batch
+            process_match(session_maker, mid, semaphore, tm_exclusions)
+            for mid, _, _ in batch
         ]
         batch_results = await asyncio.gather(*tasks)
 
@@ -239,18 +402,20 @@ async def run(args):
     for r in all_results:
         if "error" in r:
             continue
-        records.append(
-            {
-                "match_id": r["match_id"],
-                "league_id": r["league_id"],
-                "date": r["date"],
-                "home_talent_delta": r.get("home_talent_delta"),
-                "away_talent_delta": r.get("away_talent_delta"),
-                "talent_delta_diff": r.get("talent_delta_diff"),
-                "shock_magnitude": r.get("shock_magnitude"),
-                "talent_delta_missing": r.get("talent_delta_missing", 1),
-            }
-        )
+        rec = {
+            "match_id": r["match_id"],
+            "league_id": r["league_id"],
+            "date": r["date"],
+            "home_talent_delta": r.get("home_talent_delta"),
+            "away_talent_delta": r.get("away_talent_delta"),
+            "talent_delta_diff": r.get("talent_delta_diff"),
+            "shock_magnitude": r.get("shock_magnitude"),
+            "talent_delta_missing": r.get("talent_delta_missing", 1),
+        }
+        if tm_exclusions is not None:
+            rec["tm_home_excluded"] = r.get("tm_home_excluded", 0)
+            rec["tm_away_excluded"] = r.get("tm_away_excluded", 0)
+        records.append(rec)
 
     df = pd.DataFrame(records)
 
@@ -305,6 +470,13 @@ async def run(args):
         len(df),
     )
 
+    # -- TM coverage report (ABE: hiConf vs midConf) --
+    tm_coverage = {}
+    if tm_exclusions is not None:
+        tm_coverage = log_tm_coverage(
+            records, tm_exclusions, tm_conf_map, all_matches
+        )
+
     # -- ABE P0-1: Save metadata --
     n_with_delta = int(df["home_talent_delta"].notna().sum())
     n_missing = int(df["talent_delta_missing"].sum())
@@ -314,6 +486,7 @@ async def run(args):
         "include_doubtful": False,
         "min_date": "2023-01-01",
         "league_filter": args.league,
+        "tm_injuries": args.tm_injuries,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "total_matches": len(all_matches),
         "success": len(records),
@@ -324,6 +497,8 @@ async def run(args):
         "coverage_pct": round(100 * n_with_delta / len(df), 1) if len(df) > 0 else 0,
         "canary_metrics": canary_metrics,
     }
+    if tm_coverage:
+        metadata["tm_coverage"] = tm_coverage
 
     meta_path = output_path.with_suffix(".json").parent / "historical_mtv_metadata.json"
     with open(meta_path, "w") as f:
@@ -358,6 +533,12 @@ def main():
         "--resume",
         action="store_true",
         help="Skip matches already in parquet",
+    )
+    parser.add_argument(
+        "--tm-injuries",
+        type=str,
+        default=None,
+        help="Path to TM injuries parquet (offline injection, zero prod impact)",
     )
     args = parser.parse_args()
     asyncio.run(run(args))

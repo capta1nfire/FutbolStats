@@ -661,12 +661,16 @@ async def predict_expected_xi_injury_aware(
     top_k: int = 18,
     min_history_matches: int = 3,
     include_doubtful: bool = False,
+    extra_excluded_player_ids: Optional[set] = None,
 ) -> Optional[dict]:
     """
     Convenience wrapper: expected XI prediction excluding known missing players.
 
     Uses player_injuries (per-fixture) to exclude injury_type='Missing Fixture'
     (optionally also Questionable/Doubtful) captured before kickoff.
+
+    extra_excluded_player_ids: optional set of additional player IDs to exclude
+    (e.g. from Transfermarkt historical injuries for offline MTV builds).
     """
     excluded = await load_injury_excluded_player_ids(
         session,
@@ -675,6 +679,8 @@ async def predict_expected_xi_injury_aware(
         match_kickoff=match_date,
         include_doubtful=include_doubtful,
     )
+    if extra_excluded_player_ids:
+        excluded = excluded | extra_excluded_player_ids
     return await predict_expected_xi(
         session,
         team_id=team_id,
@@ -1015,6 +1021,7 @@ async def compute_team_talent_delta(
     window: int = 15,
     limit_matches: int = 10,
     include_doubtful: bool = False,
+    extra_excluded_player_ids: Optional[set] = None,
 ) -> dict:
     """
     Compute talent delta for one team in a match:
@@ -1043,6 +1050,7 @@ async def compute_team_talent_delta(
         top_k=18,
         min_history_matches=3,
         include_doubtful=include_doubtful,
+        extra_excluded_player_ids=extra_excluded_player_ids,
     )
     xi_expected = expected.get("expected_xi_ids") if expected else None
     if not xi_expected or len(xi_expected) < 7:
@@ -1126,6 +1134,8 @@ async def compute_match_talent_delta_features(
     window: int = 15,
     limit_matches: int = 10,
     include_doubtful: bool = False,
+    home_extra_excluded: Optional[set] = None,
+    away_extra_excluded: Optional[set] = None,
 ) -> dict:
     """
     Compute home/away talent delta features for a match (Phase 2 MTV).
@@ -1134,6 +1144,9 @@ async def compute_match_talent_delta_features(
       - home_talent_delta, away_talent_delta
       - talent_delta_diff = home - away
       - *_missing flags
+
+    Optional extra_excluded params allow offline injection of additional
+    player exclusions (e.g. TM historical injuries) without touching DB.
     """
     home = await compute_team_talent_delta(
         session,
@@ -1144,6 +1157,7 @@ async def compute_match_talent_delta_features(
         window=window,
         limit_matches=limit_matches,
         include_doubtful=include_doubtful,
+        extra_excluded_player_ids=home_extra_excluded,
     )
     away = await compute_team_talent_delta(
         session,
@@ -1154,6 +1168,7 @@ async def compute_match_talent_delta_features(
         window=window,
         limit_matches=limit_matches,
         include_doubtful=include_doubtful,
+        extra_excluded_player_ids=away_extra_excluded,
     )
 
     home_delta = home.get("talent_delta")
