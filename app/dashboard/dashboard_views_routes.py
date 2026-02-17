@@ -5108,6 +5108,7 @@ async def dashboard_photo_candidates(
         LEFT JOIN players p ON p.external_id = pa.player_external_id
         WHERE pa.asset_type = 'candidate'
           AND pa.review_status = :status
+          AND pa.source != 'api_football'
           AND (CAST(:team_id AS INTEGER) IS NULL OR p.team_id = :team_id)
         ORDER BY pa.quality_score DESC NULLS LAST, pa.created_at DESC
     """)
@@ -5241,6 +5242,7 @@ async def dashboard_photo_face_preview(
     cs: int = Query(None, description="Manual crop size"),
     sw: int = Query(None, description="Source width at crop time"),
     sh: int = Query(None, description="Source height at crop time"),
+    clean: int = Query(0, description="1 = also run PhotoRoom background removal"),
     session: AsyncSession = Depends(get_async_session),
 ):
     """Return a face-crop preview PNG for a photo candidate.
@@ -5248,6 +5250,7 @@ async def dashboard_photo_face_preview(
     Downloads the candidate image, runs crop_face(), and streams the result.
     If manual crop params (cx, cy, cs, sw, sh) are provided, applies that
     exact crop instead of auto-detect — what you see is what you get.
+    If clean=1, also runs PhotoRoom background removal on the cropped result.
     """
     _check_token(request)
 
@@ -5303,10 +5306,18 @@ async def dashboard_photo_face_preview(
         scaled_y = min(scaled_y, max(0, ah - scaled_size))
 
         cropped = img.crop((scaled_x, scaled_y, scaled_x + scaled_size, scaled_y + scaled_size))
-        cropped = cropped.resize((256, 256), PILImage.Resampling.LANCZOS)
+        cropped = cropped.resize((512, 512), PILImage.Resampling.LANCZOS)
         buf = _io.BytesIO()
         cropped.save(buf, format="PNG", optimize=True)
-        return Response(content=buf.getvalue(), media_type="image/png", headers={
+        crop_bytes = buf.getvalue()
+
+        if clean:
+            from app.photos.photoroom import remove_background
+            cleaned = await remove_background(crop_bytes)
+            if cleaned:
+                crop_bytes = cleaned
+
+        return Response(content=crop_bytes, media_type="image/png", headers={
             "Cache-Control": "no-cache",
         })
 
