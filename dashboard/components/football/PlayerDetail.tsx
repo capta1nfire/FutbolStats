@@ -119,7 +119,6 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogo
   const [imgSubmitting, setImgSubmitting] = useState(false);
   const [imgMsg, setImgMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [candidateId, setCandidateId] = useState<number | null>(null);
-  const [candidateUrl, setCandidateUrl] = useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [pastePreview, setPastePreview] = useState<string | null>(null);
@@ -131,7 +130,6 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogo
     setImgUrl("");
     setImgMsg(null);
     setCandidateId(null);
-    setCandidateUrl(null);
     setReviewOpen(false);
     setPastePreview(null);
   }, [player.player_external_id]);
@@ -154,7 +152,6 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogo
         return;
       }
       setCandidateId(data.id);
-      setCandidateUrl(data.candidate_url);
       setImgMsg({ type: "ok", text: `Candidate #${data.id} created` });
       setImgUrl("");
       setPastePreview(null);
@@ -508,13 +505,17 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogo
                 </h4>
                 <span className="text-[10px] text-green-500">ready for review</span>
               </div>
-              {candidateUrl && (
-                <div className="flex justify-center">
-                  <div className="relative w-36 h-48 rounded-lg bg-muted overflow-hidden border border-border">
-                    <Image src={candidateUrl} alt="Candidate" fill className="object-contain" unoptimized />
-                  </div>
+              <div className="flex justify-center">
+                <div className="relative w-36 h-48 rounded-lg bg-muted overflow-hidden border border-border">
+                  <Image
+                    src={`/api/photos/preview?id=${candidateId}`}
+                    alt="Candidate"
+                    fill
+                    className="object-contain"
+                    unoptimized
+                  />
                 </div>
-              )}
+              </div>
               <button
                 onClick={() => setReviewOpen(true)}
                 className="w-full py-2 rounded-lg bg-primary/10 border border-primary/30 text-sm text-primary hover:bg-primary/20 transition-colors"
