@@ -5281,6 +5281,84 @@ async def dashboard_photo_review_action(
     return response
 
 
+@router.post("/dashboard/photos/flip/{player_external_id}")
+async def dashboard_photo_flip(
+    request: Request,
+    player_external_id: int,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Flip the active card photo horizontally and re-upload to R2."""
+    _check_token(request)
+
+    from fastapi.responses import JSONResponse
+    import io as _io
+    import httpx
+    from PIL import Image as PILImage, ImageOps
+    from app.logos.r2_client import get_logos_r2_client
+    from app.photos.config import build_player_photo_key, compute_content_hash
+    from app.logos.config import get_logos_settings
+
+    # 1. Find active card
+    sql = text("""
+        SELECT id, cdn_url, r2_key FROM player_photo_assets
+        WHERE player_external_id = :ext_id
+          AND asset_type = 'card' AND is_active = true
+          AND style IN ('segmented', 'raw')
+        ORDER BY updated_at DESC LIMIT 1
+    """)
+    result = await session.execute(sql, {"ext_id": player_external_id})
+    card = result.mappings().first()
+    if not card:
+        raise HTTPException(status_code=404, detail="No active card found")
+
+    cdn_url = card["cdn_url"]
+    if not cdn_url:
+        raise HTTPException(status_code=404, detail="Card has no CDN URL")
+
+    # 2. Download current image
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(cdn_url)
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502, detail=f"Image download failed ({resp.status_code})")
+            image_bytes = resp.content
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Download error: {e}")
+
+    # 3. Flip horizontally
+    img = PILImage.open(_io.BytesIO(image_bytes))
+    flipped = ImageOps.mirror(img)
+    buf = _io.BytesIO()
+    flipped.save(buf, format="PNG", optimize=True)
+    flipped_bytes = buf.getvalue()
+
+    # 4. Upload to R2 with new content hash
+    r2_client = get_logos_r2_client()
+    if not r2_client:
+        raise HTTPException(status_code=500, detail="R2 client not available")
+
+    content_hash = compute_content_hash(flipped_bytes)
+    r2_key = build_player_photo_key(player_external_id, content_hash, "card", "segmented")
+    success = await r2_client.put_object(r2_key, flipped_bytes, "image/png")
+    if not success:
+        raise HTTPException(status_code=500, detail="R2 upload failed")
+
+    cdn_base = get_logos_settings().LOGOS_CDN_BASE_URL.rstrip("/")
+    new_cdn_url = f"{cdn_base}/{r2_key}"
+
+    # 5. Update DB
+    await session.execute(text("""
+        UPDATE player_photo_assets
+        SET cdn_url = :cdn_url, r2_key = :r2_key, content_hash = :hash,
+            updated_at = NOW(), changed_by = 'manual_flip'
+        WHERE id = :id
+    """), {"cdn_url": new_cdn_url, "r2_key": r2_key, "hash": content_hash, "id": card["id"]})
+    await session.commit()
+
+    logger.info(f"Photo flip: player {player_external_id} card #{card['id']} → {new_cdn_url}")
+    return {"cdn_url": new_cdn_url, "card_id": card["id"]}
+
+
 @router.post("/dashboard/photos/promote-pending")
 async def dashboard_photo_promote_pending(
     request: Request,

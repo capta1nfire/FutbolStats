@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { TeamSquadPlayerSeasonStats } from "@/lib/types/squad";
 import { IconTabs } from "@/components/ui/icon-tabs";
 import { SurfaceCard } from "@/components/ui/surface-card";
-import { Info, BarChart3, ImageIcon, Loader2, CheckCircle, XCircle, Upload } from "lucide-react";
+import { Info, BarChart3, ImageIcon, Loader2, CheckCircle, XCircle, Upload, FlipHorizontal2 } from "lucide-react";
 import { JerseyIcon } from "@/components/ui/jersey-icon";
 import { TeamPhotoReview } from "./TeamPhotoReview";
 
@@ -122,6 +122,8 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogo
   const [dragOver, setDragOver] = useState(false);
   const [pastePreview, setPastePreview] = useState<string | null>(null);
   const [currentPhotoDims, setCurrentPhotoDims] = useState<{ w: number; h: number } | null>(null);
+  const [flipping, setFlipping] = useState(false);
+  const [photoVersion, setPhotoVersion] = useState(0);
   const dropZoneRef = useRef<HTMLDivElement>(null);
 
   // Reset images state when player changes
@@ -219,6 +221,28 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogo
     }
   }, [handleImageFile, submitCandidate]);
   const sections = buildSections(player);
+
+  const handleFlip = useCallback(async () => {
+    setFlipping(true);
+    try {
+      const res = await fetch("/api/photos/flip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ player_external_id: player.player_external_id }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setImgMsg({ type: "err", text: data.error || `Flip failed (${res.status})` });
+        return;
+      }
+      setPhotoVersion((v) => v + 1);
+      setImgMsg({ type: "ok", text: "Photo flipped" });
+    } catch (e) {
+      setImgMsg({ type: "err", text: e instanceof Error ? e.message : "Flip failed" });
+    } finally {
+      setFlipping(false);
+    }
+  }, [player.player_external_id]);
 
   // Full name from firstname + lastname if available
   const fullName =
@@ -407,17 +431,30 @@ export function PlayerDetail({ player, teamMatchesPlayed = 0, teamName, teamLogo
         <div className="space-y-4" onPaste={handlePaste}>
           {/* Current photo */}
           <SurfaceCard className="space-y-2">
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Current Photo
-            </h4>
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Current Photo
+              </h4>
+              {player.photo_url_card_hq && (
+                <button
+                  onClick={handleFlip}
+                  disabled={flipping}
+                  className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+                  title="Flip photo horizontally"
+                >
+                  {flipping ? <Loader2 className="h-3 w-3 animate-spin" /> : <FlipHorizontal2 className="h-3 w-3" />}
+                  Flip
+                </button>
+              )}
+            </div>
             <div className="flex justify-center">
               <div className="relative w-32 h-32 rounded-lg bg-muted overflow-hidden">
                 <Image
-                  src={player.photo_url_card_hq || player.photo_url || playerPhotoUrl(player.player_external_id)}
+                  src={`${player.photo_url_card_hq || player.photo_url || playerPhotoUrl(player.player_external_id)}${photoVersion ? `?v=${photoVersion}` : ""}`}
                   alt={player.player_name}
                   fill
                   className="object-cover"
-                  unoptimized={!(player.photo_url_card_hq)}
+                  unoptimized
                   onLoad={(e) => {
                     const img = e.currentTarget as HTMLImageElement;
                     if (img.naturalWidth && img.naturalHeight) setCurrentPhotoDims({ w: img.naturalWidth, h: img.naturalHeight });
