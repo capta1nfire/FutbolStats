@@ -1,4 +1,1 @@
-[phases.install]
-cmds = [
-    "python -m venv --copies /opt/venv && . /opt/venv/bin/activate && pip install -r requirements.txt && pip uninstall -y opencv-python opencv-contrib-python 2>/dev/null; pip install opencv-python-headless>=4.8.0"
-]
+# Intentionally empty — use default Nixpacks Python build
