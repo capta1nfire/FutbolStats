@@ -310,8 +310,8 @@ def crop_face(image_bytes: bytes, output_size: int = 512, player_name: str = "",
                 face_box=face_box,
                 w=w,
                 h=h,
-                scale=2.35,
-                y_bias=0.60,
+                scale=3.2,
+                y_bias=0.55,
             )
         else:
             # Attempt 2: head region from foreground silhouette in top strip of content bbox.
@@ -335,8 +335,8 @@ def crop_face(image_bytes: bytes, output_size: int = 512, player_name: str = "",
                     face_box=head_box,
                     w=w,
                     h=h,
-                    scale=2.20,
-                    y_bias=0.62,
+                    scale=3.0,
+                    y_bias=0.55,
                 )
             else:
                 # Last resort: conservative top-center crop from content bbox.
