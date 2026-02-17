@@ -7369,3 +7369,122 @@ async def train_family_s_status(request: Request):
     """Check Family S training status. TEMPORARY."""
     _check_token(request)
     return _training_status
+
+
+_eval_status = {"running": False, "result": None, "error": None}
+
+
+@router.post("/ops/eval-family-s")
+async def eval_family_s_endpoint(request: Request):
+    """Evaluate Family S per-league Brier. TEMPORARY."""
+    _check_token(request)
+
+    if _eval_status["running"]:
+        return JSONResponse(status_code=409, content={"error": "Eval already running"})
+
+    async def _run_eval():
+        import numpy as np
+        import pandas as pd
+        from app.features.engineering import FeatureEngineer
+        from app.ml.family_s import FamilySEngine
+        from app.models import ModelSnapshot
+
+        _eval_status["running"] = True
+        _eval_status["result"] = None
+        _eval_status["error"] = None
+
+        try:
+            TIER_3_LEAGUES = [94, 265, 88, 203, 144]
+            MTV_COLS = ["home_talent_delta", "away_talent_delta", "talent_delta_diff", "shock_magnitude"]
+            LEAGUE_NAMES = {88: "Eredivisie", 94: "Primeira Liga", 144: "Belgian Pro League", 203: "Süper Lig", 265: "Chile Primera"}
+
+            # Load model from DB
+            async with AsyncSessionLocal() as session:
+                snap = (await session.execute(
+                    select(ModelSnapshot)
+                    .where(ModelSnapshot.model_version.like("%family_s%"))
+                    .order_by(ModelSnapshot.created_at.desc()).limit(1)
+                )).scalar_one_or_none()
+
+            if not snap or not snap.model_blob:
+                raise ValueError("Family S snapshot not found in DB")
+
+            engine = FamilySEngine(model_version=snap.model_version)
+            engine.load_from_bytes(snap.model_blob)
+            logger.info("[EVAL-FAMILY-S] Model loaded from snapshot id=%d", snap.id)
+
+            # Build features
+            min_dt = datetime(2023, 1, 1)
+            async with AsyncSessionLocal() as session:
+                fe = FeatureEngineer(session=session)
+                df = await fe.build_training_dataset(
+                    league_only=True, league_ids=TIER_3_LEAGUES, min_date=min_dt,
+                )
+            logger.info("[EVAL-FAMILY-S] Features: %d rows", len(df))
+
+            # Merge MTV
+            mtv = pd.read_parquet("data/historical_mtv_features_tm_hiconf_padded.parquet")
+            mtv = mtv[mtv["league_id"].isin(TIER_3_LEAGUES)]
+            df = df.merge(mtv[["match_id"] + MTV_COLS], on="match_id", how="left")
+            for col in MTV_COLS:
+                df[col] = df[col].fillna(0.0)
+
+            # Filter odds
+            df = df[df["odds_home"].notna() & df["odds_draw"].notna() & df["odds_away"].notna()].reset_index(drop=True)
+
+            # Predict
+            predictions = engine.predict(df)
+
+            # Calculate Brier per league
+            results = {}
+            for lid in TIER_3_LEAGUES:
+                mask = df["league_id"] == lid
+                df_l = df[mask].reset_index(drop=True)
+                preds_l = [p for p, m in zip(predictions, mask) if m]
+
+                if len(df_l) == 0:
+                    continue
+
+                brier_sum = 0.0
+                for idx, row in df_l.iterrows():
+                    probs = preds_l[idx]["probabilities"]
+                    actual = row["result"]  # 0=H, 1=D, 2=A
+                    # Brier = sum((p_i - y_i)^2) for 3 classes
+                    y = [1 if actual == c else 0 for c in range(3)]
+                    p = [probs["home"], probs["draw"], probs["away"]]
+                    brier_sum += sum((pi - yi) ** 2 for pi, yi in zip(p, y))
+
+                brier = brier_sum / len(df_l)
+                results[lid] = {
+                    "league": LEAGUE_NAMES.get(lid, str(lid)),
+                    "brier": round(brier, 4),
+                    "samples": len(df_l),
+                }
+                logger.info("[EVAL-FAMILY-S] %s: Brier=%.4f (N=%d)", LEAGUE_NAMES.get(lid), brier, len(df_l))
+
+            # Global
+            total_brier = sum(r["brier"] * r["samples"] for r in results.values()) / sum(r["samples"] for r in results.values())
+
+            _eval_status["result"] = {
+                "per_league": results,
+                "global_brier": round(total_brier, 4),
+                "total_samples": sum(r["samples"] for r in results.values()),
+                "snapshot_id": snap.id,
+            }
+            logger.info("[EVAL-FAMILY-S] DONE. Global Brier=%.4f", total_brier)
+
+        except Exception as e:
+            _eval_status["error"] = f"{type(e).__name__}: {e}"
+            logger.error("[EVAL-FAMILY-S] FAILED: %s", e, exc_info=True)
+        finally:
+            _eval_status["running"] = False
+
+    asyncio.ensure_future(_run_eval())
+    return {"ok": True, "message": "Eval started", "check_status": "/ops/eval-family-s/status"}
+
+
+@router.get("/ops/eval-family-s/status")
+async def eval_family_s_status(request: Request):
+    """Check eval status. TEMPORARY."""
+    _check_token(request)
+    return _eval_status
