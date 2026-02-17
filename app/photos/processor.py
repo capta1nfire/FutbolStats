@@ -124,17 +124,26 @@ def crop_face(image_bytes: bytes, output_size: int = 512, player_name: str = "",
         # Take top 30% of CONTENT height (tighter face crop)
         face_h = int(content_h * 0.30)
 
-        # Center horizontally on the content bounding box.
-        # For transparent-bg images, this centers on the person silhouette.
-        # For opaque images (pre-PhotoRoom), this centers on the full image.
-        content_center_x = content_left + content_w // 2
+        # Center horizontally on the HEAD region only (top portion),
+        # not the full body bbox — arms/pose can shift the body center
+        # away from where the head actually is.
+        head_bottom = content_top + face_h
+        alpha = np.array(img.split()[3])
+        head_strip = alpha[content_top:head_bottom, :]
+        head_cols = np.any(head_strip > 128, axis=0)
+        if np.any(head_cols):
+            head_left = int(np.argmax(head_cols))
+            head_right = int(w - np.argmax(head_cols[::-1]))
+            head_center_x = (head_left + head_right) // 2
+        else:
+            head_center_x = content_left + content_w // 2
 
         crop_size = min(content_w, face_h)
-        left = max(0, content_center_x - crop_size // 2)
+        left = max(0, head_center_x - crop_size // 2)
         left = min(left, w - crop_size)  # clamp to image bounds
         top = content_top
 
-        logger.debug(f"Content center X: {content_center_x}, crop left: {left}, crop_size: {crop_size}")
+        logger.debug(f"Head center X: {head_center_x}, crop left: {left}, crop_size: {crop_size}")
 
         face_region = img.crop((left, top, left + crop_size, top + crop_size))
         face_img = face_region.resize((output_size, output_size), Image.Resampling.LANCZOS)
