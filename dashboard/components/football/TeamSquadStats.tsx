@@ -241,12 +241,12 @@ export function TeamSquadStats({ teamId, season, onPlayerSelect }: TeamSquadStat
                   <td className="px-3 py-2 sticky left-[28px] z-[5] bg-background group-hover/row:bg-accent/50 transition-colors overflow-hidden">
                     <div className="flex items-center gap-2">
                       <Image
-                        src={p.photo_url_thumb_hq || p.photo_url || playerPhotoUrl(p.player_external_id)}
+                        src={p.photo_url_thumb_hq || p.photo_url_card_hq || p.photo_url || playerPhotoUrl(p.player_external_id)}
                         alt=""
                         width={26}
                         height={26}
                         className="rounded-full shrink-0 object-cover"
-                        unoptimized={!(p.photo_url_thumb_hq)}
+                        unoptimized={!(p.photo_url_thumb_hq || p.photo_url_card_hq)}
                       />
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">

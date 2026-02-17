@@ -166,17 +166,29 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (adjustMode) return;
-      if (e.key === "ArrowRight" || e.key === "Enter") {
+      if (e.key === "ArrowUp") {
         e.preventDefault();
         e.stopPropagation();
         handleAction("approve");
-      } else if (e.key === "ArrowLeft" || e.key === "Backspace") {
+      } else if (e.key === "ArrowDown") {
         e.preventDefault();
         e.stopPropagation();
         handleAction("reject");
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        e.stopPropagation();
+        setCurrentIndex((i) => Math.min(i + 1, candidates.length - 1));
+        setImgErrors({});
+        setManualCrop(null);
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        e.stopPropagation();
+        setCurrentIndex((i) => Math.max(i - 1, 0));
+        setImgErrors({});
+        setManualCrop(null);
       }
     },
-    [adjustMode, handleAction]
+    [adjustMode, handleAction, candidates.length]
   );
 
   // ── Pan/zoom helpers ──────────────────────────────────────────────
@@ -503,7 +515,7 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
               onClick={() => handleAction("reject")}
               disabled={adjustMode || submitting}
               className="w-16 h-16 rounded-full bg-red-500/20 border-2 border-red-500/60 flex items-center justify-center hover:bg-red-500/30 transition-colors disabled:opacity-40"
-              title="Reject (← Left Arrow)"
+              title="Reject (↓ Down Arrow)"
             >
               <XCircle className="h-8 w-8 text-red-400" />
             </button>
@@ -519,7 +531,7 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
               onClick={() => handleAction("approve")}
               disabled={adjustMode || submitting}
               className="w-16 h-16 rounded-full bg-green-500/20 border-2 border-green-500/60 flex items-center justify-center hover:bg-green-500/30 transition-colors disabled:opacity-40"
-              title="Approve (→ Right Arrow)"
+              title="Approve (↑ Up Arrow)"
             >
               {submitting ? (
                 <div className="h-8 w-8 border-2 border-green-400 border-t-transparent rounded-full animate-spin" />
@@ -546,7 +558,6 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
                       alt="Adjust"
                       className="absolute select-none pointer-events-none max-w-none"
                       referrerPolicy="no-referrer"
-                      crossOrigin="anonymous"
                       draggable={false}
                       onLoad={onAdjustImageLoad}
                       onError={() => setImgErrors((e) => ({ ...e, candidate: true }))}
@@ -689,7 +700,7 @@ export function TeamPhotoReview({ teamId, teamName }: TeamPhotoReviewProps) {
               />
             </div>
             <p className="text-white/40 text-xs text-center tabular-nums">
-              {currentIndex} / {candidates.length} · ← reject · → approve · ESC close
+              {currentIndex} / {candidates.length} · ↑ approve · ↓ reject · ←→ nav · ESC close
             </p>
           </div>
         </div>
