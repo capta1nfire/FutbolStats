@@ -7509,7 +7509,7 @@ async def eval_family_s_endpoint(request: Request):
                     "brier_baseline": round(float(brier_base), 4),
                     "brier_family_s_oof": round(float(brier_fs), 4),
                     "delta": round(float(delta), 4),
-                    "family_s_better": delta < 0,
+                    "family_s_better": bool(delta < 0),
                     "n_oof": int(league_mask.sum()),
                 }
                 logger.info(
