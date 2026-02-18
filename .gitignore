@@ -60,5 +60,8 @@ data/oddsportal_raw/
 # Transfermarkt scraping outputs (ABE P0: no commit)
 data/tm_*
 
+# Parquet data files (large, re-generable)
+*.parquet
+
 # Local screenshots / scratch assets
 ios/FutbolStats/FutbolStats/capta.PNG
