@@ -1085,7 +1085,7 @@ async def _train_model_background():
         logger.info("Background training started...")
         async with AsyncSessionLocal() as session:
             feature_engineer = FeatureEngineer(session=session)
-            df = await feature_engineer.build_training_dataset()
+            df = await feature_engineer.build_training_dataset(league_only=True)
 
             if len(df) < 100:
                 logger.error(f"Insufficient training data: {len(df)} samples. Need at least 100.")
@@ -1769,6 +1769,7 @@ async def train_model(
         min_date=min_date,
         max_date=max_date,
         league_ids=body.league_ids,
+        league_only=True,
     )
 
     if len(df) < 100:
