@@ -7304,8 +7304,7 @@ async def train_family_s_endpoint(request: Request):
             logger.info(f"[TRAIN-FAMILY-S] MTV parquet: {len(mtv)} rows for Tier 3")
 
             df = df.merge(mtv[["match_id"] + MTV_COLS], on="match_id", how="left")
-            for col in MTV_COLS:
-                df[col] = df[col].fillna(0.0)
+            # NaN preserved — XGBoost sparsity-aware split handles missing natively
 
             # Step 3: Filter odds
             before = len(df)
@@ -7437,8 +7436,7 @@ async def eval_family_s_endpoint(request: Request):
             mtv = pd.read_parquet("data/historical_mtv_features_tm_hiconf_padded.parquet")
             mtv = mtv[mtv["league_id"].isin(TIER_3_LEAGUES)]
             df = df.merge(mtv[["match_id"] + MTV_COLS], on="match_id", how="left")
-            for col in MTV_COLS:
-                df[col] = df[col].fillna(0.0)
+            # NaN preserved — XGBoost sparsity-aware split handles missing natively
 
             # Filter odds
             df = df[df["odds_home"].notna() & df["odds_draw"].notna() & df["odds_away"].notna()].reset_index(drop=True)

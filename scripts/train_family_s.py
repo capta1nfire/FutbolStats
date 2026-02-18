@@ -96,12 +96,12 @@ def merge_mtv(df: pd.DataFrame) -> pd.DataFrame:
     )
     logger.info("After MTV merge: %d rows (was %d)", len(df), before)
 
-    # Fill MTV NaN with 0.0 (padded approach, consistent with parquet)
+    # Preserve NaN for MTV — XGBoost sparsity-aware split handles missing natively.
+    # 0.0 has semantic meaning (talent matched expectation), NaN = no data.
     for col in MTV_COLS:
         n_missing = df[col].isna().sum()
         if n_missing > 0:
-            logger.info("  %s: %d missing → fill 0.0", col, n_missing)
-        df[col] = df[col].fillna(0.0)
+            logger.info("  %s: %d missing (NaN preserved for XGBoost sparsity)", col, n_missing)
 
     return df
 
