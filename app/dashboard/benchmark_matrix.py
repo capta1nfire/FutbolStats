@@ -51,6 +51,8 @@ MODEL_VERSIONS = ["v1.0.0", "v1.0.1-league-only"]
 
 SHADOW_VERSION = "v1.1.0-twostage"
 
+FAMILY_S_VERSION = "v2.0-tier3-family_s"
+
 ALL_CUTOFF = date(2026, 1, 15)  # period=all starts here
 
 VALID_PERIODS = {"30d", "60d", "90d", "all"}
@@ -325,6 +327,16 @@ QUERY_MODELS = f"""
           AND sp.created_at <= r.date
         ORDER BY sp.match_id, sp.created_at DESC
     ),
+    family_s_preds AS (
+        SELECT DISTINCT ON (fp.match_id)
+            fp.match_id,
+            fp.home_prob AS fs_h, fp.draw_prob AS fs_d, fp.away_prob AS fs_a
+        FROM predictions fp
+        JOIN resolved r ON r.id = fp.match_id
+        WHERE fp.model_version = :family_s_version
+          AND fp.created_at <= r.date
+        ORDER BY fp.match_id, fp.created_at DESC
+    ),
     pinnacle_anchor AS (
         SELECT DISTINCT ON (oh.match_id)
             oh.match_id, oh.odds_home, oh.odds_draw, oh.odds_away
@@ -341,11 +353,13 @@ QUERY_MODELS = f"""
            r.home_goals, r.away_goals,
            mp.model_version, mp.home_prob AS ma_h, mp.draw_prob AS ma_d, mp.away_prob AS ma_a,
            sp.shadow_home_prob AS sh_h, sp.shadow_draw_prob AS sh_d, sp.shadow_away_prob AS sh_a,
+           fsp.fs_h, fsp.fs_d, fsp.fs_a,
            pin.odds_home AS pin_h, pin.odds_draw AS pin_d, pin.odds_away AS pin_a,
            COALESCE(al.display_name, al.name) AS league_name, COALESCE(al.country, '') AS country
     FROM resolved r
     LEFT JOIN model_preds mp ON mp.match_id = r.id
     LEFT JOIN shadow_preds sp ON sp.match_id = r.id
+    LEFT JOIN family_s_preds fsp ON fsp.match_id = r.id
     LEFT JOIN pinnacle_anchor pin ON pin.match_id = r.id
     LEFT JOIN admin_leagues al ON al.league_id = r.league_id
     ORDER BY r.league_id, r.id
@@ -387,6 +401,7 @@ async def get_benchmark_matrix(
             "cutoff": cutoff,
             "model_versions": MODEL_VERSIONS,
             "shadow_version": SHADOW_VERSION,
+            "family_s_version": FAMILY_S_VERSION,
         },
     )
     model_rows = result_md.fetchall()
@@ -449,6 +464,10 @@ async def get_benchmark_matrix(
         if row.sh_h is not None and "Shadow" not in model_data_by_match[mid]:
             model_data_by_match[mid]["Shadow"] = (float(row.sh_h), float(row.sh_d), float(row.sh_a))
 
+        # Family S (Tier 3 MTV, deduplicated: 1 per match)
+        if row.fs_h is not None and "Family_S" not in model_data_by_match[mid]:
+            model_data_by_match[mid]["Family_S"] = (float(row.fs_h), float(row.fs_d), float(row.fs_a))
+
     # Count resolved per league (from match_meta, unique match_ids)
     for mid, meta in match_meta.items():
         league_resolved_counts[meta["league_id"]] += 1
@@ -489,7 +508,7 @@ async def get_benchmark_matrix(
         label = meta["label"]
         pin_probs = mdata["pin"]
 
-        for source_key in list(MODEL_VERSIONS) + ["Shadow"]:
+        for source_key in list(MODEL_VERSIONS) + ["Shadow", "Family_S"]:
             if source_key not in mdata:
                 continue
             probs = mdata[source_key]
@@ -512,7 +531,7 @@ async def get_benchmark_matrix(
     for cell_key, data in accumulator.items():
         is_global = cell_key.startswith("ALL:")
         source_key = cell_key.split(":", 1)[1]
-        is_model = source_key.startswith("Model_A_") or source_key == "Shadow"
+        is_model = source_key.startswith("Model_A_") or source_key in ("Shadow", "Family_S")
 
         cell = _compute_cell(data["y"], data["sp"], data["pp"], is_model=is_model)
 
@@ -566,6 +585,13 @@ async def get_benchmark_matrix(
             label=f"Shadow {SHADOW_VERSION}",
             kind="model",
             total_matches=len(source_match_counts["Shadow"]),
+        ))
+    if "Family_S" in source_match_counts:
+        all_source_keys.append(BenchmarkSource(
+            key="Family_S",
+            label=f"Family S {FAMILY_S_VERSION}",
+            kind="model",
+            total_matches=len(source_match_counts["Family_S"]),
         ))
     # Then bookmakers (sorted by total matches desc), excluding Pinnacle (it's the anchor)
     for bk in sorted(

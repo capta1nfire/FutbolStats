@@ -197,6 +197,58 @@ WHERE m.date >= NOW() - INTERVAL '7 days';
 - Job post-match debe insertar en `prediction_clv`
 - Verificar canonical bookmaker en `odds_history` (Bet365 > Pinnacle > 1xBet)
 
+### Family S (Tier 3 MTV) — Verificación post-deploy
+
+Family S solo se materializa cuando el cascade logra odds + MTV para un match Tier 3.
+Si falta alguno, cae a baseline. Ligas Tier 3: Eredivisie (88), Primeira Liga (94),
+Belgian Pro (144), Süper Lig (203), Chile Primera (265).
+
+**1. Logs cascade** (genera la predicción):
+```bash
+railway logs --filter "FAMILY_S"
+# Buscar: strategy=FAMILY_S, Using Family S engine..., family_s=YES
+```
+
+**2. Logs serving** (overlay sirve la predicción al usuario):
+```bash
+railway logs --filter "family_s_serving"
+# Buscar: family_s_serving | db_hits=N db_miss=N eligible=N
+# db_hits>0 = overlay funcionando
+```
+
+**3. DB** (predicciones persistidas):
+```sql
+-- Predicciones Family S existentes
+SELECT COUNT(*), MIN(created_at), MAX(created_at)
+FROM predictions WHERE model_version = 'v2.0-tier3-family_s';
+
+-- Matches Tier 3 próximos SIN predicción Family S (candidatos a db_miss)
+SELECT m.id, m.league_id, m.status, m.date
+FROM matches m
+WHERE m.league_id IN (88, 94, 144, 203, 265)
+  AND m.status = 'NS'
+  AND m.date >= CURRENT_DATE
+  AND NOT EXISTS (
+    SELECT 1 FROM predictions p
+    WHERE p.match_id = m.id AND p.model_version = 'v2.0-tier3-family_s'
+  );
+```
+
+**4. API** (verificar que el usuario recibe Family S):
+```bash
+# En /predictions/upcoming, buscar served_from_family_s: true
+curl -s -H "X-API-Key: $FUTBOLSTATS_API_KEY" \
+  "https://web-production-f2de9.up.railway.app/predictions/upcoming" \
+  | jq '[.predictions[] | select(.served_from_family_s == true)] | length'
+```
+
+**Troubleshooting Family S**:
+
+- **Cascade no genera Family S**: Verificar `LEAGUE_ROUTER_MTV_ENABLED=true` en Railway env vars. Verificar que `init_family_s_engine()` cargó el modelo al startup (log: `Family S engine loaded`).
+- **db_hits=0 en serving**: El cascade aún no ha escrito predicciones (esperar LINEUP_CONFIRMED para matches Tier 3). Verificar con query DB arriba.
+- **Family S overlay no aplica**: Solo aplica a matches NS + Tier 3 + no frozen. Si el match ya pasó a 1H/FT, no se overlay.
+- **Rollback**: Flip `LEAGUE_ROUTER_MTV_ENABLED=false` → cache bypass se desactiva, overlay no corre, vuelve a baseline puro.
+
 ---
 
 ## "Qué hacer si algo falla"

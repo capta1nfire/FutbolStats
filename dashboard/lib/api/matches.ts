@@ -206,6 +206,10 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
   const extD = parseProbabilitySet(raw.extD ?? raw.ext_d);
   if (extD) result.extD = extD;
 
+  // Optional: Family S prediction (Tier 3 MTV model)
+  const familyS = parseProbabilitySet(raw.familyS ?? raw.family_s);
+  if (familyS) result.familyS = familyS;
+
   // Optional: Consensus market (median of de-vigged bookmakers)
   const consensus = parseProbabilitySet(raw.consensus);
   if (consensus) result.consensus = consensus;

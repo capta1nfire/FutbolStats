@@ -106,6 +106,8 @@ export interface MatchSummary {
   extC?: ProbabilitySet;
   /** Experimental ext-D prediction (league-only retrained) */
   extD?: ProbabilitySet;
+  /** Family S prediction (Tier 3 MTV model) */
+  familyS?: ProbabilitySet;
   /** Consensus market (median of de-vigged bookmakers, fair probs) */
   consensus?: ProbabilitySet;
   /** Pinnacle sharp benchmark (implied probs) */

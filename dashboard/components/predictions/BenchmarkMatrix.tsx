@@ -88,9 +88,9 @@ function MatrixCell({
 }) {
   if (!cell || cell.n === 0) {
     return (
-      <td className="px-2 py-1.5 text-center text-[11px] text-muted-foreground/40 whitespace-nowrap">
+      <span className="text-[11px] text-muted-foreground/40 whitespace-nowrap">
         --
-      </td>
+      </span>
     );
   }
 
@@ -111,7 +111,7 @@ function MatrixCell({
   if (ci) tooltipLines.push(ci);
 
   return (
-    <td className={cn("px-2 py-1.5 text-center whitespace-nowrap", opacity)}>
+    <span className={cn("inline-block", opacity)}>
       <Tooltip>
         <TooltipTrigger asChild>
           <span
@@ -132,7 +132,7 @@ function MatrixCell({
           </div>
         </TooltipContent>
       </Tooltip>
-    </td>
+    </span>
   );
 }
 
@@ -375,6 +375,7 @@ function LeagueRow({
           <td
             key={source.key}
             className={cn(
+              "px-2 py-1.5 text-center whitespace-nowrap",
               (i === 0 || isFirstBookie) && "border-l border-border"
             )}
           >

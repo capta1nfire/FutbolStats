@@ -152,8 +152,31 @@ These were the MTV improvement signals from Feature Lab that selected these 5 le
 ## Activation Sequence
 
 1. ABE confirms GO
-2. Restart Railway service (loads snapshot id=6 at startup via `init_family_s_engine()`)
+2. Restart Railway service (loads snapshot id=7 at startup via `init_family_s_engine()`)
 3. Flip env var: `LEAGUE_ROUTER_MTV_ENABLED=true` (no redeploy needed)
-4. Verify cascade logs show `strategy=FAMILY_S` for Tier 3 matches
-5. Cleanup: remove parquet from git + temporary endpoints
+4. Cleanup: remove parquet from git + temporary endpoints
+5. Verify (see below)
 6. Post-activation PIT evaluation at N>=300 predictions
+
+### Production Verification (post-activate)
+
+Family S predictions only appear after cascade runs for Tier 3 matches with confirmed lineups (~1h before kickoff).
+
+**Cascade (writes prediction to DB):**
+- Logs: `railway logs --filter "FAMILY_S"`
+- Look for: `strategy=FAMILY_S`, `Using Family S engine...`, `family_s=YES`
+
+**Serving layer (reads from DB, overlays onto API response):**
+- Logs: `railway logs --filter "family_s_serving"`
+- Look for: `family_s_serving | db_hits=N db_miss=N eligible=N`
+- API response includes `served_from_family_s: true` on overlaid predictions
+
+**DB verification:**
+```sql
+SELECT COUNT(*), MIN(created_at), MAX(created_at)
+FROM predictions WHERE model_version = 'v2.0-tier3-family_s';
+```
+
+**Rollback:** Flip `LEAGUE_ROUTER_MTV_ENABLED=false` — overlay stops, cache re-enables, baseline serves all leagues.
+
+> Full troubleshooting: see `docs/OPS_RUNBOOK.md` → "Family S (Tier 3 MTV) — Verificación post-deploy"

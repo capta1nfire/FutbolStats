@@ -22,7 +22,7 @@ import {
 // Model Accuracy Calculation
 // =============================================================================
 
-type ModelKey = "market" | "consensus" | "pinnacle" | "modelA" | "shadow" | "sensorB" | "extA" | "extB" | "extC" | "extD";
+type ModelKey = "market" | "consensus" | "pinnacle" | "modelA" | "shadow" | "sensorB" | "familyS" | "extA" | "extB" | "extC" | "extD";
 
 interface ModelAccuracyStats {
   correct: number;
@@ -40,6 +40,7 @@ function calculateModelAccuracies(
     modelA: { correct: 0, total: 0, accuracy: null },
     shadow: { correct: 0, total: 0, accuracy: null },
     sensorB: { correct: 0, total: 0, accuracy: null },
+    familyS: { correct: 0, total: 0, accuracy: null },
     extA: { correct: 0, total: 0, accuracy: null },
     extB: { correct: 0, total: 0, accuracy: null },
     extC: { correct: 0, total: 0, accuracy: null },
@@ -59,6 +60,7 @@ function calculateModelAccuracies(
       { key: "modelA", probs: match.modelA },
       { key: "shadow", probs: match.shadow },
       { key: "sensorB", probs: match.sensorB },
+      { key: "familyS", probs: match.familyS },
       { key: "extA", probs: match.extA },
       { key: "extB", probs: match.extB },
       { key: "extC", probs: match.extC },
@@ -236,6 +238,7 @@ export const MATCHES_COLUMN_OPTIONS: ColumnOption[] = [
   { id: "modelA", label: "Model A", enableHiding: true },
   { id: "shadow", label: "Shadow", enableHiding: true },
   { id: "sensorB", label: "Sensor B", enableHiding: true },
+  { id: "familyS", label: "Family S", enableHiding: true },
   { id: "extA", label: "Ext A", enableHiding: true },
   { id: "extB", label: "Ext B", enableHiding: true },
   { id: "extC", label: "Ext C", enableHiding: true },
@@ -301,6 +304,7 @@ export function MatchesTable({
     if (isVisible("modelA")) w += MODEL_COL_WIDTH;
     if (isVisible("shadow")) w += MODEL_COL_WIDTH;
     if (isVisible("sensorB")) w += MODEL_COL_WIDTH;
+    if (isVisible("familyS")) w += MODEL_COL_WIDTH;
     if (isVisible("extA")) w += MODEL_COL_WIDTH;
     if (isVisible("extB")) w += MODEL_COL_WIDTH;
     if (isVisible("extC")) w += MODEL_COL_WIDTH;
@@ -366,6 +370,7 @@ export function MatchesTable({
               {isVisible("modelA") && <col style={{ width: MODEL_COL_WIDTH }} />}
               {isVisible("shadow") && <col style={{ width: MODEL_COL_WIDTH }} />}
               {isVisible("sensorB") && <col style={{ width: MODEL_COL_WIDTH }} />}
+              {isVisible("familyS") && <col style={{ width: MODEL_COL_WIDTH }} />}
               {isVisible("extA") && <col style={{ width: MODEL_COL_WIDTH }} />}
               {isVisible("extB") && <col style={{ width: MODEL_COL_WIDTH }} />}
               {isVisible("extC") && <col style={{ width: MODEL_COL_WIDTH }} />}
@@ -479,6 +484,14 @@ export function MatchesTable({
                     style={{ minWidth: MODEL_COL_WIDTH }}
                   >
                     <ModelHeader label="Sensor B" stats={modelAccuracies.sensorB} />
+                  </th>
+                )}
+                {isVisible("familyS") && (
+                  <th
+                    className="px-3 py-3 text-center font-semibold text-sm whitespace-nowrap"
+                    style={{ minWidth: MODEL_COL_WIDTH }}
+                  >
+                    <ModelHeader label="Family S" stats={modelAccuracies.familyS} />
                   </th>
                 )}
                 {isVisible("extA") && (
@@ -738,6 +751,13 @@ export function MatchesTable({
                     {isVisible("sensorB") && (
                       <td className="px-3 py-2.5 text-center" style={{ minWidth: MODEL_COL_WIDTH }}>
                         <ProbabilityCell probs={match.sensorB} outcome={outcome} compact={compactPredictions} />
+                      </td>
+                    )}
+
+                    {/* Family S cell */}
+                    {isVisible("familyS") && (
+                      <td className="px-3 py-2.5 text-center" style={{ minWidth: MODEL_COL_WIDTH }}>
+                        <ProbabilityCell probs={match.familyS} outcome={outcome} compact={compactPredictions} />
                       </td>
                     )}
 

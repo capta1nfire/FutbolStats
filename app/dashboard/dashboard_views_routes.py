@@ -2328,6 +2328,23 @@ async def get_matches_dashboard(
         column("ext_d_away"),
     ).subquery("ext")
 
+    # Family S predictions (Tier 3 MTV model, from predictions table)
+    family_s_subq = text("""
+        SELECT DISTINCT ON (match_id)
+            match_id,
+            home_prob AS family_s_home,
+            draw_prob AS family_s_draw,
+            away_prob AS family_s_away
+        FROM predictions
+        WHERE model_version = 'v2.0-tier3-family_s'
+        ORDER BY match_id, created_at DESC
+    """).columns(
+        column("match_id"),
+        column("family_s_home"),
+        column("family_s_draw"),
+        column("family_s_away"),
+    ).subquery("family_s")
+
     # Consensus + Pinnacle odds from odds_history (PIT-safe: recorded_at < kickoff)
     odds_market_subq = text("""
         WITH latest_market_odds AS (
@@ -2417,6 +2434,10 @@ async def get_matches_dashboard(
             func.max(ext_subq.c.ext_d_home).label("ext_d_home"),
             func.max(ext_subq.c.ext_d_draw).label("ext_d_draw"),
             func.max(ext_subq.c.ext_d_away).label("ext_d_away"),
+            # Family S (Tier 3 MTV model)
+            func.max(family_s_subq.c.family_s_home).label("family_s_home"),
+            func.max(family_s_subq.c.family_s_draw).label("family_s_draw"),
+            func.max(family_s_subq.c.family_s_away).label("family_s_away"),
             # Consensus + Pinnacle odds (from odds_history, PIT-safe)
             func.max(odds_market_subq.c.consensus_home).label("consensus_home"),
             func.max(odds_market_subq.c.consensus_draw).label("consensus_draw"),
@@ -2434,6 +2455,7 @@ async def get_matches_dashboard(
         .outerjoin(SensorPrediction, SensorPrediction.match_id == Match.id)
         .outerjoin(weather_subq, weather_subq.c.match_id == Match.id)
         .outerjoin(ext_subq, ext_subq.c.match_id == Match.id)
+        .outerjoin(family_s_subq, family_s_subq.c.match_id == Match.id)
         .outerjoin(odds_market_subq, odds_market_subq.c.match_id == Match.id)
         .group_by(
             Match.id,
@@ -2689,6 +2711,14 @@ async def get_matches_dashboard(
                 "home": round(float(row.ext_d_home), 3),
                 "draw": round(float(row.ext_d_draw), 3),
                 "away": round(float(row.ext_d_away), 3),
+            }
+
+        # Family S (Tier 3 MTV model)
+        if row.family_s_home is not None:
+            match_data["family_s"] = {
+                "home": round(float(row.family_s_home), 3),
+                "draw": round(float(row.family_s_draw), 3),
+                "away": round(float(row.family_s_away), 3),
             }
 
         # Consensus odds (fair probs from median of de-vigged books)
