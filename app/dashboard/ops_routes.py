@@ -7445,13 +7445,13 @@ async def eval_family_s_endpoint(request: Request):
             logger.info("[EVAL] Post odds filter: %d rows", len(df))
 
             # ── Task 1: Baseline predictions (out-of-sample for these leagues) ──
-            baseline_features = XGBoostEngine.FEATURE_COLUMNS
-            X_base = df[baseline_features].values.astype(np.float32)
-            np.nan_to_num(X_base, copy=False)
+            # Use engine's compat logic (model trained on 14 features, code has 17)
+            baseline_features = baseline_engine._get_model_expected_features()
+            X_base = df[baseline_features].fillna(0).values.astype(np.float32)
             y_true = df["result"].values
 
             baseline_proba = baseline_engine.model.predict_proba(X_base)
-            logger.info("[EVAL] Baseline predictions done")
+            logger.info("[EVAL] Baseline predictions done (features=%d)", len(baseline_features))
 
             # ── Task 1: Family S OOF predictions (3-fold TimeSeriesSplit) ──
             family_s_features = FamilySEngine.FEATURE_COLUMNS
