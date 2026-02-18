@@ -1860,7 +1860,10 @@ async def get_predictions(
         and not save
         and with_context
     )
-    if is_default_full and _predictions_cache["data"] is not None:
+    # Bypass cache when Family S overlay active (overlay must run fresh per request)
+    _family_s_cache_bypass = settings.LEAGUE_ROUTER_MTV_ENABLED
+
+    if is_default_full and _predictions_cache["data"] is not None and not _family_s_cache_bypass:
         if now - _predictions_cache["timestamp"] < _predictions_cache["ttl"]:
             logger.info("Returning cached predictions")
             return _predictions_cache["data"]
@@ -1897,7 +1900,7 @@ async def get_predictions(
         )
 
     # If cache is warm and request is a subset, filter and return immediately
-    if is_cacheable_subset and _predictions_cache["data"] is not None:
+    if is_cacheable_subset and _predictions_cache["data"] is not None and not _family_s_cache_bypass:
         if now - _predictions_cache["timestamp"] < _predictions_cache["ttl"]:
             if is_default_full:
                 # Full request with warm cache - return as-is (already handled above, but safety)
@@ -2089,6 +2092,16 @@ async def get_predictions(
     _t4 = time.time()
     predictions = await _apply_team_overrides(session, predictions)
     _stage_times["overrides_ms"] = (time.time() - _t4) * 1000
+
+    # Overlay Family S from DB for Tier 3 NS matches (Mandato D - Fase 4b)
+    _t4b = time.time()
+    predictions, fs_stats = await _overlay_family_s_predictions(session, predictions)
+    _stage_times["family_s_overlay_ms"] = (time.time() - _t4b) * 1000
+    if fs_stats.get("db_hits", 0) > 0:
+        logger.info(
+            "family_s_serving | db_hits=%d db_miss=%d eligible=%d",
+            fs_stats["db_hits"], fs_stats["db_miss"], fs_stats["total_eligible"],
+        )
 
     # ═══════════════════════════════════════════════════════════════
     # FASE 1: Apply draw cap to value bets (portfolio level)
@@ -2410,6 +2423,141 @@ async def _overlay_rerun_predictions(
     return predictions, stats
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# Family S DB-first overlay (Mandato D - Fase 4b)
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+async def _get_family_s_prediction(session: AsyncSession, match_id: int):
+    """Get latest Family S prediction from DB for a single match."""
+    from app.ml.family_s import get_family_s_engine
+
+    engine = get_family_s_engine()
+    if not engine:
+        return None
+    result = await session.execute(
+        select(Prediction)
+        .where(Prediction.match_id == match_id)
+        .where(Prediction.model_version == engine.model_version)
+        .order_by(Prediction.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+def _recalculate_confidence_tier(probs: dict) -> str:
+    """Recalculate confidence tier from probabilities (P0-3)."""
+    max_prob = max(probs["home"], probs["draw"], probs["away"])
+    if max_prob >= 0.55:
+        return "gold"
+    elif max_prob >= 0.45:
+        return "silver"
+    return "copper"
+
+
+async def _overlay_family_s_predictions(
+    session: AsyncSession,
+    predictions: list,
+) -> tuple:
+    """Overlay Family S predictions from DB for NS Tier 3 matches.
+
+    The cascade handler saves Family S predictions to DB. This reads them
+    back and overlays them onto baseline on-the-fly predictions, recalculating
+    fair_odds, value_bets, and confidence_tier.
+
+    Returns:
+        (predictions, stats_dict)
+    """
+    from app.ml.family_s import is_family_s_loaded, get_family_s_engine
+    from app.ml.league_router import TIER_3
+
+    stats = {"db_hits": 0, "db_miss": 0, "total_eligible": 0}
+
+    if not settings.LEAGUE_ROUTER_MTV_ENABLED:
+        return predictions, stats
+    if not is_family_s_loaded():
+        return predictions, stats
+
+    family_s = get_family_s_engine()
+    if not family_s:
+        return predictions, stats
+
+    # Collect eligible match IDs (NS, Tier 3, not frozen)
+    eligible_ids = [
+        p.get("match_id") for p in predictions
+        if p.get("match_id")
+        and p.get("status") == "NS"
+        and not p.get("is_frozen")
+        and p.get("league_id") in TIER_3
+    ]
+    if not eligible_ids:
+        return predictions, stats
+
+    stats["total_eligible"] = len(eligible_ids)
+
+    # P0-1: Use ORM query instead of raw SQL to avoid asyncpg cast issues
+    result = await session.execute(
+        select(Prediction)
+        .where(Prediction.match_id.in_(eligible_ids))
+        .where(Prediction.model_version == family_s.model_version)
+    )
+    rows = result.scalars().all()
+
+    # Keep latest prediction per match_id
+    fs_preds = {}
+    for row in rows:
+        existing = fs_preds.get(row.match_id)
+        if not existing or row.created_at > existing.created_at:
+            fs_preds[row.match_id] = row
+
+    # Overlay
+    eligible_set = set(eligible_ids)
+    for pred in predictions:
+        match_id = pred.get("match_id")
+        if match_id not in fs_preds:
+            if match_id in eligible_set:
+                stats["db_miss"] += 1
+            continue
+
+        db_pred = fs_preds[match_id]
+        h, d, a = float(db_pred.home_prob), float(db_pred.draw_prob), float(db_pred.away_prob)
+
+        # Replace probabilities
+        new_probs = {"home": h, "draw": d, "away": a}
+        pred["probabilities"] = new_probs
+
+        # Recalculate fair odds
+        pred["fair_odds"] = {
+            "home": round(1.0 / h, 2) if h > 0 else None,
+            "draw": round(1.0 / d, 2) if d > 0 else None,
+            "away": round(1.0 / a, 2) if a > 0 else None,
+        }
+
+        # P0-3: Recalculate confidence_tier for new probs
+        pred["confidence_tier"] = _recalculate_confidence_tier(new_probs)
+
+        # P0-2: Recompute value_bets using ml_engine instance + sort by expected_value
+        market = pred.get("market_odds")
+        if market and market.get("home") and market.get("draw") and market.get("away"):
+            vb = ml_engine._find_value_bets(
+                [h, d, a],
+                [market["home"], market["draw"], market["away"]],
+            )
+            pred["value_bets"] = vb if vb else []
+            pred["has_value_bet"] = bool(vb)
+            pred["best_value_bet"] = (
+                max(vb, key=lambda x: x["expected_value"]) if vb else None
+            )
+
+        # Mark as Family S (skip market anchor downstream)
+        pred["skip_market_anchor"] = True
+        pred["served_from_family_s"] = True
+        pred["family_s_model_version"] = family_s.model_version
+        stats["db_hits"] += 1
+
+    return predictions, stats
+
+
 async def _overlay_frozen_predictions(
     session: AsyncSession,
     predictions: list[dict],
@@ -2623,8 +2771,30 @@ async def get_match_prediction(
 
     df = pd.DataFrame([features])
     predictions = ml_engine.predict(df)
+    pred = predictions[0]
 
-    return predictions[0]
+    # Overlay Family S prediction from DB if applicable
+    from app.ml.family_s import is_family_s_loaded
+    from app.ml.league_router import TIER_3
+    if (match.status == "NS"
+        and match.league_id in TIER_3
+        and settings.LEAGUE_ROUTER_MTV_ENABLED
+        and is_family_s_loaded()):
+
+        fs_pred = await _get_family_s_prediction(session, match_id)
+        if fs_pred:
+            h, d, a = float(fs_pred.home_prob), float(fs_pred.draw_prob), float(fs_pred.away_prob)
+            new_probs = {"home": h, "draw": d, "away": a}
+            pred["probabilities"] = new_probs
+            pred["fair_odds"] = {
+                "home": round(1.0 / h, 2) if h > 0 else None,
+                "draw": round(1.0 / d, 2) if d > 0 else None,
+                "away": round(1.0 / a, 2) if a > 0 else None,
+            }
+            pred["confidence_tier"] = _recalculate_confidence_tier(new_probs)
+            pred["served_from_family_s"] = True
+
+    return pred
 
 
 # =============================================================================
@@ -3251,6 +3421,25 @@ async def get_match_details(
             predictions = ml_engine.predict(df)
             prediction = predictions[0] if predictions else None
             _timings["ml_predict"] = int((time.time() - _t0) * 1000)
+
+            # Overlay Family S prediction from DB if applicable
+            from app.ml.family_s import is_family_s_loaded
+            from app.ml.league_router import TIER_3
+            if (prediction and match.league_id in TIER_3
+                and settings.LEAGUE_ROUTER_MTV_ENABLED
+                and is_family_s_loaded()):
+                fs_pred = await _get_family_s_prediction(session, match.id)
+                if fs_pred:
+                    h, d, a = float(fs_pred.home_prob), float(fs_pred.draw_prob), float(fs_pred.away_prob)
+                    new_probs = {"home": h, "draw": d, "away": a}
+                    prediction["probabilities"] = new_probs
+                    prediction["fair_odds"] = {
+                        "home": round(1.0 / h, 2) if h > 0 else None,
+                        "draw": round(1.0 / d, 2) if d > 0 else None,
+                        "away": round(1.0 / a, 2) if a > 0 else None,
+                    }
+                    prediction["confidence_tier"] = _recalculate_confidence_tier(new_probs)
+                    prediction["served_from_family_s"] = True
         except Exception as e:
             logger.error(f"Error getting prediction: {e}")
 

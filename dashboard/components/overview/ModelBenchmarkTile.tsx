@@ -18,7 +18,7 @@ import {
 const ReactApexChart = dynamic(() => import("react-apexcharts"), { ssr: false });
 
 // All available models
-const ALL_MODELS = ["Market", "Model A", "Shadow", "Sensor B"] as const;
+const ALL_MODELS = ["Market", "Model A", "Shadow", "Sensor B", "Family S"] as const;
 
 // Model config with colors
 const MODEL_CONFIG: Record<string, { color: string; strokeColor: string }> = {
@@ -26,6 +26,7 @@ const MODEL_CONFIG: Record<string, { color: string; strokeColor: string }> = {
   "Model A": { color: "rgba(34, 197, 94, 0.2)", strokeColor: "#22c55e" },
   Shadow: { color: "rgba(168, 85, 247, 0.2)", strokeColor: "#a855f7" },
   "Sensor B": { color: "rgba(249, 115, 22, 0.2)", strokeColor: "#f97316" },
+  "Family S": { color: "rgba(14, 165, 233, 0.2)", strokeColor: "#0ea5e9" },
 };
 
 interface ModelBenchmarkTileProps {
@@ -40,6 +41,7 @@ function calculateCumulativeData(dailyData: DailyModelStats[], selectedModels: s
   let modelACum = 0;
   let shadowCum = 0;
   let sensorBCum = 0;
+  let familySCum = 0;
   let totalMatches = 0;
 
   return dailyData.map((day) => {
@@ -47,6 +49,7 @@ function calculateCumulativeData(dailyData: DailyModelStats[], selectedModels: s
     modelACum += day.model_a_correct;
     shadowCum += day.shadow_correct;
     sensorBCum += day.sensor_b_correct;
+    familySCum += day.family_s_correct;
     totalMatches += day.matches;
 
     // Parse date as local time (not UTC) to avoid timezone shift
@@ -57,6 +60,7 @@ function calculateCumulativeData(dailyData: DailyModelStats[], selectedModels: s
       modelA: selectedModels.includes("Model A") && totalMatches > 0 ? (modelACum / totalMatches) * 100 : 0,
       shadow: selectedModels.includes("Shadow") && totalMatches > 0 ? (shadowCum / totalMatches) * 100 : 0,
       sensorB: selectedModels.includes("Sensor B") && totalMatches > 0 ? (sensorBCum / totalMatches) * 100 : 0,
+      familyS: selectedModels.includes("Family S") && totalMatches > 0 ? (familySCum / totalMatches) * 100 : 0,
     };
   });
 }
@@ -74,7 +78,7 @@ function formatStartDate(dateStr: string): string {
 // Trend Arrow Calculation (WMA 3d vs 3d prev)
 // =============================================================================
 
-type ModelKey = "market" | "model_a" | "shadow" | "sensor_b";
+type ModelKey = "market" | "model_a" | "shadow" | "sensor_b" | "family_s";
 
 interface TrendInfo {
   arrow: string;
@@ -99,6 +103,7 @@ function seriesNameToModelKey(name: string): ModelKey | null {
     "Model A": "model_a",
     "Shadow": "shadow",
     "Sensor B": "sensor_b",
+    "Family S": "family_s",
   };
   return map[name] ?? null;
 }
@@ -219,6 +224,12 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
         data: chartData.map((d) => d.sensorB),
       });
     }
+    if (selectedModels.includes("Family S") && chartData.length > 0) {
+      series.push({
+        name: "Family S",
+        data: chartData.map((d) => d.familyS),
+      });
+    }
     return series;
   }, [chartData, selectedModels]);
 
@@ -232,6 +243,7 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
       if (selectedModels.includes("Model A")) allValues.push(d.modelA);
       if (selectedModels.includes("Shadow")) allValues.push(d.shadow);
       if (selectedModels.includes("Sensor B")) allValues.push(d.sensorB);
+      if (selectedModels.includes("Family S")) allValues.push(d.familyS);
     });
 
     if (allValues.length === 0) return { min: 30, max: 60 };
@@ -254,6 +266,7 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
     if (selectedModels.includes("Model A")) colors.push("#22c55e");
     if (selectedModels.includes("Shadow")) colors.push("#a855f7");
     if (selectedModels.includes("Sensor B")) colors.push("#f97316");
+    if (selectedModels.includes("Family S")) colors.push("#0ea5e9");
     return colors;
   }, [selectedModels]);
 
@@ -340,6 +353,7 @@ export function ModelBenchmarkTile({ className }: ModelBenchmarkTileProps) {
             "Model A": "model_a_correct",
             "Shadow": "shadow_correct",
             "Sensor B": "sensor_b_correct",
+            "Family S": "family_s_correct",
           };
 
           for (let i = 0; i < series.length; i++) {

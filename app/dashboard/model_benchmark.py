@@ -38,6 +38,7 @@ MODEL_AVAILABILITY = {
     "Model A": "2026-01-10",    # Post-important adjustments
     "Shadow": "2026-01-15",     # Shadow model start
     "Sensor B": "2026-01-15",   # Sensor B start
+    "Family S": "2026-02-18",   # Tier 3 MTV model (5 leagues only)
 }
 
 VALID_MODELS = set(MODEL_AVAILABILITY.keys())
@@ -57,6 +58,7 @@ class DailyModelStats(BaseModel):
     model_a_correct: int
     shadow_correct: int
     sensor_b_correct: int
+    family_s_correct: int = 0
     model_a_version: Optional[str] = None  # "1.0" or "1.0.1" (predominant version that day)
 
 
@@ -206,6 +208,7 @@ async def get_model_benchmark(
         include_model_a = "Model A" in selected
         include_shadow = "Shadow" in selected
         include_sensor_b = "Sensor B" in selected
+        include_family_s = "Family S" in selected
 
         # Build dynamic query - returns raw probabilities for Python co-pick processing
         # Use America/Los_Angeles timezone to match dashboard UI grouping
@@ -289,7 +292,18 @@ async def get_model_benchmark(
                      ORDER BY sp.created_at DESC LIMIT 1) as sensor_b_draw_prob,
                     (SELECT sp.b_away_prob FROM sensor_predictions sp
                      WHERE sp.match_id = m.id
-                     ORDER BY sp.created_at DESC LIMIT 1) as sensor_b_away_prob
+                     ORDER BY sp.created_at DESC LIMIT 1) as sensor_b_away_prob,
+
+                    -- Family S raw probabilities (Tier 3 MTV model, from predictions table)
+                    (SELECT p.home_prob FROM predictions p
+                     WHERE p.match_id = m.id AND p.model_version = :family_s_version
+                     ORDER BY p.created_at DESC LIMIT 1) as family_s_home_prob,
+                    (SELECT p.draw_prob FROM predictions p
+                     WHERE p.match_id = m.id AND p.model_version = :family_s_version
+                     ORDER BY p.created_at DESC LIMIT 1) as family_s_draw_prob,
+                    (SELECT p.away_prob FROM predictions p
+                     WHERE p.match_id = m.id AND p.model_version = :family_s_version
+                     ORDER BY p.created_at DESC LIMIT 1) as family_s_away_prob
 
                 FROM matches m
                 WHERE m.status IN ('FT', 'PEN')  -- Include penalties (90' result is draw)
@@ -304,6 +318,7 @@ async def get_model_benchmark(
                 AND (model_a_home IS NOT NULL OR NOT :include_model_a)
                 AND (shadow_home_prob IS NOT NULL OR NOT :include_shadow)
                 AND (sensor_b_home_prob IS NOT NULL OR NOT :include_sensor_b)
+                AND (family_s_home_prob IS NOT NULL OR NOT :include_family_s)
             ORDER BY match_date
         """)
 
@@ -318,6 +333,8 @@ async def get_model_benchmark(
                 "include_model_a": include_model_a,
                 "include_shadow": include_shadow,
                 "include_sensor_b": include_sensor_b,
+                "include_family_s": include_family_s,
+                "family_s_version": "v2.0-tier3-family_s",
             }
         )
         rows = result.fetchall()
@@ -339,6 +356,7 @@ async def get_model_benchmark(
             'model_a_correct': 0,
             'shadow_correct': 0,
             'sensor_b_correct': 0,
+            'family_s_correct': 0,
             'model_a_active_count': 0,  # How many used active version (vs fallback)
         })
 
@@ -379,6 +397,13 @@ async def get_model_benchmark(
                 ):
                     daily_stats[day]['sensor_b_correct'] += 1
 
+            # Family S (co-pick logic) — Tier 3 only, so many days will have 0
+            if include_family_s and row.family_s_home_prob is not None:
+                if is_prediction_correct(
+                    row.family_s_home_prob, row.family_s_draw_prob, row.family_s_away_prob, actual
+                ):
+                    daily_stats[day]['family_s_correct'] += 1
+
         # Convert to list sorted by date
         # Determine predominant Model A version per day:
         #   majority active → "1.0.1", majority fallback → "1.0", mixed → "1.0/1.0.1"
@@ -401,6 +426,7 @@ async def get_model_benchmark(
                 model_a_correct=stats['model_a_correct'],
                 shadow_correct=stats['shadow_correct'],
                 sensor_b_correct=stats['sensor_b_correct'],
+                family_s_correct=stats['family_s_correct'],
                 model_a_version=_resolve_model_a_version(stats) if include_model_a else None,
             )
             for day, stats in sorted(daily_stats.items())
@@ -412,6 +438,7 @@ async def get_model_benchmark(
         total_model_a_correct = sum(d.model_a_correct for d in daily_data)
         total_shadow_correct = sum(d.shadow_correct for d in daily_data)
         total_sensor_b_correct = sum(d.sensor_b_correct for d in daily_data)
+        total_family_s_correct = sum(d.family_s_correct for d in daily_data)
 
         # Calculate days won for each model (only among selected models)
         # Ties split the day: 2 tied = 0.5 each, 4 tied = 0.25 each
@@ -431,6 +458,8 @@ async def get_model_benchmark(
                     candidates.append(d.shadow_correct)
                 if include_sensor_b:
                     candidates.append(d.sensor_b_correct)
+                if include_family_s:
+                    candidates.append(d.family_s_correct)
 
                 if not candidates:
                     continue
@@ -485,6 +514,15 @@ async def get_model_benchmark(
                 correct=total_sensor_b_correct,
                 total=total_matches,
                 days_won=count_days_won(lambda d: d.sensor_b_correct, "Sensor B"),
+            ))
+
+        if include_family_s:
+            models_list.append(ModelSummary(
+                name="Family S",
+                accuracy=round((total_family_s_correct / total_matches) * 100, 1) if total_matches > 0 else 0,
+                correct=total_family_s_correct,
+                total=total_matches,
+                days_won=count_days_won(lambda d: d.family_s_correct, "Family S"),
             ))
 
         return ModelBenchmarkResponse(

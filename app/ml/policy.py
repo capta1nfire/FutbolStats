@@ -214,6 +214,11 @@ def apply_market_anchor(
             n_skipped_not_ns += 1
             continue
 
+        # Skip Family S predictions (already final from cascade, avoid double-anchor)
+        if pred.get("skip_market_anchor"):
+            modified_predictions.append(pred)
+            continue
+
         # Determine alpha for this league
         league_id = pred.get("league_id")
         alpha = league_overrides.get(league_id, alpha_default) if league_id else alpha_default

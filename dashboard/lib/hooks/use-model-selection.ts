@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 
 const STORAGE_KEY = "modelBenchmarkSelection";
-const ALL_MODELS = ["Market", "Model A", "Shadow", "Sensor B"] as const;
+const ALL_MODELS = ["Market", "Model A", "Shadow", "Sensor B", "Family S"] as const;
 const DEFAULT_VALUE = [...ALL_MODELS];
 
 /**
