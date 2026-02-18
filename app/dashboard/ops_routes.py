@@ -7376,7 +7376,7 @@ _eval_status = {"running": False, "result": None, "error": None}
 
 @router.post("/ops/eval-family-s")
 async def eval_family_s_endpoint(request: Request):
-    """Evaluate Family S per-league Brier. TEMPORARY."""
+    """ABE Mandato D eval: baseline vs Family S OOF per league + Chile triage. TEMPORARY."""
     _check_token(request)
 
     if _eval_status["running"]:
@@ -7385,8 +7385,12 @@ async def eval_family_s_endpoint(request: Request):
     async def _run_eval():
         import numpy as np
         import pandas as pd
+        import xgboost as xgb
+        from sklearn.model_selection import TimeSeriesSplit
         from app.features.engineering import FeatureEngineer
         from app.ml.family_s import FamilySEngine
+        from app.ml.engine import XGBoostEngine
+        from app.ml.metrics import calculate_brier_score
         from app.models import ModelSnapshot
 
         _eval_status["running"] = True
@@ -7398,29 +7402,36 @@ async def eval_family_s_endpoint(request: Request):
             MTV_COLS = ["home_talent_delta", "away_talent_delta", "talent_delta_diff", "shock_magnitude"]
             LEAGUE_NAMES = {88: "Eredivisie", 94: "Primeira Liga", 144: "Belgian Pro League", 203: "Süper Lig", 265: "Chile Primera"}
 
-            # Load model from DB
+            # ── Load both models from DB ──
             async with AsyncSessionLocal() as session:
-                snap = (await session.execute(
-                    select(ModelSnapshot)
-                    .where(ModelSnapshot.model_version.like("%family_s%"))
+                # Baseline (active)
+                baseline_snap = (await session.execute(
+                    select(ModelSnapshot).where(ModelSnapshot.is_active == True)
+                    .order_by(ModelSnapshot.created_at.desc()).limit(1)
+                )).scalar_one_or_none()
+                # Family S
+                family_s_snap = (await session.execute(
+                    select(ModelSnapshot).where(ModelSnapshot.model_version.like("%family_s%"))
                     .order_by(ModelSnapshot.created_at.desc()).limit(1)
                 )).scalar_one_or_none()
 
-            if not snap or not snap.model_blob:
-                raise ValueError("Family S snapshot not found in DB")
+            if not baseline_snap or not baseline_snap.model_blob:
+                raise ValueError("Baseline snapshot not found")
+            if not family_s_snap or not family_s_snap.model_blob:
+                raise ValueError("Family S snapshot not found")
 
-            engine = FamilySEngine(model_version=snap.model_version)
-            engine.load_from_bytes(snap.model_blob)
-            logger.info("[EVAL-FAMILY-S] Model loaded from snapshot id=%d", snap.id)
+            baseline_engine = XGBoostEngine(model_version=baseline_snap.model_version)
+            baseline_engine.load_from_bytes(baseline_snap.model_blob)
+            logger.info("[EVAL] Baseline loaded: %s (id=%d)", baseline_snap.model_version, baseline_snap.id)
 
-            # Build features
+            # ── Build dataset (same as training) ──
             min_dt = datetime(2023, 1, 1)
             async with AsyncSessionLocal() as session:
                 fe = FeatureEngineer(session=session)
                 df = await fe.build_training_dataset(
                     league_only=True, league_ids=TIER_3_LEAGUES, min_date=min_dt,
                 )
-            logger.info("[EVAL-FAMILY-S] Features: %d rows", len(df))
+            logger.info("[EVAL] FeatureEngineer: %d rows", len(df))
 
             # Merge MTV
             mtv = pd.read_parquet("data/historical_mtv_features_tm_hiconf_padded.parquet")
@@ -7431,56 +7442,134 @@ async def eval_family_s_endpoint(request: Request):
 
             # Filter odds
             df = df[df["odds_home"].notna() & df["odds_draw"].notna() & df["odds_away"].notna()].reset_index(drop=True)
+            logger.info("[EVAL] Post odds filter: %d rows", len(df))
 
-            # Predict
-            predictions = engine.predict(df)
+            # ── Task 1: Baseline predictions (out-of-sample for these leagues) ──
+            baseline_features = XGBoostEngine.FEATURE_COLUMNS
+            X_base = df[baseline_features].values.astype(np.float32)
+            np.nan_to_num(X_base, copy=False)
+            y_true = df["result"].values
 
-            # Calculate Brier per league
-            results = {}
+            baseline_proba = baseline_engine.model.predict_proba(X_base)
+            logger.info("[EVAL] Baseline predictions done")
+
+            # ── Task 1: Family S OOF predictions (3-fold TimeSeriesSplit) ──
+            family_s_features = FamilySEngine.FEATURE_COLUMNS
+            X_fs = df[family_s_features].values.astype(np.float32)
+            np.nan_to_num(X_fs, copy=False)
+
+            # Replicate training params
+            params = {
+                "objective": "multi:softprob",
+                "num_class": 3,
+                "max_depth": 3,
+                "learning_rate": 0.0283,
+                "n_estimators": 114,
+                "min_child_weight": 7,
+                "subsample": 0.72,
+                "colsample_bytree": 0.71,
+                "reg_alpha": 2.8e-05,
+                "reg_lambda": 0.000904,
+                "random_state": 42,
+                "use_label_encoder": False,
+                "eval_metric": "mlogloss",
+            }
+
+            oof_proba = np.zeros((len(df), 3))
+            oof_mask = np.zeros(len(df), dtype=bool)
+            tscv = TimeSeriesSplit(n_splits=3)
+
+            for fold, (train_idx, val_idx) in enumerate(tscv.split(X_fs)):
+                fold_model = xgb.XGBClassifier(**params)
+                fold_model.fit(X_fs[train_idx], y_true[train_idx], verbose=False)
+                oof_proba[val_idx] = fold_model.predict_proba(X_fs[val_idx])
+                oof_mask[val_idx] = True
+                fold_brier = calculate_brier_score(y_true[val_idx], oof_proba[val_idx])
+                logger.info("[EVAL] Family S OOF fold %d: Brier=%.4f (N=%d)", fold + 1, fold_brier, len(val_idx))
+
+            logger.info("[EVAL] OOF coverage: %d/%d samples", oof_mask.sum(), len(df))
+
+            # ── Per-league Δ (only OOF samples) ──
+            per_league = {}
             for lid in TIER_3_LEAGUES:
-                mask = df["league_id"] == lid
-                df_l = df[mask].reset_index(drop=True)
-                preds_l = [p for p, m in zip(predictions, mask) if m]
-
-                if len(df_l) == 0:
+                league_mask = (df["league_id"] == lid).values & oof_mask
+                if league_mask.sum() == 0:
                     continue
 
-                brier_sum = 0.0
-                for idx, row in df_l.iterrows():
-                    probs = preds_l[idx]["probabilities"]
-                    actual = row["result"]  # 0=H, 1=D, 2=A
-                    # Brier = sum((p_i - y_i)^2) for 3 classes
-                    y = [1 if actual == c else 0 for c in range(3)]
-                    p = [probs["home"], probs["draw"], probs["away"]]
-                    brier_sum += sum((pi - yi) ** 2 for pi, yi in zip(p, y))
+                y_l = y_true[league_mask]
+                base_l = baseline_proba[league_mask]
+                fs_l = oof_proba[league_mask]
 
-                brier = brier_sum / len(df_l)
-                results[lid] = {
+                brier_base = calculate_brier_score(y_l, base_l)
+                brier_fs = calculate_brier_score(y_l, fs_l)
+                delta = brier_fs - brier_base  # negative = Family S better
+
+                per_league[str(lid)] = {
                     "league": LEAGUE_NAMES.get(lid, str(lid)),
-                    "brier": round(brier, 4),
-                    "samples": len(df_l),
+                    "brier_baseline": round(float(brier_base), 4),
+                    "brier_family_s_oof": round(float(brier_fs), 4),
+                    "delta": round(float(delta), 4),
+                    "family_s_better": delta < 0,
+                    "n_oof": int(league_mask.sum()),
                 }
-                logger.info("[EVAL-FAMILY-S] %s: Brier=%.4f (N=%d)", LEAGUE_NAMES.get(lid), brier, len(df_l))
+                logger.info(
+                    "[EVAL] %s: baseline=%.4f, family_s_oof=%.4f, Δ=%.4f (%s) N=%d",
+                    LEAGUE_NAMES.get(lid), brier_base, brier_fs, delta,
+                    "BETTER" if delta < 0 else "WORSE", league_mask.sum(),
+                )
 
-            # Global
-            total_brier = sum(r["brier"] * r["samples"] for r in results.values()) / sum(r["samples"] for r in results.values())
+            # Global OOF
+            global_base = calculate_brier_score(y_true[oof_mask], baseline_proba[oof_mask])
+            global_fs = calculate_brier_score(y_true[oof_mask], oof_proba[oof_mask])
+            global_delta = global_fs - global_base
+
+            # ── Task 2: Chile triage ──
+            chile_mask = df["league_id"] == 265
+            chile_df = df[chile_mask]
+            chile_n = len(chile_df)
+
+            chile_triage = {
+                "total_matches": chile_n,
+                "odds_coverage": {
+                    "with_odds": chile_n,  # already filtered
+                    "pct": 100.0,
+                    "note": "Post odds-filter (pre-filter checked separately)",
+                },
+                "mtv_nonzero_pct": round(100.0 * (chile_df["talent_delta_diff"] != 0).sum() / chile_n, 1) if chile_n else 0,
+                "data_quality": {},
+            }
+            for col in ["home_shots_avg", "away_shots_avg", "home_corners_avg", "away_corners_avg",
+                         "home_rest_days", "away_rest_days", "home_matches_played", "away_matches_played"]:
+                if col in chile_df.columns:
+                    n_zero = (chile_df[col] == 0).sum()
+                    n_nan = chile_df[col].isna().sum()
+                    chile_triage["data_quality"][col] = {
+                        "zero_pct": round(100.0 * n_zero / chile_n, 1) if chile_n else 0,
+                        "nan_pct": round(100.0 * n_nan / chile_n, 1) if chile_n else 0,
+                    }
 
             _eval_status["result"] = {
-                "per_league": results,
-                "global_brier": round(total_brier, 4),
-                "total_samples": sum(r["samples"] for r in results.values()),
-                "snapshot_id": snap.id,
+                "task1_per_league_delta": per_league,
+                "task1_global": {
+                    "brier_baseline": round(float(global_base), 4),
+                    "brier_family_s_oof": round(float(global_fs), 4),
+                    "delta": round(float(global_delta), 4),
+                    "n_oof": int(oof_mask.sum()),
+                    "baseline_version": baseline_snap.model_version,
+                    "family_s_snapshot_id": family_s_snap.id,
+                },
+                "task2_chile_triage": chile_triage,
             }
-            logger.info("[EVAL-FAMILY-S] DONE. Global Brier=%.4f", total_brier)
+            logger.info("[EVAL] DONE. Global Δ=%.4f", global_delta)
 
         except Exception as e:
             _eval_status["error"] = f"{type(e).__name__}: {e}"
-            logger.error("[EVAL-FAMILY-S] FAILED: %s", e, exc_info=True)
+            logger.error("[EVAL] FAILED: %s", e, exc_info=True)
         finally:
             _eval_status["running"] = False
 
     asyncio.ensure_future(_run_eval())
-    return {"ok": True, "message": "Eval started", "check_status": "/ops/eval-family-s/status"}
+    return {"ok": True, "message": "Eval started (baseline vs Family S OOF + Chile triage)", "check_status": "/ops/eval-family-s/status"}
 
 
 @router.get("/ops/eval-family-s/status")
