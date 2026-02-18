@@ -2,13 +2,14 @@
 
 Loads the Family S model (v2.0-tier3-family_s) from model_snapshots.
 Uses FamilySEngine, a subclass of XGBoostEngine with expanded features:
-  - 17 core FEATURE_COLUMNS (baseline)
+  - 14 baseline (same as XGBoostEngine.FEATURE_COLUMNS)
+  - 3 competitiveness (abs_attack_diff, abs_defense_diff, abs_strength_gap)
   - 3 odds features (odds_home, odds_draw, odds_away)
   - 4 MTV features (home_talent_delta, away_talent_delta, talent_delta_diff, shock_magnitude)
 
-P0-2: FamilySEngine overrides FEATURE_COLUMNS so _prepare_features() and
-_get_model_expected_features() use the correct 24-feature list in both
-training and serving (1:1 fidelity).
+FamilySEngine overrides FEATURE_COLUMNS (24 total) so _prepare_features() and
+_get_model_expected_features() use the correct feature list in both
+training and serving.
 
 Status: GATED behind LEAGUE_ROUTER_MTV_ENABLED flag.
 """
@@ -40,7 +41,7 @@ class FamilySEngine(XGBoostEngine):
     """
 
     FEATURE_COLUMNS = [
-        # ── 17 core (same order as XGBoostEngine) ──
+        # ── 14 baseline (same as XGBoostEngine) ──
         "home_goals_scored_avg",
         "home_goals_conceded_avg",
         "home_shots_avg",
@@ -55,6 +56,7 @@ class FamilySEngine(XGBoostEngine):
         "away_matches_played",
         "goal_diff_avg",
         "rest_diff",
+        # ── 3 competitiveness (legacy, kept for Family S model) ──
         "abs_attack_diff",
         "abs_defense_diff",
         "abs_strength_gap",

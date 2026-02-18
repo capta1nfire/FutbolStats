@@ -366,10 +366,6 @@ class XGBoostEngine:
         "away_matches_played",
         "goal_diff_avg",
         "rest_diff",
-        # FASE 1: Competitiveness features for draw prediction
-        "abs_attack_diff",
-        "abs_defense_diff",
-        "abs_strength_gap",
     ]
 
     def __init__(self, model_version: str = None):
@@ -377,39 +373,28 @@ class XGBoostEngine:
         self.model: Optional[xgb.XGBClassifier] = None
         self.model_path = Path(settings.MODEL_PATH)
         self.model_path.mkdir(exist_ok=True)
-        self._feature_compat_logged = False  # Log feature truncation only once
 
     def _get_model_filepath(self) -> Path:
         """Get the filepath for the current model version."""
         timestamp = datetime.now().strftime("%Y%m%d")
         return self.model_path / f"xgb_{self.model_version}_{timestamp}.json"
 
-    def _get_model_expected_features(self) -> list[str]:
-        """
-        Get the features expected by the loaded model.
-
-        Handles backward compatibility with models trained on fewer features.
-        """
+    def _get_model_expected_features(self) -> list:
+        """Get features expected by the loaded model. Fail-closed on mismatch."""
         if self.model is None:
             return self.FEATURE_COLUMNS
 
-        # Try to get feature count from model
         try:
             n_features = self.model.n_features_in_
         except AttributeError:
-            # Fallback for older models
-            n_features = len(self.FEATURE_COLUMNS)
+            return self.FEATURE_COLUMNS
 
-        # If model expects fewer features than current FEATURE_COLUMNS,
-        # return only the first N features (they were added in order)
-        if n_features < len(self.FEATURE_COLUMNS):
-            if not self._feature_compat_logged:
-                logger.info(
-                    f"[FEATURE_COMPAT] Model expects {n_features} features, code has {len(self.FEATURE_COLUMNS)}. "
-                    f"Truncating to first {n_features} features for backward compatibility."
-                )
-                self._feature_compat_logged = True
-            return self.FEATURE_COLUMNS[:n_features]
+        if n_features != len(self.FEATURE_COLUMNS):
+            raise ValueError(
+                f"[FEATURE_MISMATCH] Model expects {n_features} features but "
+                f"FEATURE_COLUMNS has {len(self.FEATURE_COLUMNS)}. "
+                f"Retrain the model or adjust FEATURE_COLUMNS to match."
+            )
 
         return self.FEATURE_COLUMNS
 

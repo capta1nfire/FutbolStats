@@ -108,6 +108,29 @@ RESIDUAL_HYPERPARAMS = {
     "verbosity": 0,
 }
 
+# ─── Two-Stage hyperparams (from engine.py TwoStageEngine) ───
+TWO_STAGE_PARAMS_S1 = {
+    "objective": "binary:logistic",
+    "max_depth": 3,
+    "learning_rate": 0.05,
+    "n_estimators": 100,
+    "min_child_weight": 7,
+    "subsample": 0.72,
+    "colsample_bytree": 0.71,
+    "verbosity": 0,
+}
+TWO_STAGE_PARAMS_S2 = {
+    "objective": "binary:logistic",
+    "max_depth": 3,
+    "learning_rate": 0.05,
+    "n_estimators": 100,
+    "min_child_weight": 5,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "verbosity": 0,
+}
+TWO_STAGE_DRAW_WEIGHT = 1.2
+
 # ─── Diagnostic flags (set from CLI in main()) ──────────────
 _DECOMPOSE = False
 _DEVIG_SENSITIVITY = False
@@ -129,6 +152,7 @@ NO_REST_FEATURES = [f for f in BASELINE_FEATURES
 
 ELO_FEATURES = ["elo_home", "elo_away", "elo_diff"]
 ODDS_FEATURES = ["odds_home", "odds_draw", "odds_away"]
+IMPLIED_DRAW_FEATURES = ["implied_draw"]  # Derived from odds, used by Two-Stage Stage 1
 
 # xG features (rolling averages from Understat/FotMob)
 XG_CORE = ["home_xg_for_avg", "away_xg_for_avg", "xg_diff"]
@@ -152,6 +176,9 @@ STRENGTH_MINIMAL = ["goal_diff_avg"]
 
 # Competitiveness group (v1.0.1 additions)
 COMPETITIVENESS = ["abs_attack_diff", "abs_defense_diff", "abs_strength_gap"]
+
+# Baseline without competitiveness (original 14 features, matches prod model v1.0.0)
+BASELINE_14_FEATURES = [f for f in BASELINE_FEATURES if f not in COMPETITIVENESS]
 
 # Core stats (goals only, no shots/corners/rest)
 GOALS_CORE = [
@@ -236,6 +263,15 @@ STANDINGS_FEATURES = [
     "home_points_per_game",    # PPG in current season
     "away_points_per_game",
     "season_progress",         # matches_played / expected_total (0.0-1.0)
+]
+
+# ─── Wave 13: Precipitation Features (FS-10) ─────────────────
+# Real precipitation from IDEAM stations (Colombia only, datos.gov.co)
+# Source: match_weather_hist.weather_data->'ideam'
+PRECIP_FEATURES = [
+    "precip_total_mm",         # Total mm across 3h match window (h0+h1+h2)
+    "precip_max_hour_mm",      # Max mm in any single hour (intensity proxy)
+    "precip_is_rainy",         # Binary: total > 1.0mm
 ]
 
 TESTS = {
@@ -455,6 +491,17 @@ TESTS = {
     "V2_geo_standings_full": GEO_FEATURES + STANDINGS_FEATURES + DEFENSE_PAIR + ELO_FEATURES + ODDS_FEATURES,
 
     # ═══════════════════════════════════════════════════════════
+    # SECTION X: PRECIPITATION (FS-10 — IDEAM real station data)
+    # Colombia-only: uses match_weather_hist.weather_data->'ideam'
+    # Tests whether match-day precipitation adds predictive signal
+    # ═══════════════════════════════════════════════════════════
+    "X0_precip_only":       PRECIP_FEATURES,
+    "X1_precip_elo":        PRECIP_FEATURES + ELO_FEATURES,
+    "X2_precip_odds":       PRECIP_FEATURES + ODDS_FEATURES,
+    "X3_precip_elo_odds":   PRECIP_FEATURES + ELO_FEATURES + ODDS_FEATURES,
+    "X4_precip_full":       PRECIP_FEATURES + DEFENSE_PAIR + ELO_FEATURES + ODDS_FEATURES,
+
+    # ═══════════════════════════════════════════════════════════
     # SECTION S: MTV (Match Talent Variance — historical talent_delta)
     # talent_delta = PTS(XI_real) - PTS(XI_expected); shock_magnitude = max(|h|,|a|)
     # Requires pre-computed parquet: data/historical_mtv_features.parquet
@@ -469,6 +516,37 @@ TESTS = {
     "S7_mtv_xi_elo":      MTV_FEATURES + XI_CONTINUITY_FEATURES + ELO_FEATURES,
     "S8_mtv_xg_elo_odds": MTV_FEATURES + XG_CORE + ELO_FEATURES + ODDS_FEATURES,
     "S9_m2_plus_mtv":     ARG_SIGNAL + ELO_FEATURES + INTERACTION_FEATURES + MTV_FEATURES,
+}
+
+# ═══════════════════════════════════════════════════════════════
+# SECTION W: TWO-STAGE ARCHITECTURE (Shadow B architecture)
+# Same feature sets as key One-Stage tests, but trained with
+# Two-Stage decomposition: Stage 1 (draw vs non-draw) + Stage 2
+# (home vs away). Tests with implied_draw add market draw signal
+# to Stage 1 only. Evaluated by evaluate_two_stage().
+# ═══════════════════════════════════════════════════════════════
+TWO_STAGE_TESTS = {
+    # W0-W2: Architecture ablation (same features as One-Stage anchors)
+    "W0_ts_baseline":       BASELINE_FEATURES,
+    "W1_ts_elo":            ELO_FEATURES,
+    "W2_ts_baseline_elo":   BASELINE_FEATURES + ELO_FEATURES,
+
+    # W3-W5: With odds (raw odds as features, no implied_draw)
+    "W3_ts_odds":           ODDS_FEATURES,
+    "W4_ts_elo_odds":       ELO_FEATURES + ODDS_FEATURES,
+    "W5_ts_full_odds":      BASELINE_FEATURES + ODDS_FEATURES,
+
+    # W6-W9: With implied_draw (the Shadow Stage 1 secret weapon)
+    "W6_ts_implied_only":   BASELINE_FEATURES + IMPLIED_DRAW_FEATURES,
+    "W7_ts_implied_elo":    BASELINE_FEATURES + ELO_FEATURES + IMPLIED_DRAW_FEATURES,
+    "W8_ts_implied_odds":   BASELINE_FEATURES + ODDS_FEATURES + IMPLIED_DRAW_FEATURES,
+    "W9_ts_kitchen_sink":   (BASELINE_FEATURES + ELO_FEATURES + ODDS_FEATURES +
+                             IMPLIED_DRAW_FEATURES + FORM_CORE),
+
+    # W10-W12: Best One-Stage combos in Two-Stage (head-to-head comparison)
+    "W10_ts_defense_elo":    DEFENSE_PAIR + ELO_FEATURES,
+    "W11_ts_m2_combo":       ARG_SIGNAL + ELO_FEATURES + INTERACTION_FEATURES,
+    "W12_ts_m2_odds":        ARG_SIGNAL + ELO_FEATURES + INTERACTION_FEATURES + ODDS_FEATURES,
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -518,6 +596,7 @@ OPTUNA_CANDIDATES = {
 }
 
 LEAGUE_NAMES = {
+    # LATAM
     128: "Argentina",
     239: "Colombia",
     242: "Ecuador",
@@ -528,14 +607,23 @@ LEAGUE_NAMES = {
     250: "Paraguay",
     268: "Uruguay",
     71:  "Brasil",
-    94:  "Primeira Liga",
     262: "Liga MX",
     253: "MLS",
+    # EUR Top 5
     140: "La Liga",
     39:  "Premier League",
     135: "Serie A",
     78:  "Bundesliga",
     61:  "Ligue 1",
+    # EUR Expansion
+    94:  "Primeira Liga",
+    88:  "Eredivisie",
+    144: "Belgian Pro",
+    203: "Süper Lig",
+    40:  "Championship",
+    307: "Saudi Pro",
+    # Special
+    0:   "CROSS-LEAGUE",
 }
 
 # Split-season leagues: primary league_id → all league_ids to extract together
@@ -581,8 +669,8 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
                m.opening_odds_draw AS odds_draw_open,
                m.opening_odds_away AS odds_away_open,
                m.opening_odds_kind,
-               COALESCE(u.xg_home, f.xg_home) AS xg_home_raw,
-               COALESCE(u.xg_away, f.xg_away) AS xg_away_raw,
+               COALESCE(u.xg_home, f.xg_home, m.xg_home) AS xg_home_raw,
+               COALESCE(u.xg_away, f.xg_away, m.xg_away) AS xg_away_raw,
                wh.lat AS home_lat_raw, wh.lon AS home_lon_raw,
                wh.stadium_altitude_m AS home_altitude_raw,
                wa.lat AS away_lat_raw, wa.lon AS away_lon_raw,
@@ -1001,6 +1089,67 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
 
     n_standings = df["home_position"].notna().sum()
     print(f"  Standings: {n_standings}/{len(df)} ({100*n_standings/len(df):.0f}%)")
+
+    # ── Precipitation Features (Wave 13 — FS-10) ─────────────────
+    # Source: match_weather_hist IDEAM data (Colombia only, datos.gov.co)
+    # Loaded via separate query (psycopg2 '?' conflicts with JSONB operator)
+    print("  Computing precipitation features...")
+    import json as _json
+
+    precip_query = """
+        SELECT match_id, weather_data->'ideam' AS ideam_json
+        FROM match_weather_hist
+        WHERE match_id = ANY(%s)
+          AND jsonb_exists(weather_data, 'ideam')
+    """
+    match_ids_list = df["match_id"].tolist()
+    precip_df = pd.read_sql(precip_query, conn, params=(match_ids_list,))
+
+    def _parse_precip(raw):
+        """Extract total_mm and max_hour_mm from IDEAM JSONB."""
+        if raw is None or (isinstance(raw, float) and np.isnan(raw)):
+            return None, None
+        try:
+            if isinstance(raw, str):
+                d = _json.loads(raw)
+            elif isinstance(raw, dict):
+                d = raw
+            else:
+                return None, None
+            hours = []
+            for key in ("h0", "h1", "h2"):
+                h = d.get(key)
+                if h and "rain_mm" in h:
+                    hours.append(float(h["rain_mm"]))
+                else:
+                    hours.append(0.0)
+            total = sum(hours)
+            max_h = max(hours)
+            return total, max_h
+        except Exception:
+            return None, None
+
+    # Parse IDEAM data
+    precip_vals = {}
+    for _, row in precip_df.iterrows():
+        t, m = _parse_precip(row["ideam_json"])
+        if t is not None:
+            precip_vals[row["match_id"]] = (t, m)
+
+    df["precip_total_mm"] = df["match_id"].map(
+        lambda mid: precip_vals.get(mid, (None, None))[0])
+    df["precip_max_hour_mm"] = df["match_id"].map(
+        lambda mid: precip_vals.get(mid, (None, None))[1])
+    df["precip_total_mm"] = pd.to_numeric(df["precip_total_mm"], errors="coerce")
+    df["precip_max_hour_mm"] = pd.to_numeric(df["precip_max_hour_mm"], errors="coerce")
+    df["precip_is_rainy"] = (df["precip_total_mm"] > 1.0).astype(float)
+    df.loc[df["precip_total_mm"].isna(), "precip_is_rainy"] = np.nan
+
+    n_precip = df["precip_total_mm"].notna().sum()
+    n_rainy = (df["precip_is_rainy"] == 1.0).sum() if n_precip > 0 else 0
+    print(f"  Precip: {n_precip}/{len(df)} ({100*n_precip/len(df):.0f}%) "
+          f"| Rainy matches: {n_rainy}/{n_precip if n_precip > 0 else 1} "
+          f"({100*n_rainy/max(n_precip,1):.0f}%)")
 
     # Coverage report
     n_total = len(df)
@@ -1778,10 +1927,13 @@ def compute_all_experimental_features(df: pd.DataFrame) -> pd.DataFrame:
 # ─── Universe System (Fix 1 + Fix 3) ─────────────────────────
 
 # All optional feature groups that define universe boundaries
-_ODDS_SET = set(ODDS_FEATURES)
+_ODDS_SET = set(ODDS_FEATURES) | set(IMPLIED_DRAW_FEATURES)  # implied_draw requires odds
 _XG_SET = set(XG_ALL)  # XG_CORE + XG_DEFENSE + XG_OVERPERF
 _XI_SET = set(XI_CONTINUITY_FEATURES)
 _MTV_SET = set(MTV_FEATURES)
+_GEO_SET = set(GEO_FEATURES)
+_STANDINGS_SET = set(STANDINGS_FEATURES)
+_PRECIP_SET = set(PRECIP_FEATURES)
 
 
 def classify_test_universe(feature_names: list) -> str:
@@ -1791,11 +1943,20 @@ def classify_test_universe(feature_names: list) -> str:
     needs_xg = bool(feats & _XG_SET)
     needs_xi = bool(feats & _XI_SET)
     needs_mtv = bool(feats & _MTV_SET)
+    needs_geo = bool(feats & _GEO_SET)
+    needs_standings = bool(feats & _STANDINGS_SET)
+    needs_precip = bool(feats & _PRECIP_SET)
     parts = []
     if needs_mtv:
         parts.append("mtv")
     if needs_xi:
         parts.append("xi")
+    if needs_geo:
+        parts.append("geo")
+    if needs_standings:
+        parts.append("st")
+    if needs_precip:
+        parts.append("precip")
     if needs_odds:
         parts.append("odds")
     if needs_xg:
@@ -1827,7 +1988,8 @@ def compute_universes(df: pd.DataFrame, tests_dict: dict) -> dict:
       - mtv_xi_odds:     base ∩ mtv ∩ xi ∩ odds
       - mtv_xi_odds_xg:  base ∩ mtv ∩ xi ∩ odds ∩ xG
     """
-    _ALL_OPTIONAL = _ODDS_SET | _XG_SET | _XI_SET | _MTV_SET
+    _ALL_OPTIONAL = (_ODDS_SET | _XG_SET | _XI_SET | _MTV_SET |
+                     _GEO_SET | _STANDINGS_SET | _PRECIP_SET)
 
     # Collect all "base" features (non-optional) across all tests
     all_base_feats = set()
@@ -1866,6 +2028,15 @@ def compute_universes(df: pd.DataFrame, tests_dict: dict) -> dict:
     mtv_cols = [c for c in MTV_FEATURES if c in df_base.columns]
     mtv_mask = df_base[mtv_cols].notna().all(axis=1) if mtv_cols else pd.Series(False, index=df_base.index)
 
+    geo_cols = [c for c in GEO_FEATURES if c in df_base.columns]
+    geo_mask = df_base[geo_cols].notna().all(axis=1) if geo_cols else pd.Series(False, index=df_base.index)
+
+    st_cols = [c for c in STANDINGS_FEATURES if c in df_base.columns]
+    st_mask = df_base[st_cols].notna().all(axis=1) if st_cols else pd.Series(False, index=df_base.index)
+
+    precip_cols = [c for c in PRECIP_FEATURES if c in df_base.columns]
+    precip_mask = df_base[precip_cols].notna().all(axis=1) if precip_cols else pd.Series(False, index=df_base.index)
+
     # Build universes
     universes: dict[str, pd.DataFrame] = {"base": df_base}
 
@@ -1887,6 +2058,18 @@ def compute_universes(df: pd.DataFrame, tests_dict: dict) -> dict:
     _add("mtv_xi", mtv_mask & xi_mask)
     _add("mtv_xi_odds", mtv_mask & xi_mask & odds_mask)
     _add("mtv_xi_odds_xg", mtv_mask & xi_mask & odds_mask & xg_mask)
+    # Geo universes
+    _add("geo", geo_mask)
+    _add("geo_odds", geo_mask & odds_mask)
+    _add("geo_st", geo_mask & st_mask)
+    _add("geo_st_odds", geo_mask & st_mask & odds_mask)
+    # Standings universes
+    _add("st", st_mask)
+    _add("st_odds", st_mask & odds_mask)
+    _add("st_odds_xg", st_mask & odds_mask & xg_mask)
+    # Precipitation universes
+    _add("precip", precip_mask)
+    _add("precip_odds", precip_mask & odds_mask)
 
     # Report
     for uid, udf in universes.items():
@@ -2099,6 +2282,67 @@ def train_xgb(X_train, y_train, seed=42):
     sample_weight[y_train == 1] = DRAW_WEIGHT
     model.fit(X_train, y_train, sample_weight=sample_weight, verbose=False)
     return model
+
+
+# ─── Two-Stage Training (Shadow architecture) ────────────────
+
+def train_two_stage(X_train, y_train, feature_names, seed=42):
+    """Train Two-Stage model: Stage 1 (draw vs non-draw) + Stage 2 (home vs away).
+
+    Stage 1: Binary classifier on all features (including implied_draw if present).
+    Stage 2: Binary classifier on non-draw samples only (excludes implied_draw).
+    Composition: p_draw = S1, p_home = (1-p_draw)*S2_home, p_away = (1-p_draw)*S2_away.
+    """
+    # Stage 1: draw (1) vs non-draw (0)
+    y_s1 = (y_train == 1).astype(int)
+    params_s1 = {**TWO_STAGE_PARAMS_S1, "random_state": seed}
+    model_s1 = xgb.XGBClassifier(**params_s1)
+    sw_s1 = np.ones(len(y_s1), dtype=np.float32)
+    sw_s1[y_s1 == 1] = TWO_STAGE_DRAW_WEIGHT
+    model_s1.fit(X_train, y_s1, sample_weight=sw_s1, verbose=False)
+
+    # Stage 2: home (0) vs away (1), non-draw only
+    non_draw = y_train != 1
+    y_s2 = (y_train[non_draw] == 2).astype(int)
+
+    # Remove implied_draw from Stage 2 (it's a draw-specific signal)
+    if "implied_draw" in feature_names:
+        id_idx = feature_names.index("implied_draw")
+        s2_cols = [i for i in range(X_train.shape[1]) if i != id_idx]
+    else:
+        s2_cols = list(range(X_train.shape[1]))
+
+    X_s2 = X_train[non_draw][:, s2_cols]
+    params_s2 = {**TWO_STAGE_PARAMS_S2, "random_state": seed}
+    model_s2 = xgb.XGBClassifier(**params_s2)
+    model_s2.fit(X_s2, y_s2, verbose=False)
+
+    return model_s1, model_s2, s2_cols
+
+
+def predict_two_stage(model_s1, model_s2, X_test, s2_cols):
+    """Predict probabilities using Two-Stage composition.
+
+    Returns (N, 3) array: [p_home, p_draw, p_away] summing to 1.0.
+    """
+    p_draw = model_s1.predict_proba(X_test)[:, 1]
+    X_s2 = X_test[:, s2_cols]
+    p_away_given_nd = model_s2.predict_proba(X_s2)[:, 1]
+    p_home = (1 - p_draw) * (1 - p_away_given_nd)
+    p_away = (1 - p_draw) * p_away_given_nd
+    return np.column_stack([p_home, p_draw, p_away])
+
+
+def compute_implied_draw(df):
+    """Compute implied_draw from odds (pre-kickoff market draw probability)."""
+    has_odds = (df["odds_home"].notna() & df["odds_draw"].notna() &
+                df["odds_away"].notna() & (df["odds_draw"] > 0))
+    inv_h = 1.0 / df["odds_home"].where(df["odds_home"] > 0)
+    inv_d = 1.0 / df["odds_draw"].where(df["odds_draw"] > 0)
+    inv_a = 1.0 / df["odds_away"].where(df["odds_away"] > 0)
+    total = inv_h + inv_d + inv_a
+    df["implied_draw"] = (inv_d / total).where(has_odds, np.nan)
+    return df
 
 
 # ─── Market Residual helpers ─────────────────────────────────
@@ -2399,6 +2643,76 @@ def evaluate_feature_set(df_universe: pd.DataFrame, feature_names: list,
     }
     result.update(diag)
     return result
+
+
+def evaluate_two_stage(df_universe, feature_names, test_name,
+                       lockbox_mode=False):
+    """Train & evaluate a Two-Stage model (Shadow architecture).
+
+    Same pattern as evaluate_feature_set but uses train_two_stage/predict_two_stage.
+    """
+    prep = _prepare_dataset(df_universe, feature_names, test_name,
+                            lockbox_mode=lockbox_mode)
+    if "error" in prep:
+        return {"test": test_name, **prep}
+
+    df_train, df_test, df_sorted = prep["df_train"], prep["df_test"], prep["df_sorted"]
+    X_tr, y_tr, X_te, y_te = prep["X_tr"], prep["y_tr"], prep["X_te"], prep["y_te"]
+
+    all_briers, all_logloss, all_accuracy = [], [], []
+    all_y_probs = []
+
+    for seed_i in range(N_SEEDS):
+        seed = seed_i * 42 + 7
+        s1, s2, s2_cols = train_two_stage(X_tr, y_tr, feature_names, seed=seed)
+        y_prob = predict_two_stage(s1, s2, X_te, s2_cols)
+
+        all_briers.append(multiclass_brier(y_te, y_prob))
+        all_logloss.append(log_loss(y_te, y_prob, labels=[0, 1, 2]))
+        y_pred = np.argmax(y_prob, axis=1)
+        all_accuracy.append(float(np.mean(y_pred == y_te)))
+        all_y_probs.append(y_prob)
+
+    ensemble_prob = np.mean(all_y_probs, axis=0)
+    brier_ensemble = multiclass_brier(y_te, ensemble_prob)
+    ci_lo, ci_hi = bootstrap_ci(y_te, ensemble_prob)
+
+    # Draw-specific metrics (Two-Stage diagnostic)
+    draw_pred = np.argmax(ensemble_prob, axis=1) == 1
+    draw_real = y_te == 1
+    n_draw_pred = int(draw_pred.sum())
+    n_draw_correct = int((draw_pred & draw_real).sum())
+    draw_acc = round(n_draw_correct / n_draw_pred, 4) if n_draw_pred > 0 else 0.0
+
+    test_dist = df_test["result"].value_counts().sort_index()
+    test_pct = (test_dist / len(df_test) * 100).round(1).to_dict()
+
+    return {
+        "test": test_name,
+        "architecture": "two_stage",
+        "universe": classify_test_universe(feature_names),
+        "n_features": len(feature_names),
+        "features": feature_names,
+        "n_train": len(df_train),
+        "n_test": len(df_test),
+        "date_range": [str(df_sorted["date"].min()), str(df_sorted["date"].max())],
+        "split_date": str(df_test["date"].min()),
+        "brier_ensemble": round(brier_ensemble, 5),
+        "brier_ci95": [round(ci_lo, 5), round(ci_hi, 5)],
+        "brier_seed_mean": round(float(np.mean(all_briers)), 5),
+        "brier_seed_std": round(float(np.std(all_briers)), 5),
+        "brier_seed_range": [round(min(all_briers), 5), round(max(all_briers), 5)],
+        "logloss_mean": round(float(np.mean(all_logloss)), 5),
+        "accuracy_mean": round(float(np.mean(all_accuracy)), 4),
+        "draw_predicted": n_draw_pred,
+        "draw_correct": n_draw_correct,
+        "draw_accuracy": draw_acc,
+        "test_distribution": {
+            "H": test_pct.get(0, 0),
+            "D": test_pct.get(1, 0),
+            "A": test_pct.get(2, 0),
+        },
+    }
 
 
 def evaluate_feature_set_residual(df_universe, feature_names, test_name,
@@ -3142,7 +3456,8 @@ def fair_model_vs_market(df_odds_universe: pd.DataFrame, feature_names: list,
 
 def run_league_tests(df: pd.DataFrame, league_id: int,
                      lockbox_mode: bool = False,
-                     run_residual: bool = False) -> dict:
+                     run_residual: bool = False,
+                     run_two_stage: bool = False) -> dict:
     """Run all feature set tests for one league using fixed universes."""
     league_name = LEAGUE_NAMES.get(league_id, f"league_{league_id}")
 
@@ -3153,8 +3468,11 @@ def run_league_tests(df: pd.DataFrame, league_id: int,
         print(f"  Mode: LOCKBOX (70/15/15)")
     print(f"{'=' * 70}")
 
-    # Fix 1: compute universes once
-    universes = compute_universes(df, TESTS)
+    # Fix 1: compute universes once (include Two-Stage tests for proper universe coverage)
+    all_tests_dict = dict(TESTS)
+    if run_two_stage:
+        all_tests_dict.update(TWO_STAGE_TESTS)
+    universes = compute_universes(df, all_tests_dict)
 
     # Run anchor tests (A0, A1) in each non-empty universe for intra-universe deltas
     anchor_tests = {"A0_baseline_17": TESTS["A0_baseline_17"],
@@ -3194,6 +3512,75 @@ def run_league_tests(df: pd.DataFrame, league_id: int,
         elif res:
             print(f"    SKIP: {res['error']}")
         results.append(res)
+
+    # ─── Section W: Two-Stage architecture tests ──────────────
+    two_stage_results = []
+    if run_two_stage:
+        print(f"\n  {'─' * 60}")
+        print(f"  SECTION W: Two-Stage Architecture (Shadow B)")
+        print(f"  {'─' * 60}")
+
+        for test_name, features in TWO_STAGE_TESTS.items():
+            uid = classify_test_universe(features)
+            udf = universes.get(uid, pd.DataFrame())
+
+            print(f"\n  [{test_name}] {len(features)} features (universe={uid})...")
+            if udf.empty:
+                res = {"test": test_name, "universe": uid,
+                       "error": "empty_universe:%s" % uid}
+                print(f"    SKIP: {res['error']}")
+                two_stage_results.append(res)
+                continue
+
+            res = evaluate_two_stage(udf, features, test_name,
+                                     lockbox_mode=lockbox_mode)
+            if res and "error" not in res:
+                print(f"    Brier: {res['brier_ensemble']:.5f} "
+                      f"(seeds: {res['brier_seed_mean']:.5f} "
+                      f"\u00b1 {res['brier_seed_std']:.5f}) "
+                      f"CI95[{res['brier_ci95'][0]:.5f}, {res['brier_ci95'][1]:.5f}] "
+                      f"Acc: {res['accuracy_mean']:.3f} "
+                      f"Draw: {res['draw_predicted']}/{res['draw_correct']} "
+                      f"({res['draw_accuracy']:.3f}) "
+                      f"(N_train={res['n_train']}, N_test={res['n_test']})")
+            elif res:
+                print(f"    SKIP: {res['error']}")
+            two_stage_results.append(res)
+
+        # Two-Stage vs One-Stage head-to-head summary
+        valid_ts = [r for r in two_stage_results if r and "error" not in r]
+        if valid_ts:
+            print(f"\n  {'─' * 70}")
+            print(f"  TWO-STAGE vs ONE-STAGE HEAD-TO-HEAD")
+            delta_sym = "\u0394"
+            print(f"  {'Test':<28} {'TS Brier':>10} {'OS Brier':>10} "
+                  f"{delta_sym:>8} {'Draw Acc':>9}")
+            print(f"  {'─' * 28} {'─' * 10} {'─' * 10} {'─' * 8} {'─' * 9}")
+            # Map W tests to their One-Stage equivalents
+            h2h_map = {
+                "W0_ts_baseline": "A0_baseline_17",
+                "W2_ts_baseline_elo": "H1_defense_elo",
+                "W5_ts_full_odds": "J2_full_odds",
+                "W10_ts_defense_elo": "H1_defense_elo",
+            }
+            for ts_r in valid_ts:
+                ts_name = ts_r["test"]
+                os_name = h2h_map.get(ts_name)
+                os_brier = None
+                if os_name:
+                    for r in results:
+                        if r and r.get("test") == os_name and "error" not in r:
+                            os_brier = r["brier_ensemble"]
+                            break
+                delta_str = ""
+                os_str = "N/A"
+                if os_brier is not None:
+                    os_str = "%.5f" % os_brier
+                    delta = ts_r["brier_ensemble"] - os_brier
+                    delta_str = "%+.5f" % delta
+                print(f"  {ts_name:<28} {ts_r['brier_ensemble']:>10.5f} "
+                      f"{os_str:>10} {delta_str:>8} "
+                      f"{ts_r['draw_accuracy']:>9.3f}")
 
     # Market baseline (uses odds universe, lockbox-aware split)
     print(f"\n  [MKT_market] De-vigged odds baseline...")
@@ -3559,7 +3946,9 @@ def run_league_tests(df: pd.DataFrame, league_id: int,
         "universes": {uid: len(udf) for uid, udf in universes.items()},
         "anchors_by_universe": anchors_by_universe,
         "tests": [r for r in results if r is not None],
+        "two_stage_tests": [r for r in two_stage_results if r is not None],
         "market_baseline": mkt,
+        "market_brier": mkt["brier_ensemble"] if mkt and "brier_ensemble" in mkt else None,
         "fair_comparisons": {k: {kk: vv for kk, vv in v.items()
                                   if kk != "alignment_check"}
                               for k, v in fair_comparisons.items()},
@@ -3996,6 +4385,232 @@ def run_shap_analysis(df: pd.DataFrame, league_id: int, output_dir: str) -> dict
     return shap_output
 
 
+# ─── Signal Map (marginal contribution per feature category) ──
+
+# Feature categories for signal map — maps category name to
+# (test_with_category, test_without_category) for delta computation
+SIGNAL_MAP_CATEGORIES = {
+    "Odds":         ("J2_full_odds",        "A0_baseline_17"),
+    "Elo":          ("A1_only_elo_k32",     "A0_baseline_17"),
+    "Elo+Baseline": ("H1_defense_elo",      "A0_baseline_17"),
+    "Form":         ("E3_form_elo",         "A1_only_elo_k32"),
+    "Matchups":     ("F1_matchup_elo",      "A1_only_elo_k32"),
+    "xG":           ("P2_xg_elo",           "A1_only_elo_k32"),
+    "Interactions":  ("L1_interactions_elo", "A1_only_elo_k32"),
+    "Opp-Adjusted": ("K1_opp_adj_elo",      "A1_only_elo_k32"),
+    "Draw-Aware":   ("K5_draw_aware_elo",   "A1_only_elo_k32"),
+    "H2H":          ("F4_h2h_elo",          "A1_only_elo_k32"),
+    "MTV":          ("S1_mtv_elo",          "A1_only_elo_k32"),
+    "XI Continuity": ("Q1_xi_elo",          "A1_only_elo_k32"),
+    "Geo":          ("U1_geo_elo",          "A1_only_elo_k32"),
+    "Standings":    ("T1_standings_elo",     "A1_only_elo_k32"),
+    "Precip":       ("X1_precip_elo",       "A1_only_elo_k32"),
+    # Two-Stage architecture effect
+    "TwoStage (arch)":     ("W2_ts_baseline_elo",  "A0_baseline_17"),
+    "TwoStage + Odds":     ("W5_ts_full_odds",     "J2_full_odds"),
+    "TwoStage + Implied":  ("W8_ts_implied_odds",  "J2_full_odds"),
+}
+
+
+def generate_signal_map(all_results):
+    """Generate per-league signal map showing marginal contribution of each feature category.
+
+    Returns dict: {league_name: {category: {delta, with_brier, without_brier, signal}}}
+    """
+    signal_maps = []
+
+    for league_result in all_results:
+        league_name = league_result.get("league_name", "unknown")
+        tests = league_result.get("tests", [])
+        ts_tests = league_result.get("two_stage_tests", [])
+
+        # Build lookup: test_name -> brier_ensemble
+        lookup = {}
+        for t in tests:
+            if t and "error" not in t:
+                lookup[t["test"]] = t["brier_ensemble"]
+        for t in ts_tests:
+            if t and "error" not in t:
+                lookup[t["test"]] = t["brier_ensemble"]
+
+        # Market baseline
+        market_brier = league_result.get("market_brier")
+
+        categories = {}
+        for cat_name, (with_test, without_test) in SIGNAL_MAP_CATEGORIES.items():
+            b_with = lookup.get(with_test)
+            b_without = lookup.get(without_test)
+            if b_with is not None and b_without is not None:
+                delta = round(b_without - b_with, 5)  # Positive = category helps
+                categories[cat_name] = {
+                    "delta": delta,
+                    "with_brier": b_with,
+                    "without_brier": b_without,
+                    "signal": "STRONG" if delta > 0.005 else
+                              "MODERATE" if delta > 0.001 else
+                              "WEAK" if delta > 0 else "NOISE",
+                }
+
+        signal_maps.append({
+            "league": league_name,
+            "league_id": league_result.get("league_id"),
+            "market_brier": market_brier,
+            "categories": categories,
+        })
+
+    return signal_maps
+
+
+def print_signal_map(signal_maps):
+    """Pretty-print the signal map across all leagues."""
+    if not signal_maps:
+        return
+
+    print(f"\n{'=' * 100}")
+    print(f"  SIGNAL MAP — Marginal Contribution by Feature Category")
+    print(f"  (delta = Brier improvement when adding category; positive = helps)")
+    print(f"{'=' * 100}")
+
+    # Collect all categories across all leagues
+    all_cats = []
+    for sm in signal_maps:
+        all_cats.extend(sm["categories"].keys())
+    all_cats = sorted(set(all_cats), key=lambda c: list(SIGNAL_MAP_CATEGORIES.keys()).index(c)
+                      if c in SIGNAL_MAP_CATEGORIES else 999)
+
+    # Header
+    leagues = [sm["league"] for sm in signal_maps]
+    header = f"  {'Category':<22}"
+    for lg in leagues:
+        header += f" {lg[:12]:>12}"
+    print(header)
+    print(f"  {'─' * 22}" + f" {'─' * 12}" * len(leagues))
+
+    # Market baseline row
+    mkt_row = f"  {'Market Brier':<22}"
+    for sm in signal_maps:
+        mb = sm.get("market_brier")
+        mkt_row += f" {mb:>12.5f}" if mb else f" {'N/A':>12}"
+    print(mkt_row)
+    print(f"  {'─' * 22}" + f" {'─' * 12}" * len(leagues))
+
+    # Category rows
+    for cat in all_cats:
+        row = f"  {cat:<22}"
+        for sm in signal_maps:
+            info = sm["categories"].get(cat)
+            if info:
+                d = info["delta"]
+                sig = info["signal"][0]  # S/M/W/N
+                if d > 0.005:
+                    row += f"  {d:>+.5f} *"
+                elif d > 0.001:
+                    row += f"  {d:>+.5f} ."
+                elif d > 0:
+                    row += f"  {d:>+.5f}  "
+                else:
+                    row += f"  {d:>+.5f} -"
+            else:
+                row += f" {'---':>12}"
+        print(row)
+
+    # Summary: best category per league
+    print(f"\n  {'─' * 22}" + f" {'─' * 12}" * len(leagues))
+    best_row = f"  {'BEST CATEGORY':<22}"
+    for sm in signal_maps:
+        cats = sm["categories"]
+        if cats:
+            best = max(cats.items(), key=lambda x: x[1]["delta"])
+            best_row += f" {best[0][:12]:>12}"
+        else:
+            best_row += f" {'N/A':>12}"
+    print(best_row)
+
+    invest_row = f"  {'INVEST IN':<22}"
+    for sm in signal_maps:
+        cats = sm["categories"]
+        # Find categories with STRONG or MODERATE signal
+        invest = [c for c, v in cats.items()
+                  if v["signal"] in ("STRONG", "MODERATE")
+                  and c not in ("Elo", "Elo+Baseline")]  # Elo is always available
+        if invest:
+            invest_row += f" {invest[0][:12]:>12}"
+        else:
+            invest_row += f" {'(nothing)':>12}"
+    print(invest_row)
+
+    print()
+
+
+# ─── Ablation: Competitiveness Features (14 vs 17) ───────────
+
+def run_competitiveness_ablation(df, league_id, lockbox_mode=False):
+    """Ablation test: BASELINE_14 vs BASELINE_17 (competitiveness features).
+
+    Uses a single dataset preparation (BASELINE_17 superset) and derives
+    BASELINE_14 subset from the same df_train/df_test for apples-to-apples.
+    """
+    league_name = LEAGUE_NAMES.get(league_id, f"league_{league_id}")
+
+    # Use "base" universe (no odds/xg/mtv needed)
+    tests_for_universe = {"ABLATE_baseline_17": BASELINE_FEATURES}
+    universes = compute_universes(df, tests_for_universe)
+    udf = universes.get("base")
+    if udf is None or udf.empty:
+        return {"league_id": league_id, "league_name": league_name,
+                "error": "empty_universe"}
+
+    # Single preparation with BASELINE_17 (superset)
+    prep = _prepare_dataset(udf, BASELINE_FEATURES, "ABLATE_baseline_17",
+                            lockbox_mode=lockbox_mode)
+    if "error" in prep:
+        return {"league_id": league_id, "league_name": league_name, **prep}
+
+    df_train, df_test = prep["df_train"], prep["df_test"]
+    y_tr, y_te = prep["y_tr"], prep["y_te"]
+    X_tr_17, X_te_17 = prep["X_tr"], prep["X_te"]
+
+    # Derive BASELINE_14 from same DataFrames (apples-to-apples)
+    X_tr_14 = df_train[BASELINE_14_FEATURES].fillna(0).values.astype(np.float32)
+    X_te_14 = df_test[BASELINE_14_FEATURES].fillna(0).values.astype(np.float32)
+
+    split_date = str(df_test["date"].min())
+
+    # Train/eval both with N_SEEDS ensemble
+    def _train_eval(X_tr, X_te):
+        all_probs = []
+        for seed_i in range(N_SEEDS):
+            seed = seed_i * 42 + 7
+            model = train_xgb(X_tr, y_tr, seed=seed)
+            y_prob = model.predict_proba(X_te)
+            all_probs.append(y_prob)
+        ensemble = np.mean(all_probs, axis=0)
+        brier = multiclass_brier(y_te, ensemble)
+        ci = bootstrap_ci(y_te, ensemble)
+        return ensemble, brier, ci
+
+    prob_14, brier_14, ci_14 = _train_eval(X_tr_14, X_te_14)
+    prob_17, brier_17, ci_17 = _train_eval(X_tr_17, X_te_17)
+
+    # Paired delta: Δ = brier_17 - brier_14
+    delta = brier_17 - brier_14
+    delta_ci = bootstrap_paired_delta(y_te, prob_17, prob_14)
+
+    return {
+        "league_id": league_id,
+        "league_name": league_name,
+        "n_train": len(df_train),
+        "n_test": len(df_test),
+        "split_date": split_date,
+        "brier_14": round(brier_14, 5),
+        "brier_14_ci95": [round(ci_14[0], 5), round(ci_14[1], 5)],
+        "brier_17": round(brier_17, 5),
+        "brier_17_ci95": [round(ci_17[0], 5), round(ci_17[1], 5)],
+        "delta": round(delta, 5),
+        "delta_ci95": [round(delta_ci[0], 5), round(delta_ci[1], 5)],
+    }
+
+
 # ─── Main ─────────────────────────────────────────────────────
 
 def main():
@@ -4030,14 +4645,38 @@ def main():
     parser.add_argument("--strict-mtv", action="store_true",
                         help="GDT strict mode: drop matches without MTV data before universes "
                              "(forces apples-to-apples temporal overlap)")
+    parser.add_argument("--two-stage", action="store_true",
+                        help="Run Section W: Two-Stage architecture tests (Shadow B)")
+    parser.add_argument("--signal-map", action="store_true",
+                        help="Generate signal map showing marginal contribution per feature "
+                             "category per league")
+    parser.add_argument("--cross-league", action="store_true",
+                        help="Merge all specified leagues into one dataset for cross-league "
+                             "training experiment")
+    parser.add_argument("--all-leagues", action="store_true",
+                        help="Run on ALL 25 active domestic leagues")
+    parser.add_argument("--ablate-competitiveness", action="store_true",
+                        help="Run ablation BASELINE_14 vs BASELINE_17 (competitiveness features)")
     args = parser.parse_args()
 
-    league_ids = args.league or [128, 94]
     data_dir = args.data_dir
     run_optuna = args.optuna
     run_shap = args.shap
     lockbox_mode = args.lockbox
     run_residual = args.residual
+    run_two_stage = args.two_stage
+    run_signal_map = args.signal_map
+    run_cross_league = args.cross_league
+
+    # --all-leagues: run on all 23 primary league IDs (25 leagues via split)
+    if args.all_leagues:
+        league_ids = sorted(k for k in LEAGUE_NAMES.keys() if k > 0)
+    else:
+        league_ids = args.league or [128, 94]
+
+    # signal-map implies two-stage (need W tests for TwoStage categories)
+    if run_signal_map:
+        run_two_stage = True
 
     # Set diagnostic flags (FS-01/FS-02/FS-03/FS-04/FS-06/FS-07)
     global _DECOMPOSE, _DEVIG_SENSITIVITY, _WALK_FORWARD, _OPENING_TEST, _CALIBRATE
@@ -4060,7 +4699,11 @@ def main():
         print("  ERROR: shap not installed. Run: pip install shap")
         sys.exit(1)
 
-    if run_shap:
+    run_ablation = args.ablate_competitiveness
+
+    if run_ablation:
+        mode_label = "ABLATION_COMPETITIVENESS"
+    elif run_shap:
         mode_label = "SHAP"
     elif run_optuna:
         mode_label = "OPTUNA"
@@ -4082,22 +4725,38 @@ def main():
         mode_label += "+CAL_%s" % _CALIBRATE.upper()
     if args.strict_mtv:
         mode_label += "+STRICT_MTV"
+    if run_two_stage:
+        mode_label += "+TWO_STAGE"
+    if run_signal_map:
+        mode_label += "+SIGNAL_MAP"
+    if run_cross_league:
+        mode_label += "+CROSS_LEAGUE"
 
     print(f"\n  FEATURE LAB ({mode_label})")
     print(f"  {'=' * 50}")
-    print(f"  Leagues: {[LEAGUE_NAMES.get(l, l) for l in league_ids]}")
-    if run_shap:
+    print(f"  Leagues: {[LEAGUE_NAMES.get(l, l) for l in league_ids]} ({len(league_ids)})")
+    if run_ablation:
+        print(f"  Ablation: BASELINE_14 ({len(BASELINE_14_FEATURES)}f) vs "
+              f"BASELINE_17 ({len(BASELINE_FEATURES)}f)")
+        print(f"  Competitiveness: {COMPETITIVENESS}")
+    elif run_shap:
         print(f"  SHAP tests: {len(SHAP_TESTS)} key feature sets")
     elif run_optuna:
         print(f"  Candidates: {len(OPTUNA_CANDIDATES)} champion sets")
-        print(f"  Optuna: {OPTUNA_N_TRIALS} trials × {OPTUNA_CV_FOLDS}-fold temporal CV")
+        print(f"  Optuna: {OPTUNA_N_TRIALS} trials x {OPTUNA_CV_FOLDS}-fold temporal CV")
     else:
-        print(f"  Tests: {len(TESTS)} feature sets + market baseline")
+        n_tests = len(TESTS)
+        if run_two_stage:
+            n_tests += len(TWO_STAGE_TESTS)
+        print(f"  Tests: {n_tests} feature sets + market baseline")
     if run_residual:
         print(f"  Residual: {len(RESIDUAL_TESTS)} market-residual tests (Section R)")
+    if run_cross_league:
+        print(f"  Cross-league: merge all leagues into one training set")
     print(f"  Seeds: {N_SEEDS} | Bootstrap: {N_BOOTSTRAP}")
 
     all_results = []
+    all_league_dfs = {}  # league_id -> DataFrame (for cross-league merge)
 
     for league_id in league_ids:
         csv_path = Path(data_dir) / f"lab_data_{league_id}.csv"
@@ -4111,6 +4770,11 @@ def main():
             df = compute_elo_goals(df)
             df = compute_all_experimental_features(df)
             print(f"  Loaded {len(df)} rows, {len(df.columns)} columns")
+
+        # Compute implied_draw from odds (for Two-Stage tests)
+        df = compute_implied_draw(df)
+        n_implied = int(df["implied_draw"].notna().sum())
+        print(f"  Implied draw computed: {n_implied}/{len(df)} ({100*n_implied/len(df):.1f}%)")
 
         # MTV: Merge historical talent_delta features from pre-computed parquet
         mtv_path = Path("data/historical_mtv_features.parquet")
@@ -4146,47 +4810,176 @@ def main():
             print(f"  SKIP: no data for league {league_id}")
             continue
 
-        if run_shap:
+        # Store for cross-league merge (before running tests)
+        if run_cross_league:
+            all_league_dfs[league_id] = df.copy()
+
+        if run_ablation:
+            result = run_competitiveness_ablation(df, league_id,
+                                                  lockbox_mode=lockbox_mode)
+        elif run_shap:
             result = run_shap_analysis(df, league_id, data_dir)
         elif run_optuna:
             result = run_optuna_tests(df, league_id)
         else:
             result = run_league_tests(df, league_id, lockbox_mode=lockbox_mode,
-                                      run_residual=run_residual)
+                                      run_residual=run_residual,
+                                      run_two_stage=run_two_stage)
         all_results.append(result)
 
+    # ─── Cross-league merge mode ──────────────────────────────
+    cross_league_result = None
+    if run_cross_league and len(all_league_dfs) > 1:
+        print(f"\n{'=' * 70}")
+        print(f"  CROSS-LEAGUE MERGE — {len(all_league_dfs)} leagues combined")
+        print(f"{'=' * 70}")
+
+        # Concatenate all league DataFrames, add league_id column for tracking
+        merged_dfs = []
+        for lid, ldf in all_league_dfs.items():
+            ldf_copy = ldf.copy()
+            ldf_copy["source_league_id"] = lid
+            merged_dfs.append(ldf_copy)
+        df_merged = pd.concat(merged_dfs, ignore_index=True)
+        df_merged = df_merged.sort_values(["date", "match_id"]).reset_index(drop=True)
+
+        # Re-compute Elo on merged dataset (cross-league Elo)
+        print(f"  Merged: {len(df_merged)} matches from {len(all_league_dfs)} leagues")
+        print(f"  Re-computing Elo on merged dataset...")
+        df_merged = compute_elo_goals(df_merged)
+        df_merged = compute_all_experimental_features(df_merged)
+        df_merged = compute_implied_draw(df_merged)
+
+        cross_league_result = run_league_tests(
+            df_merged, league_id=0,
+            lockbox_mode=lockbox_mode,
+            run_residual=run_residual,
+            run_two_stage=run_two_stage)
+        cross_league_result["league_name"] = "CROSS-LEAGUE"
+        cross_league_result["league_id"] = 0
+        cross_league_result["source_leagues"] = list(all_league_dfs.keys())
+        all_results.append(cross_league_result)
+
+    # ─── Ablation output ─────────────────────────────────────
+    if run_ablation and all_results:
+        valid = [r for r in all_results if "error" not in r]
+        errors = [r for r in all_results if "error" in r]
+        aggregate = None
+
+        if valid:
+            print(f"\n{'=' * 85}")
+            print(f"  ABLATION: BASELINE_14 vs BASELINE_17 (Competitiveness Features)")
+            print(f"{'=' * 85}")
+            print(f"  {'League':<18} {'Brier14':>8} {'Brier17':>8} "
+                  f"{'Delta':>8} {'CI95_lo':>8} {'CI95_hi':>8} {'N_test':>7}")
+            print(f"  {'-'*18} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*7}")
+
+            for r in valid:
+                sig = ""
+                if r["delta_ci95"][1] < 0:
+                    sig = " **"  # 17 significantly better
+                elif r["delta_ci95"][0] > 0:
+                    sig = " !!"  # 14 significantly better
+                print(f"  {r['league_name']:<18} {r['brier_14']:>8.5f} {r['brier_17']:>8.5f} "
+                      f"{r['delta']:>+8.5f} {r['delta_ci95'][0]:>+8.5f} "
+                      f"{r['delta_ci95'][1]:>+8.5f} {r['n_test']:>7d}{sig}")
+
+            # Weighted aggregate
+            total_n = sum(r["n_test"] for r in valid)
+            delta_weighted = sum(r["delta"] * r["n_test"] for r in valid) / total_n
+            n_better_17 = sum(1 for r in valid if r["delta"] < 0)
+            n_better_14 = sum(1 for r in valid if r["delta"] > 0)
+            n_neutral = sum(1 for r in valid if r["delta"] == 0)
+
+            print(f"  {'-'*18} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*7}")
+            print(f"  {'WEIGHTED AVG':<18} {'':>8} {'':>8} {delta_weighted:>+8.5f} "
+                  f"{'':>8} {'':>8} {total_n:>7d}")
+            print(f"\n  17 better (D<0): {n_better_17} | 14 better (D>0): {n_better_14}"
+                  f" | neutral: {n_neutral}")
+            print(f"  ** = CI95 entirely <0 (17 sig. better)")
+            print(f"  !! = CI95 entirely >0 (14 sig. better)")
+
+            # Aggregate to results
+            aggregate = {
+                "delta_weighted": round(delta_weighted, 5),
+                "total_n_test": total_n,
+                "n_leagues": len(valid),
+                "n_better_17": n_better_17,
+                "n_better_14": n_better_14,
+                "n_neutral": n_neutral,
+            }
+
+        if errors:
+            print(f"\n  Errors ({len(errors)}):")
+            for r in errors:
+                print(f"    {r['league_name']}: {r['error']}")
+
+        # Save JSON
+        output_path = Path(data_dir) / "feature_lab_ablation_competitiveness.json"
+        save_payload = {
+            "meta": {
+                "timestamp": datetime.now().isoformat(),
+                "mode": mode_label,
+                "leagues": league_ids,
+                "n_seeds": N_SEEDS,
+                "n_bootstrap": N_BOOTSTRAP,
+                "test_fraction": TEST_FRACTION,
+                "prod_hyperparams": PROD_HYPERPARAMS,
+                "baseline_14_features": BASELINE_14_FEATURES,
+                "baseline_17_features": BASELINE_FEATURES,
+                "competitiveness_features": COMPETITIVENESS,
+            },
+            "results": all_results,
+            "aggregate": aggregate if valid else None,
+        }
+        with open(output_path, "w") as f:
+            json.dump(save_payload, f, indent=2, default=str)
+        print(f"\n  Results saved to: {output_path}")
+
     # Cross-league comparison (standard/optuna modes only)
-    if not run_shap and len(all_results) > 1:
+    elif not run_shap and len(all_results) > 1:
         if run_optuna:
             print_optuna_comparison(all_results)
         else:
             print_comparison(all_results)
 
+    # ─── Signal Map ───────────────────────────────────────────
+    if not run_ablation and run_signal_map and all_results:
+        signal_maps = generate_signal_map(all_results)
+        print_signal_map(signal_maps)
+
     # Save results (standard/optuna modes — SHAP saves its own file)
-    if not run_shap:
+    if not run_ablation and not run_shap:
         suffix = "_optuna" if run_optuna else ""
+        if run_signal_map:
+            suffix += "_signal_map"
+        if run_cross_league:
+            suffix += "_cross_league"
         output_path = Path(data_dir) / f"feature_lab_results{suffix}.json"
+        save_payload = {
+            "meta": {
+                "timestamp": datetime.now().isoformat(),
+                "mode": mode_label,
+                "leagues": league_ids,
+                "n_seeds": N_SEEDS,
+                "n_bootstrap": N_BOOTSTRAP,
+                "elo_k": ELO_K,
+                "elo_home_adv": ELO_HOME_ADV,
+                "elo_initial": ELO_INITIAL,
+                "test_fraction": TEST_FRACTION,
+                "rolling_window": ROLLING_WINDOW,
+                "time_decay_lambda": TIME_DECAY_LAMBDA,
+                "draw_weight": DRAW_WEIGHT,
+                **({"optuna_n_trials": OPTUNA_N_TRIALS,
+                    "optuna_cv_folds": OPTUNA_CV_FOLDS} if run_optuna else
+                   {"prod_hyperparams": PROD_HYPERPARAMS}),
+            },
+            "results": all_results,
+        }
+        if run_signal_map and all_results:
+            save_payload["signal_maps"] = signal_maps
         with open(output_path, "w") as f:
-            json.dump({
-                "meta": {
-                    "timestamp": datetime.now().isoformat(),
-                    "mode": mode_label,
-                    "leagues": league_ids,
-                    "n_seeds": N_SEEDS,
-                    "n_bootstrap": N_BOOTSTRAP,
-                    "elo_k": ELO_K,
-                    "elo_home_adv": ELO_HOME_ADV,
-                    "elo_initial": ELO_INITIAL,
-                    "test_fraction": TEST_FRACTION,
-                    "rolling_window": ROLLING_WINDOW,
-                    "time_decay_lambda": TIME_DECAY_LAMBDA,
-                    "draw_weight": DRAW_WEIGHT,
-                    **({"optuna_n_trials": OPTUNA_N_TRIALS,
-                        "optuna_cv_folds": OPTUNA_CV_FOLDS} if run_optuna else
-                       {"prod_hyperparams": PROD_HYPERPARAMS}),
-                },
-                "results": all_results,
-            }, f, indent=2, default=str)
+            json.dump(save_payload, f, indent=2, default=str)
         print(f"\n  Results saved to: {output_path}")
 
 
