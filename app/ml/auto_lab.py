@@ -50,7 +50,7 @@ _ELO_GW = ["elo_gw_home", "elo_gw_away", "elo_gw_diff"]
 _FORM_CORE = ["home_win_rate5", "away_win_rate5", "form_diff"]
 
 # xG
-_XG_CORE = ["home_xg_for_avg", "away_xg_for_avg", "xg_diff"]
+_XG_CORE = ["home_xg_for_avg", "away_xg_for_avg", "xg_diff_avg"]
 
 # Odds-derived (implicit probs)
 _ODDS = ["odds_home", "odds_draw", "odds_away"]
@@ -400,6 +400,11 @@ async def run_fast_lab(session, league_id, trigger_reason="scheduled"):
             return {"run_id": run_id, "status": "insufficient_data", "n_matches": len(df) if df is not None else 0}
 
         n_matches = len(df)
+
+        # Enrich with derived features (Elo, Form, OppAdj, Overperf)
+        from app.features.lab_features import enrich_for_lab
+        df = enrich_for_lab(df)
+
         logger.info("[AUTO_LAB] League %d: %d matches, %d features available",
                      league_id, n_matches, len(df.columns))
 
