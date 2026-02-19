@@ -7362,3 +7362,21 @@ async def get_league_lab_data(request: Request):
         "per_league_summary": per_league,
     }
 
+
+@router.post("/dashboard/ops/trigger-auto-lab")
+async def trigger_auto_lab(request: Request, league_id: int = Query(...)):
+    """
+    Manually trigger an Auto-Lab run for a specific league.
+
+    Bypasses cadence check and daily quota (manual trigger).
+    Protected by dashboard token.
+    """
+    if not verify_dashboard_token_bool(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from app.ml.auto_lab import run_fast_lab
+
+    async with AsyncSessionLocal() as session:
+        result = await run_fast_lab(session, league_id, trigger_reason="manual")
+
+    return result or {"status": "error", "detail": "run_fast_lab returned None"}
