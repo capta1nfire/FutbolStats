@@ -2,9 +2,9 @@
 
 import { useState, useCallback, useEffect } from "react";
 
-const STORAGE_KEY = "modelBenchmarkSelection";
+const STORAGE_KEY = "modelBenchmarkSelection_v2";
 const ALL_MODELS = ["Market", "Model A", "Shadow", "Sensor B", "Family S"] as const;
-const DEFAULT_VALUE = [...ALL_MODELS];
+const DEFAULT_VALUE: string[] = ["Market", "Model A", "Shadow", "Sensor B"];
 
 /**
  * Hook for managing model selection state with localStorage persistence
