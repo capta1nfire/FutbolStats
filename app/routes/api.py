@@ -1392,6 +1392,9 @@ class PredictionItem(BaseModel):
     served_from_rerun: Optional[bool] = None  # True if served from DB rerun prediction
     rerun_model_version: Optional[str] = None  # Model version of rerun prediction
 
+    # Serving telemetry (SSOT)
+    serving_metadata: Optional[dict] = None
+
 
 class PredictionsResponse(BaseModel):
     predictions: list[PredictionItem]
@@ -2094,6 +2097,18 @@ async def get_predictions(
     predictions = await _apply_team_overrides(session, predictions)
     _stage_times["overrides_ms"] = (time.time() - _t4) * 1000
 
+    # ── Two-Stage W3 overlay for TS leagues (ABE routing, 2026-02-18) ──
+    _t4a = time.time()
+    from app.ml.twostage_serving import overlay_ts_predictions
+    predictions, ts_stats = overlay_ts_predictions(predictions, ml_engine=ml_engine)
+    _stage_times["ts_overlay_ms"] = (time.time() - _t4a) * 1000
+    if ts_stats.get("ts_hits", 0) > 0:
+        logger.info(
+            "ts_serving | hits=%d no_odds=%d eligible=%d os_kept=%d",
+            ts_stats["ts_hits"], ts_stats["ts_no_odds"],
+            ts_stats["ts_eligible"], ts_stats["os_kept"],
+        )
+
     # Overlay Family S from DB for Tier 3 NS matches (Mandato D - Fase 4b)
     _t4b = time.time()
     predictions, fs_stats = await _overlay_family_s_predictions(session, predictions)
@@ -2157,6 +2172,10 @@ async def get_predictions(
             f"share={policy_metadata['draw_share_original']}%→{policy_metadata['draw_share_after']}%"
         )
     # ═══════════════════════════════════════════════════════════════
+    # STEP 12: Serving telemetry — stamp each prediction with metadata
+    # ═══════════════════════════════════════════════════════════════
+    from app.ml.serving_telemetry import stamp_serving_metadata
+    stamp_serving_metadata(predictions, ml_engine.model_version)
 
     # Save predictions to database if requested
     # asof_timestamp = NOW() captures the PIT boundary for this prediction batch
@@ -2206,6 +2225,8 @@ async def get_predictions(
             # Rerun serving fields
             served_from_rerun=pred.get("served_from_rerun"),
             rerun_model_version=pred.get("rerun_model_version"),
+            # Serving telemetry (SSOT)
+            serving_metadata=pred.get("serving_metadata"),
         )
         prediction_items.append(item)
 
@@ -2795,7 +2816,28 @@ async def get_match_prediction(
     predictions = ml_engine.predict(df)
     pred = predictions[0]
 
-    # Overlay Family S prediction from DB if applicable
+    # Overlay Two-Stage W3 for TS leagues (ABE routing)
+    from app.ml.twostage_serving import predict_single_ts, is_ts_loaded
+    from app.ml.league_router import is_ts_league
+    if (match.status == "NS"
+        and is_ts_league(match.league_id)
+        and is_ts_loaded()):
+
+        market = pred.get("market_odds") or {}
+        ts_result = predict_single_ts(market, pred_dict=pred)
+        if ts_result:
+            h, d, a = ts_result
+            pred["probabilities"] = {"home": round(h, 4), "draw": round(d, 4), "away": round(a, 4)}
+            pred["fair_odds"] = {
+                "home": round(1.0 / h, 2) if h > 0.001 else None,
+                "draw": round(1.0 / d, 2) if d > 0.001 else None,
+                "away": round(1.0 / a, 2) if a > 0.001 else None,
+            }
+            pred["skip_market_anchor"] = True
+            from app.ml.twostage_serving import get_ts_engine
+            pred["model_version_served"] = get_ts_engine().model_version
+
+    # Overlay Family S prediction from DB if applicable (overrides TS for Tier 3)
     from app.ml.family_s import is_family_s_loaded
     from app.ml.league_router import TIER_3
     if (match.status == "NS"
@@ -2820,6 +2862,11 @@ async def get_match_prediction(
     if pred.get("status") == "NS" and not pred.get("is_frozen"):
         from app.ml.serving_utils import finalize_ev_and_value_bets
         [pred], _ = finalize_ev_and_value_bets([pred], ml_engine)
+
+    # Stamp serving telemetry
+    pred["league_id"] = match.league_id
+    from app.ml.serving_telemetry import stamp_serving_metadata
+    stamp_serving_metadata([pred], ml_engine.model_version)
 
     return pred
 
@@ -3449,7 +3496,26 @@ async def get_match_details(
             prediction = predictions[0] if predictions else None
             _timings["ml_predict"] = int((time.time() - _t0) * 1000)
 
-            # Overlay Family S prediction from DB if applicable
+            # [P0-B] Overlay Two-Stage W3 for TS leagues (same pattern as /upcoming)
+            if prediction and not prediction.get("is_frozen"):
+                from app.ml.twostage_serving import predict_single_ts, is_ts_loaded
+                from app.ml.league_router import is_ts_league
+                if is_ts_league(match.league_id) and is_ts_loaded():
+                    market = prediction.get("market_odds") or {}
+                    ts_result = predict_single_ts(market, pred_dict=prediction)
+                    if ts_result:
+                        h, d, a = ts_result
+                        prediction["probabilities"] = {"home": round(h, 4), "draw": round(d, 4), "away": round(a, 4)}
+                        prediction["fair_odds"] = {
+                            "home": round(1.0 / h, 2) if h > 0.001 else None,
+                            "draw": round(1.0 / d, 2) if d > 0.001 else None,
+                            "away": round(1.0 / a, 2) if a > 0.001 else None,
+                        }
+                        prediction["skip_market_anchor"] = True
+                        from app.ml.twostage_serving import get_ts_engine
+                        prediction["model_version_served"] = get_ts_engine().model_version
+
+            # Overlay Family S prediction from DB if applicable (overrides TS for Tier 3)
             from app.ml.family_s import is_family_s_loaded
             from app.ml.league_router import TIER_3
             if (prediction and match.league_id in TIER_3
@@ -3472,6 +3538,12 @@ async def get_match_details(
             if prediction and not prediction.get("is_frozen"):
                 from app.ml.serving_utils import finalize_ev_and_value_bets
                 [prediction], _ = finalize_ev_and_value_bets([prediction], ml_engine)
+
+            # Stamp serving telemetry
+            if prediction:
+                prediction["league_id"] = match.league_id
+                from app.ml.serving_telemetry import stamp_serving_metadata
+                stamp_serving_metadata([prediction], ml_engine.model_version)
         except Exception as e:
             logger.error(f"Error getting prediction: {e}")
 

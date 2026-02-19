@@ -2153,6 +2153,16 @@ async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
 
         predictions = engine.predict(df)
 
+        # PHASE 2a: Two-Stage W3 overlay for TS leagues (ABE routing)
+        from app.ml.twostage_serving import overlay_ts_predictions
+        predictions, ts_stats = overlay_ts_predictions(predictions, ml_engine=engine)
+        if ts_stats.get("ts_hits", 0) > 0:
+            logger.info(
+                "[DAILY-SAVE] ts_serving | hits=%d no_odds=%d eligible=%d os_kept=%d",
+                ts_stats["ts_hits"], ts_stats["ts_no_odds"],
+                ts_stats["ts_eligible"], ts_stats["os_kept"],
+            )
+
         # PHASE 2b: Market anchor — blend with market for low-signal leagues
         from app.ml.policy import apply_market_anchor, get_policy_config
         _policy_cfg = get_policy_config()
@@ -2162,6 +2172,10 @@ async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
             league_overrides=_policy_cfg["market_anchor_league_overrides"],
             enabled=_policy_cfg["market_anchor_enabled"],
         )
+
+        # PHASE 2c: Stamp serving telemetry (SSOT)
+        from app.ml.serving_telemetry import stamp_serving_metadata
+        stamp_serving_metadata(predictions, engine.model_version)
 
         # =================================================================
         # PHASE 3: Save predictions (new session, fresh connection)
@@ -2197,12 +2211,14 @@ async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
 
                         # Upsert prediction
                         # ABE P2: Include asof_timestamp for PIT attribution
+                        # ABE routing: use TS model_version if TS overlay was applied
+                        served_version = pred.get("model_version_served", engine.model_version)
                         await upsert(
                             session,
                             Prediction,
                             values={
                                 "match_id": match_id,
-                                "model_version": engine.model_version,
+                                "model_version": served_version,
                                 "home_prob": probs["home"],
                                 "draw_prob": probs["draw"],
                                 "away_prob": probs["away"],
@@ -8164,6 +8180,17 @@ async def _run_event_bus_sweeper():
         logger.error(f"[SWEEPER] Job failed: {e}", exc_info=True)
 
 
+async def _refresh_serving_configs_job():
+    """[P0-F] Periodic refresh of league_serving_config cache for multi-worker convergence."""
+    try:
+        from app.ml.league_router import load_serving_configs
+        async with AsyncSessionLocal() as session:
+            n = await load_serving_configs(session)
+            logger.debug("[SERVING-CONFIG] Refreshed %d configs", n)
+    except Exception as e:
+        logger.warning("[SERVING-CONFIG] Refresh failed: %s", e)
+
+
 def start_scheduler(ml_engine):
     """
     Start the background scheduler.
@@ -8255,6 +8282,18 @@ def start_scheduler(ml_engine):
         id="daily_audit",
         name="Daily Post-Match Audit",
         replace_existing=True,
+    )
+
+    # Serving config refresh: Every 5 minutes [P0-F multi-worker convergence]
+    # Ensures all Gunicorn workers pick up DB changes within 5 minutes
+    scheduler.add_job(
+        _refresh_serving_configs_job,
+        trigger=IntervalTrigger(minutes=5),
+        id="serving_config_refresh",
+        name="Serving Config Refresh (every 5min)",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
     )
 
     # Shadow predictions evaluation: Every 30 minutes

@@ -7240,3 +7240,34 @@ async def patch_incident(
 
     return {"ok": True, "status": new_status, "updated_at": now_iso}
 
+
+# =============================================================================
+# SERVING CONFIG RELOAD (SSOT)
+# =============================================================================
+
+@router.post("/dashboard/ops/reload-serving-config")
+async def reload_serving_config(request: Request):
+    """
+    Hot-reload league_serving_config from DB into this worker's memory cache.
+
+    Note: Only reloads the current worker. Other workers rely on TTL-based
+    lazy reload (60s) or the periodic APScheduler refresh job (5min).
+
+    Protected by dashboard token.
+    """
+    if not verify_dashboard_token_bool(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    from app.ml.league_router import load_serving_configs, get_tier_summary
+    from app.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
+        n = await load_serving_configs(session)
+
+    summary = get_tier_summary()
+    return {
+        "status": "reloaded",
+        "configs_loaded": n,
+        "tier_summary": summary,
+    }
+

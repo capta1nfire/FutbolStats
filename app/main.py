@@ -310,6 +310,22 @@ async def lifespan(app: FastAPI):
         if family_s_ok:
             logger.info("Family S engine loaded (activates when LEAGUE_ROUTER_MTV_ENABLED=true)")
 
+    # Initialize Two-Stage W3 engine (ABE routing: 15 TS + 8 OS leagues)
+    async with AsyncSessionLocal() as session:
+        from app.ml.twostage_serving import init_ts_engine
+        ts_ok = await init_ts_engine(session)
+        if ts_ok:
+            logger.info("Two-Stage W3 engine loaded (v1.0.2 routing active)")
+
+    # Load SSOT league serving configs from DB [P0-G: resilient startup]
+    async with AsyncSessionLocal() as session:
+        try:
+            from app.ml.league_router import load_serving_configs
+            n_configs = await load_serving_configs(session)
+            logger.info("League serving configs loaded: %d leagues from DB", n_configs)
+        except Exception as e:
+            logger.warning("Failed to load serving configs from DB, using hardcoded fallbacks: %s", e)
+
     # Start background scheduler for weekly sync/train
     start_scheduler(ml_engine)
 

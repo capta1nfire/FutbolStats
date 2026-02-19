@@ -337,14 +337,17 @@ def apply_market_anchor(
 
 
 def get_policy_config() -> dict:
-    """Get policy configuration from settings."""
+    """Get policy configuration from settings + SSOT league_serving_config cache."""
     from app.config import get_settings
+    from app.ml.league_router import get_league_overrides_from_cache
 
     settings = get_settings()
 
-    # Parse league overrides: "128:1.0,239:0.8" → {128: 1.0, 239: 0.8}
-    league_overrides = {}
-    if settings.MARKET_ANCHOR_LEAGUE_OVERRIDES:
+    # SSOT: read league overrides from DB-backed cache first
+    league_overrides = get_league_overrides_from_cache()
+
+    # Fallback: if cache is empty (startup race condition), parse env var
+    if not league_overrides and settings.MARKET_ANCHOR_LEAGUE_OVERRIDES:
         for pair in settings.MARKET_ANCHOR_LEAGUE_OVERRIDES.split(","):
             pair = pair.strip()
             if ":" in pair:
