@@ -1,6 +1,6 @@
 # Team Enrichment System
 
-Sistema de enriquecimiento de datos de equipos para FutbolStats.
+Sistema de enriquecimiento de datos de equipos para Bon Jogo.
 
 ## Arquitectura General
 

@@ -1,4 +1,4 @@
-# Ops Runbook (FutbolStats) — Monitoreo Diario + Guardrails
+# Ops Runbook (Bon Jogo) — Monitoreo Diario + Guardrails
 
 Este documento es una guía **operativa** (5 min/día) para verificar que el backend está sano, capturando PIT correctamente y que las ligas críticas (incl. CONMEBOL) están en el radar.
 

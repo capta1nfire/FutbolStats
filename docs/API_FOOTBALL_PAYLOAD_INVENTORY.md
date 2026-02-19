@@ -7,7 +7,7 @@
 
 ## 1. Resumen de Endpoints Disponibles
 
-| Endpoint | Descripción | Disponibilidad | Uso en FutbolStats |
+| Endpoint | Descripción | Disponibilidad | Uso en Bon Jogo |
 |----------|-------------|----------------|---------------------|
 | `/fixtures?id=X` | Datos básicos del partido | Siempre | ✅ Activo |
 | `/fixtures/statistics?fixture=X` | Estadísticas del partido | Post-FT | ✅ Activo |

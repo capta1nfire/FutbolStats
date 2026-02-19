@@ -3,7 +3,7 @@
 
 **Proyecto**: Sistema de Videoanálisis de Fútbol Asistido por Inteligencia Artificial
 **Codename**: AVA (Auditor de Video Análisis)
-**Relación**: Herramienta complementaria de FutbolStats
+**Relación**: Herramienta complementaria de Bon Jogo
 **Estado**: Fase de diseño — sin implementación
 **Fecha**: 2026-02-15
 **Owner**: David
@@ -12,13 +12,13 @@
 
 ## 1. Resumen Ejecutivo
 
-AVA es un sistema de visión por computadora que procesa video de partidos de fútbol desde transmisiones broadcast (IPTV) y extrae métricas tácticas granulares que los proveedores actuales de FutbolStats (API-Football, Sofascore, Understat) no proporcionan.
+AVA es un sistema de visión por computadora que procesa video de partidos de fútbol desde transmisiones broadcast (IPTV) y extrae métricas tácticas granulares que los proveedores actuales de Bon Jogo (API-Football, Sofascore, Understat) no proporcionan.
 
-El objetivo no es reemplazar proveedores de datos desde el día uno, sino generar features tácticas propias — pressing, transiciones, posesión territorial, estructura defensiva — que enriquezcan el modelo de predicciones XGBoost de FutbolStats y generen ventaja predictiva (alpha) sobre los bookmakers.
+El objetivo no es reemplazar proveedores de datos desde el día uno, sino generar features tácticas propias — pressing, transiciones, posesión territorial, estructura defensiva — que enriquezcan el modelo de predicciones XGBoost de Bon Jogo y generen ventaja predictiva (alpha) sobre los bookmakers.
 
 **Veredicto de viabilidad**: Viable con scope disciplinado. Requiere validación mediante MVP antes de inversión significativa en hardware.
 
-**Criterio de decisión**: Si el MVP demuestra mejora medible en log-loss/Brier del modelo de FutbolStats en backtest temporal, el proyecto escala. Si no, se archiva y se evalúa comprar datos de tracking a proveedores especializados.
+**Criterio de decisión**: Si el MVP demuestra mejora medible en log-loss/Brier del modelo de Bon Jogo en backtest temporal, el proyecto escala. Si no, se archiva y se evalúa comprar datos de tracking a proveedores especializados.
 
 ---
 
@@ -33,7 +33,7 @@ Construir un sistema capaz de observar, comprender y estructurar la dinámica de
 Generar al menos una feature táctica derivada de video que:
 1. No exista en API-Football, Sofascore ni Understat
 2. Pase validación PIT (Point-In-Time) — solo datos pre-kickoff del partido a predecir
-3. Demuestre lift estadísticamente significativo en el modelo XGBoost de FutbolStats (log-loss o Brier score) en backtest temporal out-of-sample
+3. Demuestre lift estadísticamente significativo en el modelo XGBoost de Bon Jogo (log-loss o Brier score) en backtest temporal out-of-sample
 
 ### 2.3 Lo que AVA NO es
 
@@ -45,11 +45,11 @@ Generar al menos una feature táctica derivada de video que:
 
 ---
 
-## 3. Contexto: Integración con FutbolStats
+## 3. Contexto: Integración con Bon Jogo
 
-### 3.1 Estado actual de FutbolStats
+### 3.1 Estado actual de Bon Jogo
 
-FutbolStats es un sistema de predicciones 1X2 (Victoria Local, Empate, Victoria Visitante) con:
+Bon Jogo es un sistema de predicciones 1X2 (Victoria Local, Empate, Victoria Visitante) con:
 - **Modelo ML**: XGBoost multi-class classifier con ~50+ features
 - **Proveedores de datos**: API-Football (stats, eventos, lineups), Sofascore (ratings, formaciones), Understat (xG, xPTS)
 - **Features actuales**: Rolling averages (goles, tiros, corners), xG, weather/bio-adaptability, talent delta, xi_weighted (ratings por posición), justice regression
@@ -71,7 +71,7 @@ FutbolStats es un sistema de predicciones 1X2 (Victoria Local, Empate, Victoria 
 ```
 Video IPTV → AVA (local) → Métricas tácticas → PostgreSQL local → Sync → Railway DB
                                                                             ↓
-                                        FutbolStats ML pipeline ← Features rolling pre-match (PIT-safe)
+                                        Bon Jogo ML pipeline ← Features rolling pre-match (PIT-safe)
 ```
 
 Las métricas de AVA se calculan post-partido y se agregan como rolling averages pre-match para el modelo de predicciones, respetando PIT compliance (solo datos de partidos anteriores al que se predice).
@@ -212,7 +212,7 @@ Cada componente del pipeline debe emitir un score de confianza:
 | Homografía | Reprojection error del frame | Descartar frames con homografía inestable |
 | Clock OCR | Confidence de lectura | Interpolar minutos cuando OCR falla |
 
-**Sin scores de confianza, FutbolStats ingerirá ruido puro (GIGO).** Esta es la diferencia entre un sistema útil y uno que contamina el modelo.
+**Sin scores de confianza, Bon Jogo ingerirá ruido puro (GIGO).** Esta es la diferencia entre un sistema útil y uno que contamina el modelo.
 
 **Criterio de salida Fase 0**: mAP jugadores >0.85, homografía válida en >50% de frames, clasificación de equipo >95% accuracy, Clock OCR funcional.
 
@@ -236,9 +236,9 @@ Cada componente del pipeline debe emitir un score de confianza:
 
 ### Fase 1: Métricas Tácticas (sin identidad individual)
 
-**Objetivo**: Generar las primeras features tácticas útiles para FutbolStats, sin depender de identidad de jugadores.
+**Objetivo**: Generar las primeras features tácticas útiles para Bon Jogo, sin depender de identidad de jugadores.
 
-| Métrica | Definición | Cómo se calcula | Feature para FutbolStats |
+| Métrica | Definición | Cómo se calcula | Feature para Bon Jogo |
 |---|---|---|---|
 | **Field Tilt** | Centro de gravedad longitudinal del bloque visible de cada equipo | Promedio de coordenadas X (eje largo del campo) de todos los jugadores detectados del equipo, por ventanas de 5 minutos | Rolling average de field tilt por equipo (últimos N partidos) |
 | **Posesión territorial** | Distribución de posesión por tercios del campo | Clasificar zona del balón (tercio defensivo / medio / ofensivo) en cada frame válido, acumular tiempo | % posesión en tercio ofensivo como rolling average |
@@ -246,7 +246,7 @@ Cada componente del pipeline debe emitir un score de confianza:
 | **Densidad defensiva** | Número de defensores en radio del balón | Contar jugadores del equipo defensor dentro de un radio de 15m del balón en frames de ataque rival | Promedio de densidad defensiva por equipo |
 | **Velocidad de transición proxy** | Segundos entre recuperación y llegada a zona de ataque | Medir tiempo entre Action Spot "recuperación" y primer frame donde el centro de gravedad del equipo cruza al tercio ofensivo | Promedio de velocidad de transición por equipo |
 
-**Integración con FutbolStats**:
+**Integración con Bon Jogo**:
 1. Métricas calculadas post-partido y almacenadas en PostgreSQL local
 2. Sync a Railway DB
 3. Features agregadas como rolling averages pre-match con time-decay, respetando PIT compliance
@@ -311,7 +311,7 @@ Cada componente del pipeline debe emitir un score de confianza:
 
 | Capa | Tecnología | Versión | Justificación |
 |---|---|---|---|
-| **Lenguaje** | Python | 3.12+ | Consistencia con FutbolStats |
+| **Lenguaje** | Python | 3.12+ | Consistencia con Bon Jogo |
 | **Framework ML** | PyTorch | 2.5+ | Ecosistema de CV dominante |
 | **CUDA** | NVIDIA CUDA | 12.4+ | Requerido para TensorRT |
 | **Inferencia** | TensorRT | FP16 | Obligatorio para throughput. Sin esto, los tiempos de inferencia arruinan la escalabilidad. |
@@ -420,7 +420,7 @@ Cada componente del pipeline debe emitir un score de confianza:
 | Tasa de éxito de pipeline (partidos sin crash) | >95% |
 | Throughput (partidos/día con hardware mínimo) | >48 |
 
-### 8.3 Métricas de negocio (impacto en FutbolStats)
+### 8.3 Métricas de negocio (impacto en Bon Jogo)
 
 | Métrica | Cómo medir | Criterio de éxito |
 |---|---|---|
@@ -467,7 +467,7 @@ Es la métrica más simple que demuestra que el pipeline visual genera informaci
 
 1. Calcular field tilt para 50 partidos
 2. Generar rolling average de field tilt por equipo (últimos N partidos)
-3. Inyectar como feature pre-match al modelo XGBoost de FutbolStats
+3. Inyectar como feature pre-match al modelo XGBoost de Bon Jogo
 4. Ejecutar backtest temporal out-of-sample
 5. Medir:
    - ¿Mejora el log-loss? ¿Mejora el Brier score?
@@ -552,7 +552,7 @@ Modelo entrenado (MLflow model registry)
     ↓
 Métricas extraídas (PostgreSQL local)
     ↓
-Sync → Railway DB → FutbolStats ML pipeline
+Sync → Railway DB → Bon Jogo ML pipeline
 ```
 
 ### 12.2 Monitoreo de drift
@@ -575,7 +575,7 @@ Sync → Railway DB → FutbolStats ML pipeline
 | **Fase 0**: Percepción robusta (completa) | 6-8 semanas | Gate aprobado |
 | **Fase 0.5**: Action Spotting | 3-4 semanas | Fase 0 |
 | **Fase 1**: Métricas tácticas | 4-6 semanas | Fase 0.5 |
-| **Gate 1**: Validación lift en FutbolStats | 1-2 semanas | Fase 1 |
+| **Gate 1**: Validación lift en Bon Jogo | 1-2 semanas | Fase 1 |
 | **Fase 1.5**: Identidad de jugadores | 4-6 semanas | Gate 1 |
 | **Fase 2**: Métricas avanzadas | 8-12 semanas | Fase 1.5 |
 | **Fase 3**: Experimental | Indefinido | Fase 2 estable |
@@ -599,7 +599,7 @@ Fase -1 → MVP
 
 Fase 0 → Fase 0.5 → Fase 1
          ↓
-    GATE 1: ¿Features tácticas mejoran FutbolStats?
+    GATE 1: ¿Features tácticas mejoran Bon Jogo?
          ├── SÍ → Fase 1.5 + Fase 2
          └── NO → Quedarse en features por equipo, no escalar
 
@@ -617,7 +617,7 @@ Si en cualquier gate el proyecto no demuestra valor:
 
 1. **Archivar** el desarrollo de CV propio
 2. **Evaluar** compra de datos de tracking a proveedores: SkillCorner (broadcast tracking), Stats Perform, Second Spectrum
-3. **Reutilizar** la infraestructura de features de FutbolStats — las features se diseñan igual (rolling averages PIT-safe), solo cambia la fuente de datos
+3. **Reutilizar** la infraestructura de features de Bon Jogo — las features se diseñan igual (rolling averages PIT-safe), solo cambia la fuente de datos
 4. **Preservar** el conocimiento adquirido sobre CV deportivo como activo intelectual
 
 ---

@@ -14,7 +14,7 @@
 
 ## 1. Resumen Ejecutivo
 
-TITAN OMNISCIENCE es un **robot de scraping masivo** disenado para recolectar datos deportivos de **cientos de fuentes** (300+) y alimentar el modelo XGBoost de FutbolStats con 615 variables.
+TITAN OMNISCIENCE es un **robot de scraping masivo** disenado para recolectar datos deportivos de **cientos de fuentes** (300+) y alimentar el modelo XGBoost de Bon Jogo con 615 variables.
 
 ### Vision
 > "Un bot que visite TODO internet deportivo: casas de apuestas, blogs, periodicos, redes sociales, APIs publicas, foros, y cualquier pagina con datos relevantes."
@@ -1019,7 +1019,7 @@ titan/
 - La FASE 1 se implementó como módulo **`app/titan/`** dentro del backend existente (FastAPI), para minimizar fricción y permitir deploy incremental.
 - La estructura `titan/` standalone queda como refactor futuro (Fase 2+) si se decide extraer el módulo.
 
-### 7.2 Integracion con FutbolStats Existente
+### 7.2 Integracion con Bon Jogo Existente
 
 ```python
 # app/etl/ -> titan/extractors/ (refactor gradual)

@@ -233,7 +233,7 @@ oddsharvester historic \
 El mapeo de team names es el paso más crítico. Seguimos el patrón probado de FDUK (`data/fduk_team_aliases.json`):
 
 ```
-OddsPortal team name → team_id interno (FutbolStats DB)
+OddsPortal team name → team_id interno (Bon Jogo DB)
 ```
 
 ### 5.2 Estructura del archivo de aliases

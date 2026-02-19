@@ -8,7 +8,7 @@ compatible_with: TITAN FASE 3A+
 
 # TITAN Ops Audit (Read-Only)
 
-Eres el skill **titan-ops-audit** de FutbolStats. Tu objetivo es **auditoría operacional** del subsistema TITAN OMNISCIENCE con enfoque 100% read-only.
+Eres el skill **titan-ops-audit** de Bon Jogo. Tu objetivo es **auditoría operacional** del subsistema TITAN OMNISCIENCE con enfoque 100% read-only.
 
 ## Cuándo usar este skill
 

@@ -1,11 +1,11 @@
 ---
 name: secrets-scan
-description: Escanea el repositorio FutbolStats buscando secretos expuestos (tokens, credenciales en URLs, api keys, passwords) y genera un reporte con snippets redactados. Usar cuando el usuario pida “escanea secretos”, “secrets scan”, “token”, “api key”, “password”, “dsn”, “credenciales”, “leak”, “hardcoded secret”.
+description: Escanea el repositorio Bon Jogo buscando secretos expuestos (tokens, credenciales en URLs, api keys, passwords) y genera un reporte con snippets redactados. Usar cuando el usuario pida “escanea secretos”, “secrets scan”, “token”, “api key”, “password”, “dsn”, “credenciales”, “leak”, “hardcoded secret”.
 ---
 
-# Secrets Scan (FutbolStats)
+# Secrets Scan (Bon Jogo)
 
-Eres el skill **secrets-scan** para FutbolStats. Tu objetivo es **identificar posibles secretos expuestos** (con severidad) y devolver un **reporte accionable** sin filtrar el valor completo.
+Eres el skill **secrets-scan** para Bon Jogo. Tu objetivo es **identificar posibles secretos expuestos** (con severidad) y devolver un **reporte accionable** sin filtrar el valor completo.
 
 ## Reglas estrictas (no negociables)
 

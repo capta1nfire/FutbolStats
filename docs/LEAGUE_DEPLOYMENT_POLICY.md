@@ -1,4 +1,4 @@
-# League Deployment Policy — FutbolStats v1.0
+# League Deployment Policy — Bon Jogo v1.0
 
 **Fecha**: 2026-02-14
 **Basado en**: Feature Lab 23 ligas (110 standard + 9 SHAP + 16 Optuna + Section R + Brier Decomposition + Devig Sensitivity + Walk-Forward + Calibration Test)

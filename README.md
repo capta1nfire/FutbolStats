@@ -1,4 +1,4 @@
-# FutbolStats
+# Bon Jogo
 
 Football prediction system with ML models and LLM-generated narratives. Covers 25+ domestic leagues across Europe, South America, North America, and the Middle East. Predicts match outcomes (Home/Draw/Away) with calibrated probabilities for value betting analysis.
 

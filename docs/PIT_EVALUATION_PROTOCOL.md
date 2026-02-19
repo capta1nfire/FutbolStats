@@ -1,4 +1,4 @@
-# PIT Evaluation Protocol - FutbolStats
+# PIT Evaluation Protocol - Bon Jogo
 
 **Version**: 2.0
 **Date**: 2026-01-09

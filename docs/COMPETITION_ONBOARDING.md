@@ -1,6 +1,6 @@
 # Competition Onboarding Protocol
 
-> Checklist auditable para agregar una nueva competición al sistema FutbolStats.
+> Checklist auditable para agregar una nueva competición al sistema Bon Jogo.
 
 ## Quick Reference
 

@@ -1,4 +1,4 @@
-# FutbolStats — Feature Dictionary SOTA (Point-in-Time)
+# Bon Jogo — Feature Dictionary SOTA (Point-in-Time)
 
 Diccionario oficial de features para el stack SOTA. Cada feature debe cumplir:
 - **as_of**: disponible antes del kickoff (o snapshot predefinido), nunca post-partido.

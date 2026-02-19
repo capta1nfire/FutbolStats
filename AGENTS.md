@@ -1,16 +1,16 @@
 ---
-name: futbolstats
+name: bon-jogo
 version: "2.0"
 updated: 2026-02-03
 description: Sistema de predicciones de fútbol con ML y narrativas LLM
 language: es
 ---
 
-# FutbolStats - Guía para Agentes de Código
+# Bon Jogo - Guía para Agentes de Código
 
 ## Visión General del Proyecto
 
-**FutbolStats** es un sistema de predicciones de resultados de partidos de fútbol (Victoria Local, Empate, Victoria Visitante) con probabilidades para identificar oportunidades de value betting. Incluye narrativas generadas por LLM, dashboard operacional y arquitectura DB-first.
+**Bon Jogo** es un sistema de predicciones de resultados de partidos de fútbol (Victoria Local, Empate, Victoria Visitante) con probabilidades para identificar oportunidades de value betting. Incluye narrativas generadas por LLM, dashboard operacional y arquitectura DB-first.
 
 ### Stack Tecnológico
 

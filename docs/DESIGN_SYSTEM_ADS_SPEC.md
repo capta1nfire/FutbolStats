@@ -1,4 +1,4 @@
-# ADS — Design System Spec (v0) · FutbolStats Ops Dashboard
+# ADS — Design System Spec (v0) · Bon Jogo Ops Dashboard
 
 > **Rol**: ADS (Auditor Design System) define estándares visuales.  
 > **Implementación**: Claude (codificador dashboard) ejecuta cambios en UI siguiendo este spec.  
@@ -76,7 +76,7 @@ Status (base)
 [ADD] --status-error-text   / bg / border
 [ADD] --status-info-text    / bg / border
 
-Valores sugeridos (derivados del JSON de FutbolStats):
+Valores sugeridos (derivados del JSON de Bon Jogo):
 - bg:    rgba(color, 0.15)
 - border rgba(color, 0.30)
 - text:  color sólido

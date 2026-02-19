@@ -41,7 +41,7 @@
 
 ## 1. Motivación
 
-FutbolStats opera a nivel de **equipo**. La granularidad más fina son los lineups de Sofascore (XI + ratings), pero sin modelo de datos para jugadores ni managers.
+Bon Jogo opera a nivel de **equipo**. La granularidad más fina son los lineups de Sofascore (XI + ratings), pero sin modelo de datos para jugadores ni managers.
 
 **Problema**: No podemos saber si el goleador está lesionado ni si cambió el DT esta semana — dos de los factores más predictivos en fútbol que **no están en nuestro feature set**.
 

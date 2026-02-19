@@ -1,4 +1,4 @@
-# ML Architecture - FutbolStats
+# ML Architecture - Bon Jogo
 
 Documentación técnica del sistema de predicciones ML, sus guardrails y mecanismos de evaluación/shadow.
 
@@ -40,6 +40,8 @@ Features baseline (misma lista usada por Sensor B para comparación justa):
 - `away_matches_played`
 - `goal_diff_avg`
 - `rest_diff`
+
+> **Nota (2026-02-18)**: Las 3 features "competitiveness" (`abs_attack_diff`, `abs_defense_diff`, `abs_strength_gap`) fueron removidas del baseline tras ablation test en 23 ligas (N=4,995, Δ ponderado = -0.00012 ≈ 0). Se mantienen en `FeatureEngineer` para Family S y Two-Stage. El compat layer de truncation silencioso fue reemplazado por un check fail-closed (`ValueError` si `model.n_features_in_ != len(FEATURE_COLUMNS)`).
 
 ### Draw label canónico
 

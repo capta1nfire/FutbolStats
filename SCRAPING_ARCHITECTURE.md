@@ -1,4 +1,4 @@
-# FutbolStats — SCRAPING_ARCHITECTURE (Resilient & Observed)
+# Bon Jogo — SCRAPING_ARCHITECTURE (Resilient & Observed)
 
 Este documento especifica el **Sistema de Scraping Resiliente y Observado** (satélite) que alimenta directamente la arquitectura SOTA definida en `docs/ARCHITECTURE_SOTA.md` y el diccionario `docs/FEATURE_DICTIONARY_SOTA.md`.
 
@@ -235,7 +235,7 @@ Formato obligatorio por evento (línea JSON):
 - `ts` (UTC ISO)
 - `service` (ej: `sofascore_scraper`)
 - `run_id` (UUID por ejecución)
-- `match_id` (interno FutbolStats, si se conoce)
+- `match_id` (interno Bon Jogo, si se conoce)
 - `source_event_id` (id proveedor)
 - `attempt` (int)
 - `state` (INIT/NAVIGATING/INTERCEPTING/VALIDATED/...)
@@ -303,7 +303,7 @@ Grafana (ejemplos de umbral):
 
 ---
 
-## 5) INTERFAZ DE SERVICIO (Integración con FutbolStats)
+## 5) INTERFAZ DE SERVICIO (Integración con Bon Jogo)
 
 ### 5.1 Firma de servicio (contrato Python)
 

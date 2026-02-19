@@ -1,4 +1,4 @@
-# FutbolStats
+# Bon Jogo
 
 Sistema de predicciones de fútbol con ML y narrativas LLM.
 

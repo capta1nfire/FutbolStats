@@ -1,7 +1,7 @@
 # Transferencia de Contexto para Nuevo Auditor Técnico
 
 **Fecha**: 2026-01-17
-**Proyecto**: FutbolStats
+**Proyecto**: Bon Jogo
 
 ---
 

@@ -1,9 +1,9 @@
 ---
 name: ml-diagnostic
-description: Ejecuta un diagnóstico ML read-only en FutbolStats (calibración ECE por clase, Brier vs mercado con frozen_odds PIT-safe, tendencia temporal, coverage de stats, señal Sensor B, coverage de predicciones) y entrega un reporte determinístico (HEALTHY/UNDERPERFORMING/STALE/DEGRADING/MISCALIBRATED/INSUFFICIENT_DATA). Usar cuando el usuario pida “ml diagnostic”, “calibración”, “ECE”, “brier”, “skill score”, “vs mercado”, “Sensor B”, “stale”, “degrading” o auditorías de performance del modelo.
+description: Ejecuta un diagnóstico ML read-only en Bon Jogo (calibración ECE por clase, Brier vs mercado con frozen_odds PIT-safe, tendencia temporal, coverage de stats, señal Sensor B, coverage de predicciones) y entrega un reporte determinístico (HEALTHY/UNDERPERFORMING/STALE/DEGRADING/MISCALIBRATED/INSUFFICIENT_DATA). Usar cuando el usuario pida "ml diagnostic", "calibración", "ECE", "brier", "skill score", "vs mercado", "Sensor B", "stale", "degrading" o auditorías de performance del modelo.
 ---
 
-# ML Diagnostic (FutbolStats)
+# ML Diagnostic (Bon Jogo)
 
 ## Objetivo
 

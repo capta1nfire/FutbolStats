@@ -1,4 +1,4 @@
-# Agent & Auditor Onboarding - FutbolStats
+# Agent & Auditor Onboarding - Bon Jogo
 
 Documento de transferencia de contexto para **agentes codificadores** (Master, Claude) y **auditores** (ABE, ATI, ADB, ADA).
 
@@ -185,7 +185,7 @@ Todo código, comandos, JSON, reportes o contenido técnico DEBE estar en bloque
 
 ---
 
-## 4. El Proyecto: FutbolStats
+## 4. El Proyecto: Bon Jogo
 
 ### Descripción
 Sistema de predicciones de fútbol con ML y narrativas LLM. Incluye:

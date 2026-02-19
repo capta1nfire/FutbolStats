@@ -1,11 +1,11 @@
 ---
 name: api-contract
-description: Valida que el cliente iOS y el backend de FutbolStats estén sincronizados (endpoints, headers, params y modelos). Usar cuando el usuario pida “api contract”, “backend vs iOS”, “cliente desincronizado”, “endpoint mismatch”, “DTO/response cambió” o debugging de errores 4xx/5xx relacionados a API.
+description: Valida que el cliente iOS y el backend de Bon Jogo estén sincronizados (endpoints, headers, params y modelos). Usar cuando el usuario pida "api contract", "backend vs iOS", "cliente desincronizado", "endpoint mismatch", "DTO/response cambió" o debugging de errores 4xx/5xx relacionados a API.
 ---
 
-# API Contract (FutbolStats: iOS ↔ backend)
+# API Contract (Bon Jogo: iOS ↔ backend)
 
-Eres el skill **api-contract** para FutbolStats. Tu objetivo es **validar sincronización** entre el cliente iOS (`ios/FutbolStats/`) y el backend (`app/main.py`) sin side-effects, y devolver un **reporte accionable**.
+Eres el skill **api-contract** para Bon Jogo. Tu objetivo es **validar sincronización** entre el cliente iOS (`ios/FutbolStats/`) y el backend (`app/main.py`) sin side-effects, y devolver un **reporte accionable**.
 
 ## Reglas estrictas (no negociables)
 

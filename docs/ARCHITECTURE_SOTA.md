@@ -1,6 +1,6 @@
-# FutbolStats — Arquitectura SOTA (Source of Truth)
+# Bon Jogo — Arquitectura SOTA (Source of Truth)
 
-Documento técnico rector para evolucionar FutbolStats desde el baseline XGBoost hacia un sistema SOTA orientado a **Alpha** (ventaja estadística contra el mercado), manteniendo **causalidad temporal** y operabilidad en producción.
+Documento técnico rector para evolucionar Bon Jogo desde el baseline XGBoost hacia un sistema SOTA orientado a **Alpha** (ventaja estadística contra el mercado), manteniendo **causalidad temporal** y operabilidad en producción.
 
 ## TL;DR
 - **Data Fuel**: Feature engineering 2ª generación con *point-in-time correctness* + multi-fuente (API-Football spine + Understat xG/xPTS + Sofascore XI ratings + Open-Meteo).

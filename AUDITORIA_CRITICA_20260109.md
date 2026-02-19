@@ -1,4 +1,4 @@
-# AUDITORÍA CRÍTICA - FutbolStats
+# AUDITORÍA CRÍTICA - Bon Jogo
 **Fecha**: 2026-01-09  
 **Auditor**: Senior  
 **Scope**: Cambios últimos ~2 días  
