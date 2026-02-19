@@ -29,9 +29,9 @@ export function TopBar() {
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-            <span className="text-primary-foreground font-bold text-sm">FS</span>
+            <span className="text-primary-foreground font-bold text-sm">BJ</span>
           </div>
-          <span className="font-semibold text-foreground">FutbolStats</span>
+          <span className="font-semibold text-foreground">Bon Jogo</span>
         </div>
 
         {/* Site Switcher - links to Football */}

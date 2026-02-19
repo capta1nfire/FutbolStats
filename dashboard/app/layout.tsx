@@ -12,8 +12,8 @@ import "@fontsource/barlow-condensed/700.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "FutbolStats Ops Dashboard",
-  description: "Operations dashboard for FutbolStats",
+  title: "Bon Jogo Ops Dashboard",
+  description: "Operations dashboard for Bon Jogo",
 };
 
 export default function RootLayout({

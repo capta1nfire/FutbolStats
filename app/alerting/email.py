@@ -57,11 +57,11 @@ def _build_predictions_health_email(
     severity = "WARNING" if status == "warn" else "CRITICAL"
     hours_str = f"{hours_since_last:.1f}h" if hours_since_last else "N/A"
 
-    subject = f"[FutbolStats] {severity}: Predictions Health Alert"
+    subject = f"[Bon Jogo] {severity}: Predictions Health Alert"
 
     body = f"""
-FutbolStats Predictions Health Alert
-=====================================
+Bon Jogo Predictions Health Alert
+===================================
 
 Status: {status.upper()}
 Severity: {severity}
@@ -83,7 +83,7 @@ Action Required:
 Check the predictions scheduler job and RunPod/Gemini LLM availability.
 
 ---
-This is an automated alert from FutbolStats.
+This is an automated alert from Bon Jogo.
 """
 
     return subject, body

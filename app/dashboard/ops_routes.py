@@ -5317,7 +5317,7 @@ def _render_login_page(error: str = "") -> str:
 </head>
 <body>
     <div class="login-container">
-        <h1>FutbolStats OPS</h1>
+        <h1>Bon Jogo OPS</h1>
         <p class="subtitle">Admin Console</p>
         {error_html}
         <form method="POST" action="/ops/login">

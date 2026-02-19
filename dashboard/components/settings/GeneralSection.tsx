@@ -14,7 +14,7 @@ export function GeneralSection({ settings }: GeneralSectionProps) {
     <div className="bg-background rounded-lg p-6 space-y-6 border border-border">
       <SettingsSectionHeader
         title="General Settings"
-        description="Basic configuration for the FutbolStats platform"
+        description="Basic configuration for the Bon Jogo platform"
       />
 
       <div className="space-y-6">
