@@ -40,7 +40,9 @@ def stamp_serving_metadata(predictions, baseline_version):
         # Check if a model overlay was applied
         if pred.get("served_from_family_s"):
             served_strategy = "family_s"
-            served_version = pred.get("model_version_served") or served_version
+            served_version = (pred.get("model_version_served")
+                              or pred.get("family_s_model_version")
+                              or served_version)
         elif pred.get("model_version_served"):
             # TS overlay sets model_version_served
             served_strategy = "twostage"
@@ -52,9 +54,12 @@ def stamp_serving_metadata(predictions, baseline_version):
             fallback_reason = "model_not_loaded_or_no_prediction"
 
         # Actual alpha applied (TS/FS skip anchor, so alpha=0 for them)
+        # policy.py stores anchor info in policy_metadata.market_anchor
         alpha_applied = 0.0
-        if served_strategy == "baseline" and pred.get("market_anchor_applied"):
-            alpha_applied = pred.get("market_anchor_alpha", alpha)
+        if served_strategy == "baseline":
+            anchor_meta = (pred.get("policy_metadata") or {}).get("market_anchor")
+            if anchor_meta and anchor_meta.get("applied"):
+                alpha_applied = anchor_meta.get("alpha", alpha)
 
         pred["serving_metadata"] = {
             "preferred_strategy": preferred,
