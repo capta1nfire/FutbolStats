@@ -8191,6 +8191,15 @@ async def _refresh_serving_configs_job():
         logger.warning("[SERVING-CONFIG] Refresh failed: %s", e)
 
 
+async def _run_auto_lab_job():
+    """[P2] Auto-Lab Online: evaluate feature sets for one league per run."""
+    try:
+        from app.ml.auto_lab import auto_lab_scheduler_job
+        await auto_lab_scheduler_job()
+    except Exception as e:
+        logger.error("[AUTO_LAB] Job wrapper failed: %s", e)
+
+
 def start_scheduler(ml_engine):
     """
     Start the background scheduler.
@@ -8291,6 +8300,20 @@ def start_scheduler(ml_engine):
         trigger=IntervalTrigger(minutes=5),
         id="serving_config_refresh",
         name="Serving Config Refresh (every 5min)",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
+    # Auto-Lab Online: CronTrigger 4:00 UTC daily (before sync/predictions)
+    # Advisory only — evaluates feature sets per league, persists to DB
+    # Kill-switch: AUTO_LAB_ENABLED (default False)
+    # [P0-J] pg_try_advisory_lock(777001) + max_instances=1
+    scheduler.add_job(
+        _run_auto_lab_job,
+        trigger=CronTrigger(hour=4, minute=0),
+        id="auto_lab_online",
+        name="Auto-Lab Online (daily 4:00 UTC)",
         replace_existing=True,
         max_instances=1,
         coalesce=True,

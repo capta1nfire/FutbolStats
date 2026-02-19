@@ -173,6 +173,15 @@ class Settings(BaseSettings):
     WIKIDATA_RATE_LIMIT_DELAY: float = 0.2  # 5 req/sec (conservative, Wikidata allows 500/min)
     WIKIPEDIA_RATE_LIMIT_DELAY: float = 0.3  # ~3 req/sec (Wikipedia allows 200/min = 3.3 req/sec)
 
+    # Auto-Lab Online (PASO 2: advisory feature evaluation per league)
+    AUTO_LAB_ENABLED: bool = False               # Kill-switch (default OFF)
+    AUTO_LAB_MAX_PER_DAY: int = 1                # Max leagues per day
+    AUTO_LAB_TIMEOUT_MIN: int = 30               # Hard timeout per league (minutes)
+    AUTO_LAB_CADENCE_HIGH_DAYS: int = 14         # Re-run if >=180 FT in 90d
+    AUTO_LAB_CADENCE_MID_DAYS: int = 21          # Re-run if >=120 FT in 90d
+    AUTO_LAB_CADENCE_LOW_DAYS: int = 35          # Re-run if <120 FT in 90d
+    AUTO_LAB_MIN_MATCHES_TOTAL: int = 200        # Min FT matches to run
+
     # RunPod LLM Narrative Configuration
     RUNPOD_API_KEY: str = ""
     RUNPOD_ENDPOINT_ID: str = "a49n0iddpgsv7r"

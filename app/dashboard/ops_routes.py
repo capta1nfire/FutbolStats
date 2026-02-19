@@ -7271,3 +7271,94 @@ async def reload_serving_config(request: Request):
         "tier_summary": summary,
     }
 
+
+@router.get("/dashboard/league-lab.json")
+async def get_league_lab_data(request: Request):
+    """
+    Auto-Lab Online dashboard data.
+
+    Returns recent runs (30d), per-league summary, and config.
+    Protected by dashboard token.
+    """
+    if not verify_dashboard_token_bool(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    settings = get_settings()
+
+    async with AsyncSessionLocal() as session:
+        # Recent runs (last 30 days)
+        recent_rows = (await session.execute(text("""
+            SELECT r.id, r.league_id, al.name AS league_name,
+                   r.started_at, r.finished_at, r.status, r.mode,
+                   r.n_matches_used, r.n_tests_run, r.duration_ms,
+                   r.best_test_name, r.best_brier, r.market_brier, r.delta_vs_market,
+                   r.error_message
+            FROM league_lab_runs r
+            JOIN admin_leagues al ON al.league_id = r.league_id
+            WHERE r.started_at >= NOW() - INTERVAL '30 days'
+            ORDER BY r.started_at DESC
+            LIMIT 50
+        """))).fetchall()
+
+        recent_runs = []
+        for row in recent_rows:
+            recent_runs.append({
+                "run_id": row[0],
+                "league_id": row[1],
+                "league_name": row[2],
+                "started_at": row[3].isoformat() if row[3] else None,
+                "finished_at": row[4].isoformat() if row[4] else None,
+                "status": row[5],
+                "mode": row[6],
+                "n_matches": row[7],
+                "n_tests": row[8],
+                "duration_ms": row[9],
+                "best_test": row[10],
+                "best_brier": row[11],
+                "market_brier": row[12],
+                "delta_vs_market": row[13],
+                "error": row[14],
+            })
+
+        # Per-league summary (latest completed run per league)
+        summary_rows = (await session.execute(text("""
+            SELECT DISTINCT ON (r.league_id)
+                   r.league_id, al.name AS league_name,
+                   r.id AS run_id, r.finished_at, r.status,
+                   r.best_test_name, r.best_brier, r.market_brier, r.delta_vs_market,
+                   r.n_matches_used, r.n_tests_run
+            FROM league_lab_runs r
+            JOIN admin_leagues al ON al.league_id = r.league_id
+            WHERE r.status = 'completed'
+            ORDER BY r.league_id, r.finished_at DESC
+        """))).fetchall()
+
+        per_league = []
+        for row in summary_rows:
+            per_league.append({
+                "league_id": row[0],
+                "league_name": row[1],
+                "last_run_id": row[2],
+                "last_run_at": row[3].isoformat() if row[3] else None,
+                "best_test": row[5],
+                "best_brier": row[6],
+                "market_brier": row[7],
+                "delta_vs_market": row[8],
+                "n_matches": row[9],
+                "n_tests": row[10],
+            })
+
+    return {
+        "auto_lab_enabled": settings.AUTO_LAB_ENABLED,
+        "config": {
+            "max_per_day": settings.AUTO_LAB_MAX_PER_DAY,
+            "timeout_min": settings.AUTO_LAB_TIMEOUT_MIN,
+            "cadence_high_days": settings.AUTO_LAB_CADENCE_HIGH_DAYS,
+            "cadence_mid_days": settings.AUTO_LAB_CADENCE_MID_DAYS,
+            "cadence_low_days": settings.AUTO_LAB_CADENCE_LOW_DAYS,
+            "min_matches": settings.AUTO_LAB_MIN_MATCHES_TOTAL,
+        },
+        "recent_runs": recent_runs,
+        "per_league_summary": per_league,
+    }
+
