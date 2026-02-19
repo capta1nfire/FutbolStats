@@ -142,7 +142,7 @@ async def _pick_next_league(session) -> dict:
         GROUP BY al.league_id, al.name
         HAVING COUNT(m.id) >= :min_matches
         ORDER BY al.league_id
-    """), {"min_matches": settings.AUTO_LAB_MIN_MATCHES_TOTAL}))).fetchall()
+    """), {"min_matches": settings.AUTO_LAB_MIN_MATCHES_TOTAL})).fetchall()
 
     if not rows:
         return None
