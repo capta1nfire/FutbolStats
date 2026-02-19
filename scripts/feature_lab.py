@@ -86,7 +86,6 @@ PROD_HYPERPARAMS = {
     "colsample_bytree": 0.71,
     "reg_alpha": 2.8e-05,
     "reg_lambda": 0.000904,
-    "use_label_encoder": False,
     "eval_metric": "mlogloss",
     "verbosity": 0,
 }
@@ -103,7 +102,6 @@ RESIDUAL_HYPERPARAMS = {
     "colsample_bytree": 0.6,
     "reg_alpha": 0.1,
     "reg_lambda": 1.0,
-    "use_label_encoder": False,
     "eval_metric": "mlogloss",
     "verbosity": 0,
 }
@@ -728,6 +726,16 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
     lineups_df = pd.read_sql(lineup_query, conn, params=(extract_ids,))
     print(f"  Lineups loaded: {len(lineups_df)} rows")
 
+    # ── Precipitation: load IDEAM data from match_weather_hist ──
+    precip_query = """
+        SELECT match_id, weather_data->'ideam' AS ideam_json
+        FROM match_weather_hist
+        WHERE match_id = ANY(%s)
+          AND jsonb_exists(weather_data, 'ideam')
+    """
+    _precip_df = pd.read_sql(precip_query, conn, params=(matches["match_id"].tolist(),))
+    print(f"  Precipitation (IDEAM) loaded: {len(_precip_df)} rows")
+
     conn.close()
     print(f"  Raw matches: {len(matches)}")
 
@@ -1092,18 +1100,9 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
 
     # ── Precipitation Features (Wave 13 — FS-10) ─────────────────
     # Source: match_weather_hist IDEAM data (Colombia only, datos.gov.co)
-    # Loaded via separate query (psycopg2 '?' conflicts with JSONB operator)
+    # _precip_df was loaded before conn.close() in the extraction phase
     print("  Computing precipitation features...")
     import json as _json
-
-    precip_query = """
-        SELECT match_id, weather_data->'ideam' AS ideam_json
-        FROM match_weather_hist
-        WHERE match_id = ANY(%s)
-          AND jsonb_exists(weather_data, 'ideam')
-    """
-    match_ids_list = df["match_id"].tolist()
-    precip_df = pd.read_sql(precip_query, conn, params=(match_ids_list,))
 
     def _parse_precip(raw):
         """Extract total_mm and max_hour_mm from IDEAM JSONB."""
@@ -1131,7 +1130,7 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
 
     # Parse IDEAM data
     precip_vals = {}
-    for _, row in precip_df.iterrows():
+    for _, row in _precip_df.iterrows():
         t, m = _parse_precip(row["ideam_json"])
         if t is not None:
             precip_vals[row["match_id"]] = (t, m)
@@ -2458,7 +2457,6 @@ def optuna_tune(X_train, y_train, n_trials=OPTUNA_N_TRIALS, n_folds=OPTUNA_CV_FO
             "colsample_bytree": trial.suggest_float("colsample_bytree", 0.4, 1.0),
             "reg_alpha": trial.suggest_float("reg_alpha", 1e-6, 1.0, log=True),
             "reg_lambda": trial.suggest_float("reg_lambda", 1e-6, 1.0, log=True),
-            "use_label_encoder": False,
             "eval_metric": "mlogloss",
             "verbosity": 0,
             "random_state": seed,
@@ -2485,7 +2483,6 @@ def optuna_tune(X_train, y_train, n_trials=OPTUNA_N_TRIALS, n_folds=OPTUNA_CV_FO
     best.update({
         "objective": "multi:softprob",
         "num_class": 3,
-        "use_label_encoder": False,
         "eval_metric": "mlogloss",
         "verbosity": 0,
     })
@@ -2562,7 +2559,7 @@ def evaluate_feature_set_optuna(df_universe: pd.DataFrame, feature_names: list,
         "logloss_mean": round(float(np.mean(all_logloss)), 5),
         "accuracy_mean": round(float(np.mean(all_accuracy)), 4),
         "optuna_params": {k: v for k, v in best_params.items()
-                          if k not in ("objective", "num_class", "use_label_encoder",
+                          if k not in ("objective", "num_class",
                                        "eval_metric", "verbosity")},
         "optuna_cv_brier": round(cv_brier, 5),
         "optuna_n_trials": OPTUNA_N_TRIALS,

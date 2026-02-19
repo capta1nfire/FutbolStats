@@ -321,7 +321,6 @@ def run_oot_evaluation(pairs: List[Dict], oot_fraction: float = 0.3) -> Dict:
             learning_rate=0.1,
             scale_pos_weight=scale,
             eval_metric="logloss",
-            use_label_encoder=False,
             random_state=42,
         )
         model.fit(X_train, y_train, verbose=False)

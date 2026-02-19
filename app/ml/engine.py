@@ -1,6 +1,9 @@
 """XGBoost model engine for match prediction."""
 
+import json
 import logging
+import struct
+import zlib
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -15,6 +18,52 @@ from app.ml.metrics import calculate_brier_score
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# UBJ Envelope — version-portable model serialization (replaces pickle)
+# ═══════════════════════════════════════════════════════════════════════════
+# XGBoost pickle is NOT portable between major versions.  UBJ (Universal
+# Binary JSON) is XGBoost's native binary format — stable across 2.x → 3.x.
+# Envelope: _UBJ_MAGIC + header_len(4B LE) + JSON header + model bytes.
+
+_UBJ_MAGIC = b"XGBUBJ\x01"
+
+
+def _xgb_to_ubj_bytes(model) -> bytes:
+    """Serialize an XGBClassifier/Booster to UBJ bytes via save_raw.
+
+    Uses the Booster's native save_raw (not sklearn save_model) to avoid
+    version-specific sklearn wrapper issues.  The booster bytes contain
+    objective, num_class, and tree structure — everything needed for
+    predict_proba to work after load_model reconstructs sklearn attrs.
+    """
+    return model.get_booster().save_raw(raw_format="ubj")
+
+
+def _xgb_from_ubj_bytes(model_bytes: bytes):
+    """Deserialize an XGBClassifier from UBJ bytes via load_model.
+
+    XGBoost auto-detects the UBJ format from content bytes.  However,
+    loading from raw booster bytes (save_raw) doesn't set sklearn attrs
+    like n_classes_ — we reconstruct them from the booster config.
+    """
+    model = xgb.XGBClassifier()
+    model.load_model(bytearray(model_bytes))
+
+    # Booster-only bytes don't include sklearn metadata — reconstruct
+    # predict_proba only needs n_classes_ (not classes_); classes_ is a
+    # read-only property in XGBoost 2.0.x so we skip it.
+    if not hasattr(model, "n_classes_"):
+        config = json.loads(model.get_booster().save_config())
+        num_class = int(
+            config["learner"]["learner_model_param"]["num_class"]
+        )
+        if num_class <= 1:  # binary:logistic stores 0
+            num_class = 2
+        model.n_classes_ = num_class
+
+    return model
 
 
 # =============================================================================
@@ -83,52 +132,70 @@ class TwoStageEngine:
         "random_state": 42,
     }
 
-    def __init__(self, model_version: str = None, draw_weight: float = 1.2):
+    def __init__(self, model_version: str = None, draw_weight: float = 1.2,
+                 stage1_features=None, stage2_features=None):
         """
         Initialize two-stage engine.
 
         Args:
             model_version: Version string for saving/loading.
             draw_weight: Sample weight for draws in Stage 1 (default 1.2).
+            stage1_features: Custom feature list for Stage 1. None = use class defaults.
+            stage2_features: Custom feature list for Stage 2. None = use class defaults.
         """
         self.model_version = model_version or "v1.1.0-twostage"
         self.draw_weight = draw_weight
+        self._custom_stage1_features = stage1_features
+        self._custom_stage2_features = stage2_features
         self.stage1: Optional[xgb.XGBClassifier] = None
         self.stage2: Optional[xgb.XGBClassifier] = None
         self.model_path = Path(settings.MODEL_PATH)
         self.model_path.mkdir(exist_ok=True)
 
+    @property
+    def active_stage1_features(self):
+        """Stage 1 features: custom if set, else class defaults."""
+        return self._custom_stage1_features or self.STAGE1_FEATURES
+
+    @property
+    def active_stage2_features(self):
+        """Stage 2 features: custom if set, else class defaults."""
+        return self._custom_stage2_features or self.STAGE2_FEATURES
+
     def _prepare_features_stage1(self, df: pd.DataFrame) -> np.ndarray:
-        """Prepare features for Stage 1, adding implied_draw from odds."""
+        """Prepare features for Stage 1, adding implied_draw from odds if needed."""
+        features = self.active_stage1_features
         df = df.copy()
 
-        # Compute implied_draw from odds if available
-        if "odds_draw" in df.columns:
-            df["implied_draw_raw"] = 1 / df["odds_draw"].replace(0, np.nan)
-            df["implied_home_raw"] = 1 / df["odds_home"].replace(0, np.nan)
-            df["implied_away_raw"] = 1 / df["odds_away"].replace(0, np.nan)
-            total = df["implied_draw_raw"] + df["implied_home_raw"] + df["implied_away_raw"]
-            df["implied_draw"] = df["implied_draw_raw"] / total
-            df["implied_draw"] = df["implied_draw"].fillna(0.25)
-        else:
-            df["implied_draw"] = 0.25  # Default league average
+        # Only compute implied_draw when using default features that need it
+        if "implied_draw" in features and "implied_draw" not in df.columns:
+            if "odds_draw" in df.columns:
+                df["implied_draw_raw"] = 1 / df["odds_draw"].replace(0, np.nan)
+                df["implied_home_raw"] = 1 / df["odds_home"].replace(0, np.nan)
+                df["implied_away_raw"] = 1 / df["odds_away"].replace(0, np.nan)
+                total = df["implied_draw_raw"] + df["implied_home_raw"] + df["implied_away_raw"]
+                df["implied_draw"] = df["implied_draw_raw"] / total
+                df["implied_draw"] = df["implied_draw"].fillna(0.25)
+            else:
+                df["implied_draw"] = 0.25  # Default league average
 
         # Fill missing features
-        for col in self.STAGE1_FEATURES:
+        for col in features:
             if col not in df.columns:
                 logger.warning(f"Missing Stage1 feature {col}, filling with 0")
                 df[col] = 0
 
-        return df[self.STAGE1_FEATURES].fillna(0).values
+        return df[features].fillna(0).values
 
     def _prepare_features_stage2(self, df: pd.DataFrame) -> np.ndarray:
         """Prepare features for Stage 2."""
+        features = self.active_stage2_features
         df = df.copy()
-        for col in self.STAGE2_FEATURES:
+        for col in features:
             if col not in df.columns:
                 logger.warning(f"Missing Stage2 feature {col}, filling with 0")
                 df[col] = 0
-        return df[self.STAGE2_FEATURES].fillna(0).values
+        return df[features].fillna(0).values
 
     def train(self, df: pd.DataFrame, n_splits: int = 3) -> dict:
         """
@@ -280,49 +347,94 @@ class TwoStageEngine:
         return ["home", "draw", "away"][int(np.argmax([p_home, p_draw, p_away]))]
 
     def save_to_bytes(self) -> bytes:
-        """Export both stages to compressed bytes for DB storage."""
-        import pickle
-        import zlib
+        """Export both stages to compressed UBJ bytes for DB storage.
 
+        Uses XGBoost native UBJSON format (version-portable across major
+        releases) instead of Python pickle (not portable between versions).
+        """
         if self.stage1 is None or self.stage2 is None:
             raise ValueError("No model trained to export")
 
-        payload = {
-            "stage1": self.stage1,
-            "stage2": self.stage2,
+        s1_ubj = _xgb_to_ubj_bytes(self.stage1)
+        s2_ubj = _xgb_to_ubj_bytes(self.stage2)
+
+        header = json.dumps({
+            "type": "xgb_twostage",
             "model_version": self.model_version,
             "draw_weight": self.draw_weight,
-        }
+            "stage1_features": self._custom_stage1_features,
+            "stage2_features": self._custom_stage2_features,
+            "stage1_len": len(s1_ubj),
+        }).encode("utf-8")
 
-        raw_bytes = pickle.dumps(payload)
-        compressed = zlib.compress(raw_bytes, level=6)
+        envelope = (
+            _UBJ_MAGIC
+            + struct.pack("<I", len(header))
+            + header
+            + s1_ubj
+            + s2_ubj
+        )
 
-        compression_ratio = (1 - len(compressed) / len(raw_bytes)) * 100
+        compressed = zlib.compress(envelope, level=6)
+
+        compression_ratio = (1 - len(compressed) / len(envelope)) * 100
         logger.info(
-            f"TwoStage model compressed: {len(raw_bytes)} -> {len(compressed)} bytes "
+            f"TwoStage model compressed (UBJ): {len(envelope)} -> {len(compressed)} bytes "
             f"({compression_ratio:.1f}% reduction)"
         )
 
         return compressed
 
     def load_from_bytes(self, blob: bytes) -> bool:
-        """Load both stages from compressed bytes."""
-        import pickle
-        import zlib
-
+        """Load both stages from compressed bytes (UBJ envelope or legacy pickle)."""
         try:
             decompressed = zlib.decompress(blob)
-            payload = pickle.loads(decompressed)
 
-            self.stage1 = payload["stage1"]
-            self.stage2 = payload["stage2"]
-            self.model_version = payload.get("model_version", "v1.1.0-twostage")
-            self.draw_weight = payload.get("draw_weight", 1.2)
+            if decompressed[:len(_UBJ_MAGIC)] == _UBJ_MAGIC:
+                # UBJ envelope format (version-portable)
+                offset = len(_UBJ_MAGIC)
+                header_len = struct.unpack("<I", decompressed[offset:offset + 4])[0]
+                offset += 4
+                header = json.loads(decompressed[offset:offset + header_len])
+                offset += header_len
 
-            logger.info(
-                f"TwoStage model loaded from bytes: {len(blob)} compressed -> "
-                f"{len(decompressed)} decompressed"
-            )
+                s1_len = header["stage1_len"]
+                s1_ubj = decompressed[offset:offset + s1_len]
+                offset += s1_len
+                s2_ubj = decompressed[offset:]
+
+                self.stage1 = _xgb_from_ubj_bytes(s1_ubj)
+                self.stage2 = _xgb_from_ubj_bytes(s2_ubj)
+                self.model_version = header.get("model_version", "v1.1.0-twostage")
+                self.draw_weight = header.get("draw_weight", 1.2)
+                self._custom_stage1_features = header.get("stage1_features")
+                self._custom_stage2_features = header.get("stage2_features")
+
+                logger.info(
+                    f"TwoStage model loaded from UBJ: {len(blob)} compressed -> "
+                    f"{len(decompressed)} decompressed, "
+                    f"features_s1={len(self.active_stage1_features)}, "
+                    f"features_s2={len(self.active_stage2_features)}"
+                )
+            else:
+                # Legacy pickle format (pre-migration, not version-portable)
+                import pickle
+                payload = pickle.loads(decompressed)
+
+                self.stage1 = payload["stage1"]
+                self.stage2 = payload["stage2"]
+                self.model_version = payload.get("model_version", "v1.1.0-twostage")
+                self.draw_weight = payload.get("draw_weight", 1.2)
+                self._custom_stage1_features = payload.get("stage1_features")
+                self._custom_stage2_features = payload.get("stage2_features")
+
+                logger.info(
+                    f"TwoStage model loaded from legacy pickle: {len(blob)} compressed -> "
+                    f"{len(decompressed)} decompressed, "
+                    f"features_s1={len(self.active_stage1_features)}, "
+                    f"features_s2={len(self.active_stage2_features)}"
+                )
+
             return True
         except Exception as e:
             logger.error(f"Failed to load TwoStage model from bytes: {e}")
@@ -460,7 +572,6 @@ class XGBoostEngine:
             "reg_alpha": 2.8e-05,
             "reg_lambda": 0.000904,
             "random_state": 42,
-            "use_label_encoder": False,
             "eval_metric": "mlogloss",
         }
         if hyperparams:
@@ -880,11 +991,10 @@ class XGBoostEngine:
         return self.model is not None
 
     def save_to_bytes(self) -> bytes:
-        """
-        Export the trained model to compressed bytes for database storage.
+        """Export model to compressed UBJ bytes for DB storage.
 
-        Uses pickle + zlib for ~70% size reduction.
-        This can be stored in PostgreSQL BYTEA and loaded without disk I/O.
+        Uses XGBoost native UBJSON format (version-portable across major
+        releases) instead of Python pickle (not portable between versions).
 
         Returns:
             bytes: The compressed model as binary data.
@@ -892,44 +1002,67 @@ class XGBoostEngine:
         Raises:
             ValueError: If no model is trained.
         """
-        import pickle
-        import zlib
-
         if self.model is None:
             raise ValueError("No model trained to export")
 
-        raw_bytes = pickle.dumps(self.model)
-        compressed = zlib.compress(raw_bytes, level=6)
+        model_ubj = _xgb_to_ubj_bytes(self.model)
 
-        compression_ratio = (1 - len(compressed) / len(raw_bytes)) * 100
+        header = json.dumps({"type": "xgb_baseline"}).encode("utf-8")
+        envelope = (
+            _UBJ_MAGIC
+            + struct.pack("<I", len(header))
+            + header
+            + model_ubj
+        )
+
+        compressed = zlib.compress(envelope, level=6)
+
+        compression_ratio = (1 - len(compressed) / len(envelope)) * 100
         logger.info(
-            f"Model compressed: {len(raw_bytes)} -> {len(compressed)} bytes "
+            f"Model compressed (UBJ): {len(envelope)} -> {len(compressed)} bytes "
             f"({compression_ratio:.1f}% reduction)"
         )
 
         return compressed
 
     def load_from_bytes(self, blob: bytes) -> bool:
-        """
-        Load a model directly from compressed bytes (from database).
+        """Load model from compressed bytes (UBJ envelope or legacy pickle).
+
+        Auto-detects format: UBJ envelope (version-portable) or legacy pickle.
 
         Args:
-            blob: Compressed binary model data from save_to_bytes() or database.
+            blob: Compressed binary model data.
 
         Returns:
             True if model loaded successfully, False otherwise.
         """
-        import pickle
-        import zlib
-
         try:
             decompressed = zlib.decompress(blob)
-            self.model = pickle.loads(decompressed)
 
-            logger.info(
-                f"Model loaded from bytes: {len(blob)} compressed -> "
-                f"{len(decompressed)} decompressed"
-            )
+            if decompressed[:len(_UBJ_MAGIC)] == _UBJ_MAGIC:
+                # UBJ envelope format (version-portable)
+                offset = len(_UBJ_MAGIC)
+                header_len = struct.unpack("<I", decompressed[offset:offset + 4])[0]
+                offset += 4
+                offset += header_len
+                model_ubj = decompressed[offset:]
+
+                self.model = _xgb_from_ubj_bytes(model_ubj)
+
+                logger.info(
+                    f"Model loaded from UBJ: {len(blob)} compressed -> "
+                    f"{len(decompressed)} decompressed"
+                )
+            else:
+                # Legacy pickle format (pre-migration, not version-portable)
+                import pickle
+                self.model = pickle.loads(decompressed)
+
+                logger.info(
+                    f"Model loaded from legacy pickle: {len(blob)} compressed -> "
+                    f"{len(decompressed)} decompressed"
+                )
+
             return True
         except Exception as e:
             logger.error(f"Failed to load model from bytes: {e}")
