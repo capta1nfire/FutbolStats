@@ -912,7 +912,7 @@ class XGBoostEngine:
                     "away": odds_away,
                 }
                 value_bets = self._find_value_bets(
-                    probas[idx],
+                    np.array([home_prob, draw_prob, away_prob]),
                     [odds_home, odds_draw, odds_away],
                 )
                 pred["value_bets"] = value_bets
@@ -933,7 +933,7 @@ class XGBoostEngine:
         self,
         probas: np.ndarray,
         market_odds: list[float],
-        threshold: float = 0.05,
+        threshold: float = None,
     ) -> list[dict]:
         """
         Find value betting opportunities with Expected Value calculation.
@@ -948,11 +948,15 @@ class XGBoostEngine:
         Args:
             probas: Model probabilities [home, draw, away].
             market_odds: Market odds [home, draw, away].
-            threshold: Minimum edge required (default 5%).
+            threshold: Minimum edge required. None = read from POLICY_EDGE_THRESHOLD.
 
         Returns:
             List of value bet opportunities with EV metrics.
         """
+        if threshold is None:
+            from app.config import get_settings
+            threshold = get_settings().POLICY_EDGE_THRESHOLD
+
         outcomes = ["home", "draw", "away"]
         value_bets = []
 

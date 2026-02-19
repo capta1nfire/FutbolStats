@@ -49,8 +49,11 @@ def apply_draw_cap(
         return predictions, {"cap_applied": False, "reason": "no_predictions"}
 
     # Collect all value bets with their prediction index
+    # ABE P0-1: Only NS + non-frozen predictions participate in draw cap
     all_value_bets = []
     for i, pred in enumerate(predictions):
+        if pred.get("is_frozen") or pred.get("status") != "NS":
+            continue
         value_bets = pred.get("value_bets", []) or []
         for vb in value_bets:
             all_value_bets.append({

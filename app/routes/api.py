@@ -2105,11 +2105,46 @@ async def get_predictions(
         )
 
     # ═══════════════════════════════════════════════════════════════
-    # FASE 1: Apply draw cap to value bets (portfolio level)
+    # STEP 8: Calibration (NS only, baseline only, pre-market-anchor)
+    # ABE P0-3: skip TS/Family S predictions
+    # ═══════════════════════════════════════════════════════════════
+    _t_calib = time.time()
+    from app.ml.serving_utils import apply_calibration, finalize_ev_and_value_bets
+    from app.ml.policy import apply_draw_cap, get_policy_config, apply_market_anchor
+    policy_config = get_policy_config()
+    predictions, calib_meta = apply_calibration(
+        predictions,
+        enabled=settings.PROBA_CALIBRATION_ENABLED,
+        method=settings.PROBA_CALIBRATION_METHOD,
+        temperature=settings.PROBA_CALIBRATION_TEMPERATURE,
+    )
+    _stage_times["calibration_ms"] = (time.time() - _t_calib) * 1000
+
+    # ═══════════════════════════════════════════════════════════════
+    # STEP 9: Market anchor — blend model probs with market for low-signal leagues
+    # ═══════════════════════════════════════════════════════════════
+    _t5b = time.time()
+    predictions, anchor_metadata = apply_market_anchor(
+        predictions,
+        alpha_default=policy_config["market_anchor_alpha_default"],
+        league_overrides=policy_config["market_anchor_league_overrides"],
+        enabled=policy_config["market_anchor_enabled"],
+    )
+    _stage_times["market_anchor_ms"] = (time.time() - _t5b) * 1000
+
+    # ═══════════════════════════════════════════════════════════════
+    # STEP 10: FINAL EV recalc from SERVED probs (P0 fix)
+    # ABE P0-4: reuses ml_engine._find_value_bets (zero duplication)
+    # ═══════════════════════════════════════════════════════════════
+    _t_ev = time.time()
+    predictions, ev_meta = finalize_ev_and_value_bets(predictions, ml_engine)
+    _stage_times["finalize_ev_ms"] = (time.time() - _t_ev) * 1000
+
+    # ═══════════════════════════════════════════════════════════════
+    # STEP 11: Draw cap (NS only, portfolio level)
+    # ABE P0-1: draw_cap is no-op for FT/frozen
     # ═══════════════════════════════════════════════════════════════
     _t5 = time.time()
-    from app.ml.policy import apply_draw_cap, get_policy_config
-    policy_config = get_policy_config()
     predictions, policy_metadata = apply_draw_cap(
         predictions,
         max_draw_share=policy_config["max_draw_share"],
@@ -2121,20 +2156,6 @@ async def get_predictions(
             f"policy_draw_cap | applied | draws={policy_metadata['n_draws_original']}→{policy_metadata['n_draws_after']} "
             f"share={policy_metadata['draw_share_original']}%→{policy_metadata['draw_share_after']}%"
         )
-    # ═══════════════════════════════════════════════════════════════
-
-    # ═══════════════════════════════════════════════════════════════
-    # FASE 2: Market anchor — blend model probs with market for low-signal leagues
-    # ═══════════════════════════════════════════════════════════════
-    _t5b = time.time()
-    from app.ml.policy import apply_market_anchor
-    predictions, anchor_metadata = apply_market_anchor(
-        predictions,
-        alpha_default=policy_config["market_anchor_alpha_default"],
-        league_overrides=policy_config["market_anchor_league_overrides"],
-        enabled=policy_config["market_anchor_enabled"],
-    )
-    _stage_times["market_anchor_ms"] = (time.time() - _t5b) * 1000
     # ═══════════════════════════════════════════════════════════════
 
     # Save predictions to database if requested
@@ -2795,6 +2816,11 @@ async def get_match_prediction(
             pred["confidence_tier"] = _recalculate_confidence_tier(new_probs)
             pred["served_from_family_s"] = True
 
+    # P0-2 (ABE): finalize EV from served probs (single endpoint)
+    if pred.get("status") == "NS" and not pred.get("is_frozen"):
+        from app.ml.serving_utils import finalize_ev_and_value_bets
+        [pred], _ = finalize_ev_and_value_bets([pred], ml_engine)
+
     return pred
 
 
@@ -3441,6 +3467,11 @@ async def get_match_details(
                     }
                     prediction["confidence_tier"] = _recalculate_confidence_tier(new_probs)
                     prediction["served_from_family_s"] = True
+
+            # P0-2 (ABE): finalize EV from served probs (single endpoint)
+            if prediction and not prediction.get("is_frozen"):
+                from app.ml.serving_utils import finalize_ev_and_value_bets
+                [prediction], _ = finalize_ev_and_value_bets([prediction], ml_engine)
         except Exception as e:
             logger.error(f"Error getting prediction: {e}")
 

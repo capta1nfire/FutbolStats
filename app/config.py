@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     MARKET_ANCHOR_LEAGUE_OVERRIDES: str = "128:1.0"  # "league_id:alpha" — explicit low-signal leagues
     MARKET_ANCHOR_MIN_SAMPLES: int = 200  # Min FT with odds before accepting per-league α
 
+    # Calibration: optional post-hoc temperature scaling (ABE P0 2026-02-19)
+    PROBA_CALIBRATION_ENABLED: bool = False       # Feature flag (default OFF)
+    PROBA_CALIBRATION_METHOD: str = "temperature"  # "temperature" | "none"
+    PROBA_CALIBRATION_TEMPERATURE: float = 1.0     # T=1.0 = identity (no-op)
+
     # League Router: Asymmetric prediction routing (GDT M3 2026-02-15)
     LEAGUE_ROUTER_ENABLED: bool = True        # Enable tier classification + logging
     LEAGUE_ROUTER_MTV_ENABLED: bool = False   # Gate MTV feature injection for Tier 3
