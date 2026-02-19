@@ -22,7 +22,7 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.config import get_settings
 from app.ml.metrics import calculate_brier_score
 
 logger = logging.getLogger("futbolstats.auto_lab")
@@ -128,6 +128,7 @@ async def _pick_next_league(session) -> dict:
     Returns dict with league_id, name, ft_90d, last_run_at, days_since_run
     or None if no league is due.
     """
+    settings = get_settings()
     # Get all active leagues with FT count in last 90 days
     rows = (await session.execute(text("""
         SELECT al.league_id, al.name,
@@ -137,7 +138,7 @@ async def _pick_next_league(session) -> dict:
                 WHERE lr.league_id = al.league_id AND lr.status = 'completed') AS last_run_at
         FROM admin_leagues al
         JOIN matches m ON m.league_id = al.league_id AND m.status = 'FT'
-        WHERE al.kind = 'league' AND al.sync_enabled = true
+        WHERE al.kind = 'league' AND al.is_active = true
         GROUP BY al.league_id, al.name
         HAVING COUNT(m.id) >= :min_matches
         ORDER BY al.league_id
@@ -378,6 +379,7 @@ async def run_fast_lab(session, league_id, trigger_reason="scheduled"):
     """
     from app.features.engineering import FeatureEngineer
 
+    settings = get_settings()
     t0 = time.monotonic()
     run_id = await _create_run(session, league_id, trigger_reason)
 
@@ -457,6 +459,7 @@ async def run_fast_lab(session, league_id, trigger_reason="scheduled"):
 
 async def auto_lab_scheduler_job():
     """Entry point for APScheduler. Acquires advisory lock, picks league, runs lab."""
+    settings = get_settings()
     if not settings.AUTO_LAB_ENABLED:
         return
 
