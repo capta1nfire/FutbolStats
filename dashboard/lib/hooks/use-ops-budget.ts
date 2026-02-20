@@ -19,6 +19,7 @@ import {
   parseOpsMovement,
   parseOpsSotaEnrichment,
   parseOpsTitan,
+  parseOpsSofascoreCron,
   OpsSentrySummary,
   OpsJobsHealth,
   OpsFastpathHealth,
@@ -33,6 +34,7 @@ import {
   OpsMovement,
   SotaEnrichmentNormalized,
   OpsTitan,
+  OpsSofascoreCron,
 } from "@/lib/api/ops";
 
 /**
@@ -73,6 +75,7 @@ interface OpsData {
   movement: OpsMovement | null;
   sotaEnrichment: SotaEnrichmentNormalized | null;
   titan: OpsTitan | null;
+  sofascoreCron: OpsSofascoreCron | null;
   requestId?: string;
 }
 
@@ -112,6 +115,7 @@ async function fetchOpsData(): Promise<OpsData> {
       movement: null,
       sotaEnrichment: null,
       titan: null,
+      sofascoreCron: null,
       requestId,
     };
   }
@@ -133,6 +137,7 @@ async function fetchOpsData(): Promise<OpsData> {
   const movement = parseOpsMovement(data);
   const sotaEnrichment = parseOpsSotaEnrichment(data);
   const titan = parseOpsTitan(data);
+  const sofascoreCron = parseOpsSofascoreCron(data);
 
   return {
     budget,
@@ -151,6 +156,7 @@ async function fetchOpsData(): Promise<OpsData> {
     movement,
     sotaEnrichment,
     titan,
+    sofascoreCron,
     requestId,
   };
 }
@@ -243,6 +249,8 @@ export interface UseOpsOverviewResult {
   sotaEnrichment: SotaEnrichmentNormalized | null;
   /** Parsed TITAN OMNISCIENCE, null if unavailable */
   titan: OpsTitan | null;
+  /** Parsed Sofascore Cron, null if unavailable */
+  sofascoreCron: OpsSofascoreCron | null;
   /** True if data fetch failed or all parsing failed */
   isDegraded: boolean;
   /** True if budget specifically is degraded */
@@ -275,6 +283,8 @@ export interface UseOpsOverviewResult {
   isSotaEnrichmentDegraded: boolean;
   /** True if TITAN specifically is degraded */
   isTitanDegraded: boolean;
+  /** True if Sofascore Cron specifically is degraded */
+  isSofascoreCronDegraded: boolean;
   /** Request ID for debugging (from response header) */
   requestId?: string;
   /** Loading state */
@@ -325,6 +335,7 @@ export function useOpsOverview(): UseOpsOverviewResult {
   const movement = data?.movement ?? null;
   const sotaEnrichment = data?.sotaEnrichment ?? null;
   const titan = data?.titan ?? null;
+  const sofascoreCron = data?.sofascoreCron ?? null;
   const requestId = data?.requestId;
 
   const isBudgetDegraded = !!error || budget === null;
@@ -342,6 +353,7 @@ export function useOpsOverview(): UseOpsOverviewResult {
   const isMovementDegraded = !!error || movement === null;
   const isSotaEnrichmentDegraded = !!error || sotaEnrichment === null;
   const isTitanDegraded = !!error || titan === null;
+  const isSofascoreCronDegraded = !!error || sofascoreCron === null;
   // isDegraded = ALL core blocks failed (not diagnostics)
   const isDegraded = isBudgetDegraded && isHealthDegraded && isJobsDegraded && isPredictionsDegraded;
 
@@ -362,6 +374,7 @@ export function useOpsOverview(): UseOpsOverviewResult {
     movement,
     sotaEnrichment,
     titan,
+    sofascoreCron,
     isDegraded,
     isBudgetDegraded,
     isHealthDegraded,
@@ -378,6 +391,7 @@ export function useOpsOverview(): UseOpsOverviewResult {
     isMovementDegraded,
     isSotaEnrichmentDegraded,
     isTitanDegraded,
+    isSofascoreCronDegraded,
     requestId,
     isLoading,
     error: error as Error | null,

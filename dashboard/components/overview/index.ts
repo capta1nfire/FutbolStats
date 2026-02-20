@@ -22,6 +22,7 @@ export { PitProgressCompactTile } from "./PitProgressCompactTile";
 export { MovementSummaryTile } from "./MovementSummaryTile";
 export { TitanCompactTile } from "./TitanCompactTile";
 export { IncidentsCompactTile } from "./IncidentsCompactTile";
+export { SofascoreCronCompactTile } from "./SofascoreCronCompactTile";
 // Model Benchmark with ApexCharts
 export { ModelBenchmarkTile } from "./ModelBenchmarkTile";
 // Overview Drawer

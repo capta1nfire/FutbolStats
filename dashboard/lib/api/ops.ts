@@ -1575,7 +1575,61 @@ export function parseOpsSotaEnrichment(ops: OpsResponse): SotaEnrichmentNormaliz
 }
 
 // ============================================================================
-// TITAN OMNISCIENCE Extraction
+// Sofascore Cron Extraction
+// ============================================================================
+
+export interface OpsSofascoreCronJob {
+  last_at: string | null;
+  count_24h: number;
+  status: ApiBudgetStatus;
+  minutes_since: number | null;
+}
+
+export interface OpsSofascoreCron {
+  status: ApiBudgetStatus;
+  refs: OpsSofascoreCronJob;
+  stats: OpsSofascoreCronJob;
+  lineups: OpsSofascoreCronJob;
+  ratings: OpsSofascoreCronJob;
+}
+
+function parseOpsSofascoreCronJob(raw: unknown): OpsSofascoreCronJob | null {
+  if (!isObject(raw)) return null;
+
+  const status = normalizeStatus(raw.status);
+  if (status === null) return null;
+
+  return {
+    last_at: typeof raw.last_at === "string" ? raw.last_at : null,
+    count_24h: typeof raw.count_24h === "number" ? raw.count_24h : 0,
+    status,
+    minutes_since: typeof raw.minutes_since === "number" ? raw.minutes_since : null,
+  };
+}
+
+export function parseOpsSofascoreCron(ops: OpsResponse): OpsSofascoreCron | null {
+  const cron = getNestedValue(ops, "data", "sofascore_cron");
+  if (!isObject(cron)) return null;
+
+  const status = normalizeStatus(cron.status);
+  if (status === null) return null;
+
+  const refs = parseOpsSofascoreCronJob(cron.refs);
+  const stats = parseOpsSofascoreCronJob(cron.stats);
+  const lineups = parseOpsSofascoreCronJob(cron.lineups);
+  const ratings = parseOpsSofascoreCronJob(cron.ratings);
+
+  if (!refs || !stats || !lineups || !ratings) return null;
+
+  return {
+    status,
+    refs,
+    stats,
+    lineups,
+    ratings,
+  };
+}
+
 // ============================================================================
 
 /**

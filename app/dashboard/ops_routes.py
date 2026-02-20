@@ -3889,6 +3889,67 @@ async def _run_coverage_queries(league_name_by_id: dict[int, str]) -> list:
     return coverage_by_league
 
 
+async def _calculate_sofascore_cron_health(session) -> dict:
+    """Check freshness of Sofascore data from local cron jobs."""
+    try:
+        from sqlalchemy import text
+        row = await session.execute(text("""
+            SELECT
+                (SELECT MAX(created_at) FROM match_external_refs WHERE source = 'sofascore') AS refs_last,
+                (SELECT COUNT(*) FROM match_external_refs WHERE source = 'sofascore' AND created_at > NOW() - INTERVAL '24 hours') AS refs_24h,
+                (SELECT MAX(captured_at) FROM match_sofascore_stats) AS stats_last,
+                (SELECT COUNT(*) FROM match_sofascore_stats WHERE captured_at > NOW() - INTERVAL '24 hours') AS stats_24h,
+                (SELECT MAX(captured_at) FROM match_sofascore_lineup) AS lineups_last,
+                (SELECT COUNT(*) FROM match_sofascore_lineup WHERE captured_at > NOW() - INTERVAL '24 hours') AS lineups_24h,
+                (SELECT MAX(captured_at) FROM sofascore_player_rating_history) AS ratings_last,
+                (SELECT COUNT(*) FROM sofascore_player_rating_history WHERE captured_at > NOW() - INTERVAL '24 hours') AS ratings_24h
+        """))
+        r = row.first()
+        now = datetime.utcnow()
+
+        def _evaluate_job(last_at, count_24h, warn_hours, red_hours):
+            if not last_at:
+                return {"last_at": None, "count_24h": count_24h, "status": "critical", "minutes_since": None}
+            # Handle timezone-aware/naive datetimes safely
+            if last_at.tzinfo is not None:
+                last_at = last_at.replace(tzinfo=None)
+            mins = int((now - last_at).total_seconds() / 60)
+            status = "ok"
+            if mins > red_hours * 60:
+                status = "critical"
+            elif mins > warn_hours * 60:
+                status = "warning"
+            return {
+                "last_at": last_at.isoformat(),
+                "count_24h": count_24h,
+                "status": status,
+                "minutes_since": mins
+            }
+
+        refs = _evaluate_job(r[0], r[1] or 0, 12, 24)
+        stats = _evaluate_job(r[2], r[3] or 0, 8, 24)
+        lineups = _evaluate_job(r[4], r[5] or 0, 6, 12)
+        ratings = _evaluate_job(r[6], r[7] or 0, 12, 24)
+
+        overall_status = "ok"
+        statuses = [refs["status"], stats["status"], lineups["status"], ratings["status"]]
+        if "critical" in statuses:
+            overall_status = "critical"
+        elif "warning" in statuses:
+            overall_status = "warning"
+
+        return {
+            "status": overall_status,
+            "refs": refs,
+            "stats": stats,
+            "lineups": lineups,
+            "ratings": ratings
+        }
+    except Exception as e:
+        logger.warning(f"Error calculating sofascore cron health: {e}")
+        return {"status": "degraded"}
+
+
 async def _load_ops_data() -> dict:
     """
     Ops dashboard: read-only aggregated metrics from DB + in-process state.
@@ -3955,6 +4016,7 @@ async def _load_ops_data() -> dict:
         coverage_by_league,
         clv_data,
         cascade_ab_data,
+        sofascore_cron_data,
     ) = await asyncio.gather(
         _fetch_budget_status(),
         _fetch_sentry_health(),
@@ -3974,6 +4036,7 @@ async def _load_ops_data() -> dict:
         _safe(_run_coverage_queries(league_name_by_id), [], "coverage"),
         _calc(_calculate_clv_summary),
         _calc(_calculate_cascade_ab_test),
+        _calc(_calculate_sofascore_cron_health),
     )
 
     # Post-processing: enrich with league names
@@ -4045,6 +4108,7 @@ async def _load_ops_data() -> dict:
         "coverage_by_league": coverage_by_league,
         "clv": clv_data,
         "cascade_ab": cascade_ab_data,
+        "sofascore_cron": sofascore_cron_data,
         "ml_model": ml_model_info,
         "live_summary": live_summary_stats,
         "db_pool": get_pool_status(),

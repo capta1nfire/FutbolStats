@@ -29,6 +29,7 @@ import {
   DiagnosticsTile,
   TitanCompactTile,
   IncidentsCompactTile,
+  SofascoreCronCompactTile,
   // Model Benchmark
   ModelBenchmarkTile,
   // Drawer
@@ -116,6 +117,8 @@ export default function OverviewPage() {
     sensorB,
     titan,
     isTitanDegraded,
+    sofascoreCron,
+    isSofascoreCronDegraded,
     isDegraded,
     isLoading,
     error,
@@ -418,6 +421,10 @@ export default function OverviewPage() {
             <TitanCompactTile
               titan={titan}
               isMockFallback={isTitanDegraded}
+            />
+            <SofascoreCronCompactTile
+              cron={sofascoreCron}
+              isMockFallback={isSofascoreCronDegraded}
             />
           </div>
 
