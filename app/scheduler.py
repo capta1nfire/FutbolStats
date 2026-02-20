@@ -461,12 +461,11 @@ async def ensure_kickoff_predictions() -> dict:
             match_ids = [g[0] for g in imminent_gaps]
             feature_engineer = FeatureEngineer(session=session)
 
-            if hasattr(feature_engineer, 'get_matches_features_by_ids'):
-                df = await feature_engineer.get_matches_features_by_ids(match_ids, league_only=True)
-            else:
-                df = await feature_engineer.get_upcoming_matches_features(league_only=True)
-                if len(df) > 0:
-                    df = df[df["match_id"].isin(match_ids)]
+            # MUST use get_upcoming_matches_features (handles NS matches).
+            # get_matches_features_by_ids only processes FT/AET/PEN — useless here.
+            df = await feature_engineer.get_upcoming_matches_features(league_only=True)
+            if len(df) > 0:
+                df = df[df["match_id"].isin(match_ids)]
 
             if len(df) == 0:
                 logger.error(f"[KICKOFF-SAFETY] No features for imminent matches: {match_ids}")
