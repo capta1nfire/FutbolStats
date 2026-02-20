@@ -30,6 +30,7 @@ RESTRICTIONS:
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -172,6 +173,27 @@ def extract_best_odds(match_data: dict) -> tuple[float, float, float, str] | Non
         return avg_h, avg_d, avg_a, f"OddsPortal (avg of {len(odds_h)})"
 
     return None
+
+
+def extract_all_bookmaker_odds(match_data: dict) -> list[tuple]:
+    """Extract ALL valid bookmaker odds from 1x2_market.
+    Returns list of (bookmaker_name, odds_home, odds_draw, odds_away).
+    """
+    market = match_data.get("1x2_market", [])
+    results = []
+    for entry in market:
+        bname = entry.get("bookmaker_name", "").strip()
+        if not bname:
+            continue
+        try:
+            h = float(entry["1"])
+            d = float(entry["X"])
+            a = float(entry["2"])
+            if h > 1.0 and d > 1.0 and a > 1.0:
+                results.append((bname, h, d, a))
+        except (ValueError, KeyError):
+            continue
+    return results
 
 
 # =============================================================================
@@ -350,13 +372,16 @@ async def ingest_section(
     }
 
     for op_match in all_op_matches:
-        # Extract odds first (skip if no odds available)
+        # Extract best odds (for legacy dual-write)
         odds = extract_best_odds(op_match)
-        if not odds:
+        # Extract ALL bookmaker odds (for raw_odds_1x2)
+        all_odds = extract_all_bookmaker_odds(op_match)
+
+        if not odds and not all_odds:
             stats["no_odds_in_op"] += 1
             continue
 
-        home_odds, draw_odds, away_odds, source_name = odds
+        home_odds, draw_odds, away_odds, source_name = odds if odds else (None, None, None, None)
 
         # Match to DB
         match_id, reason = await match_op_to_db(conn, op_match, league_ids, aliases)
@@ -368,45 +393,101 @@ async def ingest_section(
                 stats["no_db_match"] += 1
             if len(stats["unmatched_details"]) < 50:
                 stats["unmatched_details"].append(reason)
+
+            # DLQ: write unmatched odds to raw_odds_1x2 with match_id = NULL
+            # Uses deterministic hash for dedup on re-execution
+            if not dry_run and all_odds:
+                op_home = op_match.get("home_team", "?")
+                op_away = op_match.get("away_team", "?")
+                op_date = op_match.get("match_date", "")
+                for bookie, oh, od, oa in all_odds:
+                    event_hash = hashlib.md5(
+                        f"oddsportal|{bookie}|{op_home}|{op_away}|{op_date}".encode()
+                    ).hexdigest()
+                    try:
+                        await conn.execute("""
+                            INSERT INTO raw_odds_1x2
+                                (match_id, provider, bookmaker, odds_home, odds_draw, odds_away,
+                                 odds_kind, external_event_hash, metadata)
+                            VALUES (NULL, 'oddsportal', $1, $2, $3, $4, 'closing', $5,
+                                    jsonb_build_object('home_team', $6, 'away_team', $7,
+                                                       'match_date', $8, 'reason', $9,
+                                                       'section', $10))
+                            ON CONFLICT (external_event_hash)
+                            WHERE match_id IS NULL AND external_event_hash IS NOT NULL
+                            DO NOTHING
+                        """, bookie, oh, od, oa, event_hash,
+                        op_home, op_away, op_date, reason, section)
+                    except Exception:
+                        pass  # DLQ best-effort, don't block pipeline
+                stats.setdefault("raw_dlq", 0)
+                stats["raw_dlq"] += len(all_odds)
+
             continue
 
         stats["matched"] += 1
 
-        # Check if already has odds (fetch from DB)
+        # Fetch match_date once (used by both writes)
+        match_date = None
+        if not dry_run:
+            match_date = await conn.fetchval(
+                "SELECT date FROM matches WHERE id = $1", match_id
+            )
+
+        # Check if already has legacy odds
         existing = await conn.fetchval(
             "SELECT opening_odds_home FROM matches WHERE id = $1",
             match_id,
         )
-        if existing is not None:
-            stats["already_has_odds"] += 1
-            continue
+        has_legacy_odds = existing is not None
 
-        # Write odds (ABE P0: column contract from plan §7.4)
         if not dry_run:
             try:
-                match_date = await conn.fetchval(
-                    "SELECT date FROM matches WHERE id = $1", match_id
-                )
-                await conn.execute("""
-                    UPDATE matches
-                    SET opening_odds_home = $1,
-                        opening_odds_draw = $2,
-                        opening_odds_away = $3,
-                        opening_odds_source = $4,
-                        opening_odds_kind = 'closing',
-                        opening_odds_column = '1x2',
-                        opening_odds_recorded_at = $5,
-                        opening_odds_recorded_at_type = 'match_date'
-                    WHERE id = $6
-                      AND opening_odds_home IS NULL
-                """, home_odds, draw_odds, away_odds, source_name,
-                     match_date, match_id)
+                # Legacy dual-write: UPDATE matches.opening_odds_* (only if NULL)
+                if not has_legacy_odds and odds:
+                    await conn.execute("""
+                        UPDATE matches
+                        SET opening_odds_home = $1,
+                            opening_odds_draw = $2,
+                            opening_odds_away = $3,
+                            opening_odds_source = $4,
+                            opening_odds_kind = 'closing',
+                            opening_odds_column = '1x2',
+                            opening_odds_recorded_at = $5,
+                            opening_odds_recorded_at_type = 'match_date'
+                        WHERE id = $6
+                          AND opening_odds_home IS NULL
+                    """, home_odds, draw_odds, away_odds, source_name,
+                         match_date, match_id)
+
+                # Raw write: INSERT ALL bookmaker odds into raw_odds_1x2
+                for bookie, oh, od, oa in all_odds:
+                    await conn.execute("""
+                        INSERT INTO raw_odds_1x2
+                            (match_id, provider, bookmaker, odds_home, odds_draw, odds_away,
+                             odds_kind, recorded_at, metadata)
+                        VALUES ($1, 'oddsportal', $2, $3, $4, $5, 'closing', $6,
+                                jsonb_build_object('section', $7))
+                        ON CONFLICT (match_id, provider, bookmaker, odds_kind)
+                        WHERE match_id IS NOT NULL
+                        DO UPDATE SET
+                            odds_home = EXCLUDED.odds_home,
+                            odds_draw = EXCLUDED.odds_draw,
+                            odds_away = EXCLUDED.odds_away,
+                            metadata = EXCLUDED.metadata
+                    """, match_id, bookie, oh, od, oa, match_date, section)
+                stats.setdefault("raw_inserted", 0)
+                stats["raw_inserted"] += len(all_odds)
+
             except Exception as e:
                 stats["errors"] += 1
                 logger.warning(f"  DB error for match_id={match_id}: {e}")
                 continue
 
-        stats["updated"] += 1
+        if has_legacy_odds:
+            stats["already_has_odds"] += 1
+        else:
+            stats["updated"] += 1
 
     return stats
 
@@ -429,6 +510,8 @@ def print_gate_report(section: str, stats: dict, dry_run: bool, logger: logging.
     logger.info(f"  no_odds_in_op:      {stats['no_odds_in_op']}")
     logger.info(f"  already_has_odds:   {stats['already_has_odds']}")
     logger.info(f"  would_update:       {stats['updated']}")
+    logger.info(f"  raw_odds_inserted:  {stats.get('raw_inserted', 0)}")
+    logger.info(f"  raw_dlq_unmatched:  {stats.get('raw_dlq', 0)}")
     logger.info(f"  errors:             {stats['errors']}")
 
     # Abort conditions

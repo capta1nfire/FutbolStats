@@ -86,7 +86,7 @@ async def load_evaluation_data(engine, season: int = 2024) -> pd.DataFrame:
     Returns DataFrame with:
     - match_id, date, home_team, away_team
     - prob_home, prob_draw, prob_away (model predictions)
-    - opening_odds_home/draw/away or closing odds
+    - canonical_odds_home/draw/away or closing odds
     - actual_outcome (0=home, 1=draw, 2=away)
     - gate features (rotation, congestion, etc.)
     """
@@ -104,10 +104,10 @@ async def load_evaluation_data(engine, season: int = 2024) -> pd.DataFrame:
                 p.home_prob as prob_home,
                 p.draw_prob as prob_draw,
                 p.away_prob as prob_away,
-                -- Opening odds
-                m.opening_odds_home,
-                m.opening_odds_draw,
-                m.opening_odds_away,
+                -- Canonical odds (cascade-resolved)
+                co.odds_home as canonical_odds_home,
+                co.odds_draw as canonical_odds_draw,
+                co.odds_away as canonical_odds_away,
                 -- Closing odds (current odds as proxy)
                 m.odds_home as closing_odds_home,
                 m.odds_draw as closing_odds_draw,
@@ -121,11 +121,12 @@ async def load_evaluation_data(engine, season: int = 2024) -> pd.DataFrame:
             JOIN teams ht ON m.home_team_id = ht.id
             JOIN teams at ON m.away_team_id = at.id
             LEFT JOIN predictions p ON m.id = p.match_id
+            LEFT JOIN match_canonical_odds co ON co.match_id = m.id
             WHERE m.status = 'FT'
               AND m.season >= :season
               AND m.home_goals IS NOT NULL
               AND m.away_goals IS NOT NULL
-              AND m.opening_odds_home IS NOT NULL
+              AND co.odds_home IS NOT NULL
             ORDER BY m.date
         """), {"season": season})
 
@@ -142,9 +143,9 @@ async def load_evaluation_data(engine, season: int = 2024) -> pd.DataFrame:
         )
 
         # Fill missing predictions with market implied probs
-        for col, odds_col in [('prob_home', 'opening_odds_home'),
-                               ('prob_draw', 'opening_odds_draw'),
-                               ('prob_away', 'opening_odds_away')]:
+        for col, odds_col in [('prob_home', 'canonical_odds_home'),
+                               ('prob_draw', 'canonical_odds_draw'),
+                               ('prob_away', 'canonical_odds_away')]:
             mask = df[col].isna() & df[odds_col].notna()
             if mask.any():
                 # De-vig using power method
@@ -272,7 +273,7 @@ def identify_value_bets(df, config: dict) -> np.ndarray:
     threshold = config["edge_threshold"]
 
     if odds_type == "opening":
-        odds_cols = ['opening_odds_home', 'opening_odds_draw', 'opening_odds_away']
+        odds_cols = ['canonical_odds_home', 'canonical_odds_draw', 'canonical_odds_away']
     else:
         odds_cols = ['closing_odds_home', 'closing_odds_draw', 'closing_odds_away']
 
@@ -374,7 +375,7 @@ async def evaluate_config(df: pd.DataFrame, config: dict) -> dict:
     # Get odds type
     odds_type = config.get("odds_type", "opening")
     if odds_type == "opening":
-        odds_cols = ['opening_odds_home', 'opening_odds_draw', 'opening_odds_away']
+        odds_cols = ['canonical_odds_home', 'canonical_odds_draw', 'canonical_odds_away']
     else:
         odds_cols = ['closing_odds_home', 'closing_odds_draw', 'closing_odds_away']
 
@@ -490,7 +491,7 @@ async def main():
 
     # Check data quality
     has_predictions = df['prob_home'].notna().sum()
-    has_opening = df['opening_odds_home'].notna().sum()
+    has_opening = df['canonical_odds_home'].notna().sum()
     has_closing = df['closing_odds_home'].notna().sum()
 
     print("Calidad de datos:")

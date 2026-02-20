@@ -165,6 +165,7 @@ class FDUKMatch:
     p_home: Optional[float]  # de-vigged probability
     p_draw: Optional[float]
     p_away: Optional[float]
+    all_bookmaker_odds: Optional[list] = None  # [(bookmaker, h, d, a, kind, col), ...]
 
 
 @dataclass
@@ -336,6 +337,45 @@ def get_odds_and_provider_extra(row: dict) -> tuple[Optional[float], Optional[fl
     return None, None, None, "none"
 
 
+def extract_all_bookmaker_odds_main(row: dict) -> list[tuple]:
+    """Extract ALL valid bookmaker triplets from a main-format CSV row.
+    Returns list of (bookmaker, odds_h, odds_d, odds_a, odds_kind, column_prefix).
+    """
+    BOOKMAKERS_MAIN = [
+        ("Bet365", "B365H", "B365D", "B365A"),
+        ("Pinnacle", "PSH", "PSD", "PSA"),
+        ("avg", "AvgH", "AvgD", "AvgA"),
+    ]
+    results = []
+    for bookie, col_h, col_d, col_a in BOOKMAKERS_MAIN:
+        h = parse_float(row.get(col_h, ""))
+        d = parse_float(row.get(col_d, ""))
+        a = parse_float(row.get(col_a, ""))
+        if h and d and a and h > 1 and d > 1 and a > 1:
+            results.append((bookie, h, d, a, "proxy_pre_closing", col_h))
+    return results
+
+
+def extract_all_bookmaker_odds_extra(row: dict) -> list[tuple]:
+    """Extract ALL valid bookmaker triplets from an extra-format (LATAM) CSV row.
+    Returns list of (bookmaker, odds_h, odds_d, odds_a, odds_kind, column_prefix).
+    """
+    BOOKMAKERS_EXTRA = [
+        ("Pinnacle", "PSCH", "PSCD", "PSCA"),
+        ("avg", "AvgCH", "AvgCD", "AvgCA"),
+        ("Bet365", "B365CH", "B365CD", "B365CA"),
+        ("Max", "MaxCH", "MaxCD", "MaxCA"),
+    ]
+    results = []
+    for bookie, col_h, col_d, col_a in BOOKMAKERS_EXTRA:
+        h = parse_float(row.get(col_h, ""))
+        d = parse_float(row.get(col_d, ""))
+        a = parse_float(row.get(col_a, ""))
+        if h and d and a and h > 1 and d > 1 and a > 1:
+            results.append((bookie, h, d, a, "closing", col_h))
+    return results
+
+
 def calculate_devig(odds_h: float, odds_d: float, odds_a: float) -> tuple[float, float, float, float]:
     """
     Calculate de-vigged probabilities and overround.
@@ -370,6 +410,7 @@ def parse_csv(content: str, division: str, season_code: str) -> list[FDUKMatch]:
             continue
 
         odds_h, odds_d, odds_a, provider = get_odds_and_provider(row)
+        all_odds = extract_all_bookmaker_odds_main(row)
 
         # Calculate de-vigged probabilities
         p_home, p_draw, p_away, overround = None, None, None, None
@@ -393,6 +434,7 @@ def parse_csv(content: str, division: str, season_code: str) -> list[FDUKMatch]:
             p_home=p_home,
             p_draw=p_draw,
             p_away=p_away,
+            all_bookmaker_odds=all_odds,
         )
         matches.append(match)
 
@@ -440,6 +482,7 @@ def parse_extra_csv(content: str, division: str, min_season_year: int = EXTRA_MI
             continue
 
         odds_h, odds_d, odds_a, provider = get_odds_and_provider_extra(row)
+        all_odds = extract_all_bookmaker_odds_extra(row)
 
         # Calculate de-vigged probabilities
         p_home, p_draw, p_away, overround = None, None, None, None
@@ -463,6 +506,7 @@ def parse_extra_csv(content: str, division: str, min_season_year: int = EXTRA_MI
             p_home=p_home,
             p_draw=p_draw,
             p_away=p_away,
+            all_bookmaker_odds=all_odds,
         )
         matches.append(match)
 
@@ -815,34 +859,60 @@ async def backfill_postgres(
                 else:
                     stats["matched_high_conf"] += 1
 
-                # Check if already has odds
-                db_match = next((m for m in db_matches if m["id"] == result.db_match_id), None)
-                if db_match and db_match.get("opening_odds_home") is not None:
-                    stats["skipped_has_odds"] += 1
-                    continue
-
                 # Build metadata
                 source, kind, col = get_odds_metadata(fduk_match)
                 match_date = datetime.strptime(fduk_match.date, "%Y-%m-%d")
 
-                # Update
-                if not dry_run:
-                    await conn.execute("""
-                        UPDATE matches
-                        SET opening_odds_home = $1,
-                            opening_odds_draw = $2,
-                            opening_odds_away = $3,
-                            opening_odds_source = $5,
-                            opening_odds_kind = $6,
-                            opening_odds_column = $7,
-                            opening_odds_recorded_at = $8,
-                            opening_odds_recorded_at_type = 'file_asof'
-                        WHERE id = $4
-                          AND opening_odds_home IS NULL
-                    """, fduk_match.odds_home, fduk_match.odds_draw, fduk_match.odds_away,
-                    result.db_match_id, source, kind, col, match_date)
+                # Check if already has legacy odds (skip UPDATE but still write raw)
+                db_match = next((m for m in db_matches if m["id"] == result.db_match_id), None)
+                has_legacy_odds = db_match and db_match.get("opening_odds_home") is not None
 
-                stats["updated"] += 1
+                if not dry_run:
+                    # Legacy dual-write: UPDATE matches.opening_odds_* (only if NULL)
+                    if not has_legacy_odds:
+                        await conn.execute("""
+                            UPDATE matches
+                            SET opening_odds_home = $1,
+                                opening_odds_draw = $2,
+                                opening_odds_away = $3,
+                                opening_odds_source = $5,
+                                opening_odds_kind = $6,
+                                opening_odds_column = $7,
+                                opening_odds_recorded_at = $8,
+                                opening_odds_recorded_at_type = 'file_asof'
+                            WHERE id = $4
+                              AND opening_odds_home IS NULL
+                        """, fduk_match.odds_home, fduk_match.odds_draw, fduk_match.odds_away,
+                        result.db_match_id, source, kind, col, match_date)
+
+                    # Raw write: INSERT ALL bookmaker odds into raw_odds_1x2
+                    all_odds = fduk_match.all_bookmaker_odds or []
+                    for bookie, oh, od, oa, o_kind, o_col in all_odds:
+                        await conn.execute("""
+                            INSERT INTO raw_odds_1x2
+                                (match_id, provider, bookmaker, odds_home, odds_draw, odds_away,
+                                 odds_kind, recorded_at, metadata)
+                            VALUES ($1, 'fduk', $2, $3, $4, $5, $6, $7,
+                                    jsonb_build_object('csv_column', $8,
+                                                       'season_code', $9,
+                                                       'division', $10))
+                            ON CONFLICT (match_id, provider, bookmaker, odds_kind)
+                            WHERE match_id IS NOT NULL
+                            DO UPDATE SET
+                                odds_home = EXCLUDED.odds_home,
+                                odds_draw = EXCLUDED.odds_draw,
+                                odds_away = EXCLUDED.odds_away,
+                                metadata = EXCLUDED.metadata
+                        """, result.db_match_id, bookie, oh, od, oa,
+                        o_kind, match_date, o_col,
+                        fduk_match.season_code, fduk_match.division)
+                        stats.setdefault("raw_inserted", 0)
+                        stats["raw_inserted"] += 1
+
+                if has_legacy_odds:
+                    stats["skipped_has_odds"] += 1
+                else:
+                    stats["updated"] += 1
 
     finally:
         await conn.close()

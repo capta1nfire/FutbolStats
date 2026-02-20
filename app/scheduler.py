@@ -5017,6 +5017,146 @@ async def refresh_recent_ft_stats(lookback_hours: int = 6, max_calls: int = 50) 
 # CLV_k = ln(odds_asof / odds_close) per outcome. Positive = timing edge.
 
 
+async def canonical_odds_sweeper() -> dict:
+    """
+    Materialize canonical odds for recently changed matches.
+
+    Runs every 6 hours. Scope: matches modified in last 7 days + next 3 days.
+    Anti-downgrade guardrail: if a row already has P1/P2/P3 data, NEVER overwrite
+    with a lower-priority source (P4-P7). Quality can only go UP, never DOWN.
+
+    Cascade (Market Truth > System Myopia):
+      P1: FDUK Pinnacle (raw_odds_1x2 where provider='fduk', bookmaker='Pinnacle')
+      P2: FDUK B365 / OddsPortal (raw_odds_1x2 excl. Pinnacle)
+      P3: prediction_clv / match_odds_snapshot (bet365 frozen)
+      P4: odds_snapshots Bet365_live
+      P5: predictions.frozen_odds
+      P6: matches.odds_home (API-Football)
+      P7: odds_snapshots avg (fallback)
+    """
+    logger.info("canonical_odds_sweeper: starting")
+    t0 = time.time()
+    stats = {"inserted": 0, "upgraded": 0, "skipped_downgrade": 0, "errors": 0}
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Scope: matches modified recently OR upcoming
+            scope_rows = await session.execute(text("""
+                SELECT m.id, m.status,
+                       m.odds_home, m.odds_draw, m.odds_away,
+                       co.match_id AS has_canonical, co.priority AS current_priority
+                FROM matches m
+                LEFT JOIN match_canonical_odds co ON co.match_id = m.id
+                WHERE m.date >= NOW() - INTERVAL '7 days'
+                  AND m.date <= NOW() + INTERVAL '3 days'
+            """))
+            rows = scope_rows.fetchall()
+            match_ids = [row.id for row in rows]
+            logger.info(f"canonical_odds_sweeper: {len(rows)} matches in scope")
+
+            # Pre-load raw odds for P1/P2 resolution (batch, no N+1)
+            raw_odds_map = {}  # match_id -> (odds_h, odds_d, odds_a, source, priority)
+            if match_ids:
+                raw_rows = await session.execute(text("""
+                    SELECT DISTINCT ON (r.match_id)
+                        r.match_id, r.odds_home, r.odds_draw, r.odds_away,
+                        r.provider, r.bookmaker, r.odds_kind
+                    FROM raw_odds_1x2 r
+                    WHERE r.match_id = ANY(:ids)
+                      AND r.provider IN ('fduk', 'oddsportal')
+                    ORDER BY r.match_id,
+                      CASE WHEN r.provider = 'fduk' AND r.bookmaker = 'Pinnacle' THEN 0
+                           WHEN r.provider = 'fduk' THEN 1
+                           WHEN r.provider = 'oddsportal' THEN 2
+                           ELSE 3
+                      END,
+                      CASE r.bookmaker
+                          WHEN 'Pinnacle' THEN 1
+                          WHEN 'Bet365' THEN 2
+                          WHEN 'unknown' THEN 3
+                          WHEN 'bet-at-home' THEN 4
+                          WHEN 'BetInAsia' THEN 5
+                          WHEN 'avg' THEN 6
+                          ELSE 7
+                      END,
+                      CASE r.odds_kind WHEN 'closing' THEN 1 ELSE 2 END
+                """), {"ids": match_ids})
+                for rr in raw_rows.fetchall():
+                    is_pinnacle = (rr.provider == 'fduk' and rr.bookmaker == 'Pinnacle')
+                    priority = 1 if is_pinnacle else 2
+                    source = f"{rr.provider} ({rr.bookmaker})"
+                    raw_odds_map[rr.match_id] = (
+                        rr.odds_home, rr.odds_draw, rr.odds_away, source, priority
+                    )
+
+            for row in rows:
+                match_id = row.id
+                is_closing = row.status in ('FT', 'AET', 'PEN', 'AWD')
+                current_p = row.current_priority  # None if not in canonical yet
+
+                # Resolve best available odds with priority
+                best = None  # (odds_h, odds_d, odds_a, source, priority)
+
+                # P1/P2: from raw_odds_1x2 (pre-loaded)
+                if match_id in raw_odds_map:
+                    best = raw_odds_map[match_id]
+
+                # P3-P5: require sub-queries (expensive), skip in sweeper — covered by one-shot script
+                # Only P1, P2, P6 are cheap enough for a periodic job
+
+                # P6: matches.odds_home (API-Football)
+                if not best and row.odds_home and row.odds_draw and row.odds_away:
+                    best = (row.odds_home, row.odds_draw, row.odds_away,
+                            'matches.odds (API-Football)', 6)
+
+                if not best:
+                    continue  # No odds available for this match
+
+                new_priority = best[4]
+
+                # Anti-downgrade guardrail: NEVER overwrite high-quality with low-quality
+                if current_p is not None and new_priority >= current_p:
+                    stats["skipped_downgrade"] += 1
+                    continue
+
+                # Insert or upgrade
+                await session.execute(text("""
+                    INSERT INTO match_canonical_odds
+                        (match_id, odds_home, odds_draw, odds_away, source, priority, is_closing, updated_at)
+                    VALUES (:mid, :oh, :od, :oa, :src, :p, :ic, NOW())
+                    ON CONFLICT (match_id) DO UPDATE SET
+                        odds_home = EXCLUDED.odds_home,
+                        odds_draw = EXCLUDED.odds_draw,
+                        odds_away = EXCLUDED.odds_away,
+                        source = EXCLUDED.source,
+                        priority = EXCLUDED.priority,
+                        is_closing = EXCLUDED.is_closing,
+                        updated_at = NOW()
+                    WHERE match_canonical_odds.priority > EXCLUDED.priority
+                       OR match_canonical_odds.match_id IS NULL
+                """), {
+                    "mid": match_id,
+                    "oh": float(best[0]), "od": float(best[1]), "oa": float(best[2]),
+                    "src": best[3], "p": new_priority, "ic": is_closing,
+                })
+
+                if row.has_canonical is None:
+                    stats["inserted"] += 1
+                else:
+                    stats["upgraded"] += 1
+
+            await session.commit()
+
+    except Exception as e:
+        logger.error(f"canonical_odds_sweeper error: {e}", exc_info=True)
+        stats["errors"] += 1
+
+    elapsed = time.time() - t0
+    stats["elapsed_s"] = round(elapsed, 1)
+    logger.info(f"canonical_odds_sweeper: done in {elapsed:.1f}s — {stats}")
+    return stats
+
+
 async def score_clv_post_match() -> dict:
     """
     Score CLV for predictions of recently finished matches.
@@ -8592,6 +8732,22 @@ def start_scheduler(ml_engine):
         max_instances=1,
         coalesce=True,
         misfire_grace_time=2 * 3600,
+    )
+
+    # Canonical Odds Sweeper: Every 6 hours
+    # Materializes canonical odds for matches in [-7d, +3d] window.
+    # Anti-downgrade guardrail: P1/P2/P3 data is IMMUTABLE from lower sources.
+    # 0 API calls — reads only from existing DB tables.
+    scheduler.add_job(
+        canonical_odds_sweeper,
+        trigger=IntervalTrigger(hours=6),
+        id="canonical_odds_sweeper",
+        name="Canonical Odds Sweeper (every 6h)",
+        replace_existing=True,
+        next_run_time=datetime.utcnow() + timedelta(seconds=105),  # Offset: +105s
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=6 * 3600,
     )
 
     # Odds Sync: Every 6 hours (configurable via ODDS_SYNC_INTERVAL_HOURS)

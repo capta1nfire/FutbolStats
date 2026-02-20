@@ -2294,37 +2294,39 @@ class FeatureEngineer:
             # Restaurar fecha original (importante si match está en session)
             match.date = orig_date
 
-    @staticmethod
-    def _extract_odds_triplet(match) -> tuple:
-        """Extract odds using triplet-atomic logic: closing > opening > None.
+    async def _preload_canonical_odds(self, match_ids: list[int]) -> dict:
+        """Batch-load canonical odds from match_canonical_odds.
 
-        PIT guardrail: if odds_recorded_at exists and is AFTER match.date,
-        treat closing odds as missing (potential leakage).
-        Never mixes closing and opening within the same match.
+        Returns dict {match_id: (odds_home, odds_draw, odds_away)}.
+        Single query, O(1) lookup per match.
         """
-        # Check closing triplet (with PIT guard)
-        has_close = (
-            match.odds_home is not None
-            and match.odds_draw is not None
-            and match.odds_away is not None
+        if not match_ids:
+            return {}
+        result = await self.session.execute(
+            text(
+                "SELECT match_id, odds_home, odds_draw, odds_away "
+                "FROM match_canonical_odds WHERE match_id = ANY(:ids)"
+            ),
+            {"ids": match_ids},
         )
-        if has_close and match.odds_recorded_at and match.date:
-            rec_at = match.odds_recorded_at.replace(tzinfo=None) if match.odds_recorded_at.tzinfo else match.odds_recorded_at
-            match_dt = match.date.replace(tzinfo=None) if getattr(match.date, 'tzinfo', None) else match.date
-            if rec_at > match_dt:
-                has_close = False  # PIT violation: odds captured after kickoff
+        return {
+            r.match_id: (r.odds_home, r.odds_draw, r.odds_away)
+            for r in result.fetchall()
+        }
 
-        # Check opening triplet
-        has_open = (
-            match.opening_odds_home is not None
-            and match.opening_odds_draw is not None
-            and match.opening_odds_away is not None
-        )
+    @staticmethod
+    def _extract_odds_triplet(match, canonical_odds: dict = None) -> tuple:
+        """Extract odds from match_canonical_odds (single source of truth).
 
-        if has_close:
-            return match.odds_home, match.odds_draw, match.odds_away
-        elif has_open:
-            return match.opening_odds_home, match.opening_odds_draw, match.opening_odds_away
+        Priority cascade already resolved in canonical table:
+        P1 FDUK Pinnacle > P2 B365/OddsPortal > P3 CLV/frozen >
+        P4 Bet365_live > P5 predictions.frozen > P6 API-Football > P7 avg
+
+        For matches not yet in canonical (new NS matches pending sweeper),
+        returns None — model handles missing odds gracefully.
+        """
+        if canonical_odds is not None and match.id in canonical_odds:
+            return canonical_odds[match.id]
         return None, None, None
 
     async def build_training_dataset(
@@ -2383,6 +2385,10 @@ class FeatureEngineer:
         self._cache = TeamMatchCache()
         await self._cache.preload(self.session, team_ids)
 
+        # Preload canonical odds (single source of truth, replaces opening_odds fallback)
+        canonical_odds = await self._preload_canonical_odds([m.id for m in matches])
+        logger.info(f"Canonical odds loaded: {len(canonical_odds)}/{len(matches)} matches")
+
         # Build features for each match
         rows = []
         _t0 = __import__("time").time()
@@ -2411,8 +2417,8 @@ class FeatureEngineer:
                 features["home_goals"] = match.home_goals
                 features["away_goals"] = match.away_goals
 
-                # Add odds: closing > opening > None (triplet-atomic, PIT-safe)
-                oh, od, oa = self._extract_odds_triplet(match)
+                # Canonical odds (match_canonical_odds — single source of truth)
+                oh, od, oa = self._extract_odds_triplet(match, canonical_odds)
                 features["odds_home"] = oh
                 features["odds_draw"] = od
                 features["odds_away"] = oa
@@ -2487,6 +2493,9 @@ class FeatureEngineer:
         self._cache = TeamMatchCache()
         await self._cache.preload(self.session, team_ids)
 
+        # Preload canonical odds (single source of truth)
+        canonical_odds = await self._preload_canonical_odds([m.id for m in matches])
+
         # Build features for each match
         rows = []
         for match in matches:
@@ -2497,8 +2506,8 @@ class FeatureEngineer:
                 features["home_goals"] = match.home_goals
                 features["away_goals"] = match.away_goals
 
-                # Add odds: closing > opening > None (triplet-atomic, PIT-safe)
-                oh, od, oa = self._extract_odds_triplet(match)
+                # Canonical odds (match_canonical_odds — single source of truth)
+                oh, od, oa = self._extract_odds_triplet(match, canonical_odds)
                 features["odds_home"] = oh
                 features["odds_draw"] = od
                 features["odds_away"] = oa
@@ -2632,6 +2641,9 @@ class FeatureEngineer:
             self._cache = TeamMatchCache()
             await self._cache.preload(self.session, team_ids)
 
+        # Preload canonical odds (single source of truth)
+        canonical_odds = await self._preload_canonical_odds([m.id for m in matches])
+
         rows = []
         for match in matches:
             try:
@@ -2644,8 +2656,8 @@ class FeatureEngineer:
                 # External IDs for team override resolution
                 features["home_team_external_id"] = match.home_team.external_id if match.home_team else None
                 features["away_team_external_id"] = match.away_team.external_id if match.away_team else None
-                # Add odds: closing > opening > None (triplet-atomic, PIT-safe)
-                oh, od, oa = self._extract_odds_triplet(match)
+                # Canonical odds (match_canonical_odds — single source of truth)
+                oh, od, oa = self._extract_odds_triplet(match, canonical_odds)
                 features["odds_home"] = oh
                 features["odds_draw"] = od
                 features["odds_away"] = oa

@@ -52,12 +52,14 @@ WITH pit_snapshots AS (
         m.away_team_id,
         ht.name as home_team,
         at.name as away_team,
-        -- Opening odds (from FDUK backfill)
-        m.opening_odds_home,
-        m.opening_odds_draw,
-        m.opening_odds_away
+        -- Canonical odds (cascade-resolved from match_canonical_odds)
+        co.odds_home AS canonical_odds_home,
+        co.odds_draw AS canonical_odds_draw,
+        co.odds_away AS canonical_odds_away,
+        co.source AS canonical_odds_source
     FROM odds_snapshots os
     JOIN matches m ON m.id = os.match_id
+    LEFT JOIN match_canonical_odds co ON co.match_id = m.id
     LEFT JOIN teams ht ON ht.id = m.home_team_id
     LEFT JOIN teams at ON at.id = m.away_team_id
     WHERE os.snapshot_type = 'lineup_confirmed'
@@ -127,10 +129,11 @@ SELECT
     ps.pit_odds_home,
     ps.pit_odds_draw,
     ps.pit_odds_away,
-    -- Opening odds (historical baseline from FDUK)
-    ps.opening_odds_home,
-    ps.opening_odds_draw,
-    ps.opening_odds_away,
+    -- Canonical odds (cascade-resolved, replaces legacy opening_odds)
+    ps.canonical_odds_home,
+    ps.canonical_odds_draw,
+    ps.canonical_odds_away,
+    ps.canonical_odds_source,
     -- Baseline odds (CLV proxy) from market_movement_snapshots
     COALESCE(bms.baseline_odds_home, bma.baseline_odds_home) as baseline_odds_home,
     COALESCE(bms.baseline_odds_draw, bma.baseline_odds_draw) as baseline_odds_draw,
@@ -217,10 +220,11 @@ def export_to_duckdb(data: list[dict], output_path: str) -> None:
             pit_odds_home DOUBLE,
             pit_odds_draw DOUBLE,
             pit_odds_away DOUBLE,
-            -- Opening odds
-            opening_odds_home DOUBLE,
-            opening_odds_draw DOUBLE,
-            opening_odds_away DOUBLE,
+            -- Canonical odds (cascade-resolved)
+            canonical_odds_home DOUBLE,
+            canonical_odds_draw DOUBLE,
+            canonical_odds_away DOUBLE,
+            canonical_odds_source VARCHAR,
             -- Baseline odds (CLV proxy)
             baseline_odds_home DOUBLE,
             baseline_odds_draw DOUBLE,
@@ -258,14 +262,14 @@ def export_to_duckdb(data: list[dict], output_path: str) -> None:
                 home_team, away_team, match_date, snapshot_at,
                 delta_to_kickoff_seconds, delta_ko_minutes, odds_freshness, bookmaker,
                 pit_odds_home, pit_odds_draw, pit_odds_away,
-                opening_odds_home, opening_odds_draw, opening_odds_away,
+                canonical_odds_home, canonical_odds_draw, canonical_odds_away, canonical_odds_source,
                 baseline_odds_home, baseline_odds_draw, baseline_odds_away,
                 baseline_snapshot_type, baseline_bookmaker, baseline_captured_at,
                 baseline_minutes_to_kickoff, baseline_source,
                 prediction_id, home_prob, draw_prob, away_prob,
                 model_version, prediction_at,
                 home_goals, away_goals, status, actual_result
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, [
             row.get("snapshot_id"),
             row.get("match_id"),
@@ -282,9 +286,10 @@ def export_to_duckdb(data: list[dict], output_path: str) -> None:
             float(row["pit_odds_home"]) if row.get("pit_odds_home") else None,
             float(row["pit_odds_draw"]) if row.get("pit_odds_draw") else None,
             float(row["pit_odds_away"]) if row.get("pit_odds_away") else None,
-            float(row["opening_odds_home"]) if row.get("opening_odds_home") else None,
-            float(row["opening_odds_draw"]) if row.get("opening_odds_draw") else None,
-            float(row["opening_odds_away"]) if row.get("opening_odds_away") else None,
+            float(row["canonical_odds_home"]) if row.get("canonical_odds_home") else None,
+            float(row["canonical_odds_draw"]) if row.get("canonical_odds_draw") else None,
+            float(row["canonical_odds_away"]) if row.get("canonical_odds_away") else None,
+            row.get("canonical_odds_source"),
             float(row["baseline_odds_home"]) if row.get("baseline_odds_home") else None,
             float(row["baseline_odds_draw"]) if row.get("baseline_odds_draw") else None,
             float(row["baseline_odds_away"]) if row.get("baseline_odds_away") else None,
@@ -334,9 +339,9 @@ def generate_summary(output_path: str) -> dict:
     result = con.execute("SELECT COUNT(*) FROM pit_dataset WHERE prediction_id IS NOT NULL").fetchone()
     summary["with_predictions"] = result[0]
 
-    # Records with opening odds
-    result = con.execute("SELECT COUNT(*) FROM pit_dataset WHERE opening_odds_home IS NOT NULL").fetchone()
-    summary["with_opening_odds"] = result[0]
+    # Records with canonical odds
+    result = con.execute("SELECT COUNT(*) FROM pit_dataset WHERE canonical_odds_home IS NOT NULL").fetchone()
+    summary["with_canonical_odds"] = result[0]
 
     # Records with baseline odds (market movement fallback)
     result = con.execute("SELECT COUNT(*) FROM pit_dataset WHERE baseline_odds_home IS NOT NULL").fetchone()
@@ -430,7 +435,7 @@ async def main():
     print(f"Output file: {args.output}")
     print(f"Total records: {summary['total_records']}")
     print(f"With predictions (as-of): {summary['with_predictions']}")
-    print(f"With opening odds: {summary['with_opening_odds']}")
+    print(f"With canonical odds: {summary['with_canonical_odds']}")
     print(f"With baseline odds: {summary.get('with_baseline_odds', 0)}")
     print(f"Leakage violations: {summary['leakage_violations']} (must be 0)")
     print(f"\nDate range: {summary['date_range']['min']} to {summary['date_range']['max']}")

@@ -215,22 +215,23 @@ SELECT
                WHERE fmt.match_id = m.id AND fmt.xg_home IS NOT NULL AND fmt.xg_away IS NOT NULL)
   ) AS xg_n,
 
-  -- Closing odds: matches.odds OR odds_history(is_closing)
+  -- Canonical odds: match_canonical_odds (single source of truth, cascade-resolved)
   COUNT(*) FILTER (WHERE
-    (m.odds_home > 1.0 AND m.odds_draw > 1.0 AND m.odds_away > 1.0)
-    OR EXISTS (SELECT 1 FROM odds_history ohc
-               WHERE ohc.match_id = m.id AND ohc.is_closing = true
-               AND ohc.odds_home > 1.0 AND ohc.odds_draw > 1.0 AND ohc.odds_away > 1.0
-               AND (ohc.quarantined IS NULL OR ohc.quarantined = false))
+    EXISTS (SELECT 1 FROM match_canonical_odds co
+            WHERE co.match_id = m.id
+            AND co.odds_home > 1.0 AND co.odds_draw > 1.0 AND co.odds_away > 1.0)
+  ) AS odds_canonical_n,
+
+  -- Canonical closing odds (is_closing=true, FT/AET only)
+  COUNT(*) FILTER (WHERE
+    EXISTS (SELECT 1 FROM match_canonical_odds co
+            WHERE co.match_id = m.id AND co.is_closing = true
+            AND co.odds_home > 1.0 AND co.odds_draw > 1.0 AND co.odds_away > 1.0)
   ) AS odds_closing_n,
 
-  -- Opening odds: matches.opening_odds OR odds_history(is_opening)
+  -- Legacy opening odds (retained for backward compat, pending DROP)
   COUNT(*) FILTER (WHERE
     (m.opening_odds_home > 1.0 AND m.opening_odds_draw > 1.0 AND m.opening_odds_away > 1.0)
-    OR EXISTS (SELECT 1 FROM odds_history oho
-               WHERE oho.match_id = m.id AND oho.is_opening = true
-               AND oho.odds_home > 1.0 AND oho.odds_draw > 1.0 AND oho.odds_away > 1.0
-               AND (oho.quarantined IS NULL OR oho.quarantined = false))
   ) AS odds_opening_n,
 
   -- Lineups: both sides with >=7 starters
@@ -426,6 +427,7 @@ def _compute_league_data(row) -> dict:
     # Map SQL column suffixes to dimension keys
     col_map = [
         ("xg_n", "xg"),
+        ("odds_canonical_n", "odds_canonical"),
         ("odds_closing_n", "odds_closing"),
         ("odds_opening_n", "odds_opening"),
         ("lineups_n", "lineups"),

@@ -432,9 +432,10 @@ def benchmark_model_vs_market(
             actual_result,
             bookmaker,
             odds_freshness,
-            opening_odds_home,
-            opening_odds_draw,
-            opening_odds_away{baseline_select}
+            canonical_odds_home,
+            canonical_odds_draw,
+            canonical_odds_away,
+            canonical_odds_source{baseline_select}
         FROM pit_dataset
         WHERE home_prob IS NOT NULL
           AND pit_odds_home IS NOT NULL
@@ -666,23 +667,24 @@ def benchmark_model_vs_market(
                     by_freshness[freshness]["wins"] += 1
                 by_freshness[freshness]["returns"].append(ret)
 
-            # --- Edge analysis: baseline vs PIT odds ---
+            # --- Edge analysis: canonical vs PIT odds ---
             # Baseline priority:
-            #  1) opening_odds_* (FDUK)
+            #  1) canonical_odds_* (match_canonical_odds, cascade-resolved)
             #  2) baseline_odds_* (market_movement_snapshots earliest pre-KO)
             # Note: Use safe column access for backward compatibility with legacy datasets
-            opening_h = row.get("opening_odds_home") if "opening_odds_home" in row.index else None
-            opening_d = row.get("opening_odds_draw") if "opening_odds_draw" in row.index else None
-            opening_a = row.get("opening_odds_away") if "opening_odds_away" in row.index else None
+            canonical_h = row.get("canonical_odds_home") if "canonical_odds_home" in row.index else None
+            canonical_d = row.get("canonical_odds_draw") if "canonical_odds_draw" in row.index else None
+            canonical_a = row.get("canonical_odds_away") if "canonical_odds_away" in row.index else None
+            canonical_src = row.get("canonical_odds_source") if "canonical_odds_source" in row.index else None
             baseline_h = row.get("baseline_odds_home") if "baseline_odds_home" in row.index else None
             baseline_d = row.get("baseline_odds_draw") if "baseline_odds_draw" in row.index else None
             baseline_a = row.get("baseline_odds_away") if "baseline_odds_away" in row.index else None
             baseline_src = row.get("baseline_source") if "baseline_source" in row.index else None
 
-            base_h = opening_h or baseline_h
-            base_d = opening_d or baseline_d
-            base_a = opening_a or baseline_a
-            baseline_source = "opening_odds" if opening_h else baseline_src
+            base_h = canonical_h or baseline_h
+            base_d = canonical_d or baseline_d
+            base_a = canonical_a or baseline_a
+            baseline_source = canonical_src if canonical_h else baseline_src
 
             base_map = {"home": base_h, "draw": base_d, "away": base_a}
             baseline_bet = base_map.get(model_best_bet)
@@ -1042,7 +1044,7 @@ def benchmark_model_vs_market(
             note = ("Dataset legacy: baseline_odds_* columns not present. "
                     "Rebuild with build_pit_dataset.py to enable CLV proxy fallback.")
         else:
-            note = "No baseline odds available for edge analysis (opening_odds_* and baseline_odds_* are missing)"
+            note = "No baseline odds available for edge analysis (canonical_odds_* and baseline_odds_* are missing)"
         edge_summary.update({
             "mean_edge": None,
             "note": note,
