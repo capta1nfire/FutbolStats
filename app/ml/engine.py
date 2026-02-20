@@ -77,7 +77,9 @@ class TwoStageEngine:
 
     Architecture:
     - Stage 1: Binary classifier (draw vs non-draw)
-    - Stage 2: Binary classifier (home vs away) for non-draws
+    - Stage 2: Binary classifier for non-draws
+      * "home_away" semantic: P(home | non-draw)
+      * "fav_underdog" semantic: P(fav wins | non-draw), swap-back at inference
 
     Composition (soft, no hard override):
     - p_draw = P(draw | Stage1)
@@ -149,6 +151,7 @@ class TwoStageEngine:
         self._custom_stage2_features = stage2_features
         self.stage1: Optional[xgb.XGBClassifier] = None
         self.stage2: Optional[xgb.XGBClassifier] = None
+        self.stage2_semantic = "home_away"  # P0-4: backward compat default
         self.model_path = Path(settings.MODEL_PATH)
         self.model_path.mkdir(exist_ok=True)
 
@@ -210,13 +213,37 @@ class TwoStageEngine:
         """
         logger.info(f"Training TwoStage model {self.model_version} with {len(df)} samples")
 
+        # P0-2: Index safety — reset to 0..N-1 to prevent CV mask desalignment
+        df = df.reset_index(drop=True)
+
+        # P0-1: Scope control — only activate fav_underdog if odds features are explicit
+        if "odds_home" in self.active_stage2_features and "odds_away" in self.active_stage2_features:
+            self.stage2_semantic = "fav_underdog"
+        else:
+            self.stage2_semantic = "home_away"
+        logger.info(f"Stage 2 semantic set to: {self.stage2_semantic}")
+
         # Prepare targets
         y = df["result"].values
         y_draw = (y == 1).astype(int)  # Stage 1: 1=draw, 0=non-draw
-
-        # Non-draw subset for Stage 2
         nondraw_mask = y != 1
-        y_home = (y[nondraw_mask] == 0).astype(int)  # Stage 2: 1=home, 0=away
+
+        # P0-5: Vectorized robust Stage 2 target (fav wins vs home wins)
+        if self.stage2_semantic == "fav_underdog":
+            df_nondraw = df.iloc[np.where(nondraw_mask)[0]]
+            odds_h = df_nondraw.get("odds_home")
+            odds_a = df_nondraw.get("odds_away")
+
+            if odds_h is not None and odds_a is not None:
+                valid_odds = odds_h.notna() & odds_a.notna() & (odds_h > 0) & (odds_a > 0)
+                is_home_fav = np.where(valid_odds, odds_h.values <= odds_a.values, True)
+            else:
+                is_home_fav = np.ones(len(df_nondraw), dtype=bool)
+
+            home_won = (y[nondraw_mask] == 0)
+            y_stage2 = np.where(is_home_fav, home_won, ~home_won).astype(int)
+        else:
+            y_stage2 = (y[nondraw_mask] == 0).astype(int)
 
         # Prepare feature matrices
         X_s1 = self._prepare_features_stage1(df)
@@ -245,7 +272,23 @@ class TwoStageEngine:
             nondraw_train_mask = y[train_idx] != 1
             train_idx_nondraw = train_idx[nondraw_train_mask]
             X_s2_train = X_s2_full[train_idx_nondraw]
-            y_home_train = (y[train_idx_nondraw] == 0).astype(int)
+
+            # P0-5: Per-fold fav/underdog target for Stage 2
+            if self.stage2_semantic == "fav_underdog":
+                df_fold_nd = df.iloc[train_idx_nondraw]
+                odds_h_fold = df_fold_nd.get("odds_home")
+                odds_a_fold = df_fold_nd.get("odds_away")
+
+                if odds_h_fold is not None and odds_a_fold is not None:
+                    v_odds = odds_h_fold.notna() & odds_a_fold.notna() & (odds_h_fold > 0) & (odds_a_fold > 0)
+                    is_hf = np.where(v_odds, odds_h_fold.values <= odds_a_fold.values, True)
+                else:
+                    is_hf = np.ones(len(df_fold_nd), dtype=bool)
+
+                hw = (y[train_idx_nondraw] == 0)
+                y_home_train = np.where(is_hf, hw, ~hw).astype(int)
+            else:
+                y_home_train = (y[train_idx_nondraw] == 0).astype(int)
 
             # Train Stage 1
             s1_model = xgb.XGBClassifier(**self.PARAMS_STAGE1)
@@ -258,7 +301,23 @@ class TwoStageEngine:
             # Predict on validation
             p_draw = s1_model.predict_proba(X_s1_val)[:, 1]
             X_s2_val = X_s2_full[val_idx]
-            p_home_given_nondraw = s2_model.predict_proba(X_s2_val)[:, 1]
+            p_s2_raw = s2_model.predict_proba(X_s2_val)[:, 1]
+
+            # P0-5: Validation swap-back (fav→home probabilities)
+            if self.stage2_semantic == "fav_underdog":
+                df_val = df.iloc[val_idx]
+                odds_h_val = df_val.get("odds_home")
+                odds_a_val = df_val.get("odds_away")
+
+                if odds_h_val is not None and odds_a_val is not None:
+                    v_odds_val = odds_h_val.notna() & odds_a_val.notna() & (odds_h_val > 0) & (odds_a_val > 0)
+                    is_hf_val = np.where(v_odds_val, odds_h_val.values <= odds_a_val.values, True)
+                else:
+                    is_hf_val = np.ones(len(df_val), dtype=bool)
+
+                p_home_given_nondraw = np.where(is_hf_val, p_s2_raw, 1 - p_s2_raw)
+            else:
+                p_home_given_nondraw = p_s2_raw
 
             # Compose 3-class probabilities
             p_home = (1 - p_draw) * p_home_given_nondraw
@@ -278,13 +337,14 @@ class TwoStageEngine:
         self.stage1.fit(X_s1, y_draw, sample_weight=sample_weight_s1, verbose=False)
 
         self.stage2 = xgb.XGBClassifier(**self.PARAMS_STAGE2)
-        self.stage2.fit(X_s2, y_home, verbose=False)
+        self.stage2.fit(X_s2, y_stage2, verbose=False)
 
         logger.info("TwoStage model training complete")
 
         return {
             "model_version": self.model_version,
             "architecture": "two_stage",
+            "stage2_semantic": self.stage2_semantic,
             "samples_trained": len(df),
             "brier_score": round(avg_brier, 4),
             "cv_scores": [round(s, 4) for s in cv_brier_scores],
@@ -307,8 +367,23 @@ class TwoStageEngine:
         # Stage 1: P(draw)
         p_draw = self.stage1.predict_proba(X_s1)[:, 1]
 
-        # Stage 2: P(home | non-draw)
-        p_home_given_nondraw = self.stage2.predict_proba(X_s2)[:, 1]
+        # Stage 2: P(fav | non-draw) or P(home | non-draw)
+        p_s2_raw = self.stage2.predict_proba(X_s2)[:, 1]
+
+        # P0-5: Swap-back from fav/underdog to home/away probabilities
+        if self.stage2_semantic == "fav_underdog":
+            odds_h = df.get("odds_home")
+            odds_a = df.get("odds_away")
+
+            if odds_h is not None and odds_a is not None:
+                v_odds = odds_h.notna() & odds_a.notna() & (odds_h > 0) & (odds_a > 0)
+                is_home_fav = np.where(v_odds, odds_h.values <= odds_a.values, True)
+            else:
+                is_home_fav = np.ones(len(df), dtype=bool)
+
+            p_home_given_nondraw = np.where(is_home_fav, p_s2_raw, 1 - p_s2_raw)
+        else:
+            p_home_given_nondraw = p_s2_raw
 
         # Compose (soft composition, no threshold override)
         p_home = (1 - p_draw) * p_home_given_nondraw
@@ -362,6 +437,7 @@ class TwoStageEngine:
             "type": "xgb_twostage",
             "model_version": self.model_version,
             "draw_weight": self.draw_weight,
+            "stage2_semantic": self.stage2_semantic,  # P0-3: auditable serialization
             "stage1_features": self._custom_stage1_features,
             "stage2_features": self._custom_stage2_features,
             "stage1_len": len(s1_ubj),
@@ -407,12 +483,14 @@ class TwoStageEngine:
                 self.stage2 = _xgb_from_ubj_bytes(s2_ubj)
                 self.model_version = header.get("model_version", "v1.1.0-twostage")
                 self.draw_weight = header.get("draw_weight", 1.2)
+                self.stage2_semantic = header.get("stage2_semantic", "home_away")  # P0-4
                 self._custom_stage1_features = header.get("stage1_features")
                 self._custom_stage2_features = header.get("stage2_features")
 
                 logger.info(
                     f"TwoStage model loaded from UBJ: {len(blob)} compressed -> "
                     f"{len(decompressed)} decompressed, "
+                    f"semantic={self.stage2_semantic}, "
                     f"features_s1={len(self.active_stage1_features)}, "
                     f"features_s2={len(self.active_stage2_features)}"
                 )
@@ -425,12 +503,14 @@ class TwoStageEngine:
                 self.stage2 = payload["stage2"]
                 self.model_version = payload.get("model_version", "v1.1.0-twostage")
                 self.draw_weight = payload.get("draw_weight", 1.2)
+                self.stage2_semantic = payload.get("stage2_semantic", "home_away")  # P0-4
                 self._custom_stage1_features = payload.get("stage1_features")
                 self._custom_stage2_features = payload.get("stage2_features")
 
                 logger.info(
                     f"TwoStage model loaded from legacy pickle: {len(blob)} compressed -> "
                     f"{len(decompressed)} decompressed, "
+                    f"semantic={self.stage2_semantic}, "
                     f"features_s1={len(self.active_stage1_features)}, "
                     f"features_s2={len(self.active_stage2_features)}"
                 )
