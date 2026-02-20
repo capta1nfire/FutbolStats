@@ -2300,9 +2300,23 @@ def train_two_stage(X_train, y_train, feature_names, seed=42):
     sw_s1[y_s1 == 1] = TWO_STAGE_DRAW_WEIGHT
     model_s1.fit(X_train, y_s1, sample_weight=sw_s1, verbose=False)
 
-    # Stage 2: home (0) vs away (1), non-draw only
+    # Stage 2: fav (1) vs underdog (0), non-draw only
     non_draw = y_train != 1
-    y_s2 = (y_train[non_draw] == 2).astype(int)
+
+    # Check if odds are available in features to determine favorite
+    if "odds_home" in feature_names and "odds_away" in feature_names:
+        h_idx = feature_names.index("odds_home")
+        a_idx = feature_names.index("odds_away")
+        odds_h = X_train[non_draw][:, h_idx]
+        odds_a = X_train[non_draw][:, a_idx]
+        # NaN-safe vectorization
+        valid_odds = ~np.isnan(odds_h) & ~np.isnan(odds_a) & (odds_h > 0) & (odds_a > 0)
+        is_home_fav = np.where(valid_odds, odds_h <= odds_a, True)
+    else:
+        # Fallback si el test de la Sección W no incluye odds
+        is_home_fav = np.ones(non_draw.sum(), dtype=bool)
+    home_won = (y_train[non_draw] == 0)
+    y_s2 = np.where(is_home_fav, home_won, ~home_won).astype(int)
 
     # Remove implied_draw from Stage 2 (it's a draw-specific signal)
     if "implied_draw" in feature_names:
@@ -2319,16 +2333,33 @@ def train_two_stage(X_train, y_train, feature_names, seed=42):
     return model_s1, model_s2, s2_cols
 
 
-def predict_two_stage(model_s1, model_s2, X_test, s2_cols):
-    """Predict probabilities using Two-Stage composition.
+def predict_two_stage(model_s1, model_s2, X_test, s2_cols, feature_names):
+    """Predict probabilities using Two-Stage composition (fav/underdog semantic).
 
     Returns (N, 3) array: [p_home, p_draw, p_away] summing to 1.0.
     """
     p_draw = model_s1.predict_proba(X_test)[:, 1]
     X_s2 = X_test[:, s2_cols]
-    p_away_given_nd = model_s2.predict_proba(X_s2)[:, 1]
-    p_home = (1 - p_draw) * (1 - p_away_given_nd)
-    p_away = (1 - p_draw) * p_away_given_nd
+
+    p_s2_raw = model_s2.predict_proba(X_s2)[:, 1]
+
+    if "odds_home" in feature_names and "odds_away" in feature_names:
+        h_idx = feature_names.index("odds_home")
+        a_idx = feature_names.index("odds_away")
+        odds_h = X_test[:, h_idx]
+        odds_a = X_test[:, a_idx]
+
+        valid_odds = ~np.isnan(odds_h) & ~np.isnan(odds_a) & (odds_h > 0) & (odds_a > 0)
+        is_home_fav = np.where(valid_odds, odds_h <= odds_a, True)
+    else:
+        is_home_fav = np.ones(len(X_test), dtype=bool)
+
+    # Swap-back: if home is fav, p_s2_raw is P(home | non-draw). If away is fav, it's P(away | non-draw)
+    p_home_given_nd = np.where(is_home_fav, p_s2_raw, 1 - p_s2_raw)
+
+    p_home = (1 - p_draw) * p_home_given_nd
+    p_away = (1 - p_draw) * (1 - p_home_given_nd)
+
     return np.column_stack([p_home, p_draw, p_away])
 
 
@@ -2662,7 +2693,7 @@ def evaluate_two_stage(df_universe, feature_names, test_name,
     for seed_i in range(N_SEEDS):
         seed = seed_i * 42 + 7
         s1, s2, s2_cols = train_two_stage(X_tr, y_tr, feature_names, seed=seed)
-        y_prob = predict_two_stage(s1, s2, X_te, s2_cols)
+        y_prob = predict_two_stage(s1, s2, X_te, s2_cols, feature_names)
 
         all_briers.append(multiclass_brier(y_te, y_prob))
         all_logloss.append(log_loss(y_te, y_prob, labels=[0, 1, 2]))
