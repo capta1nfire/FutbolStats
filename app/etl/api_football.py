@@ -958,6 +958,20 @@ class APIFootballProvider(DataProvider):
             page += 1
         return all_players
 
+    async def get_injuries(self, league_id: int, season: int) -> list[dict]:
+        """
+        Fetch injuries for a league/season.
+
+        Returns raw response list from /injuries endpoint.
+        Each entry contains player, team, fixture, and injury details.
+        """
+        data = await self._rate_limited_request(
+            "injuries",
+            {"league": league_id, "season": season},
+            entity="injury",
+        )
+        return data.get("response", [])
+
     async def get_fixture_events(self, fixture_id: int) -> list[dict]:
         """
         Fetch match events (goals, cards, substitutions) for a fixture.

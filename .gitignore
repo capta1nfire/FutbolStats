@@ -60,6 +60,14 @@ data/oddsportal_raw/
 # Transfermarkt scraping outputs (ABE P0: no commit)
 data/tm_*
 
+# FootyStats xG raw scraping data (re-scrapeable, large JSON files)
+data/footystats_xg/*_raw.json
+data/footystats_xg/progress.json
+data/footystats_xg/checkpoint.json
+
+# Backfill universe checkpoints and manifests (re-generable)
+data/backfill/
+
 # Parquet data files (large, re-generable)
 *.parquet
 
