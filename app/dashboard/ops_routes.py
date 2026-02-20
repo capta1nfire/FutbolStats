@@ -7565,3 +7565,165 @@ async def trigger_train_family_s(request: Request):
         "league_stats": league_stats,
         "log": log_lines,
     }
+
+
+@router.post("/dashboard/ops/eval-family-s-vs-ts")
+async def eval_family_s_vs_twostage(request: Request):
+    """
+    Per-league Brier comparison: Family S v2.1 vs Two-Stage v1.0.3-fav (TEMPORARY).
+
+    Loads both models from DB, builds dataset for 10 Tier 3 leagues,
+    runs inference on 20% holdout per league, returns per-league Brier.
+    """
+    if not verify_dashboard_token_bool(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    import numpy as np
+    import pandas as pd
+    from sklearn.model_selection import train_test_split
+
+    from app.features.engineering import FeatureEngineer
+    from app.ml.family_s import FamilySEngine
+    from app.ml.engine import TwoStageEngine
+    from app.models import ModelSnapshot
+
+    TIER_3_LEAGUES = [88, 94, 203, 242, 262, 265, 268, 281, 299, 344]
+    MTV_COLS = ["home_talent_delta", "away_talent_delta", "talent_delta_diff", "shock_magnitude"]
+    MIN_DATE = datetime(2023, 1, 1)
+
+    start_time = time.time()
+
+    # Step 1: Load Family S v2.1 from DB
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import select as sa_select
+        result = await session.execute(
+            sa_select(ModelSnapshot)
+            .where(ModelSnapshot.model_version.like("%v2.1%family_s%"))
+            .order_by(ModelSnapshot.created_at.desc())
+            .limit(1)
+        )
+        fs_snapshot = result.scalar_one_or_none()
+
+    if not fs_snapshot:
+        return {"status": "error", "detail": "Family S v2.1 snapshot not found"}
+
+    fs_engine = FamilySEngine(model_version=fs_snapshot.model_version)
+    fs_engine.load_from_bytes(fs_snapshot.model_blob)
+
+    # Step 2: Load Two-Stage v1.0.3-fav from DB
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            sa_select(ModelSnapshot)
+            .where(ModelSnapshot.model_version.like("%v1.0.3%twostage%fav%"))
+            .order_by(ModelSnapshot.created_at.desc())
+            .limit(1)
+        )
+        ts_snapshot = result.scalar_one_or_none()
+
+    if not ts_snapshot:
+        return {"status": "error", "detail": "Two-Stage v1.0.3-fav snapshot not found"}
+
+    ts_engine = TwoStageEngine(model_version=ts_snapshot.model_version)
+    ts_engine.load_from_bytes(ts_snapshot.model_blob)
+
+    # Step 3: Build dataset
+    async with AsyncSessionLocal() as session:
+        fe = FeatureEngineer(session=session)
+        df = await fe.build_training_dataset(
+            league_only=True,
+            league_ids=TIER_3_LEAGUES,
+            min_date=MIN_DATE,
+        )
+
+    # Merge MTV
+    mtv_path = Path("data/historical_mtv_features_tm_hiconf_padded.parquet")
+    if mtv_path.exists():
+        mtv = pd.read_parquet(mtv_path)
+        mtv = mtv[mtv["league_id"].isin(TIER_3_LEAGUES)]
+        df = df.merge(mtv[["match_id"] + MTV_COLS], on="match_id", how="left")
+
+    # Filter odds
+    mask = df["odds_home"].notna() & df["odds_draw"].notna() & df["odds_away"].notna()
+    df = df[mask].reset_index(drop=True)
+
+    # Step 4: Per-league evaluation
+    def brier_score(y_true, probs):
+        """Compute 3-way Brier score."""
+        bs = 0.0
+        for i, r in enumerate(y_true):
+            p = probs[i]
+            one_hot = [0, 0, 0]
+            one_hot[r] = 1
+            bs += sum((p[j] - one_hot[j]) ** 2 for j in range(3))
+        return bs / len(y_true)
+
+    results_per_league = []
+
+    for lid in TIER_3_LEAGUES:
+        ldf = df[df["league_id"] == lid].copy()
+        if len(ldf) < 30:
+            results_per_league.append({
+                "league_id": lid, "n": len(ldf), "status": "INSUFFICIENT_DATA"
+            })
+            continue
+
+        # 80/20 split, stratified by result
+        y = ldf["result"].values
+        train_idx, test_idx = train_test_split(
+            np.arange(len(ldf)), test_size=0.2, random_state=42, stratify=y
+        )
+        test_df = ldf.iloc[test_idx].reset_index(drop=True)
+        y_test = test_df["result"].values
+
+        # Family S inference
+        try:
+            fs_probs = fs_engine.predict_proba(test_df)
+            fs_brier = brier_score(y_test, fs_probs)
+        except Exception as e:
+            fs_brier = None
+
+        # Two-Stage inference
+        try:
+            ts_probs = ts_engine.predict_proba(test_df)
+            ts_brier = brier_score(y_test, ts_probs)
+        except Exception as e:
+            ts_brier = None
+
+        delta = None
+        winner = None
+        if fs_brier is not None and ts_brier is not None:
+            delta = round(fs_brier - ts_brier, 4)
+            winner = "family_s" if delta < 0 else "twostage" if delta > 0 else "tie"
+
+        results_per_league.append({
+            "league_id": lid,
+            "n_test": len(test_idx),
+            "n_total": len(ldf),
+            "brier_family_s": round(fs_brier, 4) if fs_brier is not None else None,
+            "brier_twostage": round(ts_brier, 4) if ts_brier is not None else None,
+            "delta": delta,
+            "winner": winner,
+        })
+
+    # Aggregate
+    fs_all = [r["brier_family_s"] for r in results_per_league if r.get("brier_family_s") is not None]
+    ts_all = [r["brier_twostage"] for r in results_per_league if r.get("brier_twostage") is not None]
+    fs_wins = sum(1 for r in results_per_league if r.get("winner") == "family_s")
+    ts_wins = sum(1 for r in results_per_league if r.get("winner") == "twostage")
+
+    duration_s = time.time() - start_time
+
+    return {
+        "status": "success",
+        "family_s_version": fs_snapshot.model_version,
+        "twostage_version": ts_snapshot.model_version,
+        "aggregate": {
+            "avg_brier_family_s": round(np.mean(fs_all), 4) if fs_all else None,
+            "avg_brier_twostage": round(np.mean(ts_all), 4) if ts_all else None,
+            "fs_wins": fs_wins,
+            "ts_wins": ts_wins,
+            "total_leagues": len(results_per_league),
+        },
+        "per_league": results_per_league,
+        "duration_s": round(duration_s, 1),
+    }
