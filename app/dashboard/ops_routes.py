@@ -7444,3 +7444,124 @@ async def trigger_auto_lab(request: Request, league_id: int = Query(...)):
         result = await run_fast_lab(session, league_id, trigger_reason="manual")
 
     return result or {"status": "error", "detail": "run_fast_lab returned None"}
+
+
+@router.post("/dashboard/ops/train-family-s")
+async def trigger_train_family_s(request: Request):
+    """
+    Train Family S v2.1 model on Railway (TEMPORARY endpoint).
+
+    Runs full pipeline: FeatureEngineer → MTV merge → XGBoost train → persist snapshot.
+    Protected by dashboard token. Timeout: 10 min (Railway internal ~11 min for 21K).
+    """
+    if not verify_dashboard_token_bool(request):
+        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
+
+    import numpy as np
+    import pandas as pd
+
+    from app.features.engineering import FeatureEngineer
+    from app.ml.family_s import FamilySEngine
+
+    MODEL_VERSION = "v2.1-tier3-family_s"
+    TIER_3_LEAGUES = [88, 94, 203, 242, 262, 265, 268, 281, 299, 344]
+    MTV_COLS = ["home_talent_delta", "away_talent_delta", "talent_delta_diff", "shock_magnitude"]
+    MIN_DATE = datetime(2023, 1, 1)
+
+    start_time = time.time()
+    log_lines = []
+
+    def log(msg):
+        log_lines.append(msg)
+        logger.info("[train-family-s] %s", msg)
+
+    # Step 1: Build features
+    log(f"Building features for leagues={TIER_3_LEAGUES}, min_date={MIN_DATE}")
+    async with AsyncSessionLocal() as session:
+        fe = FeatureEngineer(session=session)
+        df = await fe.build_training_dataset(
+            league_only=True,
+            league_ids=TIER_3_LEAGUES,
+            min_date=MIN_DATE,
+        )
+    log(f"FeatureEngineer returned {len(df)} rows, {len(df.columns)} columns")
+
+    if len(df) == 0:
+        return {"status": "error", "detail": "Empty dataset"}
+
+    # Step 2: Merge MTV from parquet
+    mtv_path = Path("data/historical_mtv_features_tm_hiconf_padded.parquet")
+    if not mtv_path.exists():
+        return {"status": "error", "detail": f"MTV parquet not found: {mtv_path}"}
+
+    mtv = pd.read_parquet(mtv_path)
+    mtv = mtv[mtv["league_id"].isin(TIER_3_LEAGUES)]
+    log(f"MTV parquet: {len(mtv)} rows for Tier 3")
+
+    df = df.merge(mtv[["match_id"] + MTV_COLS], on="match_id", how="left")
+    log(f"After MTV merge: {len(df)} rows")
+
+    # Step 3: Filter rows without odds
+    before = len(df)
+    mask = df["odds_home"].notna() & df["odds_draw"].notna() & df["odds_away"].notna()
+    df = df[mask].reset_index(drop=True)
+    log(f"Odds filter: {before - len(df)} dropped, {len(df)} remain")
+
+    # Step 4: Train
+    engine = FamilySEngine(model_version=MODEL_VERSION)
+    missing = [c for c in engine.FEATURE_COLUMNS if c not in df.columns]
+    if missing:
+        return {"status": "error", "detail": f"Missing features: {missing}"}
+
+    log(f"Training {MODEL_VERSION} with {len(df)} samples, {len(engine.FEATURE_COLUMNS)} features")
+    result = engine.train(df, n_splits=3)
+    brier = result.get("brier_score", 0)
+    cv_scores = result.get("cv_brier_scores", [])
+    log(f"Training complete: brier={brier:.4f}, cv={cv_scores}")
+
+    # Step 5: Persist to DB
+    from app.ml.persistence import persist_family_s_snapshot
+
+    training_config = {
+        "league_ids": TIER_3_LEAGUES,
+        "league_only": True,
+        "min_date": "2023-01-01",
+        "feature_set_name": "core14+odds3+mtv4",
+        "feature_columns": engine.FEATURE_COLUMNS,
+        "mtv_source": "tm_hiconf_padded",
+        "n_features": len(engine.FEATURE_COLUMNS),
+    }
+
+    async with AsyncSessionLocal() as session:
+        snapshot_id = await persist_family_s_snapshot(
+            session=session,
+            engine=engine,
+            brier_score=brier,
+            cv_scores=cv_scores,
+            samples_trained=len(df),
+            training_config=training_config,
+        )
+
+    duration_s = time.time() - start_time
+    log(f"Snapshot #{snapshot_id} persisted (is_active=False). Duration: {duration_s:.1f}s")
+
+    # Per-league stats
+    league_stats = {}
+    if "league_id" in df.columns:
+        for lid in TIER_3_LEAGUES:
+            ldf = df[df["league_id"] == lid]
+            mtv_coverage = ldf["home_talent_delta"].notna().mean() * 100
+            league_stats[lid] = {"samples": len(ldf), "mtv_coverage_pct": round(mtv_coverage, 1)}
+
+    return {
+        "status": "success",
+        "snapshot_id": snapshot_id,
+        "model_version": MODEL_VERSION,
+        "brier_score": round(brier, 4),
+        "cv_brier_scores": [round(s, 4) for s in cv_scores],
+        "samples": len(df),
+        "features": len(engine.FEATURE_COLUMNS),
+        "duration_s": round(duration_s, 1),
+        "league_stats": league_stats,
+        "log": log_lines,
+    }
