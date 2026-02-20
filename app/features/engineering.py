@@ -2316,17 +2316,24 @@ class FeatureEngineer:
 
     @staticmethod
     def _extract_odds_triplet(match, canonical_odds: dict = None) -> tuple:
-        """Extract odds from match_canonical_odds (single source of truth).
+        """Extract odds from match_canonical_odds with live fallback.
 
         Priority cascade already resolved in canonical table:
         P1 FDUK Pinnacle > P2 B365/OddsPortal > P3 CLV/frozen >
         P4 Bet365_live > P5 predictions.frozen > P6 API-Football > P7 avg
 
-        For matches not yet in canonical (new NS matches pending sweeper),
-        returns None — model handles missing odds gracefully.
+        Fallback: for NS matches not yet materialized in canonical
+        (sweeper lag), fall back to matches.odds_home/draw/away (API-Football
+        live odds). This prevents prediction gaps for imminent matches.
         """
         if canonical_odds is not None and match.id in canonical_odds:
             return canonical_odds[match.id]
+        # Fallback: live odds from matches table (API-Football)
+        oh = getattr(match, "odds_home", None)
+        od = getattr(match, "odds_draw", None)
+        oa = getattr(match, "odds_away", None)
+        if oh is not None and od is not None and oa is not None:
+            return oh, od, oa
         return None, None, None
 
     async def build_training_dataset(
