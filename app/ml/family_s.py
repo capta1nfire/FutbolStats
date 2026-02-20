@@ -1,13 +1,16 @@
 """Family S prediction engine for Tier 3 leagues (Mandato D).
 
-Loads the Family S model (v2.0-tier3-family_s) from model_snapshots.
+Loads the Family S model from model_snapshots.
 Uses FamilySEngine, a subclass of XGBoostEngine with expanded features:
   - 14 baseline (same as XGBoostEngine.FEATURE_COLUMNS)
-  - 3 competitiveness (abs_attack_diff, abs_defense_diff, abs_strength_gap)
   - 3 odds features (odds_home, odds_draw, odds_away)
   - 4 MTV features (home_talent_delta, away_talent_delta, talent_delta_diff, shock_magnitude)
 
-FamilySEngine overrides FEATURE_COLUMNS (24 total) so _prepare_features() and
+v2.1: Removed 3 redundant competitiveness features (abs_attack_diff,
+abs_defense_diff, abs_strength_gap) per ablation (Δ ≈ 0). Expanded
+from 5 to 10 Tier 3 leagues per Mega-Pool V2 revalidation.
+
+FamilySEngine overrides FEATURE_COLUMNS (21 total) so _prepare_features() and
 _get_model_expected_features() use the correct feature list in both
 training and serving.
 
@@ -31,7 +34,7 @@ logger = logging.getLogger("futbolstats.family_s")
 
 
 class FamilySEngine(XGBoostEngine):
-    """XGBoostEngine subclass with 24-feature set for Tier 3 MTV model.
+    """XGBoostEngine subclass with 21-feature set for Tier 3 MTV model.
 
     Inherits all training, prediction, and serialization logic from
     XGBoostEngine. Only overrides FEATURE_COLUMNS to include odds + MTV.
@@ -56,10 +59,6 @@ class FamilySEngine(XGBoostEngine):
         "away_matches_played",
         "goal_diff_avg",
         "rest_diff",
-        # ── 3 competitiveness (legacy, kept for Family S model) ──
-        "abs_attack_diff",
-        "abs_defense_diff",
-        "abs_strength_gap",
         # ── 3 odds ──
         "odds_home",
         "odds_draw",
@@ -72,7 +71,7 @@ class FamilySEngine(XGBoostEngine):
     ]
 
     def __init__(self, model_version=None):
-        super().__init__(model_version=model_version or "v2.0-tier3-family_s")
+        super().__init__(model_version=model_version or "v2.1-tier3-family_s")
 
 
 # ═════════════════════════════════════════════════════════════════════════════

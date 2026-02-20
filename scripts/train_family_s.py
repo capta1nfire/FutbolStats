@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Train Family S model (v2.0-tier3-family_s) for Tier 3 leagues.
+"""Train Family S model (v2.1-tier3-family_s) for Tier 3 leagues.
 
 P0-1: Uses FeatureEngineer.build_training_dataset() for feature fidelity
 (1:1 with serving/cascade). Merges MTV from canonical parquet.
 
-Feature set (24): 17 core + 3 odds + 4 MTV
+Feature set (21): 14 baseline + 3 odds + 4 MTV
+v2.1: Removed 3 redundant competitiveness features. Expanded to 10 leagues.
 
 Usage:
     source .env
@@ -34,8 +35,9 @@ logger = logging.getLogger("train_family_s")
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-MODEL_VERSION = "v2.0-tier3-family_s"
-TIER_3_LEAGUES = [94, 265, 88, 203, 144]  # Primeira, Chile, Eredivisie, Turkey, Belgium
+MODEL_VERSION = "v2.1-tier3-family_s"
+# 10 Tier 3 leagues per Mega-Pool V2 revalidation (all 10/10 MTV HELPS)
+TIER_3_LEAGUES = [88, 94, 203, 242, 262, 265, 268, 281, 299, 344]
 MTV_PARQUET = "data/historical_mtv_features_tm_hiconf_padded.parquet"
 DEFAULT_MIN_DATE = "2023-01-01"
 
@@ -182,7 +184,7 @@ async def persist_to_db(train_result: dict, min_date: str):
         "league_ids": TIER_3_LEAGUES,
         "league_only": True,
         "min_date": min_date,
-        "feature_set_name": "core17+odds3+mtv4",
+        "feature_set_name": "core14+odds3+mtv4",
         "feature_columns": engine.FEATURE_COLUMNS,
         "mtv_source": "tm_hiconf_padded",
         "n_features": len(engine.FEATURE_COLUMNS),

@@ -45,13 +45,18 @@ TIER_1 = {
     140,  # La Liga (Spain)
 }
 
-# Tier 3: Family S — 5 leagues with strongest MTV signal
+# Tier 3: Family S — 10 leagues where MTV HELPS per Mega-Pool V2
 TIER_3 = {
     88,   # Eredivisie (Netherlands)
     94,   # Primeira Liga (Portugal)
-    144,  # Belgian Pro League
     203,  # Süper Lig (Turkey)
+    242,  # LDU (Ecuador)
+    262,  # Liga MX (Mexico)
     265,  # Primera División (Chile)
+    268,  # Primera División (Uruguay)
+    281,  # Liga 1 (Peru)
+    299,  # Primera División (Venezuela)
+    344,  # División Profesional (Bolivia)
 }
 
 # Two-Stage W3 guardrail-PASS leagues (15 leagues)
