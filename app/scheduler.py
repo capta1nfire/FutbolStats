@@ -1915,7 +1915,7 @@ async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
 
     # Configuration
     BATCH_SIZE = 200
-    TIME_BUDGET_MS = 300_000  # 5 minutes max (3700+ NS matches need ~150s for features)
+    TIME_BUDGET_MS = 600_000  # 10 minutes max (3500+ NS matches need ~400s for features)
 
     start_time = time.time()
     logger.info("[DAILY-SAVE] Starting daily prediction save job...")
@@ -1969,7 +1969,7 @@ async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
             # against amateur teams inflate rolling averages for lower-division teams
             try:
                 feature_engineer = FeatureEngineer(session=session)
-                df = await feature_engineer.get_upcoming_matches_features(league_only=True)
+                df = await feature_engineer.get_upcoming_matches_features(league_only=True, days_ahead=7)
             except (InterfaceError, DBAPIError) as fetch_err:
                 duration_ms = (time.time() - start_time) * 1000
                 logger.error(f"[DAILY-SAVE] DB connection lost during feature fetch: {fetch_err}")
