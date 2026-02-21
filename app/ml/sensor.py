@@ -284,9 +284,12 @@ async def retrain_sensor(session: AsyncSession) -> dict:
             -- We'll compute label in Python
             m.date
         FROM matches m
+        JOIN admin_leagues al ON m.league_id = al.league_id
         WHERE m.status = 'FT'
           AND m.home_goals IS NOT NULL
           AND m.away_goals IS NOT NULL
+          AND (m.tainted IS FALSE OR m.tainted IS NULL)
+          AND al.kind = 'league'
         ORDER BY m.date DESC
         LIMIT :limit
     """)
@@ -314,13 +317,13 @@ async def retrain_sensor(session: AsyncSession) -> dict:
     # Build features for these matches
     try:
         df = await feature_engineer.get_matches_features_by_ids(match_ids)
-    except AttributeError:
-        # Fallback: get features differently if method doesn't exist
-        logger.warning("[SENSOR] get_matches_features_by_ids not available, using alternative")
-        # For now, return LEARNING state
+    except AttributeError as e:
+        import sentry_sdk
+        sentry_sdk.capture_exception(e)
+        logger.warning(f"[SENSOR] get_matches_features_by_ids not available: {e}")
         return {
             "status": "LEARNING",
-            "reason": "Feature engineering method not available",
+            "reason": "Feature engineering method not available (AttributeError logged to Sentry)",
             "samples": len(rows),
         }
 
