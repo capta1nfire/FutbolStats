@@ -2454,17 +2454,18 @@ class FeatureEngineer:
         self,
         match_ids: list[int],
         league_only: bool = False,
+        statuses: Optional[list[str]] = None,
     ) -> pd.DataFrame:
         """
         Build features for specific matches by their IDs.
 
-        Used by Sensor B to build training data from recent finished matches.
-        Only processes completed matches (FT, AET, PEN) with valid scores.
+        Used by Sensor B (FT matches) and kickoff safety nets (NS matches).
 
         Args:
             match_ids: List of match IDs to process.
             league_only: If True, rolling averages use only league matches.
                          FASE 0 FIX: Prevents "Exeter mode" inflation.
+            statuses: Match statuses to include. Default ["FT", "AET", "PEN"].
 
         Returns:
             DataFrame with features for each match, including home_goals/away_goals.
@@ -2472,16 +2473,24 @@ class FeatureEngineer:
         if not match_ids:
             return pd.DataFrame()
 
-        # Query matches by ID (only completed with valid scores)
+        allowed = statuses or ["FT", "AET", "PEN"]
+        includes_ns = "NS" in allowed
+
+        # Query matches by ID
+        conditions = [
+            Match.id.in_(match_ids),
+            Match.status.in_(allowed),
+            Match.tainted.is_(False),
+        ]
+        # Only require valid scores for finished matches
+        if not includes_ns:
+            conditions.append(Match.home_goals.isnot(None))
+            conditions.append(Match.away_goals.isnot(None))
+
         result = await self.session.execute(
             select(Match)
-            .where(
-                Match.id.in_(match_ids),
-                Match.status.in_(["FT", "AET", "PEN"]),
-                Match.home_goals.isnot(None),
-                Match.away_goals.isnot(None),
-                Match.tainted.is_(False),
-            )
+            .where(*conditions)
+            .options(selectinload(Match.home_team), selectinload(Match.away_team))
             .order_by(Match.date.desc())
         )
         matches = list(result.scalars().all())

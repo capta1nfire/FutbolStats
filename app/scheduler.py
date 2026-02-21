@@ -456,16 +456,12 @@ async def ensure_kickoff_predictions() -> dict:
                 logger.error("[KICKOFF-SAFETY] Could not load ML model")
                 return {"generated": 0, "error": "model_not_loaded"}
 
-            # Get features for these matches
-            # FASE 0 FIX: league_only=True prevents "Exeter mode"
+            # Get features ONLY for imminent matches (O(k) not O(N))
             match_ids = [g[0] for g in imminent_gaps]
             feature_engineer = FeatureEngineer(session=session)
-
-            # MUST use get_upcoming_matches_features (handles NS matches).
-            # get_matches_features_by_ids only processes FT/AET/PEN — useless here.
-            df = await feature_engineer.get_upcoming_matches_features(league_only=True)
-            if len(df) > 0:
-                df = df[df["match_id"].isin(match_ids)]
+            df = await feature_engineer.get_matches_features_by_ids(
+                match_ids, league_only=True, statuses=["NS"]
+            )
 
             if len(df) == 0:
                 logger.error(f"[KICKOFF-SAFETY] No features for imminent matches: {match_ids}")
@@ -2404,14 +2400,10 @@ async def prediction_gap_safety_net():
             match_ids = [g[0] for g in gaps]
             feature_engineer = FeatureEngineer(session=session)
 
-            # Try to use optimized method if available, else fallback
-            if hasattr(feature_engineer, 'get_matches_features_by_ids'):
-                df = await feature_engineer.get_matches_features_by_ids(match_ids, league_only=True)
-            else:
-                # Fallback: get all upcoming and filter
-                df = await feature_engineer.get_upcoming_matches_features(league_only=True)
-                if len(df) > 0:
-                    df = df[df["match_id"].isin(match_ids)]
+            # Optimized: compute features ONLY for gap matches (O(k) not O(N))
+            df = await feature_engineer.get_matches_features_by_ids(
+                match_ids, league_only=True, statuses=["NS"]
+            )
 
             if len(df) == 0:
                 logger.warning(f"[SAFETY-NET] No features available for gap matches: {match_ids}")
