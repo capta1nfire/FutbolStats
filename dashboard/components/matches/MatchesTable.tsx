@@ -101,12 +101,39 @@ function getOutcomeFromScore(score?: MatchScore): Outcome | null {
 // Helper Components
 // =============================================================================
 
+/** Static model descriptions for header tooltips */
+const MODEL_TOOLTIPS: Record<string, string> = {
+  "Market": "Frozen closing odds (de-vigged implied probabilities)",
+  "Consensus": "Median of de-vigged bookmaker odds (fair market consensus)",
+  "Pinnacle": "Pinnacle sharp line (implied probabilities)",
+  "Model A": "v1.0.1-league-only — baseline Two-Stage (18 features, league-routed)",
+  "Shadow": "v1.0.3-twostage-w3-fav — Two-Stage Fav/Underdog (3 odds features)",
+  "Sensor B": "Sensor B — calibration diagnostic",
+  "Family S": "v2.1-tier3-family_s — Tier 3 MTV model (21 features)",
+  "Ext A": "Experimental slot A",
+  "Ext B": "Experimental slot B",
+  "Ext C": "Experimental slot C",
+  "Ext D": "Experimental slot D",
+};
+
 function ModelHeader({ label, stats }: { label: string; stats: ModelAccuracyStats }) {
   const hasStats = stats.accuracy !== null && stats.total > 0;
+  const tooltipText = MODEL_TOOLTIPS[label];
 
   return (
     <div className="flex items-center justify-center gap-1.5 leading-tight whitespace-nowrap">
-      <span>{label}</span>
+      {tooltipText ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="cursor-help border-b border-dotted border-muted-foreground/50">{label}</span>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" sideOffset={4}>
+            <p className="text-xs">{tooltipText}</p>
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        <span>{label}</span>
+      )}
       {hasStats && <span>({stats.correct})</span>}
       {hasStats && (
         <span
