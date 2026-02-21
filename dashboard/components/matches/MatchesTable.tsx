@@ -645,6 +645,13 @@ export function MatchesTable({
                       const isSFAV = divCategory === "STRONG_FAV_DISAGREE";
                       const hasDiv = isDiverge || isSFAV;
 
+                      // Post-match: did the model win the discrepancy?
+                      const isFinished = match.status === "ft";
+                      const FAV_TO_OUTCOME = ["home", "draw", "away"] as const;
+                      const modelWon = isFinished && hasDiv && gap20 && outcome
+                        ? outcome === FAV_TO_OUTCOME[gap20.modelFav]
+                        : null;
+
                       return (
                         <td className="px-3 py-2.5 text-center" style={{ minWidth: SCORE_COL_WIDTH }}>
                           {match.score ? (
@@ -654,9 +661,13 @@ export function MatchesTable({
                                   <span
                                     className={cn(
                                       "inline-flex items-center justify-center font-mono font-bold rounded px-1.5 py-0.5 text-[10px]",
-                                      isSFAV
-                                        ? "bg-destructive/15 text-destructive border border-destructive/25"
-                                        : "bg-warning/10 text-warning border border-warning/20",
+                                      modelWon === true
+                                        ? "bg-emerald-500/15 text-emerald-500 border border-emerald-500/25"
+                                        : modelWon === false
+                                          ? "bg-destructive/15 text-destructive border border-destructive/25"
+                                          : isSFAV
+                                            ? "bg-destructive/15 text-destructive border border-destructive/25"
+                                            : "bg-warning/10 text-warning border border-warning/20",
                                     )}
                                   >
                                     {match.score.home} - {match.score.away}
@@ -666,6 +677,8 @@ export function MatchesTable({
                                   <p className="text-xs">
                                     Model {["1","X","2"][gap20.modelFav]} vs Market {["1","X","2"][gap20.marketFav]}
                                     {isSFAV && ` (gap ${(Math.abs(gap20.gapOnModelFav)*100).toFixed(0)}pp, mkt fav ${(gap20.marketFavProb*100).toFixed(0)}%)`}
+                                    {modelWon === true && " — Model won"}
+                                    {modelWon === false && " — Market won"}
                                   </p>
                                 </TooltipContent>
                               </Tooltip>
