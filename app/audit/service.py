@@ -10,14 +10,18 @@ This service:
 """
 
 import logging
+import math
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import select, and_
+import numpy as np
+from sqlalchemy import select, and_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.etl.api_football import APIFootballProvider
+from app.ml.justice import compute_y_soft, compute_justice_weight
+from app.ml.autopsy import classify_autopsy
 from app.models import (
     Match,
     Prediction,
@@ -46,6 +50,37 @@ async def _get_llm_enabled(session: AsyncSession) -> bool:
 GOLD_THRESHOLD = 0.55  # >= 55% confidence
 SILVER_THRESHOLD = 0.45  # >= 45% confidence
 # Below 45% is Copper
+
+# Justice Index alpha (GDT starting recommendation)
+JUSTICE_ALPHA = 0.5
+
+
+async def resolve_xg_for_match(
+    session: AsyncSession, match_id: int,
+) -> tuple[Optional[float], Optional[float], Optional[str]]:
+    """Resolve best available xG for a match.
+
+    Priority: Understat > matches.xg_home (FotMob/FootyStats).
+    """
+    # 1. Understat (Opta-grade, Big 5)
+    r = await session.execute(text(
+        "SELECT xg_home, xg_away FROM match_understat_team "
+        "WHERE match_id = :mid AND xg_home IS NOT NULL LIMIT 1"
+    ), {"mid": match_id})
+    row = r.fetchone()
+    if row and row[0] is not None:
+        return float(row[0]), float(row[1]), "understat"
+
+    # 2. matches table (FotMob/FootyStats)
+    r2 = await session.execute(text(
+        "SELECT xg_home, xg_away, xg_source FROM matches "
+        "WHERE id = :mid AND xg_home IS NOT NULL"
+    ), {"mid": match_id})
+    row2 = r2.fetchone()
+    if row2 and row2[0] is not None:
+        return float(row2[0]), float(row2[1]), row2[2]
+
+    return None, None, None
 
 
 class PostMatchAuditService:
@@ -343,6 +378,66 @@ class PostMatchAuditService:
         self.session.add(outcome)
         await self.session.flush()  # Get the ID
 
+        # === Justice Statistics (Post-Match Auditor Module 1) ===
+        try:
+            xg_h_resolved, xg_a_resolved, xg_src = await resolve_xg_for_match(
+                self.session, match.id
+            )
+            if xg_h_resolved is not None and xg_a_resolved is not None:
+                p_h, p_d, p_a = compute_y_soft(xg_h_resolved, xg_a_resolved)
+                # GDT Override 2: variance-scaled justice weight
+                std_dev = float(np.sqrt(xg_h_resolved + xg_a_resolved + 1.0))
+                gd = match.home_goals - match.away_goals
+                xgd = xg_h_resolved - xg_a_resolved
+                w = float(np.exp(-JUSTICE_ALPHA * abs(gd - xgd) / std_dev))
+                outcome.y_soft_home = round(p_h, 6)
+                outcome.y_soft_draw = round(p_d, 6)
+                outcome.y_soft_away = round(p_a, 6)
+                outcome.justice_weight = round(w, 6)
+                outcome.justice_alpha = JUSTICE_ALPHA
+                outcome.xg_source_ysoft = xg_src
+        except Exception as e:
+            logger.warning(f"Justice stats failed for match {match.id}: {e}")
+            xg_h_resolved, xg_a_resolved, xg_src = None, None, None
+
+        # === Financial Autopsy (Post-Match Auditor Module 2) ===
+        # GDT Override 4: NO sweeper. If CLV doesn't exist yet, tag stays NULL.
+        # CLV Job is responsible for updating autopsy_tag when it completes.
+        autopsy_tag = None
+        try:
+            clv_row = await self.session.execute(text(
+                "SELECT clv_home, clv_draw, clv_away, selected_outcome, clv_selected "
+                "FROM prediction_clv WHERE prediction_id = :pid LIMIT 1"
+            ), {"pid": prediction.id})
+            clv_data = clv_row.fetchone()
+
+            if clv_data:
+                sel_clv = None
+                # Backfill selected_outcome if NULL
+                if clv_data[3] is None:
+                    clv_map = {"home": clv_data[0], "draw": clv_data[1], "away": clv_data[2]}
+                    sel_clv_raw = clv_map.get(predicted_result)
+                    sel_clv = float(sel_clv_raw) if sel_clv_raw is not None else None
+                    await self.session.execute(text(
+                        "UPDATE prediction_clv SET selected_outcome = :sel, clv_selected = :clv "
+                        "WHERE prediction_id = :pid"
+                    ), {"sel": predicted_result, "clv": sel_clv, "pid": prediction.id})
+                else:
+                    sel_clv = float(clv_data[4]) if clv_data[4] is not None else None
+
+                # Use best available xG (resolved > API-Football stats)
+                best_xg_h = xg_h_resolved if xg_h_resolved is not None else xg_home
+                best_xg_a = xg_a_resolved if xg_a_resolved is not None else xg_away
+                autopsy_tag = classify_autopsy(
+                    prediction_correct=is_correct,
+                    predicted_result=predicted_result,
+                    clv_selected=sel_clv,
+                    xg_home=best_xg_h,
+                    xg_away=best_xg_a,
+                ).value
+        except Exception as e:
+            logger.warning(f"Autopsy classification failed for match {match.id}: {e}")
+
         # Create audit record
         deviation_type, deviation_score = self._calculate_deviation_score(
             prediction, actual_result, xg_home, xg_away
@@ -418,6 +513,7 @@ class PostMatchAuditService:
             xg_prediction_aligned=xg_prediction_aligned,
             goals_vs_xg_home=(match.home_goals - xg_home) if xg_home else None,
             goals_vs_xg_away=(match.away_goals - xg_away) if xg_away else None,
+            autopsy_tag=autopsy_tag,
             should_adjust_model=should_learn,
             adjustment_notes=adjustment_notes,
             narrative_insights=narrative_result.get("insights"),

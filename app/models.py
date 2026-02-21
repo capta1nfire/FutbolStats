@@ -296,6 +296,14 @@ class PredictionOutcome(SQLModel, table=True):
     # Timing
     audited_at: datetime = Field(default_factory=datetime.utcnow)
 
+    # Justice Statistics (Post-Match Auditor Module 1)
+    y_soft_home: Optional[float] = Field(default=None, description="Poisson soft-label P(home) from xG")
+    y_soft_draw: Optional[float] = Field(default=None, description="Poisson soft-label P(draw) from xG")
+    y_soft_away: Optional[float] = Field(default=None, description="Poisson soft-label P(away) from xG")
+    justice_weight: Optional[float] = Field(default=None, description="Justice Index W = exp(-alpha * |GD-xGD| / sigma)")
+    justice_alpha: Optional[float] = Field(default=None, description="Alpha parameter used for W computation")
+    xg_source_ysoft: Optional[str] = Field(default=None, max_length=30, description="xG source: understat, fotmob, footystats")
+
     # Relationships
     prediction: Optional[Prediction] = Relationship()
     match: Optional[Match] = Relationship()
@@ -346,6 +354,12 @@ class PostMatchAudit(SQLModel, table=True):
     )
     goals_vs_xg_away: Optional[float] = Field(
         default=None, description="actual_goals - xG for away"
+    )
+
+    # Financial Autopsy (Post-Match Auditor Module 2)
+    autopsy_tag: Optional[str] = Field(
+        default=None, max_length=20,
+        description="Financial autopsy: sharp_win, sharp_loss, variance_loss, blind_spot, lucky_win, routine_win"
     )
 
     # Learning signals

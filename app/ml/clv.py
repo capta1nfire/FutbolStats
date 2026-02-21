@@ -27,6 +27,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ml.autopsy import classify_autopsy
 from app.ml.devig import devig_proportional, select_canonical_bookmaker
 
 logger = logging.getLogger(__name__)
@@ -234,6 +235,42 @@ async def score_clv_batch(
                 ON CONFLICT (prediction_id, canonical_bookmaker) DO NOTHING
             """), clv)
             metrics["scored"] += 1
+
+            # GDT Override 4: CLV Job updates autopsy_tag (no sweeper).
+            # If audit exists but autopsy_tag is NULL, classify and update.
+            try:
+                audit_row = await session.execute(text("""
+                    SELECT po.prediction_correct, po.predicted_result,
+                           po.xg_home, po.xg_away, pma.id as audit_id
+                    FROM prediction_outcomes po
+                    JOIN post_match_audits pma ON pma.outcome_id = po.id
+                    WHERE po.prediction_id = :pid AND pma.autopsy_tag IS NULL
+                    LIMIT 1
+                """), {"pid": pred_id})
+                audit_data = audit_row.fetchone()
+                if audit_data:
+                    # Derive selected CLV for predicted outcome
+                    clv_map = {"home": clv["clv_home"], "draw": clv["clv_draw"], "away": clv["clv_away"]}
+                    sel_clv = clv_map.get(audit_data[1])
+                    sel_clv_f = float(sel_clv) if sel_clv is not None else None
+                    tag = classify_autopsy(
+                        prediction_correct=audit_data[0],
+                        predicted_result=audit_data[1],
+                        clv_selected=sel_clv_f,
+                        xg_home=float(audit_data[2]) if audit_data[2] is not None else None,
+                        xg_away=float(audit_data[3]) if audit_data[3] is not None else None,
+                    ).value
+                    await session.execute(text(
+                        "UPDATE post_match_audits SET autopsy_tag = :tag WHERE id = :aid"
+                    ), {"tag": tag, "aid": audit_data[4]})
+                    # Also fill selected_outcome if missing
+                    if clv.get("selected_outcome") is None:
+                        await session.execute(text(
+                            "UPDATE prediction_clv SET selected_outcome = :sel, clv_selected = :clv "
+                            "WHERE prediction_id = :pid"
+                        ), {"sel": audit_data[1], "clv": sel_clv_f, "pid": pred_id})
+            except Exception as e_autopsy:
+                logger.debug(f"Autopsy tag update skipped for pred {pred_id}: {e_autopsy}")
         except Exception as e:
             logger.error(f"CLV error for prediction {pred_id}: {e}")
             metrics["errors"] += 1
