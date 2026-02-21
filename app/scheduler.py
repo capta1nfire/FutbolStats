@@ -1919,7 +1919,7 @@ async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
 
     # Configuration
     BATCH_SIZE = 200
-    TIME_BUDGET_MS = 120_000  # 2 minutes max
+    TIME_BUDGET_MS = 300_000  # 5 minutes max (3700+ NS matches need ~150s for features)
 
     start_time = time.time()
     logger.info("[DAILY-SAVE] Starting daily prediction save job...")
