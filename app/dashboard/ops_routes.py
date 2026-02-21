@@ -3950,6 +3950,91 @@ async def _calculate_sofascore_cron_health(session) -> dict:
         return {"status": "degraded"}
 
 
+async def _calculate_family_s_hit_rate(session) -> dict:
+    """Family S Hit Rate: proportion of predictions served by Family S vs fallback.
+
+    Tracks the 5 ABE Opción B leagues (88, 203, 242, 281, 299) over last 7 and 30 days.
+    Detects silent fallback: if hit_rate drops to 0, MTV pipeline may be broken.
+    """
+    from sqlalchemy import text
+
+    FAMILY_S_LEAGUES = [88, 203, 242, 281, 299]
+
+    row = await session.execute(text("""
+        WITH fs_preds AS (
+            SELECT
+                p.match_id,
+                m.league_id,
+                p.model_version,
+                p.created_at,
+                CASE WHEN p.model_version LIKE '%%family_s%%' THEN 1 ELSE 0 END AS is_family_s
+            FROM predictions p
+            JOIN matches m ON m.id = p.match_id
+            WHERE m.league_id = ANY(:leagues)
+              AND p.created_at > NOW() - INTERVAL '30 days'
+        )
+        SELECT
+            COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days') AS total_7d,
+            COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days' AND is_family_s = 1) AS fs_7d,
+            COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '30 days') AS total_30d,
+            COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '30 days' AND is_family_s = 1) AS fs_30d
+        FROM fs_preds
+    """), {"leagues": FAMILY_S_LEAGUES})
+    r = row.first()
+
+    total_7d = r[0] or 0
+    fs_7d = r[1] or 0
+    total_30d = r[2] or 0
+    fs_30d = r[3] or 0
+
+    hit_rate_7d = round(fs_7d / total_7d * 100, 1) if total_7d > 0 else 0.0
+    hit_rate_30d = round(fs_30d / total_30d * 100, 1) if total_30d > 0 else 0.0
+
+    # Per-league breakdown (last 7 days)
+    rows = await session.execute(text("""
+        SELECT
+            m.league_id,
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE p.model_version LIKE '%%family_s%%') AS fs_count
+        FROM predictions p
+        JOIN matches m ON m.id = p.match_id
+        WHERE m.league_id = ANY(:leagues)
+          AND p.created_at > NOW() - INTERVAL '7 days'
+        GROUP BY m.league_id
+        ORDER BY m.league_id
+    """), {"leagues": FAMILY_S_LEAGUES})
+
+    per_league = []
+    for lr in rows.fetchall():
+        lid, total, fs_count = lr[0], lr[1], lr[2]
+        rate = round(fs_count / total * 100, 1) if total > 0 else 0.0
+        per_league.append({
+            "league_id": lid,
+            "total_7d": total,
+            "family_s_7d": fs_count,
+            "fallback_7d": total - fs_count,
+            "hit_rate_pct": rate,
+        })
+
+    # Status: green if >0 FS predictions in 7d, yellow if 0 but <7d since activation, red if 0 after 7d
+    status = "ok" if fs_7d > 0 else ("warning" if total_7d == 0 else "critical")
+
+    return {
+        "status": status,
+        "activated_at": "2026-02-21",
+        "model_version": "v2.1-tier3-family_s",
+        "active_leagues": FAMILY_S_LEAGUES,
+        "hit_rate_7d_pct": hit_rate_7d,
+        "hit_rate_30d_pct": hit_rate_30d,
+        "total_predictions_7d": total_7d,
+        "family_s_served_7d": fs_7d,
+        "fallback_served_7d": total_7d - fs_7d,
+        "total_predictions_30d": total_30d,
+        "family_s_served_30d": fs_30d,
+        "per_league_7d": per_league,
+    }
+
+
 async def _load_ops_data() -> dict:
     """
     Ops dashboard: read-only aggregated metrics from DB + in-process state.
@@ -4017,6 +4102,7 @@ async def _load_ops_data() -> dict:
         clv_data,
         cascade_ab_data,
         sofascore_cron_data,
+        family_s_hit_rate_data,
     ) = await asyncio.gather(
         _fetch_budget_status(),
         _fetch_sentry_health(),
@@ -4037,6 +4123,7 @@ async def _load_ops_data() -> dict:
         _calc(_calculate_clv_summary),
         _calc(_calculate_cascade_ab_test),
         _calc(_calculate_sofascore_cron_health),
+        _calc(_calculate_family_s_hit_rate),
     )
 
     # Post-processing: enrich with league names
@@ -4109,6 +4196,7 @@ async def _load_ops_data() -> dict:
         "clv": clv_data,
         "cascade_ab": cascade_ab_data,
         "sofascore_cron": sofascore_cron_data,
+        "family_s_routing": family_s_hit_rate_data,
         "ml_model": ml_model_info,
         "live_summary": live_summary_stats,
         "db_pool": get_pool_status(),

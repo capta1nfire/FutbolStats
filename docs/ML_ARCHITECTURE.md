@@ -4,8 +4,10 @@ Documentación técnica del sistema de predicciones ML, sus guardrails y mecanis
 
 ## Estado actual (Feb 2026)
 
-- **Producción**: Model A `v1.0.1-league-only` (XGBoost baseline, 14 features league-only) + kill-switch + policy draw cap.
-- **Shadow two-stage**: `v1.1.0-twostage` **ACTIVO** con reentrenamiento automático bi-semanal (ATI-aprobado 2026-02-09). Mejor accuracy interna (Brier 0.2094). No sirve predicciones públicas.
+- **Baseline**: Model A `v1.0.1-league-only` (XGBoost, 14 features league-only) + kill-switch + policy draw cap.
+- **Two-Stage**: `v1.0.3-twostage-w3-fav` (Brier 0.1960, fav/underdog semantic). Sirve 15 ligas TS.
+- **Family S**: `v2.1-tier3-family_s` (Brier 0.1938, 21 features, MTV). Sirve 5 ligas (ABE Opción B). Activado 2026-02-21.
+- **Routing heterogéneo**: `LEAGUE_ROUTER_MTV_ENABLED=true`. Baseline → Two-Stage → Family S según liga.
 - **Sensor B**: diagnóstico de calibración (LogReg L2) con guardrails de estabilidad numérica + sanity en OPS.
 - **ext-C (Automatic Shadow)**: job automático que genera predicciones `v1.0.2-ext-C` en `predictions_experiments` (no servido).
 
@@ -653,4 +655,57 @@ Forward data collection — NOT in model yet.
 
 ### Phase 2 Compliance
 - ATI #1-4: SteamChaser, VORP P25, steel degradation 5s, Sweeper Queue ✓
+
+---
+
+## Family S v2.1 — Heterogeneous Routing (2026-02-21) — ACTIVE
+
+### Configuración
+
+- **Modelo**: `v2.1-tier3-family_s` (XGBoost, 21 features)
+- **Snapshot**: DB id=14, Brier=0.1938, is_active=False (carga por pattern match, no por is_active)
+- **Samples**: 8,488 (10 ligas Tier 3, desde 2023-01-01)
+- **CV**: 3-fold (0.1916 / 0.1944 / 0.1954)
+- **Activación**: 2026-02-21, ABE Opción B (routing por asimetría)
+- **Flag**: `LEAGUE_ROUTER_MTV_ENABLED=true`
+- **PIT eval target**: 4 semanas post-activación (N>300), ~2026-03-21
+
+### Features (21 = core14 + odds3 + mtv4)
+
+14 baseline + 3 odds (`odds_home`, `odds_draw`, `odds_away`) + 4 MTV (`home_talent_delta`, `away_talent_delta`, `talent_delta_diff`, `shock_magnitude`).
+
+v2.0 tenía 24 features (3 competitiveness: `abs_attack_diff`, `abs_defense_diff`, `abs_strength_gap`). Eliminadas en v2.1 tras ablation (Δ ≈ 0).
+
+### Routing heterogéneo (ABE Opción B)
+
+Family S sirve SOLO donde MTV compensa ineficiencia del mercado (ganadores empíricos holdout 20%):
+
+| Liga | ID | Strategy | Δ vs TS | Justificación |
+|------|----|----------|---------|---------------|
+| Ecuador | 242 | family_s | -0.0154 | Baja liquidez, MTV compensa |
+| Venezuela | 299 | family_s | -0.0091 | Baja liquidez, MTV compensa |
+| Eredivisie | 88 | family_s | -0.0042 | MTV ayuda marginalmente |
+| Süper Lig | 203 | family_s | -0.0018 | MTV ayuda marginalmente |
+| Perú | 281 | family_s | -0.0008 | MTV neutral-positivo |
+| Primeira Liga | 94 | twostage | +0.0026 | Mercado eficiente |
+| México | 262 | twostage | +0.0037 | Alta liquidez |
+| Chile | 265 | twostage | +0.0024 | TS supera FS |
+| Uruguay | 268 | twostage | +0.0013 | TS supera FS |
+| Bolivia | 344 | twostage | +0.0005 | TS ≈ FS |
+| Belgium | 144 | baseline | N/A | MTV HURTS (removida Tier 3) |
+
+### Observabilidad
+
+- **Hit Rate**: `/dashboard/ops.json` → `family_s_routing` — proporción predicciones Family S vs fallback
+- **Riesgo silencioso**: Si MTV pipeline falla, Family S cae a Two-Stage sin alerta visible
+- **Logs**: `[CASCADE] strategy=FAMILY_S` en cascade handler, `[DAILY-SAVE] League Router tiers` en batch
+
+### Fallback chain
+
+```
+Liga Tier 3 (Family S activa):
+  1. Family S v2.1 (si odds + MTV disponibles)
+  2. Two-Stage v1.0.3-fav (fallback si FS falla)
+  3. Baseline v1.0.1 (fallback final)
+```
 - GDT #1-7: asof_timestamp, lineup_detected_at, bipartite matching, injury-aware XI, CLV 3-way, DB-backed bus, cascade optimized ✓
