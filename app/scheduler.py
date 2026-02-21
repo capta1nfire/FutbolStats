@@ -882,6 +882,42 @@ def reset_lineup_capture_metrics():
     }
 
 
+def _bridge_sofascore_to_lineup_dict(sc_lineup) -> dict | None:
+    """Convert SofascoreMatchLineup to API-Football lineup dict format.
+
+    Returns None if data is incomplete or malformed.
+    Bridge needed because downstream code expects API-Football dict structure.
+    """
+    if not sc_lineup.home or not sc_lineup.away:
+        return None
+
+    def _safe_player_id(player_id_ext: str) -> int:
+        try:
+            return int(player_id_ext)
+        except (ValueError, TypeError):
+            return 0
+
+    def _side_to_dict(side) -> dict:
+        starters = [p for p in side.players if p.is_starter]
+        subs = [p for p in side.players if not p.is_starter]
+        return {
+            "formation": side.formation,
+            "starting_xi": [
+                {"id": _safe_player_id(p.player_id_ext), "name": p.name or "", "pos": p.position}
+                for p in starters
+            ],
+            "substitutes": [
+                {"id": _safe_player_id(p.player_id_ext), "name": p.name or "", "pos": p.position}
+                for p in subs
+            ],
+        }
+
+    return {
+        "home": _side_to_dict(sc_lineup.home),
+        "away": _side_to_dict(sc_lineup.away),
+    }
+
+
 async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -> dict:
     """
     Monitor upcoming matches for lineup announcements and capture odds snapshots.
@@ -947,8 +983,11 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
             result = await session.execute(text("""
                 SELECT m.id, m.external_id, m.date, m.odds_home, m.odds_draw, m.odds_away,
                        m.status, m.league_id,
+                       mer.source_match_id AS sofascore_id,
                        EXTRACT(EPOCH FROM (m.date - NOW())) / 60 as minutes_to_kickoff
                 FROM matches m
+                LEFT JOIN match_external_refs mer
+                  ON m.id = mer.match_id AND mer.source = 'sofascore'
                 WHERE m.date BETWEEN :window_start AND :window_end
                   AND m.status = 'NS'
                   AND (:league_ids_is_null = TRUE OR m.league_id = ANY(:league_ids))
@@ -996,7 +1035,13 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
 
         # --- Phase 2: API calls + short tx per match ---
         provider = APIFootballProvider()
+        sofascore_provider = None
         try:
+            # Lazy-init Sofascore provider only if any candidate has sofascore_id
+            if any(getattr(m, 'sofascore_id', None) for m in matches):
+                from app.etl.sofascore_provider import SofascoreProvider, SofascoreMatchLineup, SofascoreLineupData
+                sofascore_provider = SofascoreProvider()
+
             for match in matches:
                 match_id = match.id
                 external_id = match.external_id
@@ -1014,34 +1059,67 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
 
                     capture_start_time = datetime.utcnow()
 
-                    # API call: get lineups (OUTSIDE any DB transaction)
-                    lineup_data = None
-                    max_retries = 3
-                    for attempt in range(max_retries):
-                        try:
-                            lineup_data = await provider.get_lineups(external_id)
-                            lineup_calls += 1
-                            break
-                        except Exception as e:
-                            error_str = str(e).lower()
-                            if "429" in error_str or "rate limit" in error_str:
-                                _lineup_capture_metrics[job_type]["api_errors_429"] += 1
-                            elif "timeout" in error_str or "timed out" in error_str:
-                                _lineup_capture_metrics[job_type]["api_errors_timeout"] += 1
-                            else:
-                                _lineup_capture_metrics[job_type]["api_errors_other"] += 1
+                    # --- Dual-source lineup fetch (API-Football + Sofascore) ---
+                    # ABE guardrail: asyncio.gather(return_exceptions=True)
+                    # Sofascore NEVER blocks API-Football
 
-                            if attempt == max_retries - 1:
-                                logger.error(
-                                    f"Failed to fetch lineup for match {match_id} "
-                                    f"(external: {external_id}) after {max_retries} attempts: {e}"
-                                )
-                                raise
-                            await asyncio.sleep(2 ** attempt)
-                            logger.debug(
-                                f"Retry {attempt + 1}/{max_retries} for lineup fetch "
-                                f"(match {match_id})"
-                            )
+                    async def _fetch_apifootball(_ext_id):
+                        """Fetch lineup from API-Football with retries."""
+                        _max_retries = 3
+                        for _attempt in range(_max_retries):
+                            try:
+                                data = await provider.get_lineups(_ext_id)
+                                return data
+                            except Exception as _e:
+                                error_str = str(_e).lower()
+                                if "429" in error_str or "rate limit" in error_str:
+                                    _lineup_capture_metrics[job_type]["api_errors_429"] += 1
+                                elif "timeout" in error_str or "timed out" in error_str:
+                                    _lineup_capture_metrics[job_type]["api_errors_timeout"] += 1
+                                else:
+                                    _lineup_capture_metrics[job_type]["api_errors_other"] += 1
+                                if _attempt == _max_retries - 1:
+                                    return None
+                                await asyncio.sleep(2 ** _attempt)
+                        return None
+
+                    async def _fetch_sofascore(_sof_id):
+                        """Fetch lineup from Sofascore via IPRoyal proxy.
+
+                        ABE guardrail: NO country_code — pool genérico DE.
+                        Timeout 5s, max 1 retry (configured in SofascoreProvider).
+                        """
+                        try:
+                            result = await sofascore_provider.get_match_lineup(str(_sof_id))
+                            if result.error or result.integrity_score < 0.6:
+                                return None
+                            return _bridge_sofascore_to_lineup_dict(result)
+                        except Exception:
+                            return None
+
+                    sofascore_id = getattr(match, 'sofascore_id', None)
+                    tasks = [_fetch_apifootball(external_id)]
+                    if sofascore_id and sofascore_provider:
+                        tasks.append(_fetch_sofascore(sofascore_id))
+
+                    fetch_results = await asyncio.gather(*tasks, return_exceptions=True)
+                    lineup_calls += 1
+
+                    # First Valid Wins: pick first result with 11+11 valid starters
+                    lineup_data = None
+                    lineup_source = "api-football"
+                    for _i, _res in enumerate(fetch_results):
+                        if isinstance(_res, Exception) or _res is None:
+                            continue
+                        _hxi = _res.get("home", {}).get("starting_xi", [])
+                        _axi = _res.get("away", {}).get("starting_xi", [])
+                        if len(_hxi) == 11 and len(_axi) == 11:
+                            # Kimi hardening: reject ghost IDs
+                            if any(p.get("id") == 0 for p in _hxi + _axi):
+                                continue
+                            lineup_data = _res
+                            lineup_source = "api-football" if _i == 0 else "sofascore"
+                            break
 
                     if not lineup_data:
                         if external_id:
@@ -1080,7 +1158,7 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                         continue
 
                     # LINEUP CONFIRMED! Now capture the odds
-                    logger.info(f"Lineup confirmed for match {match_id} (external: {external_id})")
+                    logger.info(f"Lineup confirmed for match {match_id} (external: {external_id}, provider: {lineup_source})")
 
                     kickoff_time = match.date
                     lineup_detected_at = datetime.utcnow()
@@ -1256,6 +1334,7 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                             "match_id": match_id,
                             "lineup_detected_at": lineup_detected_at,
                             "source": "lineup_monitoring",
+                            "provider": lineup_source,
                         })
                     except Exception as evt_err:
                         logger.warning(f"Failed to emit LINEUP_CONFIRMED for match {match_id}: {evt_err}")
@@ -1272,7 +1351,7 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                     logger.info(
                         f"Captured lineup_confirmed odds for match {match_id}: "
                         f"H={odds_home:.2f}, D={odds_draw:.2f}, A={odds_away:.2f} at {snapshot_at} "
-                        f"(latency: {latency_ms}ms, job: {job_type})"
+                        f"(latency: {latency_ms}ms, job: {job_type}, provider: {lineup_source})"
                     )
 
                 except Exception as e:
@@ -1280,7 +1359,15 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                     logger.warning(f"Error checking lineup for match {match_id}: {e}")
 
         finally:
-            await provider.close()
+            try:
+                await provider.close()
+            except Exception:
+                pass
+            if sofascore_provider:
+                try:
+                    await sofascore_provider.close()
+                except Exception:
+                    pass
 
         if captured_count > 0:
             logger.info(f"Lineup monitoring: captured {captured_count} lineup_confirmed snapshots")

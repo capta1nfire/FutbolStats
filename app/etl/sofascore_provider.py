@@ -42,7 +42,7 @@ SOFASCORE_API_BASE = "https://api.sofascore.com/api/v1"
 
 # Rate limiting (be nice)
 MIN_REQUEST_INTERVAL = 1.0  # seconds between requests
-MAX_RETRIES = 4
+MAX_RETRIES = 1
 RETRY_DELAY_BASE = 2.0  # exponential backoff base
 JITTER_MAX = 1.0  # random jitter
 
@@ -200,7 +200,7 @@ class SofascoreProvider:
         cache_key = country_code or "_base"
         if cache_key not in self._clients:
             kwargs: dict[str, Any] = {
-                "timeout": 30.0,
+                "timeout": 5.0,
                 "headers": DEFAULT_HEADERS,
                 "follow_redirects": True,
             }
