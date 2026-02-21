@@ -2538,9 +2538,9 @@ async def live_tick():
     job_name = "live_tick"
 
     try:
-        # Use get_session_with_retry to handle Railway connection drops (InterfaceError fix)
+        # Use get_session_with_retry to handle Railway connection drops
         async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
-            # Find live matches (stuck guard: within 4h)
+            # Find live matches
             result = await session.execute(
                 text("""
                     SELECT id, external_id
@@ -2553,125 +2553,116 @@ async def live_tick():
             )
             live_matches = result.fetchall()
 
-            if not live_matches:
-                duration_ms = (time.time() - start_time) * 1000
-                record_job_run(job=job_name, status="ok", duration_ms=duration_ms)
-                # Don't log when no live matches - too noisy
-                return {"status": "skipped", "reason": "no_live_matches"}
-
-            live_count = len(live_matches)
-            logger.info(f"[LIVE_TICK] Found {live_count} live matches")
-
-            # Build lookup: external_id -> internal_id
-            id_map = {ext_id: int_id for int_id, ext_id in live_matches}
-            external_ids = list(id_map.keys())
-
-            # Batch fetch from API-Football (max 20 per request)
-            provider = APIFootballProvider()
-            updated = 0
-            api_errors = 0
-
-            try:
-                # Process in chunks of 20 (API limit)
-                for i in range(0, len(external_ids), 20):
-                    chunk = external_ids[i:i + 20]
-
-                    try:
-                        fixtures = await provider.get_fixtures_by_ids(chunk)
-
-                        for f in fixtures:
-                            ext_id = f.get("external_id")
-                            if ext_id not in id_map:
-                                continue
-
-                            match_id = id_map[ext_id]
-                            new_status = f.get("status")
-                            new_elapsed = f.get("elapsed")
-                            new_elapsed_extra = f.get("elapsed_extra")  # Injury time
-                            new_home = f.get("home_goals")
-                            new_away = f.get("away_goals")
-                            new_events = f.get("events")  # FASE 1: Live events (full schema)
-
-                            # Update match in DB (FASE 1: now includes events)
-                            # GUARDRAIL: Only update events if we have new data (don't overwrite with NULL)
-                            if new_events:
-                                await session.execute(
-                                    text("""
-                                        UPDATE matches
-                                        SET status = :status,
-                                            elapsed = :elapsed,
-                                            elapsed_extra = :elapsed_extra,
-                                            home_goals = :home_goals,
-                                            away_goals = :away_goals,
-                                            events = :events
-                                        WHERE id = :match_id
-                                    """),
-                                    {
-                                        "match_id": match_id,
-                                        "status": new_status,
-                                        "elapsed": new_elapsed,
-                                        "elapsed_extra": new_elapsed_extra,
-                                        "home_goals": new_home,
-                                        "away_goals": new_away,
-                                        "events": json.dumps(new_events),
-                                    }
-                                )
-                            else:
-                                # No events - update only score/status, preserve existing events
-                                await session.execute(
-                                    text("""
-                                        UPDATE matches
-                                        SET status = :status,
-                                            elapsed = :elapsed,
-                                            elapsed_extra = :elapsed_extra,
-                                            home_goals = :home_goals,
-                                            away_goals = :away_goals
-                                        WHERE id = :match_id
-                                    """),
-                                    {
-                                        "match_id": match_id,
-                                        "status": new_status,
-                                        "elapsed": new_elapsed,
-                                        "elapsed_extra": new_elapsed_extra,
-                                        "home_goals": new_home,
-                                        "away_goals": new_away,
-                                    }
-                                )
-                            updated += 1
-
-                    except Exception as chunk_err:
-                        api_errors += 1
-                        err_str = str(chunk_err).lower()
-
-                        # Check for rate limit or budget exceeded
-                        if "rate" in err_str or "limit" in err_str:
-                            logger.warning(f"[LIVE_TICK] Rate limited, stopping tick early")
-                            record_job_run(job=job_name, status="rate_limited", duration_ms=(time.time() - start_time) * 1000)
-                            return {"status": "rate_limited", "updated": updated}
-
-                        if "budget" in err_str or "exceeded" in err_str:
-                            logger.error(f"[LIVE_TICK] Budget exceeded, disabling tick")
-                            record_job_run(job=job_name, status="budget_exceeded", duration_ms=(time.time() - start_time) * 1000)
-                            return {"status": "budget_exceeded", "updated": updated}
-
-                        logger.warning(f"[LIVE_TICK] Chunk error: {chunk_err}")
-
-                await session.commit()
-
-            finally:
-                await provider.close()
-
+        if not live_matches:
             duration_ms = (time.time() - start_time) * 1000
-            logger.info(f"[LIVE_TICK] Updated {updated}/{live_count} live matches in {duration_ms:.0f}ms")
             record_job_run(job=job_name, status="ok", duration_ms=duration_ms)
+            return {"status": "skipped", "reason": "no_live_matches"}
 
-            return {
-                "status": "ok",
-                "live_count": live_count,
-                "updated": updated,
-                "api_errors": api_errors,
-                "duration_ms": duration_ms,
-            }
+        live_count = len(live_matches)
+        logger.info(f"[LIVE_TICK] Found {live_count} live matches")
+
+        id_map = {ext_id: int_id for int_id, ext_id in live_matches}
+        external_ids = list(id_map.keys())
+
+        # Batch fetch from API-Football
+        provider = APIFootballProvider()
+        updated = 0
+        api_errors = 0
+        all_fixtures = []
+
+        try:
+            # 1. Fetch all data FIRST (Network I/O) without holding DB locks
+            for i in range(0, len(external_ids), 20):
+                chunk = external_ids[i:i + 20]
+                try:
+                    fixtures = await provider.get_fixtures_by_ids(chunk)
+                    all_fixtures.extend(fixtures)
+                except Exception as chunk_err:
+                    api_errors += 1
+                    err_str = str(chunk_err).lower()
+                    if "rate" in err_str or "limit" in err_str:
+                        logger.warning(f"[LIVE_TICK] Rate limited, stopping fetch")
+                        break
+                    if "budget" in err_str or "exceeded" in err_str:
+                        logger.error(f"[LIVE_TICK] Budget exceeded, disabling tick")
+                        break
+                    logger.warning(f"[LIVE_TICK] Chunk error: {chunk_err}")
+
+            # 2. Open new session to perform FAST updates
+            if all_fixtures:
+                async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
+                    for f in all_fixtures:
+                        ext_id = f.get("external_id")
+                        if ext_id not in id_map:
+                            continue
+
+                        match_id = id_map[ext_id]
+                        new_status = f.get("status")
+                        new_elapsed = f.get("elapsed")
+                        new_elapsed_extra = f.get("elapsed_extra")
+                        new_home = f.get("home_goals")
+                        new_away = f.get("away_goals")
+                        new_events = f.get("events")
+
+                        if new_events:
+                            await session.execute(
+                                text("""
+                                    UPDATE matches
+                                    SET status = :status,
+                                        elapsed = :elapsed,
+                                        elapsed_extra = :elapsed_extra,
+                                        home_goals = :home_goals,
+                                        away_goals = :away_goals,
+                                        events = :events
+                                    WHERE id = :match_id
+                                """),
+                                {
+                                    "match_id": match_id,
+                                    "status": new_status,
+                                    "elapsed": new_elapsed,
+                                    "elapsed_extra": new_elapsed_extra,
+                                    "home_goals": new_home,
+                                    "away_goals": new_away,
+                                    "events": json.dumps(new_events),
+                                }
+                            )
+                        else:
+                            await session.execute(
+                                text("""
+                                    UPDATE matches
+                                    SET status = :status,
+                                        elapsed = :elapsed,
+                                        elapsed_extra = :elapsed_extra,
+                                        home_goals = :home_goals,
+                                        away_goals = :away_goals
+                                    WHERE id = :match_id
+                                """),
+                                {
+                                    "match_id": match_id,
+                                    "status": new_status,
+                                    "elapsed": new_elapsed,
+                                    "elapsed_extra": new_elapsed_extra,
+                                    "home_goals": new_home,
+                                    "away_goals": new_away,
+                                }
+                            )
+                        updated += 1
+                    await session.commit()
+
+        finally:
+            await provider.close()
+
+        duration_ms = (time.time() - start_time) * 1000
+        logger.info(f"[LIVE_TICK] Updated {updated}/{live_count} live matches in {duration_ms:.0f}ms")
+        record_job_run(job=job_name, status="ok", duration_ms=duration_ms)
+
+        return {
+            "status": "ok",
+            "live_count": live_count,
+            "updated": updated,
+            "api_errors": api_errors,
+            "duration_ms": duration_ms,
+        }
 
     except Exception as e:
         duration_ms = (time.time() - start_time) * 1000
@@ -3310,7 +3301,7 @@ async def daily_sync_results():
     start_time = time.time()
 
     try:
-        # Use get_session_with_retry to handle Railway connection drops (InterfaceError fix)
+        # Use get_session_with_retry to handle Railway connection drops
         async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
             pipeline = await create_etl_pipeline(session)
             result = await pipeline.sync_multiple_leagues(
@@ -8413,6 +8404,8 @@ def start_scheduler(ml_engine):
         id="prediction_gap_safety_net",
         name="Prediction Gap Safety Net (every 30min)",
         replace_existing=True,
+        max_instances=1,
+        coalesce=True,
     )
 
     # Daily audit job: Every day at 8:00 AM UTC (after results are synced)
@@ -8564,6 +8557,8 @@ def start_scheduler(ml_engine):
         id="live_tick",
         name="Live Tick (every 10s, batch update)",
         replace_existing=True,
+        max_instances=1,
+        coalesce=True,
     )
 
     # Lineup Monitoring - ADAPTIVE FREQUENCY SYSTEM (2026-01-07)
