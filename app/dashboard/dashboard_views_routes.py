@@ -2377,73 +2377,73 @@ async def get_matches_dashboard(
         column("pinnacle_home"), column("pinnacle_draw"), column("pinnacle_away"),
     ).subquery("market_odds")
 
-        # Router-Aware: detect active Trifecta versions from DB (GDT directive)
-        # - Baseline: is_active=True (single, used by startup loader)
-        # - Overlay (TwoStage): latest by pattern (loaded independently)
-        # - Family S: latest by pattern (loaded independently)
-        active_versions_result = await session.execute(text("""
-            SELECT model_version FROM model_snapshots WHERE is_active = true
-            UNION
-            (SELECT model_version FROM model_snapshots WHERE model_version LIKE '%%twostage%%' ORDER BY created_at DESC LIMIT 1)
-            UNION
-            (SELECT model_version FROM model_snapshots WHERE model_version LIKE '%%family_s%%' ORDER BY created_at DESC LIMIT 1)
-        """))
-        active_versions = [row[0] for row in active_versions_result.fetchall()]
-        if not active_versions:
-            logger.error("[MATCHES] No active model versions found in model_snapshots")
+    # Router-Aware: detect active Trifecta versions from DB (GDT directive)
+    # - Baseline: is_active=True (single, used by startup loader)
+    # - Overlay (TwoStage): latest by pattern (loaded independently)
+    # - Family S: latest by pattern (loaded independently)
+    active_versions_result = await session.execute(text("""
+        SELECT model_version FROM model_snapshots WHERE is_active = true
+        UNION
+        (SELECT model_version FROM model_snapshots WHERE model_version LIKE '%%twostage%%' ORDER BY created_at DESC LIMIT 1)
+        UNION
+        (SELECT model_version FROM model_snapshots WHERE model_version LIKE '%%family_s%%' ORDER BY created_at DESC LIMIT 1)
+    """))
+    active_versions = [row[0] for row in active_versions_result.fetchall()]
+    if not active_versions:
+        logger.error("[MATCHES] No active model versions found in model_snapshots")
 
-        # Subquery to get the latest prediction per match (Router-Aware: only active models)
-        latest_preds_subq = (
-            select(
-                Prediction.match_id,
-                Prediction.id.label("prediction_id"),
-                Prediction.model_version,
-                Prediction.home_prob,
-                Prediction.draw_prob,
-                Prediction.away_prob,
-                Prediction.frozen_odds_home,
-                Prediction.frozen_odds_draw,
-                Prediction.frozen_odds_away,
-                Prediction.is_frozen,
-                Prediction.frozen_at,
-            )
-            .where(Prediction.model_version.in_(active_versions) if active_versions else Prediction.id < 0)
-            .distinct(Prediction.match_id)
-            .order_by(Prediction.match_id, Prediction.created_at.desc())
-            .subquery("latest_preds")
+    # Subquery to get the latest prediction per match (Router-Aware: only active models)
+    latest_preds_subq = (
+        select(
+            Prediction.match_id,
+            Prediction.id.label("prediction_id"),
+            Prediction.model_version,
+            Prediction.home_prob,
+            Prediction.draw_prob,
+            Prediction.away_prob,
+            Prediction.frozen_odds_home,
+            Prediction.frozen_odds_draw,
+            Prediction.frozen_odds_away,
+            Prediction.is_frozen,
+            Prediction.frozen_at,
         )
+        .where(Prediction.model_version.in_(active_versions) if active_versions else Prediction.id < 0)
+        .distinct(Prediction.match_id)
+        .order_by(Prediction.match_id, Prediction.created_at.desc())
+        .subquery("latest_preds")
+    )
 
-        base_query = (
-            select(
-                Match.id,
-                Match.date,
-                Match.league_id,
-                Match.round,
-                Match.status,
-                Match.home_goals,
-                Match.away_goals,
-                Match.elapsed,
-                Match.elapsed_extra,
-                Match.venue_name,
-                Match.venue_city,
-                Match.home_team_id,
-                Match.away_team_id,
-                home_team.name.label("home_name"),
-                away_team.name.label("away_name"),
-                # Display names for use_short_names toggle
-                home_display.c.display_name.label("home_display_name"),
-                away_display.c.display_name.label("away_display_name"),
-                # Latest prediction - use MAX (grouping by Match ID)
-                func.max(latest_preds_subq.c.home_prob).label("model_a_home"),
-                func.max(latest_preds_subq.c.draw_prob).label("model_a_draw"),
-                func.max(latest_preds_subq.c.away_prob).label("model_a_away"),
-                func.max(latest_preds_subq.c.model_version).label("model_version"),
-                # Market odds (frozen at prediction time)
-                func.max(latest_preds_subq.c.frozen_odds_home).label("market_home"),
-                func.max(latest_preds_subq.c.frozen_odds_draw).label("market_draw"),
-                func.max(latest_preds_subq.c.frozen_odds_away).label("market_away"),
-                # Shadow/Two-Stage prediction
-                func.max(ShadowPrediction.shadow_home_prob).label("shadow_home"),
+    base_query = (
+        select(
+            Match.id,
+            Match.date,
+            Match.league_id,
+            Match.round,
+            Match.status,
+            Match.home_goals,
+            Match.away_goals,
+            Match.elapsed,
+            Match.elapsed_extra,
+            Match.venue_name,
+            Match.venue_city,
+            Match.home_team_id,
+            Match.away_team_id,
+            home_team.name.label("home_name"),
+            away_team.name.label("away_name"),
+            # Display names for use_short_names toggle
+            home_display.c.display_name.label("home_display_name"),
+            away_display.c.display_name.label("away_display_name"),
+            # Latest prediction - use MAX (grouping by Match ID)
+            func.max(latest_preds_subq.c.home_prob).label("model_a_home"),
+            func.max(latest_preds_subq.c.draw_prob).label("model_a_draw"),
+            func.max(latest_preds_subq.c.away_prob).label("model_a_away"),
+            func.max(latest_preds_subq.c.model_version).label("model_version"),
+            # Market odds (frozen at prediction time)
+            func.max(latest_preds_subq.c.frozen_odds_home).label("market_home"),
+            func.max(latest_preds_subq.c.frozen_odds_draw).label("market_draw"),
+            func.max(latest_preds_subq.c.frozen_odds_away).label("market_away"),
+            # Shadow/Two-Stage prediction
+            func.max(ShadowPrediction.shadow_home_prob).label("shadow_home"),
             func.max(ShadowPrediction.shadow_draw_prob).label("shadow_draw"),
             func.max(ShadowPrediction.shadow_away_prob).label("shadow_away"),
             # Sensor B prediction
