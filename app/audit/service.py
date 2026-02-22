@@ -11,6 +11,7 @@ This service:
 
 import logging
 import math
+import re
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -60,7 +61,11 @@ async def resolve_xg_for_match(
 ) -> tuple[Optional[float], Optional[float], Optional[str]]:
     """Resolve best available xG for a match.
 
-    Priority: Understat > matches.xg_home (FotMob/FootyStats).
+    GDT-mandated priority chain:
+      1. match_understat_team (Opta-grade, Big 5)
+      2. match_fotmob_stats  (FotMob raw — massive Tier-2/3 coverage)
+      3. matches.xg_home     (FootyStats / API-Football generic fallback)
+      4. match_sofascore_stats (Sofascore, last resort)
     """
     # 1. Understat (Opta-grade, Big 5)
     r = await session.execute(text(
@@ -71,14 +76,32 @@ async def resolve_xg_for_match(
     if row and row[0] is not None:
         return float(row[0]), float(row[1]), "understat"
 
-    # 2. matches table (FotMob/FootyStats)
+    # 2. match_fotmob_stats (GDT Priority 2 — ~11K matches, Tier-2/3)
     r2 = await session.execute(text(
-        "SELECT xg_home, xg_away, xg_source FROM matches "
-        "WHERE id = :mid AND xg_home IS NOT NULL"
+        "SELECT xg_home, xg_away FROM match_fotmob_stats "
+        "WHERE match_id = :mid AND xg_home IS NOT NULL LIMIT 1"
     ), {"mid": match_id})
     row2 = r2.fetchone()
     if row2 and row2[0] is not None:
-        return float(row2[0]), float(row2[1]), row2[2]
+        return float(row2[0]), float(row2[1]), "fotmob_stats"
+
+    # 3. matches table (FootyStats / API-Football generic fallback)
+    r3 = await session.execute(text(
+        "SELECT xg_home, xg_away, xg_source FROM matches "
+        "WHERE id = :mid AND xg_home IS NOT NULL"
+    ), {"mid": match_id})
+    row3 = r3.fetchone()
+    if row3 and row3[0] is not None:
+        return float(row3[0]), float(row3[1]), row3[2]
+
+    # 4. match_sofascore_stats (Sofascore, ~650 matches)
+    r4 = await session.execute(text(
+        "SELECT xg_home, xg_away FROM match_sofascore_stats "
+        "WHERE match_id = :mid AND xg_home IS NOT NULL LIMIT 1"
+    ), {"mid": match_id})
+    row4 = r4.fetchone()
+    if row4 and row4[0] is not None:
+        return float(row4[0]), float(row4[1]), "sofascore_stats"
 
     return None, None, None
 
@@ -385,11 +408,13 @@ class PostMatchAuditService:
             )
             if xg_h_resolved is not None and xg_a_resolved is not None:
                 p_h, p_d, p_a = compute_y_soft(xg_h_resolved, xg_a_resolved)
-                # GDT Override 2: variance-scaled justice weight
-                std_dev = float(np.sqrt(xg_h_resolved + xg_a_resolved + 1.0))
-                gd = match.home_goals - match.away_goals
-                xgd = xg_h_resolved - xg_a_resolved
-                w = float(np.exp(-JUSTICE_ALPHA * abs(gd - xgd) / std_dev))
+                w = float(compute_justice_weight(
+                    np.array([float(match.home_goals)]),
+                    np.array([float(match.away_goals)]),
+                    np.array([xg_h_resolved]),
+                    np.array([xg_a_resolved]),
+                    alpha=JUSTICE_ALPHA,
+                )[0])
                 outcome.y_soft_home = round(p_h, 6)
                 outcome.y_soft_draw = round(p_d, 6)
                 outcome.y_soft_away = round(p_a, 6)
@@ -489,6 +514,32 @@ class PostMatchAuditService:
             )
         else:
             adjustment_notes = None
+
+        # === EARLY SEASON CAVEAT (GDT/ABE Directive) ===
+        # Suppress should_adjust_model for early-season matches (matchday < 5).
+        # Features like form_diff, elo_k10_diff use 5-match windows — unreliable before J5.
+        _round_nums = re.findall(r'\d+', str(match.round or ''))
+        effective_matchday = int(_round_nums[-1]) if _round_nums else None
+
+        # Fallback for leagues without matchday in round string (e.g., MLS "Regular season")
+        if effective_matchday is None:
+            _md_result = await self.session.execute(text(
+                "SELECT COUNT(DISTINCT date) + 1 FROM matches "
+                "WHERE league_id = :lid AND season = :season "
+                "AND status IN ('FT','AET','PEN') AND date < :mdate"
+            ), {"lid": match.league_id, "season": match.season, "mdate": match.date})
+            effective_matchday = _md_result.scalar() or 1
+
+        is_early_season = effective_matchday < 5
+
+        if is_early_season:
+            should_learn = False
+            if secondary_factors is None:
+                secondary_factors = {}
+            secondary_factors["early_season_caveat"] = True
+            secondary_factors["effective_matchday"] = effective_matchday
+            if adjustment_notes:
+                adjustment_notes = f"[EARLY SEASON VARIANCE] {adjustment_notes}"
 
         # Generate narrative insights for the match
         narrative_result = self.generate_narrative_insights(
