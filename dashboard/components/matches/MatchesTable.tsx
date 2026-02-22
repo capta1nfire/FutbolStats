@@ -428,7 +428,7 @@ export function MatchesTable({
                     width: ROW_NUM_WIDTH,
                     minWidth: ROW_NUM_WIDTH,
                     maxWidth: ROW_NUM_WIDTH,
-                    backgroundColor: "hsl(var(--background))",
+                    backgroundColor: "var(--background)",
                   }}
                 >
                   #
@@ -441,7 +441,7 @@ export function MatchesTable({
                     width: MATCH_COL_WIDTH,
                     minWidth: MATCH_COL_WIDTH,
                     maxWidth: MATCH_COL_WIDTH,
-                    backgroundColor: "hsl(var(--background))",
+                    backgroundColor: "var(--background)",
                   }}
                 >
                   Match
@@ -595,7 +595,7 @@ export function MatchesTable({
                         width: ROW_NUM_WIDTH,
                         minWidth: ROW_NUM_WIDTH,
                         maxWidth: ROW_NUM_WIDTH,
-                        backgroundColor: isSelected ? "hsl(var(--accent))" : "hsl(var(--background))",
+                        backgroundColor: isSelected ? "var(--accent)" : "var(--background)",
                       }}
                     >
                       <div className="flex flex-col items-center gap-0.5">
@@ -611,7 +611,7 @@ export function MatchesTable({
                         left: ROW_NUM_WIDTH,
                         width: MATCH_COL_WIDTH,
                         minWidth: MATCH_COL_WIDTH,
-                        backgroundColor: isSelected ? "hsl(var(--accent))" : "hsl(var(--background))",
+                        backgroundColor: isSelected ? "var(--accent)" : "var(--background)",
                         maxWidth: MATCH_COL_WIDTH,
                       }}
                     >
