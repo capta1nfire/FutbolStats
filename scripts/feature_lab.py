@@ -1884,6 +1884,140 @@ def compute_efficiency_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ─── WAVE 14: Decomposed Elo (Attack / Defense) ─────────────
+
+def compute_elo_attack_defense(df: pd.DataFrame) -> pd.DataFrame:
+    """Decomposed Elo: separate attack and defense ratings.
+
+    Attack Elo: updated by goals_scored vs expected_goals_scored.
+    Defense Elo: updated by goals_conceded vs expected_goals_conceded.
+
+    Expected goals derived from opponent's component Elo:
+      expected_scored  = avg_goals / (1 + 10^((opp_def - INITIAL) / 400))
+      expected_conceded = avg_goals / (1 + 10^((opp_att - INITIAL) / 400))
+
+    PIT-safe: pre-match Elo used, updated after.
+    """
+    K_AD = 20
+    INITIAL = ELO_INITIAL  # 1500
+    AVG_GOALS = 1.35  # Goals per team per match (European baseline)
+
+    df = df.sort_values("date").reset_index(drop=True)
+    att_ratings = {}  # team_id -> attack Elo
+    def_ratings = {}  # team_id -> defense Elo
+
+    cols_att_h, cols_att_a = [], []
+    cols_def_h, cols_def_a = [], []
+
+    for _, row in df.iterrows():
+        h_id = row["home_team_id"]
+        a_id = row["away_team_id"]
+
+        # Pre-match ratings (PIT-safe: read BEFORE update)
+        att_h = att_ratings.get(h_id, INITIAL)
+        att_a = att_ratings.get(a_id, INITIAL)
+        def_h = def_ratings.get(h_id, INITIAL)
+        def_a = def_ratings.get(a_id, INITIAL)
+
+        cols_att_h.append(att_h)
+        cols_att_a.append(att_a)
+        cols_def_h.append(def_h)
+        cols_def_a.append(def_a)
+
+        # Expected goals based on opponent component
+        # Factor 2x ensures expected=AVG_GOALS at baseline (logistic gives 0.5 at diff=0)
+        exp_scored_h = 2.0 * AVG_GOALS * (1.0 / (1.0 + 10.0 ** ((def_a - INITIAL) / 400.0)))
+        exp_scored_a = 2.0 * AVG_GOALS * (1.0 / (1.0 + 10.0 ** ((def_h - INITIAL) / 400.0)))
+
+        # Actual goals
+        hg = row["home_goals"]
+        ag = row["away_goals"]
+
+        # Update attack Elo (based on goals scored vs expected)
+        att_ratings[h_id] = att_h + K_AD * (hg - exp_scored_h)
+        att_ratings[a_id] = att_a + K_AD * (ag - exp_scored_a)
+
+        # Update defense Elo (based on goals conceded vs expected)
+        # Higher defense Elo = fewer goals conceded than expected = GOOD
+        exp_conceded_h = 2.0 * AVG_GOALS * (1.0 / (1.0 + 10.0 ** ((att_a - INITIAL) / 400.0)))
+        exp_conceded_a = 2.0 * AVG_GOALS * (1.0 / (1.0 + 10.0 ** ((att_h - INITIAL) / 400.0)))
+
+        # Defense Elo: positive update when conceding LESS than expected
+        def_ratings[h_id] = def_h + K_AD * (exp_conceded_h - ag)
+        def_ratings[a_id] = def_a + K_AD * (exp_conceded_a - hg)
+
+    df["elo_att_home"] = cols_att_h
+    df["elo_att_away"] = cols_att_a
+    df["elo_def_home"] = cols_def_h
+    df["elo_def_away"] = cols_def_a
+
+    # Derived features
+    df["elo_att_diff"] = df["elo_att_home"] - df["elo_att_away"]
+    df["elo_def_diff"] = df["elo_def_home"] - df["elo_def_away"]
+    df["elo_att_vs_def"] = df["elo_att_home"] - df["elo_def_away"]
+    df["elo_def_vs_att"] = df["elo_att_away"] - df["elo_def_home"]
+
+    return df
+
+
+# ─── WAVE 15: Market Divergence ──────────────────────────────
+
+def compute_market_divergence(df: pd.DataFrame) -> pd.DataFrame:
+    """Market vs Elo divergence features.
+
+    Computes delta between market-implied probabilities (de-vigged proportional)
+    and Elo-implied probabilities for each outcome.
+
+    Positive market_div_away = market gives away MORE chance than Elo suggests
+    (smart money backing the away team).
+
+    Requires: odds_home/draw/away and elo_prob_home/away/elo_draw_proxy
+    from prior waves.
+
+    PIT-safe: uses pre-match odds and pre-match Elo.
+    """
+    has_odds = (
+        df["odds_home"].notna() & (df["odds_home"] > 0) &
+        df["odds_draw"].notna() & (df["odds_draw"] > 0) &
+        df["odds_away"].notna() & (df["odds_away"] > 0)
+    )
+    has_elo = df["elo_prob_home"].notna() & df["elo_prob_away"].notna()
+    valid = has_odds & has_elo
+
+    # De-vig proportional: implied_prob = (1/odds) / sum(1/odds)
+    raw_h = 1.0 / df["odds_home"]
+    raw_d = 1.0 / df["odds_draw"]
+    raw_a = 1.0 / df["odds_away"]
+    total = raw_h + raw_d + raw_a
+
+    implied_home = raw_h / total
+    implied_draw = raw_d / total
+    implied_away = raw_a / total
+
+    # Divergence = market_implied - elo_implied
+    div_home = (implied_home - df["elo_prob_home"]).astype(float)
+    div_away = (implied_away - df["elo_prob_away"]).astype(float)
+    div_draw = (implied_draw - df["elo_draw_proxy"]).astype(float)
+
+    df["market_div_home"] = np.where(valid, div_home, np.nan)
+    df["market_div_away"] = np.where(valid, div_away, np.nan)
+    df["market_div_draw"] = np.where(valid, div_draw, np.nan)
+
+    # Aggregate measures
+    df["market_div_abs"] = np.where(
+        valid,
+        np.abs(div_home) + np.abs(div_away),
+        np.nan,
+    )
+    df["market_div_sign"] = np.where(
+        valid,
+        np.sign(div_away.values - div_home.values),
+        np.nan,
+    )
+
+    return df
+
+
 # ─── Master Feature Computation ──────────────────────────────
 
 def compute_all_experimental_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -1920,13 +2054,20 @@ def compute_all_experimental_features(df: pd.DataFrame) -> pd.DataFrame:
     df = compute_interaction_features(df)
     df = compute_efficiency_features(df)
 
+    print("  [Wave 14] Decomposed Elo (attack/defense)...")
+    df = compute_elo_attack_defense(df)
+
+    print("  [Wave 15] Market divergence (odds vs Elo)...")
+    df = compute_market_divergence(df)
+
     return df
 
 
 # ─── Universe System (Fix 1 + Fix 3) ─────────────────────────
 
 # All optional feature groups that define universe boundaries
-_ODDS_SET = set(ODDS_FEATURES) | set(IMPLIED_DRAW_FEATURES)  # implied_draw requires odds
+MARKET_DIV_FEATURES = {"market_div_home", "market_div_away", "market_div_draw", "market_div_abs", "market_div_sign"}
+_ODDS_SET = set(ODDS_FEATURES) | set(IMPLIED_DRAW_FEATURES) | MARKET_DIV_FEATURES  # implied_draw + market_div require odds
 _XG_SET = set(XG_ALL)  # XG_CORE + XG_DEFENSE + XG_OVERPERF
 _XI_SET = set(XI_CONTINUITY_FEATURES)
 _MTV_SET = set(MTV_FEATURES)
