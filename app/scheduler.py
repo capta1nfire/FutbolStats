@@ -774,6 +774,35 @@ async def freeze_predictions_before_kickoff() -> dict:
                             if vb:
                                 value_bets.append(vb)
 
+                        # Kelly sizing on frozen value_bets (GDT Epoch 2)
+                        from app.config import get_settings as _get_settings_kelly
+                        _ks = _get_settings_kelly()
+                        if _ks.TRADING_KELLY_ENABLED and value_bets:
+                            from app.trading.kelly import enrich_value_bet_with_kelly
+                            value_bets = [
+                                enrich_value_bet_with_kelly(
+                                    vb,
+                                    fraction=_ks.TRADING_KELLY_FRACTION,
+                                    bankroll_units=_ks.TRADING_BANKROLL_UNITS,
+                                    min_ev=_ks.TRADING_MIN_EV,
+                                    high_odds_threshold=_ks.TRADING_MAX_ODDS_PENALTY_THRESHOLD,
+                                    high_odds_factor=_ks.TRADING_MAX_ODDS_PENALTY_FACTOR,
+                                    max_stake_pct=_ks.TRADING_MAX_STAKE_PCT,
+                                )
+                                for vb in value_bets
+                            ]
+                            # Match Exposure Cap (GDT Guardrail #2)
+                            _sum = sum(vb["suggested_stake"] for vb in value_bets)
+                            if _sum > _ks.TRADING_MAX_STAKE_PCT:
+                                _factor = _ks.TRADING_MAX_STAKE_PCT / max(_sum, 1e-9)
+                                for vb in value_bets:
+                                    vb["suggested_stake"] = round(vb["suggested_stake"] * _factor, 4)
+                                    vb["stake_units"] = round(vb["suggested_stake"] * _ks.TRADING_BANKROLL_UNITS, 2)
+                                    _fl = vb.get("stake_flags") or []
+                                    if "MAX_MATCH_CAP_APPLIED" not in _fl:
+                                        _fl.append("MAX_MATCH_CAP_APPLIED")
+                                    vb["stake_flags"] = _fl
+
                         pred.frozen_value_bets = value_bets if value_bets else None
 
                         frozen_count += 1

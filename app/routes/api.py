@@ -2172,6 +2172,23 @@ async def get_predictions(
             f"share={policy_metadata['draw_share_original']}%→{policy_metadata['draw_share_after']}%"
         )
     # ═══════════════════════════════════════════════════════════════
+    # STEP 11b: Kelly stake sizing (GDT Epoch 2 — AFTER draw_cap, FINAL layer)
+    # ═══════════════════════════════════════════════════════════════
+    _t_kelly = time.time()
+    from app.trading.pipeline import apply_kelly_sizing
+    predictions, kelly_metadata = apply_kelly_sizing(
+        predictions,
+        enabled=settings.TRADING_KELLY_ENABLED,
+        fraction=settings.TRADING_KELLY_FRACTION,
+        bankroll_units=settings.TRADING_BANKROLL_UNITS,
+        min_ev=settings.TRADING_MIN_EV,
+        high_odds_threshold=settings.TRADING_MAX_ODDS_PENALTY_THRESHOLD,
+        high_odds_factor=settings.TRADING_MAX_ODDS_PENALTY_FACTOR,
+        max_stake_pct=settings.TRADING_MAX_STAKE_PCT,
+    )
+    _stage_times["kelly_sizing_ms"] = (time.time() - _t_kelly) * 1000
+
+    # ═══════════════════════════════════════════════════════════════
     # STEP 12: Serving telemetry — stamp each prediction with metadata
     # ═══════════════════════════════════════════════════════════════
     from app.ml.serving_telemetry import stamp_serving_metadata

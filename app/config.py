@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     MARKET_ANCHOR_LEAGUE_OVERRIDES: str = "128:1.0"  # "league_id:alpha" — explicit low-signal leagues
     MARKET_ANCHOR_MIN_SAMPLES: int = 200  # Min FT with odds before accepting per-league α
 
+    # Trading Core: Kelly Criterion stake sizing (GDT Epoch 2 2026-02-22)
+    TRADING_KELLY_ENABLED: bool = False            # Feature flag (default OFF — shadow mode)
+    TRADING_KELLY_FRACTION: float = 0.25           # Quarter-Kelly (conservative)
+    TRADING_BANKROLL_UNITS: float = 1000.0         # Abstract units for stake_units
+    TRADING_MIN_EV: float = 0.03                   # Min 3% EV to size a bet
+    TRADING_MAX_ODDS_PENALTY_THRESHOLD: float = 5.0  # Odds above this get penalized
+    TRADING_MAX_ODDS_PENALTY_FACTOR: float = 0.5   # 50% penalty for high-odds bets
+    TRADING_MAX_STAKE_PCT: float = 0.05            # Max 5% bankroll per match
+
     # Calibration: optional post-hoc temperature scaling (ABE P0 2026-02-19)
     PROBA_CALIBRATION_ENABLED: bool = False       # Feature flag (default OFF)
     PROBA_CALIBRATION_METHOD: str = "temperature"  # "temperature" | "none"
