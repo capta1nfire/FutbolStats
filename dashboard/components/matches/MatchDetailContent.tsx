@@ -17,11 +17,10 @@ import { Badge } from "@/components/ui/badge";
 import { StatusDot } from "./StatusDot";
 import { DivergenceBadge } from "./DivergenceBadge";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { computeGap20 } from "@/lib/predictions";
 import { TeamLogo } from "@/components/ui/team-logo";
 import { CountryFlag } from "@/components/ui/country-flag";
@@ -419,13 +418,13 @@ function PredictionSection({
  * Match Header - 3 column layout showing teams and score/time
  */
 /** Autopsy tag visual config — Financial Autopsy (6 mutually exclusive post-match tags) */
-const AUTOPSY_CONFIG: Record<string, { label: string; color: string; description: string }> = {
-  sharp_win:     { label: "SHARP",    color: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30", description: "Edge + timing — positive CLV, model called it right" },
-  routine_win:   { label: "ROUTINE",  color: "bg-sky-500/15 text-sky-400 border-sky-500/30",            description: "Standard correct — xG aligned, no special edge" },
-  lucky_win:     { label: "LUCKY",    color: "bg-amber-500/15 text-amber-400 border-amber-500/30",      description: "Got lucky — xG said otherwise, result favored us" },
-  sharp_loss:    { label: "SHARP L",  color: "bg-purple-500/15 text-purple-400 border-purple-500/30",   description: "Timing edge but variance — positive CLV, wrong result" },
-  variance_loss: { label: "VARIANCE", color: "bg-slate-500/15 text-slate-400 border-slate-500/30",      description: "xG backed us — fair loss, model was reasonable" },
-  blind_spot:    { label: "BLIND",    color: "bg-red-500/15 text-red-400 border-red-500/30",            description: "Systematic miss — negative CLV, xG disagreed" },
+const AUTOPSY_CONFIG: Record<string, { label: string; color: string; descEs: string }> = {
+  sharp_win:     { label: "SHARP",    color: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30", descEs: "Acierto con ventaja. CLV positivo: el modelo acertó y tenía edge de timing." },
+  routine_win:   { label: "ROUTINE",  color: "bg-sky-500/15 text-sky-400 border-sky-500/30",            descEs: "Acierto estándar. xG alineado con el resultado, sin edge especial." },
+  lucky_win:     { label: "LUCKY",    color: "bg-amber-500/15 text-amber-400 border-amber-500/30",      descEs: "Acierto con suerte. xG decía otra cosa, el resultado nos favoreció." },
+  sharp_loss:    { label: "SHARP L",  color: "bg-purple-500/15 text-purple-400 border-purple-500/30",   descEs: "Fallo con edge. CLV positivo pero la varianza nos jugó en contra." },
+  variance_loss: { label: "VARIANCE", color: "bg-slate-500/15 text-slate-400 border-slate-500/30",      descEs: "Fallo justo. xG nos respaldaba, fue varianza normal." },
+  blind_spot:    { label: "BLIND",    color: "bg-red-500/15 text-red-400 border-red-500/30",            descEs: "Punto ciego. CLV negativo, xG en contra — fallo sistemático." },
 };
 
 export function MatchHeader({
@@ -529,18 +528,24 @@ export function MatchHeader({
               {match.autopsyTag && AUTOPSY_CONFIG[match.autopsyTag] && (() => {
                 const aTag = AUTOPSY_CONFIG[match.autopsyTag!];
                 return (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className={cn("inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide border cursor-help", aTag.color)}>
-                          {aTag.label}
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom" sideOffset={4}>
-                        <p className="text-xs max-w-[220px]">{aTag.description}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button className={cn("inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide border cursor-pointer", aTag.color)}>
+                        {aTag.label}
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent side="bottom" align="center" className="w-72 p-3">
+                      <p className="text-xs font-semibold mb-2">Autopsia Financiera</p>
+                      {Object.entries(AUTOPSY_CONFIG).map(([key, cfg]) => (
+                        <div key={key} className={cn("flex items-start gap-2 py-1", key === match.autopsyTag && "bg-muted/50 -mx-1 px-1 rounded")}>
+                          <span className={cn("shrink-0 mt-0.5 inline-flex items-center justify-center rounded px-1 py-px text-[8px] font-semibold uppercase tracking-wide border", cfg.color)}>
+                            {cfg.label}
+                          </span>
+                          <span className="text-[11px] text-muted-foreground leading-tight">{cfg.descEs}</span>
+                        </div>
+                      ))}
+                    </PopoverContent>
+                  </Popover>
                 );
               })()}
             </>
