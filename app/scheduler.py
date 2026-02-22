@@ -3557,7 +3557,7 @@ SHADOW_RETRAIN_VOLUME_TRIGGER = 1500  # OR: N new FT matches since last approved
 SHADOW_COOLDOWN_REJECTS = 3           # Skip after N consecutive rejects
 SHADOW_COOLDOWN_DAYS = 14             # Cooldown duration
 SHADOW_MODEL_VERSION = "v1.1.0-twostage"
-SHADOW_DRAW_WEIGHT = 1.2
+SHADOW_DRAW_WEIGHT = 1.0
 
 
 async def _check_recalib_cooldown() -> tuple[bool, int]:

@@ -1,10 +1,13 @@
-"""Two-Stage W3 serving layer (ABE Mandato, 2026-02-18).
+"""Overlay serving layer (V1.1.0 cross-wire).
 
-Loads v1.0.2-twostage-w3 from model_snapshots and provides overlay
-for /predictions/upcoming and individual match endpoints.
+Loads the overlay model (v1.1.0-twostage, 3f one-stage XGBoostEngine) from
+model_snapshots and provides prediction overlay for TS_LEAGUES.
+
+V1.1.0 cross-wire: Overlay is now a one-stage XGBoostEngine (3 odds features,
+multi:softprob) — the inverse of the pre-V1.1.0 architecture where overlay
+was a TwoStageEngine.
 
 Pattern: identical to app/ml/family_s.py (global engine, startup init).
-
 Routing: TS predictions for TS_LEAGUES (15), baseline for OS_LEAGUES (8).
 Fallback: if odds triplet invalid → keep baseline (no crash).
 """
@@ -17,7 +20,7 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ml.engine import TwoStageEngine
+from app.ml.engine import XGBoostEngine
 from app.ml.league_router import TS_LEAGUES, is_ts_league
 from app.models import ModelSnapshot
 
@@ -27,10 +30,10 @@ logger = logging.getLogger("futbolstats.twostage_serving")
 # Global engine (loaded at startup)
 # ═══════════════════════════════════════════════════════════════════════════
 
-_ts_engine: Optional[TwoStageEngine] = None
+_ts_engine: Optional[XGBoostEngine] = None
 _ts_loaded: bool = False
 
-TS_VERSION_PATTERN = "%twostage-w3%"
+TS_VERSION_PATTERN = "%twostage%"
 
 
 async def init_ts_engine(session: AsyncSession) -> bool:
@@ -57,16 +60,18 @@ async def init_ts_engine(session: AsyncSession) -> bool:
         _ts_loaded = False
         return False
 
-    engine = TwoStageEngine(model_version=snapshot.model_version)
+    engine = XGBoostEngine(model_version=snapshot.model_version)
     if engine.load_from_bytes(snapshot.model_blob):
+        # V1.1.0: overlay uses 3f one-stage XGBoostEngine (odds only)
+        engine.FEATURE_COLUMNS = ["odds_home", "odds_draw", "odds_away"]
         _ts_engine = engine
         _ts_loaded = True
         logger.info(
-            "Two-Stage W3 engine loaded: version=%s, brier=%.4f, "
-            "features_s1=%s, snapshot_id=%d",
+            "Overlay engine loaded: version=%s, brier=%.4f, "
+            "features=%s, snapshot_id=%d",
             snapshot.model_version,
             snapshot.brier_score or 0.0,
-            engine.active_stage1_features,
+            engine.FEATURE_COLUMNS,
             snapshot.id,
         )
         return True
@@ -81,7 +86,7 @@ def is_ts_loaded() -> bool:
     return _ts_loaded and _ts_engine is not None and _ts_engine.is_loaded
 
 
-def get_ts_engine() -> Optional[TwoStageEngine]:
+def get_ts_engine() -> Optional[XGBoostEngine]:
     """Get the Two-Stage W3 engine (or None if not loaded)."""
     return _ts_engine if _ts_loaded else None
 
@@ -134,7 +139,7 @@ def overlay_ts_predictions(predictions, ml_engine=None):
             stats["os_kept"] += 1
             continue
 
-        # Build DataFrame from full prediction dict so TwoStageEngine
+        # Build DataFrame from full prediction dict so overlay engine
         # gets all available features, not just odds.
         # Engine handles missing features (fills with 0 + logs warning).
         row_data = {

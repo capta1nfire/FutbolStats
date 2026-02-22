@@ -64,7 +64,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 ROLLING_WINDOW = 10
 TIME_DECAY_LAMBDA = 0.01
-DRAW_WEIGHT = 1.5
+DRAW_WEIGHT = 1.0
 N_SEEDS = 5
 N_BOOTSTRAP = 1000
 TEST_FRACTION = 0.2
@@ -127,7 +127,7 @@ TWO_STAGE_PARAMS_S2 = {
     "colsample_bytree": 0.8,
     "verbosity": 0,
 }
-TWO_STAGE_DRAW_WEIGHT = 1.2
+TWO_STAGE_DRAW_WEIGHT = 1.0
 
 # ─── Diagnostic flags (set from CLI in main()) ──────────────
 _DECOMPOSE = False

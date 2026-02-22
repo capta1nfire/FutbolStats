@@ -4,10 +4,12 @@ Singleton-by-import pattern: main.py and routers import from this module
 to share the same instances (ml_engine, telemetry counters).
 """
 
-from app.ml import XGBoostEngine
+from app.ml.engine import TwoStageEngine
 
-# Global ML engine (singleton)
-ml_engine = XGBoostEngine()
+# Global ML engine (singleton) — V1.1.0 cross-wire: TwoStageEngine as baseline
+# TwoStageEngine(XGBoostEngine) inherits predict(), _find_value_bets().
+# load_from_bytes() auto-detects blob type (xgb_twostage or xgb_baseline fallback).
+ml_engine = TwoStageEngine()
 
 # =============================================================================
 # TELEMETRY COUNTERS (aggregated, no high-cardinality labels)
