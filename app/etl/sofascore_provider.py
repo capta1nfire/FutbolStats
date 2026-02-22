@@ -23,6 +23,7 @@ Reference:
 
 import asyncio
 import logging
+import os
 import random
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -40,7 +41,7 @@ SOFASCORE_API_BASE = "https://api.sofascore.com/api/v1"
 
 # Rate limiting (be nice)
 MIN_REQUEST_INTERVAL = 1.0  # seconds between requests
-MAX_RETRIES = 2
+MAX_RETRIES = 3
 RETRY_DELAY_BASE = 2.0  # exponential backoff base
 JITTER_MAX = 1.0  # random jitter
 
@@ -171,7 +172,11 @@ class SofascoreProvider:
         self.use_mock = use_mock
         self._session: Optional[AsyncSession] = None
         self._last_request_time: float = 0
-        logger.info("SofascoreProvider initialized with curl_cffi/chrome (mock=%s)", use_mock)
+        self._proxy_url: Optional[str] = os.environ.get("SOFASCORE_PROXY_URL")
+        if self._proxy_url:
+            logger.info("SofascoreProvider initialized with curl_cffi/chrome + proxy (mock=%s)", use_mock)
+        else:
+            logger.info("SofascoreProvider initialized with curl_cffi/chrome (mock=%s)", use_mock)
 
     async def _get_session(self) -> AsyncSession:
         """Get or create curl_cffi session with Chrome TLS impersonation."""
@@ -197,8 +202,8 @@ class SofascoreProvider:
         """
         Fetch JSON with retry logic via curl_cffi (Chrome TLS impersonation).
 
-        Args:
-            country_code: Unused (kept for interface compat). Proxy no longer needed.
+        Uses SOFASCORE_PROXY_URL if set (needed on data center IPs like Railway).
+        Works without proxy on residential IPs.
 
         Returns:
             Tuple of (data, error_message).
@@ -210,9 +215,11 @@ class SofascoreProvider:
                 await self._rate_limit()
                 session = await self._get_session()
 
-                response = await session.get(
-                    url, headers=DEFAULT_HEADERS, timeout=10,
-                )
+                kwargs = {"headers": DEFAULT_HEADERS, "timeout": 15}
+                if self._proxy_url:
+                    kwargs["proxy"] = self._proxy_url
+
+                response = await session.get(url, **kwargs)
 
                 # Handle soft fails (retryable)
                 if response.status_code == 429:
