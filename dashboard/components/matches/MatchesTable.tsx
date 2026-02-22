@@ -17,11 +17,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 
 // =============================================================================
 // Model Accuracy Calculation
@@ -791,24 +786,16 @@ export function MatchesTable({
                             )
                           )}
                           {aTag && (
-                            <Popover>
-                              <PopoverTrigger asChild>
-                                <button className={cn("inline-flex items-center justify-center rounded px-1 py-px text-[8px] font-semibold uppercase tracking-wide border cursor-pointer", aTag.color)}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className={cn("inline-flex items-center justify-center rounded px-1 py-px text-[8px] font-semibold uppercase tracking-wide border cursor-default", aTag.color)}>
                                   {aTag.label}
-                                </button>
-                              </PopoverTrigger>
-                              <PopoverContent side="bottom" align="center" className="w-72 p-3">
-                                <p className="text-xs font-semibold mb-2">Autopsia Financiera</p>
-                                {Object.entries(AUTOPSY_CONFIG).map(([key, cfg]) => (
-                                  <div key={key} className={cn("flex items-start gap-2 py-1", key === match.autopsyTag && "bg-muted/50 -mx-1 px-1 rounded")}>
-                                    <span className={cn("shrink-0 mt-0.5 inline-flex items-center justify-center rounded px-1 py-px text-[8px] font-semibold uppercase tracking-wide border", cfg.color)}>
-                                      {cfg.label}
-                                    </span>
-                                    <span className="text-[11px] text-muted-foreground leading-tight">{cfg.descEs}</span>
-                                  </div>
-                                ))}
-                              </PopoverContent>
-                            </Popover>
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom" sideOffset={4}>
+                                <p className="text-xs max-w-[220px]">{aTag.descEs}</p>
+                              </TooltipContent>
+                            </Tooltip>
                           )}
                           </div>
                         </td>
