@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 
 const STORAGE_KEY_PREFIX = "pageSize:";
-const DEFAULT_PAGE_SIZE = 50;
+const DEFAULT_PAGE_SIZE = 100;
 
 /**
  * Hook for managing page size state with localStorage persistence

@@ -314,6 +314,20 @@ export function MatchesTable({
   const { formatShortDate, formatTime } = useRegion();
   const modelAccuracies = useMemo(() => calculateModelAccuracies(data), [data]);
 
+  // Sort: Live/HT first, then Scheduled, then FT/finished
+  const sortedData = useMemo(() => {
+    const statusOrder: Record<string, number> = {
+      live: 0, ht: 0,
+      scheduled: 1,
+      ft: 2, postponed: 2, cancelled: 2,
+    };
+    return [...data].sort((a, b) => {
+      const oa = statusOrder[a.status] ?? 1;
+      const ob = statusOrder[b.status] ?? 1;
+      return oa - ob;
+    });
+  }, [data]);
+
   // Column visibility helpers
   const isVisible = (colId: string) => columnVisibility[colId] !== false;
 
@@ -558,7 +572,7 @@ export function MatchesTable({
 
             {/* Body */}
             <tbody>
-              {data.map((match, idx) => {
+              {sortedData.map((match, idx) => {
                 const isSelected = selectedMatchId === match.id;
                 const outcome = match.status === "ft" ? getOutcomeFromScore(match.score) : null;
 
