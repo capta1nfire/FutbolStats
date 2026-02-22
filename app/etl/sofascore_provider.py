@@ -23,14 +23,12 @@ Reference:
 
 import asyncio
 import logging
-import os
 import random
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional
-from urllib.parse import urlparse, urlunparse
+from typing import Optional
 
-import httpx
+from curl_cffi.requests import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +40,7 @@ SOFASCORE_API_BASE = "https://api.sofascore.com/api/v1"
 
 # Rate limiting (be nice)
 MIN_REQUEST_INTERVAL = 1.0  # seconds between requests
-MAX_RETRIES = 1
+MAX_RETRIES = 2
 RETRY_DELAY_BASE = 2.0  # exponential backoff base
 JITTER_MAX = 1.0  # random jitter
 
@@ -171,47 +169,15 @@ class SofascoreProvider:
             use_mock: If True, return mock data for testing.
         """
         self.use_mock = use_mock
-        self._clients: dict[str, httpx.AsyncClient] = {}  # keyed by country code ("_base" for no geo)
+        self._session: Optional[AsyncSession] = None
         self._last_request_time: float = 0
-        self._proxy_url: Optional[str] = os.environ.get("SOFASCORE_PROXY_URL")
-        if self._proxy_url:
-            logger.info("SofascoreProvider initialized with proxy (mock=%s)", use_mock)
-        else:
-            logger.info("SofascoreProvider initialized without proxy (mock=%s)", use_mock)
+        logger.info("SofascoreProvider initialized with curl_cffi/chrome (mock=%s)", use_mock)
 
-    def _build_geo_proxy_url(self, country_code: str) -> str:
-        """Build proxy URL with IPRoyal geo-targeting suffix on the password.
-
-        Format: http://USER:PASS_country-CC@HOST:PORT
-        """
-        parsed = urlparse(self._proxy_url)
-        password = parsed.password or ""
-        # Strip any existing _country-XX suffix to avoid duplication
-        if "_country-" in password:
-            password = password[: password.index("_country-")]
-        geo_password = f"{password}_country-{country_code}"
-        netloc = f"{parsed.username}:{geo_password}@{parsed.hostname}"
-        if parsed.port:
-            netloc += f":{parsed.port}"
-        return urlunparse((parsed.scheme, netloc, parsed.path, "", "", ""))
-
-    async def _get_client(self, country_code: Optional[str] = None) -> httpx.AsyncClient:
-        """Get or create HTTP client, optionally geo-targeted by country."""
-        cache_key = country_code or "_base"
-        if cache_key not in self._clients:
-            kwargs: dict[str, Any] = {
-                "timeout": 5.0,
-                "headers": DEFAULT_HEADERS,
-                "follow_redirects": True,
-            }
-            if self._proxy_url:
-                if country_code:
-                    kwargs["proxy"] = self._build_geo_proxy_url(country_code)
-                    logger.info("[SOFASCORE] Creating geo-proxy client for country=%s", country_code)
-                else:
-                    kwargs["proxy"] = self._proxy_url
-            self._clients[cache_key] = httpx.AsyncClient(**kwargs)
-        return self._clients[cache_key]
+    async def _get_session(self) -> AsyncSession:
+        """Get or create curl_cffi session with Chrome TLS impersonation."""
+        if self._session is None:
+            self._session = AsyncSession(impersonate="chrome")
+        return self._session
 
     async def _rate_limit(self) -> None:
         """Enforce rate limiting between requests."""
@@ -229,10 +195,10 @@ class SofascoreProvider:
         country_code: Optional[str] = None,
     ) -> tuple[Optional[dict], Optional[str]]:
         """
-        Fetch JSON with retry logic.
+        Fetch JSON with retry logic via curl_cffi (Chrome TLS impersonation).
 
         Args:
-            country_code: ISO 2-letter code for geo-proxy routing (e.g. "es", "gb").
+            country_code: Unused (kept for interface compat). Proxy no longer needed.
 
         Returns:
             Tuple of (data, error_message).
@@ -242,9 +208,11 @@ class SofascoreProvider:
         for attempt in range(MAX_RETRIES):
             try:
                 await self._rate_limit()
-                client = await self._get_client(country_code)
+                session = await self._get_session()
 
-                response = await client.get(url)
+                response = await session.get(
+                    url, headers=DEFAULT_HEADERS, timeout=10,
+                )
 
                 # Handle soft fails (retryable)
                 if response.status_code == 429:
@@ -265,11 +233,12 @@ class SofascoreProvider:
                     return None, "not_found"
 
                 if response.status_code == 403:
-                    # Could be geo-blocked or detected as bot
                     logger.warning(f"[SOFASCORE] Access denied (403) for event {event_id}")
                     return None, "access_denied"
 
-                response.raise_for_status()
+                if response.status_code != 200:
+                    logger.warning(f"[SOFASCORE] HTTP {response.status_code} for event {event_id}")
+                    return None, f"http_{response.status_code}"
 
                 # Parse JSON
                 try:
@@ -279,21 +248,12 @@ class SofascoreProvider:
                     logger.error(f"[SOFASCORE] JSON parse error for event {event_id}: {e}")
                     return None, "json_parse_error"
 
-            except httpx.TimeoutException:
-                delay = RETRY_DELAY_BASE * (2 ** attempt) + random.uniform(0, JITTER_MAX)
-                logger.warning(f"[SOFASCORE] Timeout for event {event_id}, attempt {attempt + 1}, waiting {delay:.1f}s")
-                await asyncio.sleep(delay)
-                continue
-
-            except httpx.RequestError as e:
-                delay = RETRY_DELAY_BASE * (2 ** attempt) + random.uniform(0, JITTER_MAX)
-                logger.warning(f"[SOFASCORE] Request error for event {event_id}: {e}, waiting {delay:.1f}s")
-                await asyncio.sleep(delay)
-                continue
-
             except Exception as e:
-                logger.error(f"[SOFASCORE] Unexpected error for event {event_id}: {e}")
-                return None, f"unexpected_error: {str(e)[:100]}"
+                err_type = type(e).__name__
+                delay = RETRY_DELAY_BASE * (2 ** attempt) + random.uniform(0, JITTER_MAX)
+                logger.warning(f"[SOFASCORE] {err_type} for event {event_id}: {e}, waiting {delay:.1f}s")
+                await asyncio.sleep(delay)
+                continue
 
         logger.warning(f"[SOFASCORE] Failed to fetch event {event_id} after {MAX_RETRIES} attempts")
         return None, "max_retries_exceeded"
@@ -809,12 +769,11 @@ class SofascoreProvider:
         }
 
     async def close(self) -> None:
-        """Close all open connections (including geo-proxy clients)."""
-        for key, client in self._clients.items():
-            await client.aclose()
-        n = len(self._clients)
-        self._clients.clear()
-        logger.debug("SofascoreProvider closed (%d clients)", n)
+        """Close the curl_cffi session."""
+        if self._session:
+            await self._session.close()
+            self._session = None
+            logger.debug("SofascoreProvider closed")
 
 
 # =============================================================================
