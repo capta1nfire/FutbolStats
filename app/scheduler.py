@@ -982,7 +982,7 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
 
             result = await session.execute(text("""
                 SELECT m.id, m.external_id, m.date, m.odds_home, m.odds_draw, m.odds_away,
-                       m.status, m.league_id,
+                       m.status, m.league_id, m.home_team_id, m.away_team_id,
                        mer.source_match_id AS sofascore_id,
                        EXTRACT(EPOCH FROM (m.date - NOW())) / 60 as minutes_to_kickoff
                 FROM matches m
@@ -1230,6 +1230,24 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                     home_formation = home_lineup.get("formation")
                     away_formation = away_lineup.get("formation")
 
+                    # ── Extract XI data for UPSERT (ATI directive) ──
+                    home_xi_ids = [p["id"] for p in home_xi]
+                    home_xi_names = [p["name"] for p in home_xi]
+                    home_xi_positions = [p.get("pos", "") for p in home_xi]
+                    away_xi_ids = [p["id"] for p in away_xi]
+                    away_xi_names = [p["name"] for p in away_xi]
+                    away_xi_positions = [p.get("pos", "") for p in away_xi]
+                    home_subs = home_lineup.get("substitutes", [])
+                    away_subs = away_lineup.get("substitutes", [])
+                    home_sub_ids = [p["id"] for p in home_subs]
+                    home_sub_names = [p["name"] for p in home_subs]
+                    away_sub_ids = [p["id"] for p in away_subs]
+                    away_sub_names = [p["name"] for p in away_subs]
+                    home_coach = home_lineup.get("coach") or {}
+                    away_coach = away_lineup.get("coach") or {}
+                    home_team_id = match.home_team_id
+                    away_team_id = match.away_team_id
+
                     async def _write_lineup_snapshot(
                         _mid=match_id, _sat=snapshot_at,
                         _oh=odds_home, _od=odds_draw, _oa=odds_away,
@@ -1238,6 +1256,14 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                         _dtk=delta_to_kickoff, _of=odds_freshness,
                         _hf=home_formation, _af=away_formation,
                         _lda=lineup_detected_at,
+                        # ── UPSERT params (ATI directive) ──
+                        _htid=home_team_id, _atid=away_team_id,
+                        _hxi_ids=home_xi_ids, _hxi_names=home_xi_names, _hxi_pos=home_xi_positions,
+                        _axi_ids=away_xi_ids, _axi_names=away_xi_names, _axi_pos=away_xi_positions,
+                        _hsub_ids=home_sub_ids, _hsub_names=home_sub_names,
+                        _asub_ids=away_sub_ids, _asub_names=away_sub_names,
+                        _hcoach_id=home_coach.get("id"), _hcoach_name=home_coach.get("name"),
+                        _acoach_id=away_coach.get("id"), _acoach_name=away_coach.get("name"),
                     ):
                         async with AsyncSessionLocal() as s:
                             # Lock match row first → stable lock order
@@ -1301,16 +1327,44 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                                     "recorded_at": _sat,
                                 })
 
-                            # UPDATE match_lineups
-                            await s.execute(text("""
-                                UPDATE match_lineups
-                                SET lineup_confirmed_at = COALESCE(lineup_confirmed_at, :confirmed_at),
-                                    lineup_detected_at = COALESCE(lineup_detected_at, :detected_at)
-                                WHERE match_id = :match_id
-                            """), {
-                                "match_id": _mid,
-                                "confirmed_at": _sat,
-                                "detected_at": _lda,
+                            # UPSERT match_lineups: home + away (ATI directive)
+                            _lineup_upsert_sql = text("""
+                                INSERT INTO match_lineups
+                                    (match_id, team_id, is_home, formation,
+                                     starting_xi_ids, starting_xi_names, starting_xi_positions,
+                                     substitutes_ids, substitutes_names,
+                                     coach_id, coach_name, source,
+                                     lineup_confirmed_at, lineup_detected_at)
+                                VALUES
+                                    (:match_id, :team_id, :is_home, :formation,
+                                     CAST(:xi_ids AS INTEGER[]), CAST(:xi_names AS VARCHAR[]),
+                                     CAST(:xi_positions AS VARCHAR[]),
+                                     CAST(:sub_ids AS INTEGER[]), CAST(:sub_names AS VARCHAR[]),
+                                     :coach_id, :coach_name, :source,
+                                     :confirmed_at, :detected_at)
+                                ON CONFLICT (match_id, team_id) DO UPDATE SET
+                                    lineup_confirmed_at = COALESCE(match_lineups.lineup_confirmed_at, EXCLUDED.lineup_confirmed_at),
+                                    lineup_detected_at = COALESCE(match_lineups.lineup_detected_at, EXCLUDED.lineup_detected_at)
+                            """)
+                            # Home team
+                            await s.execute(_lineup_upsert_sql, {
+                                "match_id": _mid, "team_id": _htid, "is_home": True,
+                                "formation": _hf,
+                                "xi_ids": _hxi_ids, "xi_names": _hxi_names, "xi_positions": _hxi_pos,
+                                "sub_ids": _hsub_ids, "sub_names": _hsub_names,
+                                "coach_id": _hcoach_id, "coach_name": _hcoach_name,
+                                "source": "lineup_monitoring",
+                                "confirmed_at": _sat, "detected_at": _lda,
+                            })
+                            # Away team
+                            await s.execute(_lineup_upsert_sql, {
+                                "match_id": _mid, "team_id": _atid, "is_home": False,
+                                "formation": _af,
+                                "xi_ids": _axi_ids, "xi_names": _axi_names, "xi_positions": _axi_pos,
+                                "sub_ids": _asub_ids, "sub_names": _asub_names,
+                                "coach_id": _acoach_id, "coach_name": _acoach_name,
+                                "source": "lineup_monitoring",
+                                "confirmed_at": _sat, "detected_at": _lda,
                             })
 
                             await s.commit()
