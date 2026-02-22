@@ -224,6 +224,10 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
   const pinnacle = parseProbabilitySet(raw.pinnacle);
   if (pinnacle) result.pinnacle = pinnacle;
 
+  // Optional: Autopsy tag (Financial Autopsy classification for FT matches)
+  const autopsyTag = raw.autopsy_tag ?? raw.autopsyTag;
+  if (typeof autopsyTag === "string") result.autopsyTag = autopsyTag;
+
   return result;
 }
 

@@ -2379,6 +2379,20 @@ async def get_matches_dashboard(
         column("pinnacle_home"), column("pinnacle_draw"), column("pinnacle_away"),
     ).subquery("market_odds")
 
+    # Autopsy tag per match (from post_match_audits via prediction_outcomes)
+    autopsy_subq = text("""
+        SELECT DISTINCT ON (po.match_id)
+            po.match_id,
+            pma.autopsy_tag
+        FROM prediction_outcomes po
+        JOIN post_match_audits pma ON pma.outcome_id = po.id
+        WHERE pma.autopsy_tag IS NOT NULL
+        ORDER BY po.match_id, po.audited_at DESC
+    """).columns(
+        column("match_id"),
+        column("autopsy_tag"),
+    ).subquery("autopsy")
+
     # Router-Aware: detect active Trifecta versions from DB (GDT directive)
     # - Baseline: is_active=True (single, used by startup loader)
     # - Overlay (TwoStage): latest by pattern (loaded independently)
@@ -2486,6 +2500,8 @@ async def get_matches_dashboard(
             func.max(odds_market_subq.c.pinnacle_home).label("pinnacle_home"),
             func.max(odds_market_subq.c.pinnacle_draw).label("pinnacle_draw"),
             func.max(odds_market_subq.c.pinnacle_away).label("pinnacle_away"),
+            # Autopsy tag (Financial Autopsy classification for FT matches)
+            func.max(autopsy_subq.c.autopsy_tag).label("autopsy_tag"),
         )
         .join(home_team, Match.home_team_id == home_team.id)
         .join(away_team, Match.away_team_id == away_team.id)
@@ -2498,6 +2514,7 @@ async def get_matches_dashboard(
         .outerjoin(ext_subq, ext_subq.c.match_id == Match.id)
         .outerjoin(family_s_subq, family_s_subq.c.match_id == Match.id)
         .outerjoin(odds_market_subq, odds_market_subq.c.match_id == Match.id)
+        .outerjoin(autopsy_subq, autopsy_subq.c.match_id == Match.id)
         .group_by(
             Match.id,
             Match.date,
@@ -2783,6 +2800,10 @@ async def get_matches_dashboard(
                 "draw": round(1 / row.pinnacle_draw, 3) if row.pinnacle_draw and row.pinnacle_draw > 0 else None,
                 "away": round(1 / row.pinnacle_away, 3) if row.pinnacle_away and row.pinnacle_away > 0 else None,
             }
+
+        # Autopsy tag (Financial Autopsy — only for FT matches with audit)
+        if getattr(row, "autopsy_tag", None):
+            match_data["autopsy_tag"] = row.autopsy_tag
 
         matches.append(match_data)
 

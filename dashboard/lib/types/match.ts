@@ -118,6 +118,8 @@ export interface MatchSummary {
   consensus?: ProbabilitySet;
   /** Pinnacle sharp benchmark (implied probs) */
   pinnacle?: ProbabilitySet;
+  /** Financial Autopsy tag (post-match classification) */
+  autopsyTag?: string;
 }
 
 /**
