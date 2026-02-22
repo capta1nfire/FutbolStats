@@ -333,7 +333,7 @@ QUERY_MODELS = f"""
             fp.home_prob AS fs_h, fp.draw_prob AS fs_d, fp.away_prob AS fs_a
         FROM predictions fp
         JOIN resolved r ON r.id = fp.match_id
-        WHERE fp.model_version = :family_s_version
+        WHERE fp.model_version LIKE '%%family_s%%'
           AND fp.created_at <= r.date
         ORDER BY fp.match_id, fp.created_at DESC
     ),
@@ -401,7 +401,6 @@ async def get_benchmark_matrix(
             "cutoff": cutoff,
             "model_versions": MODEL_VERSIONS,
             "shadow_version": SHADOW_VERSION,
-            "family_s_version": FAMILY_S_VERSION,
         },
     )
     model_rows = result_md.fetchall()

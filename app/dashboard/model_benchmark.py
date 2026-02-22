@@ -296,13 +296,13 @@ async def get_model_benchmark(
 
                     -- Family S raw probabilities (Tier 3 MTV model, from predictions table)
                     (SELECT p.home_prob FROM predictions p
-                     WHERE p.match_id = m.id AND p.model_version = :family_s_version
+                     WHERE p.match_id = m.id AND p.model_version LIKE '%%family_s%%'
                      ORDER BY p.created_at DESC LIMIT 1) as family_s_home_prob,
                     (SELECT p.draw_prob FROM predictions p
-                     WHERE p.match_id = m.id AND p.model_version = :family_s_version
+                     WHERE p.match_id = m.id AND p.model_version LIKE '%%family_s%%'
                      ORDER BY p.created_at DESC LIMIT 1) as family_s_draw_prob,
                     (SELECT p.away_prob FROM predictions p
-                     WHERE p.match_id = m.id AND p.model_version = :family_s_version
+                     WHERE p.match_id = m.id AND p.model_version LIKE '%%family_s%%'
                      ORDER BY p.created_at DESC LIMIT 1) as family_s_away_prob
 
                 FROM matches m
@@ -334,7 +334,6 @@ async def get_model_benchmark(
                 "include_shadow": include_shadow,
                 "include_sensor_b": include_sensor_b,
                 "include_family_s": include_family_s,
-                "family_s_version": "v2.0-tier3-family_s",
             }
         )
         rows = result.fetchall()

@@ -2336,7 +2336,7 @@ async def get_matches_dashboard(
             draw_prob AS family_s_draw,
             away_prob AS family_s_away
         FROM predictions
-        WHERE model_version = 'v2.0-tier3-family_s'
+        WHERE model_version LIKE '%family_s%'
         ORDER BY match_id, created_at DESC
     """).columns(
         column("match_id"),

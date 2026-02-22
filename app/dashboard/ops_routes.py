@@ -3950,6 +3950,15 @@ async def _calculate_sofascore_cron_health(session) -> dict:
         return {"status": "degraded"}
 
 
+def _get_fs_version() -> str:
+    try:
+        from app.ml.family_s import get_family_s_engine
+        e = get_family_s_engine()
+        return e.model_version if e else "not_loaded"
+    except Exception:
+        return "unknown"
+
+
 async def _calculate_family_s_hit_rate(session) -> dict:
     """Family S Hit Rate: proportion of predictions served by Family S vs fallback.
 
@@ -4022,7 +4031,7 @@ async def _calculate_family_s_hit_rate(session) -> dict:
     return {
         "status": status,
         "activated_at": "2026-02-21",
-        "model_version": "v2.1-tier3-family_s",
+        "model_version": _get_fs_version(),
         "active_leagues": FAMILY_S_LEAGUES,
         "hit_rate_7d_pct": hit_rate_7d,
         "hit_rate_30d_pct": hit_rate_30d,
