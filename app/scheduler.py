@@ -379,7 +379,6 @@ async def ensure_kickoff_predictions() -> dict:
     errors = []
 
     try:
-        from app.ml import XGBoostEngine
         from app.models import Prediction
 
         async with AsyncSessionLocal() as session:
@@ -450,10 +449,10 @@ async def ensure_kickoff_predictions() -> dict:
                 f"Generating now..."
             )
 
-            # Load ML engine
-            engine = XGBoostEngine()
-            if not engine.load_model():
-                logger.error("[KICKOFF-SAFETY] Could not load ML model")
+            # Use singleton ML engine (loaded from DB at startup)
+            from app.state import ml_engine as engine
+            if not engine.is_loaded:
+                logger.error("[KICKOFF-SAFETY] ML model not loaded")
                 return {"generated": 0, "error": "model_not_loaded"}
 
             # Get features ONLY for imminent matches (O(k) not O(N))
@@ -2045,7 +2044,6 @@ async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
     """
     import numpy as np
     from app.db_utils import upsert
-    from app.ml import XGBoostEngine
     from app.models import Prediction, Match
     from app.ml.shadow import is_shadow_enabled, log_shadow_prediction
     from app.ml.sensor import log_sensor_prediction
@@ -2085,13 +2083,13 @@ async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
         return elapsed_ms > TIME_BUDGET_MS
 
     try:
-        # Load ML engine (outside session - doesn't need DB)
-        engine = XGBoostEngine()
-        if not engine.load_model():
-            logger.error("[DAILY-SAVE] Could not load ML model")
+        # Use singleton ML engine (loaded from DB at startup)
+        from app.state import ml_engine as engine
+        if not engine.is_loaded:
+            logger.error("[DAILY-SAVE] ML model not loaded")
             record_job_run(job="daily_save_predictions", status="error", duration_ms=0)
             if return_metrics:
-                return {"status": "error", "error": "Could not load ML model", "n_matches_total": 0, "n_eligible": 0, "n_filtered": 0, "filtered_by_reason": {}, "duration_ms": 0}
+                return {"status": "error", "error": "ML model not loaded", "n_matches_total": 0, "n_eligible": 0, "n_filtered": 0, "filtered_by_reason": {}, "duration_ms": 0}
             return
 
         sensor_settings = get_settings()
@@ -2496,7 +2494,6 @@ async def prediction_gap_safety_net():
 
     try:
         from app.db_utils import upsert
-        from app.ml import XGBoostEngine
         from app.models import Prediction, Match
 
         async with AsyncSessionLocal() as session:
@@ -2529,10 +2526,10 @@ async def prediction_gap_safety_net():
 
             logger.info(f"[SAFETY-NET] Found {len(gaps)} matches without predictions in next {lookahead_hours}h")
 
-            # Load ML engine
-            engine = XGBoostEngine()
-            if not engine.load_model():
-                logger.error("[SAFETY-NET] Could not load ML model")
+            # Use singleton ML engine (loaded from DB at startup)
+            from app.state import ml_engine as engine
+            if not engine.is_loaded:
+                logger.error("[SAFETY-NET] ML model not loaded")
                 record_job_run(job=job_name, status="error", duration_ms=(time.time() - start_time) * 1000)
                 return {"status": "error", "error": "model_not_loaded"}
 
