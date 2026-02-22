@@ -94,8 +94,12 @@ export interface MatchSummary {
   market?: ProbabilitySet;
   /** Model A prediction (production model) */
   modelA?: ProbabilitySet;
+  /** Model A version (dynamic from DB) */
+  modelAVersion?: string;
   /** Shadow/Two-Stage prediction (experimental) */
   shadow?: ProbabilitySet;
+  /** Shadow model version (dynamic from DB) */
+  shadowVersion?: string;
   /** Sensor B prediction (calibration diagnostic) */
   sensorB?: ProbabilitySet;
   /** Experimental ext-A prediction */
@@ -108,6 +112,8 @@ export interface MatchSummary {
   extD?: ProbabilitySet;
   /** Family S prediction (Tier 3 MTV model) */
   familyS?: ProbabilitySet;
+  /** Family S model version (dynamic from DB) */
+  familySVersion?: string;
   /** Consensus market (median of de-vigged bookmakers, fair probs) */
   consensus?: ProbabilitySet;
   /** Pinnacle sharp benchmark (implied probs) */

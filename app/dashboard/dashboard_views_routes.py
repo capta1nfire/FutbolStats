@@ -2332,6 +2332,7 @@ async def get_matches_dashboard(
     family_s_subq = text("""
         SELECT DISTINCT ON (match_id)
             match_id,
+            model_version AS family_s_version,
             home_prob AS family_s_home,
             draw_prob AS family_s_draw,
             away_prob AS family_s_away
@@ -2340,6 +2341,7 @@ async def get_matches_dashboard(
         ORDER BY match_id, created_at DESC
     """).columns(
         column("match_id"),
+        column("family_s_version"),
         column("family_s_home"),
         column("family_s_draw"),
         column("family_s_away"),
@@ -2443,6 +2445,7 @@ async def get_matches_dashboard(
             func.max(latest_preds_subq.c.frozen_odds_draw).label("market_draw"),
             func.max(latest_preds_subq.c.frozen_odds_away).label("market_away"),
             # Shadow/Two-Stage prediction
+            func.max(ShadowPrediction.shadow_version).label("shadow_version"),
             func.max(ShadowPrediction.shadow_home_prob).label("shadow_home"),
             func.max(ShadowPrediction.shadow_draw_prob).label("shadow_draw"),
             func.max(ShadowPrediction.shadow_away_prob).label("shadow_away"),
@@ -2472,6 +2475,7 @@ async def get_matches_dashboard(
             func.max(ext_subq.c.ext_d_draw).label("ext_d_draw"),
             func.max(ext_subq.c.ext_d_away).label("ext_d_away"),
             # Family S (Tier 3 MTV model)
+            func.max(family_s_subq.c.family_s_version).label("family_s_version"),
             func.max(family_s_subq.c.family_s_home).label("family_s_home"),
             func.max(family_s_subq.c.family_s_draw).label("family_s_draw"),
             func.max(family_s_subq.c.family_s_away).label("family_s_away"),
@@ -2701,6 +2705,8 @@ async def get_matches_dashboard(
                 "draw": round(row.model_a_draw, 3),
                 "away": round(row.model_a_away, 3),
             }
+            if row.model_version:
+                match_data["model_a_version"] = row.model_version
 
         # Shadow/Two-Stage prediction
         if row.shadow_home is not None:
@@ -2709,6 +2715,8 @@ async def get_matches_dashboard(
                 "draw": round(row.shadow_draw, 3),
                 "away": round(row.shadow_away, 3),
             }
+            if row.shadow_version:
+                match_data["shadow_version"] = row.shadow_version
 
         # Sensor B prediction
         if row.sensor_b_home is not None:
@@ -2757,6 +2765,8 @@ async def get_matches_dashboard(
                 "draw": round(float(row.family_s_draw), 3),
                 "away": round(float(row.family_s_away), 3),
             }
+            if row.family_s_version:
+                match_data["family_s_version"] = row.family_s_version
 
         # Consensus odds (fair probs from median of de-vigged books)
         if row.consensus_home is not None:

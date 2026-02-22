@@ -106,19 +106,34 @@ const MODEL_TOOLTIPS: Record<string, string> = {
   "Market": "Frozen closing odds (de-vigged implied probabilities)",
   "Consensus": "Median of de-vigged bookmaker odds (fair market consensus)",
   "Pinnacle": "Pinnacle sharp line (implied probabilities)",
-  "Model A": "v1.0.1-league-only — baseline Two-Stage (18 features, league-routed)",
-  "Shadow": "v1.0.3-twostage-w3-fav — Two-Stage Fav/Underdog (3 odds features)",
   "Sensor B": "Sensor B — calibration diagnostic",
-  "Family S": "v2.1-tier3-family_s — Tier 3 MTV model (21 features)",
   "Ext A": "Experimental slot A",
   "Ext B": "Experimental slot B",
   "Ext C": "Experimental slot C",
   "Ext D": "Experimental slot D",
 };
 
-function ModelHeader({ label, stats }: { label: string; stats: ModelAccuracyStats }) {
+/** Extract dynamic model versions from the first match that has data for each model */
+function getDynamicTooltips(data: MatchSummary[]): Record<string, string> {
+  const tooltips: Record<string, string> = {};
+  for (const m of data) {
+    if (!tooltips["Model A"] && m.modelAVersion) {
+      tooltips["Model A"] = m.modelAVersion;
+    }
+    if (!tooltips["Shadow"] && m.shadowVersion) {
+      tooltips["Shadow"] = m.shadowVersion;
+    }
+    if (!tooltips["Family S"] && m.familySVersion) {
+      tooltips["Family S"] = m.familySVersion;
+    }
+    if (tooltips["Model A"] && tooltips["Shadow"] && tooltips["Family S"]) break;
+  }
+  return tooltips;
+}
+
+function ModelHeader({ label, stats, dynamicTooltip }: { label: string; stats: ModelAccuracyStats; dynamicTooltip?: string }) {
   const hasStats = stats.accuracy !== null && stats.total > 0;
-  const tooltipText = MODEL_TOOLTIPS[label];
+  const tooltipText = dynamicTooltip || MODEL_TOOLTIPS[label];
 
   return (
     <div className="flex items-center justify-center gap-1.5 leading-tight whitespace-nowrap">
@@ -313,6 +328,7 @@ export function MatchesTable({
 }: MatchesTableProps) {
   const { formatShortDate, formatTime } = useRegion();
   const modelAccuracies = useMemo(() => calculateModelAccuracies(data), [data]);
+  const dynamicTooltips = useMemo(() => getDynamicTooltips(data), [data]);
 
   // Sort: Live/HT first, then Scheduled, then FT/finished
   const sortedData = useMemo(() => {
@@ -324,7 +340,14 @@ export function MatchesTable({
     return [...data].sort((a, b) => {
       const oa = statusOrder[a.status] ?? 1;
       const ob = statusOrder[b.status] ?? 1;
-      return oa - ob;
+      if (oa !== ob) return oa - ob;
+      // Within live group: sort by elapsed descending (closest to FT first)
+      if (oa === 0) {
+        const ea = (a.elapsed?.min ?? 0) + (a.elapsed?.extra ?? 0);
+        const eb = (b.elapsed?.min ?? 0) + (b.elapsed?.extra ?? 0);
+        return eb - ea;
+      }
+      return 0;
     });
   }, [data]);
 
@@ -508,7 +531,7 @@ export function MatchesTable({
                     className="px-3 py-3 text-center font-semibold text-sm whitespace-nowrap"
                     style={{ minWidth: MODEL_COL_WIDTH }}
                   >
-                    <ModelHeader label="Model A" stats={modelAccuracies.modelA} />
+                    <ModelHeader label="Model A" stats={modelAccuracies.modelA} dynamicTooltip={dynamicTooltips["Model A"]} />
                   </th>
                 )}
                 {isVisible("shadow") && (
@@ -516,7 +539,7 @@ export function MatchesTable({
                     className="px-3 py-3 text-center font-semibold text-sm whitespace-nowrap"
                     style={{ minWidth: MODEL_COL_WIDTH }}
                   >
-                    <ModelHeader label="Shadow" stats={modelAccuracies.shadow} />
+                    <ModelHeader label="Shadow" stats={modelAccuracies.shadow} dynamicTooltip={dynamicTooltips["Shadow"]} />
                   </th>
                 )}
                 {isVisible("sensorB") && (
@@ -532,7 +555,7 @@ export function MatchesTable({
                     className="px-3 py-3 text-center font-semibold text-sm whitespace-nowrap"
                     style={{ minWidth: MODEL_COL_WIDTH }}
                   >
-                    <ModelHeader label="Family S" stats={modelAccuracies.familyS} />
+                    <ModelHeader label="Family S" stats={modelAccuracies.familyS} dynamicTooltip={dynamicTooltips["Family S"]} />
                   </th>
                 )}
                 {isVisible("extA") && (

@@ -181,10 +181,14 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
   // Optional: Model A prediction
   const modelA = parseProbabilitySet(raw.model_a);
   if (modelA) result.modelA = modelA;
+  const modelAVersion = raw.model_a_version ?? raw.modelAVersion;
+  if (typeof modelAVersion === "string") result.modelAVersion = modelAVersion;
 
   // Optional: Shadow/Two-Stage prediction
   const shadow = parseProbabilitySet(raw.shadow);
   if (shadow) result.shadow = shadow;
+  const shadowVersion = raw.shadow_version ?? raw.shadowVersion;
+  if (typeof shadowVersion === "string") result.shadowVersion = shadowVersion;
 
   // Optional: Sensor B prediction
   const sensorB = parseProbabilitySet(raw.sensor_b);
@@ -209,6 +213,8 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
   // Optional: Family S prediction (Tier 3 MTV model)
   const familyS = parseProbabilitySet(raw.familyS ?? raw.family_s);
   if (familyS) result.familyS = familyS;
+  const familySVersion = raw.family_s_version ?? raw.familySVersion;
+  if (typeof familySVersion === "string") result.familySVersion = familySVersion;
 
   // Optional: Consensus market (median of de-vigged bookmakers)
   const consensus = parseProbabilitySet(raw.consensus);
