@@ -2250,6 +2250,23 @@ class FeatureEngineer:
             from app.features.player_features import get_player_manager_defaults
             features.update(get_player_manager_defaults())
 
+        # === Elo K=10 + Momentum features (V1.2.0 Baseline) ===
+        try:
+            from app.features.elo_state import get_elo_state
+            elo_state = await get_elo_state(self.session)
+            h_state = elo_state.get(match.home_team_id, {})
+            a_state = elo_state.get(match.away_team_id, {})
+            features["elo_k10_diff"] = (
+                h_state.get("elo_k10", 1500) - a_state.get("elo_k10", 1500)
+            )
+            features["elo_momentum_diff"] = (
+                h_state.get("elo_momentum", 0.0) - a_state.get("elo_momentum", 0.0)
+            )
+        except Exception as e:
+            logger.warning(f"Elo state features failed for match {match.id}: {e}")
+            features["elo_k10_diff"] = 0.0
+            features["elo_momentum_diff"] = 0.0
+
         return features
 
     async def get_match_features_asof(
