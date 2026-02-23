@@ -2826,8 +2826,9 @@ async def get_matches_dashboard(
         _kelly_odds_away = row.market_away or getattr(row, "consensus_away", None) or getattr(row, "pinnacle_away", None)
         if row.status in ('NS', 'TBD') and row.model_a_home is not None and _kelly_odds_home is not None:
             from app.trading.kelly import enrich_value_bet_with_kelly
+            from app.trading.pipeline import KELLY_WHITELIST
             _ts = settings
-            if _ts.TRADING_KELLY_ENABLED:
+            if _ts.TRADING_KELLY_ENABLED and row.league_id in KELLY_WHITELIST:
                 _vbs = []
                 for outcome, prob, odds in [
                     ("home", row.model_a_home, _kelly_odds_home),
