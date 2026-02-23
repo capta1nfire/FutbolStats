@@ -137,6 +137,10 @@ export interface MatchSummary {
   autopsyTag?: string;
   /** Kelly-enriched value bets (Trading Core, only for NS matches) */
   valueBets?: ValueBet[];
+  /** VORP lineup shock applied (Sprint 3 — Glass House) */
+  vorpApplied?: boolean;
+  /** talent_delta_diff used for VORP shock adjustment */
+  talentDeltaDiff?: number;
 }
 
 /**

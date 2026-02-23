@@ -235,6 +235,10 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
     if (parsed.length > 0) result.valueBets = parsed;
   }
 
+  // Optional: VORP lineup shock metadata (Sprint 3 — Glass House)
+  if (raw.vorp_applied) result.vorpApplied = true;
+  if (typeof raw.talent_delta_diff === "number") result.talentDeltaDiff = raw.talent_delta_diff;
+
   return result;
 }
 

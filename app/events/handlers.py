@@ -337,9 +337,14 @@ async def cascade_handler(event: Event):
                     "draw_prob": probs["draw"],
                     "away_prob": probs["away"],
                     "asof_timestamp": asof,
+                    "vorp_applied": vorp_applied,
+                    "talent_delta_diff": talent_delta_result.get("talent_delta_diff") if talent_delta_result else None,
                 },
                 conflict_columns=["match_id", "model_version"],
-                update_columns=["home_prob", "draw_prob", "away_prob", "asof_timestamp"],
+                update_columns=[
+                    "home_prob", "draw_prob", "away_prob", "asof_timestamp",
+                    "vorp_applied", "talent_delta_diff",
+                ],
             )
             await session.commit()
 

@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import column, func, select, text
+from sqlalchemy import Integer, cast, column, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -2403,6 +2403,8 @@ async def get_matches_dashboard(
         (SELECT model_version FROM model_snapshots WHERE model_version LIKE '%%twostage%%' ORDER BY created_at DESC LIMIT 1)
         UNION
         (SELECT model_version FROM model_snapshots WHERE model_version LIKE '%%family_s%%' ORDER BY created_at DESC LIMIT 1)
+        UNION
+        (SELECT model_version FROM model_snapshots WHERE model_version LIKE '%%latam%%' ORDER BY created_at DESC LIMIT 1)
     """))
     active_versions = [row[0] for row in active_versions_result.fetchall()]
     if not active_versions:
@@ -2422,6 +2424,8 @@ async def get_matches_dashboard(
             Prediction.frozen_odds_away,
             Prediction.is_frozen,
             Prediction.frozen_at,
+            Prediction.vorp_applied,
+            Prediction.talent_delta_diff,
         )
         .where(Prediction.model_version.in_(active_versions) if active_versions else Prediction.id < 0)
         .distinct(Prediction.match_id)
@@ -2454,6 +2458,9 @@ async def get_matches_dashboard(
             func.max(latest_preds_subq.c.draw_prob).label("model_a_draw"),
             func.max(latest_preds_subq.c.away_prob).label("model_a_away"),
             func.max(latest_preds_subq.c.model_version).label("model_version"),
+            # VORP metadata (Sprint 3 — Glass House)
+            func.max(cast(latest_preds_subq.c.vorp_applied, Integer)).label("vorp_applied"),
+            func.max(latest_preds_subq.c.talent_delta_diff).label("talent_delta_diff"),
             # Market odds (frozen at prediction time)
             func.max(latest_preds_subq.c.frozen_odds_home).label("market_home"),
             func.max(latest_preds_subq.c.frozen_odds_draw).label("market_draw"),
@@ -2724,6 +2731,12 @@ async def get_matches_dashboard(
             }
             if row.model_version:
                 match_data["model_a_version"] = row.model_version
+
+        # VORP metadata (Sprint 3 — Glass House)
+        if getattr(row, "vorp_applied", 0):
+            match_data["vorp_applied"] = True
+            if getattr(row, "talent_delta_diff", None) is not None:
+                match_data["talent_delta_diff"] = round(row.talent_delta_diff, 4)
 
         # Shadow/Two-Stage prediction
         if row.shadow_home is not None:

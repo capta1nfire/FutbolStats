@@ -225,6 +225,10 @@ class Prediction(SQLModel, table=True):
         default=None, sa_column=Column(JSON), description="Value bets snapshot at freeze time"
     )
 
+    # VORP lineup shock metadata (Sprint 3 — Glass House)
+    vorp_applied: bool = Field(default=False, description="Whether VORP lineup shock was applied")
+    talent_delta_diff: Optional[float] = Field(default=None, description="talent_delta_diff used for VORP shock")
+
     # Relationships
     match: Optional[Match] = Relationship(back_populates="predictions")
 

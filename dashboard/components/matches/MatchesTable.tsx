@@ -7,7 +7,7 @@ import { TeamLogo } from "@/components/ui/team-logo";
 import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { Copy, ShieldAlert } from "lucide-react";
+import { Copy, Crosshair, ShieldAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRegion } from "@/components/providers/RegionProvider";
 import { getPredictionPick, getProbabilityCellClasses, computeGap20, type Outcome } from "@/lib/predictions";
@@ -313,6 +313,34 @@ function KellyBet({ vb }: { vb: ValueBet }) {
               {vb.stakeFlags!.map(f => FLAG_LABELS[f] || f).join(" · ")}
             </p>
           )}
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+// =============================================================================
+// VORP Shock Badge (Sprint 3 — Glass House)
+// =============================================================================
+
+function VorpBadge({ match }: { match: MatchSummary }) {
+  if (!match.vorpApplied) return null;
+  const diff = match.talentDeltaDiff;
+  const label = diff && diff > 0 ? "HOME+" : diff && diff < 0 ? "AWAY+" : "VORP";
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex items-center gap-0.5 rounded-full bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-violet-400">
+          <Crosshair className="h-3 w-3" />
+          {label}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" sideOffset={8}>
+        <div className="text-xs space-y-0.5">
+          <p>VORP Lineup Shock aplicado</p>
+          <p>talent_delta_diff: {diff?.toFixed(4) ?? "N/A"}</p>
+          <p className="text-violet-300">Probabilidades ajustadas a T-60</p>
         </div>
       </TooltipContent>
     </Tooltip>
@@ -953,12 +981,13 @@ export function MatchesTable({
                       </td>
                     )}
 
-                    {/* Kelly cell (Trading Core) */}
+                    {/* Kelly cell (Trading Core + VORP) */}
                     {isVisible("kelly") && (
                       <td className="px-2 py-2.5" style={{ minWidth: KELLY_COL_WIDTH }}>
-                        {match.valueBets && match.valueBets.length > 0 ? (
+                        {(match.vorpApplied || (match.valueBets && match.valueBets.length > 0)) ? (
                           <div className="flex flex-col gap-1">
-                            {match.valueBets.map((vb) => (
+                            <VorpBadge match={match} />
+                            {match.valueBets?.map((vb) => (
                               <KellyBet key={vb.outcome} vb={vb} />
                             ))}
                           </div>
