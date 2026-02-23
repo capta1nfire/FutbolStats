@@ -2805,6 +2805,36 @@ async def get_matches_dashboard(
         if getattr(row, "autopsy_tag", None):
             match_data["autopsy_tag"] = row.autopsy_tag
 
+        # Value bets + Kelly sizing (GDT Glass House)
+        # ABE: SOLO NS/TBD — nunca calcular Kelly para partidos históricos
+        if row.status in ('NS', 'TBD') and row.model_a_home is not None and row.market_home is not None:
+            from app.trading.kelly import enrich_value_bet_with_kelly
+            _ts = settings
+            if _ts.TRADING_KELLY_ENABLED:
+                _vbs = []
+                for outcome, prob, odds in [
+                    ("home", row.model_a_home, row.market_home),
+                    ("draw", row.model_a_draw, row.market_draw),
+                    ("away", row.model_a_away, row.market_away),
+                ]:
+                    if prob and odds and odds > 1.0:
+                        ev = (prob * odds) - 1.0
+                        if ev >= _ts.TRADING_MIN_EV:
+                            vb = enrich_value_bet_with_kelly(
+                                {"outcome": outcome, "our_probability": round(prob, 4),
+                                 "expected_value": round(ev, 4), "market_odds": round(float(odds), 3)},
+                                fraction=_ts.TRADING_KELLY_FRACTION,
+                                bankroll_units=_ts.TRADING_BANKROLL_UNITS,
+                                min_ev=_ts.TRADING_MIN_EV,
+                                high_odds_threshold=_ts.TRADING_MAX_ODDS_PENALTY_THRESHOLD,
+                                high_odds_factor=_ts.TRADING_MAX_ODDS_PENALTY_FACTOR,
+                                max_stake_pct=_ts.TRADING_MAX_STAKE_PCT,
+                            )
+                            if vb.get("suggested_stake", 0) > 0:
+                                _vbs.append(vb)
+                if _vbs:
+                    match_data["value_bets"] = _vbs
+
         matches.append(match_data)
 
     generated_at = datetime.utcnow().isoformat() + "Z"

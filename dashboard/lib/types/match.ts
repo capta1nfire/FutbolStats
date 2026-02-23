@@ -65,6 +65,21 @@ export interface MatchWeather {
   is_daylight: boolean | null;
 }
 
+/**
+ * Kelly-enriched value bet from Trading Core
+ */
+export interface ValueBet {
+  outcome: "home" | "draw" | "away";
+  ourProbability: number;
+  expectedValue: number;
+  marketOdds: number;
+  kellyRaw: number;
+  kellyFraction: number;
+  suggestedStake: number;
+  stakeUnits: number;
+  stakeFlags: string[] | null;
+}
+
 export interface MatchSummary {
   id: number;
   status: MatchStatus;
@@ -120,6 +135,8 @@ export interface MatchSummary {
   pinnacle?: ProbabilitySet;
   /** Financial Autopsy tag (post-match classification) */
   autopsyTag?: string;
+  /** Kelly-enriched value bets (Trading Core, only for NS matches) */
+  valueBets?: ValueBet[];
 }
 
 /**

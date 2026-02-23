@@ -5,7 +5,7 @@
  * Designed to be resilient to partial or malformed responses.
  */
 
-import { MatchSummary, MatchStatus, ProbabilitySet, MatchVenue, MatchWeather } from "@/lib/types";
+import { MatchSummary, MatchStatus, ProbabilitySet, MatchVenue, MatchWeather, ValueBet } from "@/lib/types";
 
 /**
  * Expected response structure from backend
@@ -228,6 +228,13 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
   const autopsyTag = raw.autopsy_tag ?? raw.autopsyTag;
   if (typeof autopsyTag === "string") result.autopsyTag = autopsyTag;
 
+  // Optional: Value bets with Kelly sizing (Trading Core, only for NS matches)
+  const rawVbs = raw.value_bets;
+  if (Array.isArray(rawVbs) && rawVbs.length > 0) {
+    const parsed = rawVbs.map(parseValueBet).filter((vb): vb is ValueBet => vb !== null);
+    if (parsed.length > 0) result.valueBets = parsed;
+  }
+
   return result;
 }
 
@@ -285,6 +292,26 @@ function parseWeather(raw: unknown): MatchWeather | null {
     precip_prob: typeof raw.precip_prob === "number" ? raw.precip_prob : null,
     cloudcover: typeof raw.cloudcover === "number" ? raw.cloudcover : null,
     is_daylight: typeof raw.is_daylight === "boolean" ? raw.is_daylight : null,
+  };
+}
+
+/**
+ * Parse a Kelly-enriched value bet from raw object
+ */
+function parseValueBet(raw: unknown): ValueBet | null {
+  if (!isObject(raw)) return null;
+  const outcome = raw.outcome;
+  if (outcome !== "home" && outcome !== "draw" && outcome !== "away") return null;
+  return {
+    outcome,
+    ourProbability: typeof raw.our_probability === "number" ? raw.our_probability : 0,
+    expectedValue: typeof raw.expected_value === "number" ? raw.expected_value : 0,
+    marketOdds: typeof raw.market_odds === "number" ? raw.market_odds : 0,
+    kellyRaw: typeof raw.kelly_raw === "number" ? raw.kelly_raw : 0,
+    kellyFraction: typeof raw.kelly_fraction === "number" ? raw.kelly_fraction : 0,
+    suggestedStake: typeof raw.suggested_stake === "number" ? raw.suggested_stake : 0,
+    stakeUnits: typeof raw.stake_units === "number" ? raw.stake_units : 0,
+    stakeFlags: Array.isArray(raw.stake_flags) ? raw.stake_flags : null,
   };
 }
 

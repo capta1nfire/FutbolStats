@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { Trophy, Activity, GitCompareArrows } from "lucide-react";
+import { Trophy, Activity, GitCompareArrows, TrendingUp } from "lucide-react";
 import { FilterPanel, FilterGroup } from "@/components/shell";
 import { DateRangePicker, type LocalDate } from "./DateRangePicker";
 import { MatchSummary, MatchStatus } from "@/lib/types";
@@ -43,6 +43,10 @@ interface MatchesFilterPanelProps {
   showCustomizeColumns?: boolean;
   /** Whether CustomizeColumnsPanel is open (hides collapse button) */
   customizeColumnsOpen?: boolean;
+  /** Whether "only value bets" filter is active */
+  showOnlyValueBets?: boolean;
+  /** Callback when value bet filter changes */
+  onValueBetFilterChange?: (checked: boolean) => void;
 }
 
 export function MatchesFilterPanel({
@@ -62,6 +66,8 @@ export function MatchesFilterPanel({
   onCustomizeColumnsClick,
   showCustomizeColumns = false,
   customizeColumnsOpen = false,
+  showOnlyValueBets = false,
+  onValueBetFilterChange,
 }: MatchesFilterPanelProps) {
   // Get unique leagues from current page matches
   const availableLeagues = useMemo(() => {
@@ -126,6 +132,16 @@ export function MatchesFilterPanel({
       ],
     });
 
+    // Trading filter (Kelly value bets)
+    groups.push({
+      id: "trading",
+      label: "Trading",
+      icon: <TrendingUp className="h-4 w-4" strokeWidth={1.5} />,
+      options: [
+        { id: "hasKelly", label: "Con Kelly activo", checked: showOnlyValueBets },
+      ],
+    });
+
     return groups;
   }, [
     availableLeagues,
@@ -133,6 +149,7 @@ export function MatchesFilterPanel({
     selectedDivergences,
     selectedLeagues,
     selectedStatuses,
+    showOnlyValueBets,
   ]);
 
   const handleFilterChange = (
@@ -146,6 +163,8 @@ export function MatchesFilterPanel({
       onLeagueChange(optionId, checked);
     } else if (groupId === "divergence") {
       onDivergenceChange(optionId as DivergenceCategory, checked);
+    } else if (groupId === "trading") {
+      onValueBetFilterChange?.(checked);
     }
   };
 

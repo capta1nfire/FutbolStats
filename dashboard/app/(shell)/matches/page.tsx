@@ -68,6 +68,12 @@ function MatchesPageContent() {
     [searchParams]
   );
 
+  // Parse value bet filter from URL
+  const showOnlyValueBets = useMemo(
+    () => searchParams.get("vb") === "1",
+    [searchParams]
+  );
+
   // Parse selected date from URL as LocalDate string
   const selectedDate = useMemo((): LocalDate => {
     const dateParam = searchParams.get("date");
@@ -182,8 +188,13 @@ function MatchesPageContent() {
       });
     }
 
+    // Filter by value bets (Trading toggle)
+    if (showOnlyValueBets) {
+      filtered = filtered.filter((m) => m.valueBets && m.valueBets.length > 0);
+    }
+
     return filtered;
-  }, [rawMatches, filters.leagues, filters.search, selectedDivergences]);
+  }, [rawMatches, filters.leagues, filters.search, selectedDivergences, showOnlyValueBets]);
 
   // Find selected match from current list first (no extra fetch needed for basic info)
   // Falls back to backend match lookup, then mock data if needed
@@ -216,6 +227,7 @@ function MatchesPageContent() {
       div?: DivergenceCategory[];
       q?: string;
       date?: LocalDate;
+      vb?: boolean;
     }) => {
       const params = buildSearchParams({
         id: overrides.id === undefined ? selectedMatchId : overrides.id,
@@ -225,10 +237,13 @@ function MatchesPageContent() {
         div: overrides.div ?? selectedDivergences,
         q: overrides.q ?? searchValue,
       });
+      // Value bet filter (Trading)
+      const vbFlag = overrides.vb ?? showOnlyValueBets;
+      if (vbFlag) params.set("vb", "1");
       const search = params.toString();
       return `${BASE_PATH}${search ? `?${search}` : ""}`;
     },
-    [selectedMatchId, selectedDate, selectedStatuses, selectedLeagues, selectedDivergences, searchValue]
+    [selectedMatchId, selectedDate, selectedStatuses, selectedLeagues, selectedDivergences, searchValue, showOnlyValueBets]
   );
 
   // Handle row click - update URL with router.replace (no history entry)
@@ -289,6 +304,15 @@ function MatchesPageContent() {
     [router, buildUrl]
   );
 
+  // Handle value bet filter (Trading toggle)
+  const handleValueBetFilterChange = useCallback(
+    (checked: boolean) => {
+      setCurrentPage(1);
+      router.replace(buildUrl({ vb: checked }), { scroll: false });
+    },
+    [router, buildUrl]
+  );
+
   // Handle "Customize Columns" link click
   const handleCustomizeColumnsClick = useCallback(() => {
     setCustomizeColumnsOpen(true);
@@ -328,6 +352,8 @@ function MatchesPageContent() {
         showCustomizeColumns={true}
         onCustomizeColumnsClick={handleCustomizeColumnsClick}
         customizeColumnsOpen={customizeColumnsOpen}
+        showOnlyValueBets={showOnlyValueBets}
+        onValueBetFilterChange={handleValueBetFilterChange}
       />
 
       {/* Customize Columns Panel (separate column, hidden when Left Rail collapsed) */}

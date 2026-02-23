@@ -1,13 +1,13 @@
 "use client";
 
 import { useMemo, useCallback } from "react";
-import { MatchSummary, MatchScore, ProbabilitySet, MatchStatus } from "@/lib/types";
+import { MatchSummary, MatchScore, ProbabilitySet, MatchStatus, ValueBet } from "@/lib/types";
 import { StatusDot } from "./StatusDot";
 import { TeamLogo } from "@/components/ui/team-logo";
 import { Loader } from "@/components/ui/loader";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { Copy } from "lucide-react";
+import { Copy, ShieldAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRegion } from "@/components/providers/RegionProvider";
 import { getPredictionPick, getProbabilityCellClasses, computeGap20, type Outcome } from "@/lib/predictions";
@@ -271,6 +271,55 @@ function ProbabilityCell({ probs, outcome, compact = false }: ProbabilityCellPro
 }
 
 // =============================================================================
+// Kelly Bet Badge (Trading Core — GDT Glass House)
+// =============================================================================
+
+const FLAG_LABELS: Record<string, string> = {
+  "MIN_EV_REJECTED": "EV insuficiente",
+  "HIGH_ODDS_PENALTY": "Penalización cuota alta",
+  "MAX_MATCH_CAP_APPLIED": "Cap de partido",
+};
+
+function KellyBet({ vb }: { vb: ValueBet }) {
+  const label = vb.outcome === "home" ? "1" : vb.outcome === "draw" ? "X" : "2";
+  const evPct = (vb.expectedValue * 100).toFixed(1);
+  const hasFlags = vb.stakeFlags && vb.stakeFlags.length > 0;
+
+  const colorClass = vb.suggestedStake === 0
+    ? "bg-slate-500/10 text-slate-400 border-slate-500/20"
+    : vb.expectedValue >= 0.20
+    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+    : "bg-amber-500/15 text-amber-400 border-amber-500/30";
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={cn(
+          "inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-semibold rounded border",
+          colorClass
+        )}>
+          {hasFlags && <ShieldAlert className="h-2.5 w-2.5" />}
+          {label} {evPct}% · {vb.stakeUnits}U
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" sideOffset={8}>
+        <div className="text-xs space-y-0.5">
+          <p>EV: {evPct}% | Odds: {vb.marketOdds}</p>
+          <p>Kelly bruto: {(vb.kellyRaw * 100).toFixed(2)}%</p>
+          <p>Kelly fracción: {(vb.kellyFraction * 100).toFixed(2)}%</p>
+          <p className="font-semibold">Stake: {vb.stakeUnits} unidades</p>
+          {hasFlags && (
+            <p className="text-amber-400">
+              {vb.stakeFlags!.map(f => FLAG_LABELS[f] || f).join(" · ")}
+            </p>
+          )}
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+// =============================================================================
 // Column Options (for external use)
 // =============================================================================
 
@@ -295,6 +344,7 @@ export const MATCHES_COLUMN_OPTIONS: ColumnOption[] = [
   { id: "extB", label: "Ext B", enableHiding: true },
   { id: "extC", label: "Ext C", enableHiding: true },
   { id: "extD", label: "Ext D", enableHiding: true },
+  { id: "kelly", label: "Kelly", enableHiding: true },
 ];
 
 export const MATCHES_DEFAULT_VISIBILITY: VisibilityState = {};
@@ -311,6 +361,7 @@ const KICKOFF_COL_WIDTH = 100;
 const SCORE_COL_WIDTH = 80;
 const ELAPSED_COL_WIDTH = 80;
 const MODEL_COL_WIDTH = 140;
+const KELLY_COL_WIDTH = 130;
 
 interface MatchesTableProps {
   data: MatchSummary[];
@@ -383,6 +434,7 @@ export function MatchesTable({
     if (isVisible("extB")) w += MODEL_COL_WIDTH;
     if (isVisible("extC")) w += MODEL_COL_WIDTH;
     if (isVisible("extD")) w += MODEL_COL_WIDTH;
+    if (isVisible("kelly")) w += KELLY_COL_WIDTH;
     return w;
   }, [columnVisibility]);
 
@@ -449,6 +501,7 @@ export function MatchesTable({
               {isVisible("extB") && <col style={{ width: MODEL_COL_WIDTH }} />}
               {isVisible("extC") && <col style={{ width: MODEL_COL_WIDTH }} />}
               {isVisible("extD") && <col style={{ width: MODEL_COL_WIDTH }} />}
+              {isVisible("kelly") && <col style={{ width: KELLY_COL_WIDTH }} />}
             </colgroup>
 
             {/* Sticky header */}
@@ -598,6 +651,14 @@ export function MatchesTable({
                     style={{ minWidth: MODEL_COL_WIDTH }}
                   >
                     <ModelHeader label="Ext D" stats={modelAccuracies.extD} />
+                  </th>
+                )}
+                {isVisible("kelly") && (
+                  <th
+                    className="px-3 py-3 text-center font-semibold text-muted-foreground text-sm whitespace-nowrap"
+                    style={{ minWidth: KELLY_COL_WIDTH }}
+                  >
+                    Kelly
                   </th>
                 )}
               </tr>
@@ -889,6 +950,21 @@ export function MatchesTable({
                     {isVisible("extD") && (
                       <td className="px-3 py-2.5 text-center" style={{ minWidth: MODEL_COL_WIDTH }}>
                         <ProbabilityCell probs={match.extD} outcome={outcome} compact={compactPredictions} />
+                      </td>
+                    )}
+
+                    {/* Kelly cell (Trading Core) */}
+                    {isVisible("kelly") && (
+                      <td className="px-2 py-2.5" style={{ minWidth: KELLY_COL_WIDTH }}>
+                        {match.valueBets && match.valueBets.length > 0 ? (
+                          <div className="flex flex-col gap-1">
+                            {match.valueBets.map((vb) => (
+                              <KellyBet key={vb.outcome} vb={vb} />
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-xs text-center block">—</span>
+                        )}
                       </td>
                     )}
                   </tr>
