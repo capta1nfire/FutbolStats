@@ -59,6 +59,12 @@ MTV_FEATURES = [
     "talent_delta_diff", "shock_magnitude",
 ]
 
+SOTA_FEATURES = [
+    "xg_luck_residual_home", "xg_luck_residual_away", "xg_luck_residual_diff",
+    "syndicate_steam_mtv_home", "syndicate_steam_mtv_away",
+    "allostatic_load_home", "allostatic_load_away", "allostatic_load_diff"
+]
+
 # ─── Hyperparameters (exact production values) ─────────────────────────────────
 
 # TwoStage Stage 1 (production v1.0.3)
@@ -335,12 +341,45 @@ def main():
         for col in MTV_FEATURES:
             df[col] = np.nan
 
+    # ── 2.5 Compute SOTA Features ─────────────────────────────
+    print(f"\n[2.5] Computing SOTA Brier-Squeeze Features...")
+    
+    # A. xG Luck Residuals (The Theorem of Regression)
+    df["xg_luck_residual_home"] = (df["home_goals_scored_avg"] - df["home_xg_for_avg"]) - (df["home_goals_conceded_avg"] - df["home_xg_against_avg"])
+    df["xg_luck_residual_away"] = (df["away_goals_scored_avg"] - df["away_xg_for_avg"]) - (df["away_goals_conceded_avg"] - df["away_xg_against_avg"])
+    df["xg_luck_residual_diff"] = df["xg_luck_residual_home"] - df["xg_luck_residual_away"]
+    
+    # B. Syndicate Steam vs MTV (Smart Money Cross)
+    # Steam: opening probability - closing probability. Positive means money flowed IN (prob went up).
+    # Need to handle potential division by zero or missing open odds
+    steam_home = np.where(df["odds_home_open"].notna() & (df["odds_home_open"] > 0),
+                          (1.0 / df["odds_home_close"].fillna(df["odds_home"])) - (1.0 / df["odds_home_open"]), 0.0)
+    steam_away = np.where(df["odds_away_open"].notna() & (df["odds_away_open"] > 0),
+                          (1.0 / df["odds_away_close"].fillna(df["odds_away"])) - (1.0 / df["odds_away_open"]), 0.0)
+    
+    df["syndicate_steam_mtv_home"] = steam_home * df["home_talent_delta"].fillna(0)
+    df["syndicate_steam_mtv_away"] = steam_away * df["away_talent_delta"].fillna(0)
+    
+    # C. Non-Linear Allostatic Load (Compound Fatigue Tensor)
+    # Avoid exp overflow by capping rest days at a reasonable number (e.g., 14)
+    capped_rest_home = np.clip(df["home_rest_days"], 0, 14)
+    capped_rest_away = np.clip(df["away_rest_days"], 0, 14)
+    alt_home = df["altitude_home_m"].fillna(0)
+    travel = df["travel_distance_km"].fillna(0)
+    
+    # Away team bears the travel and altitude change
+    df["allostatic_load_away"] = (travel * (1 + (alt_home / 1000.0))) / np.exp(capped_rest_away)
+    # Home team bears no travel, but lack of rest still hurts
+    df["allostatic_load_home"] = 1.0 / np.exp(capped_rest_home)
+    df["allostatic_load_diff"] = df["allostatic_load_home"] - df["allostatic_load_away"]
+
     # ── 3. Build feature matrix ───────────────────────────────
     all_features = set()
     for t in Y_GRID:
         all_features.update(t["features"])
     all_features.update(FEATURES_3_ODDS)
     all_features.update(MTV_FEATURES)
+    all_features.update(SOTA_FEATURES)
     all_features.update(["market_div_abs", "market_div_sign",
                          "market_div_home", "market_div_away"])
 
@@ -493,6 +532,50 @@ def main():
             }
             print(f"    Brier={y9_brier:.5f}, Y0_mtv={y0_mtv_brier:.5f}, "
                   f"Δ={y9_delta:+.5f}")
+            
+            # ── 9.5 Y10: SOTA Experimento ─────────────────────────────
+            y10_raw = y9_raw + SOTA_FEATURES
+            y10_features = []
+            seen_y10 = set()
+            for f in y10_raw:
+                if f not in seen_y10:
+                    y10_features.append(f)
+                    seen_y10.add(f)
+                    
+            print(f"\n[6.5] Y10: SOTA Brier Squeeze ({len(y10_features)}f, onestage_optuna)")
+            print(f"      Composition: Y9 ({len(y9_features)}f) + SOTA({len(SOTA_FEATURES)})")
+            
+            feat_idx_y10 = [feature_cols.index(f) for f in y10_features]
+            probs_y10 = []
+            briers_y10 = []
+            for seed_i in range(N_SEEDS):
+                seed = seed_i * 42 + 7
+                p = train_onestage(X_tr_y9[:, feat_idx_y10], y_tr_y9,
+                                   X_te_y9[:, feat_idx_y10], PARAMS_OPTUNA,
+                                   seed=seed)
+                probs_y10.append(p)
+                briers_y10.append(calculate_brier(y_te_y9, p))
+                
+            y10_ensemble = np.mean(probs_y10, axis=0)
+            y10_brier = calculate_brier(y_te_y9, y10_ensemble)
+            y10_delta = y10_brier - y0_mtv_brier
+            y10_ci = bootstrap_paired_delta(y_te_y9, y0_mtv_ensemble, y10_ensemble)
+            
+            results["Y10"] = {
+                "brier": y10_brier,
+                "brier_mean": float(np.mean(briers_y10)),
+                "brier_std": float(np.std(briers_y10)),
+                "delta": y10_delta,
+                "delta_ci95": list(y10_ci),
+                "n_features": len(y10_features),
+                "features": y10_features,
+                "n_train_mtv": len(X_tr_y9),
+                "n_test_mtv": len(X_te_y9),
+                "y0_mtv_brier": y0_mtv_brier,
+                "source_fundamental": best_a_id,
+                "source_market": best_b_id,
+            }
+            print(f"      Brier={y10_brier:.5f}, Y0_mtv={y0_mtv_brier:.5f}, Δ={y10_delta:+.5f}")
     else:
         print(f"\n[6] Y9: SKIPPED (no MTV data)")
 
@@ -508,6 +591,8 @@ def main():
     ordered = ["Y0", "Y1", "Y2", "Y5", "Y6", "Y7", "Y8", "Y3", "Y4"]
     if "Y9" in results:
         ordered.append("Y9")
+    if "Y10" in results:
+        ordered.append("Y10")
 
     for tid in ordered:
         res = results[tid]
@@ -522,6 +607,10 @@ def main():
             track = "A"
             nf = len(y8_features)
         elif tid == "Y9":
+            arch = "os_optuna"
+            track = "C"
+            nf = res["n_features"]
+        elif tid == "Y10":
             arch = "os_optuna"
             track = "C"
             nf = res["n_features"]
@@ -542,12 +631,14 @@ def main():
         else:
             sig = "ns"
 
-        # Special annotation for Y8 and Y9
+        # Special annotation for Y8, Y9, Y10
         suffix = ""
         if tid == "Y8":
             suffix = f" ← {best_a_id}"
         elif tid == "Y9":
             suffix = f" (mtv N={res.get('n_test_mtv', '?')})"
+        elif tid == "Y10":
+            suffix = f" (mtv N={res.get('n_test_mtv', '?')}) [SOTA]"
 
         print(f"  {tid:<6} {track:<3} {arch:<12} {nf:>3} "
               f"{res['brier']:>8.5f} {delta:>+8.5f} "
