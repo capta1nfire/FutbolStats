@@ -21,8 +21,9 @@ logger = logging.getLogger(__name__)
 # ─── Kelly Whitelist ──────────────────────────────────────────────────────────
 # Only leagues with demonstrated alpha (Sprint 1 results) get Kelly stakes.
 # Format: comma-separated league IDs in env var, or hardcoded default.
-# Default: {265: Chile +4.0%, 128: Argentina +1.0%, 242: Ecuador +1.0%}
-_KELLY_WHITELIST_DEFAULT = {265, 128, 242}
+# Default: {265: Chile, 128: Argentina, 242: Ecuador, 239: Colombia, 250: Paraguay}
+# Sprint 2 expansion: Colombia (+6.18% VORP skill) and Paraguay (+10.03%) added.
+_KELLY_WHITELIST_DEFAULT = {128, 239, 242, 250, 265}
 
 def _parse_kelly_whitelist() -> set[int]:
     """Parse KELLY_WHITELIST env var or return default."""

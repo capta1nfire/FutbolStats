@@ -71,6 +71,7 @@ async def cascade_handler(event: Event):
         from app.ml.policy import apply_market_anchor, get_policy_config
         from app.ml.league_router import get_prediction_strategy
         from app.ml.family_s import is_family_s_loaded, get_family_s_engine
+        from app.ml.vorp_policy import apply_lineup_shock
         from app.config import get_settings
 
         # ── Step 1: Validate match is still NS and prediction is not frozen ──
@@ -184,11 +185,33 @@ async def cascade_handler(event: Event):
                     f"falling back to baseline"
                 )
 
-        # ── Step 4b: Select engine (Family S for T3 + MTV, else baseline) ──
+        # ── Step 4b: Select engine (LATAM / Family S / baseline) ─────────
         prediction_engine = engine  # baseline SSOT (default)
         used_family_s = False
+        used_latam = False
 
-        if (strategy["inject_mtv"]
+        # LATAM engine priority for LATAM leagues (Sprint 2 Camino B)
+        from app.ml.latam_serving import (
+            is_latam_league, is_latam_loaded, get_latam_engine,
+            compute_geo_features,
+        )
+        if is_latam_league(league_id) and is_latam_loaded():
+            latam_eng = get_latam_engine()
+            if latam_eng:
+                # Add geo features for LATAM engine (18f = 16f + 2 geo)
+                home_tid = df_match["home_team_id"].iloc[0] if "home_team_id" in df_match.columns else None
+                away_tid = df_match["away_team_id"].iloc[0] if "away_team_id" in df_match.columns else None
+                if home_tid and away_tid:
+                    geo = compute_geo_features(int(home_tid), int(away_tid))
+                    df_match["altitude_diff_m"] = geo["altitude_diff_m"]
+                    df_match["travel_distance_km"] = geo["travel_distance_km"]
+                prediction_engine = latam_eng
+                used_latam = True
+                logger.info(
+                    f"[CASCADE] Using LATAM engine for match {match_id} "
+                    f"(league={league_id}, v1.3.0)"
+                )
+        elif (strategy["inject_mtv"]
                 and talent_delta_result
                 and is_family_s_loaded()
                 and "odds_home" in df_match.columns
@@ -202,18 +225,19 @@ async def cascade_handler(event: Event):
                     f"(odds + MTV available)"
                 )
 
-        # ── Step 4c: Predict (steel degradation on Family S failure) ─────
+        # ── Step 4c: Predict (steel degradation on Family S/LATAM failure) ─
         try:
             predictions = prediction_engine.predict(df_match)
         except Exception as pred_err:
-            if used_family_s:
+            if used_family_s or used_latam:
                 logger.warning(
-                    f"[CASCADE] Family S predict failed for match {match_id}: {pred_err}, "
-                    f"falling back to baseline"
+                    f"[CASCADE] {'LATAM' if used_latam else 'Family S'} predict failed "
+                    f"for match {match_id}: {pred_err}, falling back to baseline"
                 )
                 predictions = engine.predict(df_match)
                 prediction_engine = engine
                 used_family_s = False
+                used_latam = False
             else:
                 raise
 
@@ -269,6 +293,27 @@ async def cascade_handler(event: Event):
         except Exception as e:
             logger.warning(f"[CASCADE] line_movement failed for match {match_id}: {e}")
 
+        # ── Step 5c: VORP lineup shock for LATAM (Camino B — Sprint 2) ──────
+        # Order: base prediction → VORP shock → market anchor → Kelly
+        vorp_applied = False
+        if used_latam and talent_delta_result:
+            td_diff = talent_delta_result.get("talent_delta_diff")
+            if td_diff is not None and td_diff != 0:
+                probs_pre = predictions[0]["probabilities"]
+                probs_post = apply_lineup_shock(probs_pre, td_diff)
+                # Only apply if shock actually changed something
+                if probs_post != probs_pre:
+                    predictions[0]["probabilities"] = probs_post
+                    vorp_applied = True
+                    from app.ml.vorp_policy import VORP_BETA
+                    logger.info(
+                        f"[CASCADE] VORP SHOCK match_id={match_id}: "
+                        f"td_diff={td_diff:.4f} β={VORP_BETA:.4f} "
+                        f"H {probs_pre['home']:.4f}→{probs_post['home']:.4f} "
+                        f"D {probs_pre['draw']:.4f}→{probs_post['draw']:.4f} "
+                        f"A {probs_pre['away']:.4f}→{probs_post['away']:.4f}"
+                    )
+
         # ── Step 6: Apply Market Anchor with fresh odds ──────────────────────
         policy_cfg = get_policy_config()
         anchored, anchor_meta = apply_market_anchor(
@@ -309,6 +354,8 @@ async def cascade_handler(event: Event):
             f"H={probs['home']:.4f} D={probs['draw']:.4f} A={probs['away']:.4f} "
             f"model={prediction_engine.model_version} "
             f"family_s={'YES' if used_family_s else 'NO'} "
+            f"latam={'YES' if used_latam else 'NO'} "
+            f"vorp={'YES' if vorp_applied else 'NO'} "
             f"asof={asof.isoformat()} "
             f"mtv={mtv_status} "
             f"lm={'OK' if line_movement and line_movement.get('line_drift_magnitude') is not None else 'SKIP'} "
