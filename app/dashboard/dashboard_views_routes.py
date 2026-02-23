@@ -2807,15 +2807,19 @@ async def get_matches_dashboard(
 
         # Value bets + Kelly sizing (GDT Glass House)
         # ABE: SOLO NS/TBD — nunca calcular Kelly para partidos históricos
-        if row.status in ('NS', 'TBD') and row.model_a_home is not None and row.market_home is not None:
+        # Odds source: frozen_odds (post-freeze) → consensus → pinnacle
+        _kelly_odds_home = row.market_home or getattr(row, "consensus_home", None) or getattr(row, "pinnacle_home", None)
+        _kelly_odds_draw = row.market_draw or getattr(row, "consensus_draw", None) or getattr(row, "pinnacle_draw", None)
+        _kelly_odds_away = row.market_away or getattr(row, "consensus_away", None) or getattr(row, "pinnacle_away", None)
+        if row.status in ('NS', 'TBD') and row.model_a_home is not None and _kelly_odds_home is not None:
             from app.trading.kelly import enrich_value_bet_with_kelly
             _ts = settings
             if _ts.TRADING_KELLY_ENABLED:
                 _vbs = []
                 for outcome, prob, odds in [
-                    ("home", row.model_a_home, row.market_home),
-                    ("draw", row.model_a_draw, row.market_draw),
-                    ("away", row.model_a_away, row.market_away),
+                    ("home", row.model_a_home, _kelly_odds_home),
+                    ("draw", row.model_a_draw, _kelly_odds_draw),
+                    ("away", row.model_a_away, _kelly_odds_away),
                 ]:
                     if prob and odds and odds > 1.0:
                         ev = (prob * odds) - 1.0
