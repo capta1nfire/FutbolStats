@@ -25,6 +25,8 @@ import numpy as np
 import pandas as pd
 import xgboost as xgb
 from sklearn.metrics import brier_score_loss
+from scipy.stats import poisson
+from scipy.optimize import minimize
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -160,6 +162,106 @@ Y_GRID = [
 
 # ─── Utilities ─────────────────────────────────────────────────────────────────
 
+def generate_dixon_coles_logits(xg_home: np.ndarray, xg_away: np.ndarray, rho: float = 0.13) -> np.ndarray:
+    """
+    Transforma proyecciones continuas de xG en Logits espaciales de 1X2.
+    Incluye el Corrector Topológico de Dixon-Coles (rho) para los empates.
+    """
+    N = len(xg_home)
+    base_logits = np.zeros((N, 3))
+    max_goals = 10 # Truncamiento seguro de la cola
+    k = np.arange(max_goals)
+    
+    for i in range(N):
+        lam_H, lam_A = xg_home[i], xg_away[i]
+        if pd.isna(lam_H) or pd.isna(lam_A):
+            lam_H, lam_A = 1.0, 1.0 # fallback fallback if nan
+            
+        # 1. Matriz de probabilidad conjunta (Independencia Poissoniana)
+        P_H = poisson.pmf(k, lam_H)
+        P_A = poisson.pmf(k, lam_A)
+        matrix = np.outer(P_H, P_A)
+        
+        # 2. Corrección SOTA de Dixon-Coles (El Asesino de Empates)
+        matrix[0,0] *= max(0, 1 - lam_H * lam_A * rho)
+        matrix[1,0] *= max(0, 1 + lam_H * rho)
+        matrix[0,1] *= max(0, 1 + lam_A * rho)
+        matrix[1,1] *= max(0, 1 - rho)
+        
+        # 3. Suma de topologías al Simplex 1X2
+        p_home = np.tril(matrix, -1).sum()
+        p_draw = np.trace(matrix)
+        p_away = np.triu(matrix, 1).sum()
+        
+        # 4. Normalización estricta (corrige el truncamiento > max_goals)
+        p_1x2 = np.array([p_home, p_draw, p_away])
+        sum_p = np.sum(p_1x2)
+        if sum_p > 0:
+            p_1x2 /= sum_p
+        else:
+            p_1x2 = np.array([0.33, 0.34, 0.33]) # fallback
+            
+        # 5. Transformación Acotada a Espacio Log-Odds
+        p_1x2 = np.clip(p_1x2, 1e-7, 1.0 - 1e-7)
+        base_logits[i] = np.log(p_1x2)
+        
+    return base_logits
+
+def extract_shin_probabilities(odds_1x2: np.ndarray) -> np.ndarray:
+    """
+    Resuelve el sistema estocástico de Shin para extraer la probabilidad verdadera.
+    odds_1x2: array de shape (N, 3) con cuotas decimales [Local, Empate, Visitante].
+    """
+    N = odds_1x2.shape[0]
+    true_probs = np.zeros((N, 3))
+    
+    for i in range(N):
+        # Prevent division by zero and handle missing data
+        if np.any(np.isnan(odds_1x2[i])) or np.any(odds_1x2[i] <= 0):
+            true_probs[i] = np.array([0.33, 0.34, 0.33])
+            continue
+            
+        implied = 1.0 / odds_1x2[i]
+        sum_pi = np.sum(implied)
+        
+        if sum_pi <= 1.005: # Mercado hiper-eficiente (Exchange) sin vig
+            true_probs[i] = implied / sum_pi
+            continue
+            
+        def shin_loss(params):
+            z, c = params # z: % Dinero Sharp, c: Factor de retención del Bookie
+            if z < 0 or z >= 1 or c <= 0: return 1e6
+            
+            # Ecuación de Shin para probabilidad verdadera
+            discriminant = z**2 + 4 * (1 - z) * implied / c
+            if np.any(discriminant < 0): return 1e6
+                
+            p = (np.sqrt(discriminant) - z) / (2 * (1 - z))
+            
+            # Restricciones: Suma(P_verdaderas) = 1.0, y reconciliación del Vig
+            loss1 = (np.sum(p) - 1.0)**2
+            loss2 = (np.sum(implied) - c * (z + (1 - z) * np.sum(p**2)))**2
+            return loss1 + loss2
+
+        # Optimizamos Z y C simultáneamente
+        res = minimize(shin_loss, x0=[0.02, 1.05], bounds=[(0.001, 0.5), (0.1, 2.0)])
+        z_opt, c_opt = res.x
+        
+        # Calculate clean probabilities based on optimal parameters
+        discriminant = z_opt**2 + 4 * (1 - z_opt) * implied / c_opt
+        
+        # Safe square root
+        discriminant = np.maximum(discriminant, 0)
+        p_clean = (np.sqrt(discriminant) - z_opt) / (2 * (1 - z_opt))
+        sum_p_clean = np.sum(p_clean)
+        
+        if sum_p_clean > 0:
+            true_probs[i] = p_clean / sum_p_clean
+        else:
+            true_probs[i] = implied / sum_pi
+            
+    return true_probs
+
 def calculate_brier(y_true, y_proba):
     """Multiclass Brier score (average of per-class brier_score_loss)."""
     scores = []
@@ -223,14 +325,24 @@ def train_twostage(X_train, y_train, X_test, seed=42):
     return np.column_stack([p_home, p_draw, p_away])
 
 
-def train_onestage(X_train, y_train, X_test, params, seed=42):
+def train_onestage(X_train, y_train, X_test, params, seed=42, base_margin_tr=None, base_margin_te=None):
     """Train OneStage. Returns (N, 3) probs."""
     sw = np.ones(len(y_train), dtype=np.float32)
     sw[y_train == 1] = DRAW_WEIGHT
 
     model = xgb.XGBClassifier(**{**params, "random_state": seed})
-    model.fit(X_train, y_train, sample_weight=sw, verbose=False)
-    return model.predict_proba(X_test)
+    
+    fit_kwargs = {"sample_weight": sw, "verbose": False}
+    if base_margin_tr is not None:
+        fit_kwargs["base_margin"] = base_margin_tr
+        
+    model.fit(X_train, y_train, **fit_kwargs)
+    
+    pred_kwargs = {}
+    if base_margin_te is not None:
+        pred_kwargs["base_margin"] = base_margin_te
+        
+    return model.predict_proba(X_test, **pred_kwargs)
 
 
 def load_pooled_data():
@@ -350,12 +462,36 @@ def main():
     df["xg_luck_residual_diff"] = df["xg_luck_residual_home"] - df["xg_luck_residual_away"]
     
     # B. Syndicate Steam vs MTV (Smart Money Cross)
-    # Steam: opening probability - closing probability. Positive means money flowed IN (prob went up).
-    # Need to handle potential division by zero or missing open odds
-    steam_home = np.where(df["odds_home_open"].notna() & (df["odds_home_open"] > 0),
-                          (1.0 / df["odds_home_close"].fillna(df["odds_home"])) - (1.0 / df["odds_home_open"]), 0.0)
-    steam_away = np.where(df["odds_away_open"].notna() & (df["odds_away_open"] > 0),
-                          (1.0 / df["odds_away_close"].fillna(df["odds_away"])) - (1.0 / df["odds_away_open"]), 0.0)
+    # Steam: Logit(Prob_Cierre_Shin) - Logit(Prob_Apertura_Shin)
+    odds_open_matrix = df[["odds_home_open", "odds_draw_open", "odds_away_open"]].values
+    
+    # We fill missing close odds with the 'current' odds
+    odds_close_matrix = df[["odds_home_close", "odds_draw_close", "odds_away_close"]].copy()
+    odds_close_matrix["odds_home_close"] = odds_close_matrix["odds_home_close"].fillna(df["odds_home"])
+    odds_close_matrix["odds_draw_close"] = odds_close_matrix["odds_draw_close"].fillna(df["odds_draw"])
+    odds_close_matrix["odds_away_close"] = odds_close_matrix["odds_away_close"].fillna(df["odds_away"])
+    odds_close_matrix = odds_close_matrix.values
+    
+    valid_open_mask = ~np.isnan(odds_open_matrix).any(axis=1) & (np.min(np.nan_to_num(odds_open_matrix, nan=-1), axis=1) > 0)
+    valid_close_mask = ~np.isnan(odds_close_matrix).any(axis=1) & (np.min(np.nan_to_num(odds_close_matrix, nan=-1), axis=1) > 0)
+    
+    shin_open_probs = np.full((len(df), 3), np.nan)
+    shin_close_probs = np.full((len(df), 3), np.nan)
+    
+    print(f"      > Extracting Shin probabilities for Steam ({valid_open_mask.sum()} matches, this might take a minute)...")
+    if valid_open_mask.sum() > 0:
+        shin_open_probs[valid_open_mask] = extract_shin_probabilities(odds_open_matrix[valid_open_mask])
+    if valid_close_mask.sum() > 0:
+        shin_close_probs[valid_close_mask] = extract_shin_probabilities(odds_close_matrix[valid_close_mask])
+        
+    def safe_logit(p):
+        p = np.clip(p, 1e-7, 1 - 1e-7)
+        return np.log(p / (1 - p))
+        
+    steam_home = np.where(valid_open_mask & valid_close_mask,
+                          safe_logit(shin_close_probs[:, 0]) - safe_logit(shin_open_probs[:, 0]), 0.0)
+    steam_away = np.where(valid_open_mask & valid_close_mask,
+                          safe_logit(shin_close_probs[:, 2]) - safe_logit(shin_open_probs[:, 2]), 0.0)
     
     df["syndicate_steam_mtv_home"] = steam_home * df["home_talent_delta"].fillna(0)
     df["syndicate_steam_mtv_away"] = steam_away * df["away_talent_delta"].fillna(0)
@@ -576,6 +712,67 @@ def main():
                 "source_market": best_b_id,
             }
             print(f"      Brier={y10_brier:.5f}, Y0_mtv={y0_mtv_brier:.5f}, Δ={y10_delta:+.5f}")
+            
+            # ── 9.6 Y11: The 0.1900 Assault (Poisson Priors + Shin + SOTA) ────────────────
+            print(f"\n[6.6] Y11: The 0.1900 Assault (Poisson Priors + Shin + SOTA) (onestage_optuna)")
+            
+            # 1. Base Logits via Dixon-Coles Poisson Priors
+            print(f"      > Generating Dixon-Coles Logits from xG...")
+            # Note: mtv_mask_all ensures we map correctly to the X_tr_y9 subset lengths
+            xg_home_mtv = df["home_xg_for_avg"].values[mtv_mask_all]
+            xg_away_mtv = df["away_xg_for_avg"].values[mtv_mask_all]
+            
+            all_base_logits = generate_dixon_coles_logits(xg_home_mtv, xg_away_mtv)
+            base_margin_tr = all_base_logits[:len(X_tr_y9)]
+            base_margin_te = all_base_logits[len(X_tr_y9):]
+            
+            # 2. Features: STRICTLY Exogenous (No Elo, No xG, No fundamental)
+            # Only odds(3) + best_market(4) + MTV(4) + SOTA(8)
+            y11_features = FEATURES_3_ODDS + best_market_features + MTV_FEATURES + SOTA_FEATURES
+            seen_y11 = set()
+            y11_feat_unique = []
+            for f in y11_features:
+                if f not in seen_y11:
+                    y11_feat_unique.append(f)
+                    seen_y11.add(f)
+            
+            print(f"      Composition: {len(y11_feat_unique)} Exogenous Features + BaseMargin")
+            
+            feat_idx_y11 = [feature_cols.index(f) for f in y11_feat_unique]
+            probs_y11 = []
+            briers_y11 = []
+            
+            # 3. Model Training with base_margin
+            for seed_i in range(N_SEEDS):
+                seed = seed_i * 42 + 7
+                p = train_onestage(X_tr_y9[:, feat_idx_y11], y_tr_y9,
+                                   X_te_y9[:, feat_idx_y11], PARAMS_OPTUNA,
+                                   seed=seed, 
+                                   base_margin_tr=base_margin_tr, 
+                                   base_margin_te=base_margin_te)
+                probs_y11.append(p)
+                briers_y11.append(calculate_brier(y_te_y9, p))
+                
+            y11_ensemble = np.mean(probs_y11, axis=0)
+            y11_brier = calculate_brier(y_te_y9, y11_ensemble)
+            y11_delta = y11_brier - y0_mtv_brier
+            y11_ci = bootstrap_paired_delta(y_te_y9, y0_mtv_ensemble, y11_ensemble)
+            
+            results["Y11"] = {
+                "brier": y11_brier,
+                "brier_mean": float(np.mean(briers_y11)),
+                "brier_std": float(np.std(briers_y11)),
+                "delta": y11_delta,
+                "delta_ci95": list(y11_ci),
+                "n_features": len(y11_feat_unique),
+                "features": y11_feat_unique,
+                "n_train_mtv": len(X_tr_y9),
+                "n_test_mtv": len(X_te_y9),
+                "y0_mtv_brier": y0_mtv_brier,
+                "source_fundamental": "None(PoissonPriors)",
+                "source_market": best_b_id,
+            }
+            print(f"      Brier={y11_brier:.5f}, Y0_mtv={y0_mtv_brier:.5f}, Δ={y11_delta:+.5f}")
     else:
         print(f"\n[6] Y9: SKIPPED (no MTV data)")
 
@@ -593,6 +790,8 @@ def main():
         ordered.append("Y9")
     if "Y10" in results:
         ordered.append("Y10")
+    if "Y11" in results:
+        ordered.append("Y11")
 
     for tid in ordered:
         res = results[tid]
@@ -614,6 +813,10 @@ def main():
             arch = "os_optuna"
             track = "C"
             nf = res["n_features"]
+        elif tid == "Y11":
+            arch = "os_optuna"
+            track = "C"
+            nf = res["n_features"]
         else:
             arch = "?"
             track = "?"
@@ -631,7 +834,7 @@ def main():
         else:
             sig = "ns"
 
-        # Special annotation for Y8, Y9, Y10
+        # Special annotation for Y8, Y9, Y10, Y11
         suffix = ""
         if tid == "Y8":
             suffix = f" ← {best_a_id}"
@@ -639,6 +842,8 @@ def main():
             suffix = f" (mtv N={res.get('n_test_mtv', '?')})"
         elif tid == "Y10":
             suffix = f" (mtv N={res.get('n_test_mtv', '?')}) [SOTA]"
+        elif tid == "Y11":
+            suffix = f" (mtv N={res.get('n_test_mtv', '?')}) [0.1900 Assault]"
 
         print(f"  {tid:<6} {track:<3} {arch:<12} {nf:>3} "
               f"{res['brier']:>8.5f} {delta:>+8.5f} "
