@@ -53,9 +53,9 @@ class Settings(BaseSettings):
 
     # Trading Core: Kelly Criterion stake sizing (GDT Epoch 2 2026-02-22)
     TRADING_KELLY_ENABLED: bool = False            # Feature flag (default OFF — shadow mode)
-    TRADING_KELLY_FRACTION: float = 0.25           # Quarter-Kelly (conservative)
+    TRADING_KELLY_FRACTION: float = 0.125          # Eighth-Kelly (GDT risk adjustment 2026-02-23)
     TRADING_BANKROLL_UNITS: float = 1000.0         # Abstract units for stake_units
-    TRADING_MIN_EV: float = 0.03                   # Min 3% EV to size a bet
+    TRADING_MIN_EV: float = 0.05                   # Min 5% EV to size a bet (GDT 2026-02-23)
     TRADING_MAX_ODDS_PENALTY_THRESHOLD: float = 5.0  # Odds above this get penalized
     TRADING_MAX_ODDS_PENALTY_FACTOR: float = 0.5   # 50% penalty for high-odds bets
     TRADING_MAX_STAKE_PCT: float = 0.05            # Max 5% bankroll per match
