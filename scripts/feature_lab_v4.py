@@ -123,6 +123,20 @@ PARAMS_OPTUNA = {
     "verbosity": 0,
 }
 
+# The Surgeon: Residual Optimizer (Y12)
+PARAMS_RESIDUAL = {
+    "objective": "multi:softprob",
+    "num_class": 3,
+    "max_depth": 2,
+    "learning_rate": 0.005,
+    "n_estimators": 300,
+    "min_child_weight": 200,
+    "reg_lambda": 5.0,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "eval_metric": "mlogloss",
+    "verbosity": 0,
+}
 
 # ─── Y-Section Test Grid ──────────────────────────────────────────────────────
 
@@ -773,6 +787,50 @@ def main():
                 "source_market": best_b_id,
             }
             print(f"      Brier={y11_brier:.5f}, Y0_mtv={y0_mtv_brier:.5f}, Δ={y11_delta:+.5f}")
+            
+            # ── 9.7 Y12: The Surgeon (Dixon-Coles + Y10 Features + Residual Opt) ──────
+            print(f"\n[6.7] Y12: The Surgeon (Poisson + SOTA + Restricted XGB) (onestage_residual)")
+            
+            # Use Y10 features (restoring Elo and fundamental context)
+            y12_features = y10_features
+            feat_idx_y12 = [feature_cols.index(f) for f in y12_features]
+            
+            print(f"      Composition: BaseMargin + Y10 Features ({len(y12_features)}f)")
+            
+            probs_y12 = []
+            briers_y12 = []
+            
+            # Model Training with base_margin and restricted hyperparameters
+            for seed_i in range(N_SEEDS):
+                seed = seed_i * 42 + 7
+                p = train_onestage(X_tr_y9[:, feat_idx_y12], y_tr_y9,
+                                   X_te_y9[:, feat_idx_y12], PARAMS_RESIDUAL,
+                                   seed=seed, 
+                                   base_margin_tr=base_margin_tr, 
+                                   base_margin_te=base_margin_te)
+                probs_y12.append(p)
+                briers_y12.append(calculate_brier(y_te_y9, p))
+                
+            y12_ensemble = np.mean(probs_y12, axis=0)
+            y12_brier = calculate_brier(y_te_y9, y12_ensemble)
+            y12_delta = y12_brier - y0_mtv_brier
+            y12_ci = bootstrap_paired_delta(y_te_y9, y0_mtv_ensemble, y12_ensemble)
+            
+            results["Y12"] = {
+                "brier": y12_brier,
+                "brier_mean": float(np.mean(briers_y12)),
+                "brier_std": float(np.std(briers_y12)),
+                "delta": y12_delta,
+                "delta_ci95": list(y12_ci),
+                "n_features": len(y12_features),
+                "features": y12_features,
+                "n_train_mtv": len(X_tr_y9),
+                "n_test_mtv": len(X_te_y9),
+                "y0_mtv_brier": y0_mtv_brier,
+                "source_fundamental": best_a_id,
+                "source_market": best_b_id,
+            }
+            print(f"      Brier={y12_brier:.5f}, Y0_mtv={y0_mtv_brier:.5f}, Δ={y12_delta:+.5f}")
     else:
         print(f"\n[6] Y9: SKIPPED (no MTV data)")
 
@@ -792,6 +850,8 @@ def main():
         ordered.append("Y10")
     if "Y11" in results:
         ordered.append("Y11")
+    if "Y12" in results:
+        ordered.append("Y12")
 
     for tid in ordered:
         res = results[tid]
@@ -817,6 +877,10 @@ def main():
             arch = "os_optuna"
             track = "C"
             nf = res["n_features"]
+        elif tid == "Y12":
+            arch = "os_residual"
+            track = "C"
+            nf = res["n_features"]
         else:
             arch = "?"
             track = "?"
@@ -834,7 +898,7 @@ def main():
         else:
             sig = "ns"
 
-        # Special annotation for Y8, Y9, Y10, Y11
+        # Special annotation for Y8, Y9, Y10, Y11, Y12
         suffix = ""
         if tid == "Y8":
             suffix = f" ← {best_a_id}"
@@ -844,6 +908,8 @@ def main():
             suffix = f" (mtv N={res.get('n_test_mtv', '?')}) [SOTA]"
         elif tid == "Y11":
             suffix = f" (mtv N={res.get('n_test_mtv', '?')}) [0.1900 Assault]"
+        elif tid == "Y12":
+            suffix = f" (mtv N={res.get('n_test_mtv', '?')}) [The Surgeon]"
 
         print(f"  {tid:<6} {track:<3} {arch:<12} {nf:>3} "
               f"{res['brier']:>8.5f} {delta:>+8.5f} "
