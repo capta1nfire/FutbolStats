@@ -317,6 +317,13 @@ async def lifespan(app: FastAPI):
         if ts_ok:
             logger.info("Two-Stage W3 engine loaded (v1.0.2 routing active)")
 
+    # Initialize LATAM engine (v1.3.0: 18f with geo features, 11 LATAM leagues)
+    async with AsyncSessionLocal() as session:
+        from app.ml.latam_serving import init_latam_engine
+        latam_ok = await init_latam_engine(session)
+        if latam_ok:
+            logger.info("LATAM engine loaded (v1.3.0 routing for LATAM leagues)")
+
     # Load SSOT league serving configs from DB [P0-G: resilient startup]
     async with AsyncSessionLocal() as session:
         try:

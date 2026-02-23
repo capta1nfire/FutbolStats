@@ -2326,6 +2326,18 @@ async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
                 ts_stats["ts_eligible"], ts_stats["os_kept"],
             )
 
+        # PHASE 2a2: LATAM overlay for LATAM leagues (v1.3.0, 18f with geo)
+        from app.ml.latam_serving import overlay_latam_predictions
+        predictions, latam_stats = overlay_latam_predictions(
+            predictions, feature_df=df, ml_engine=engine,
+        )
+        if latam_stats.get("latam_hits", 0) > 0:
+            logger.info(
+                "[DAILY-SAVE] latam_serving | hits=%d eligible=%d errors=%d global_kept=%d",
+                latam_stats["latam_hits"], latam_stats["latam_eligible"],
+                latam_stats["latam_errors"], latam_stats["global_kept"],
+            )
+
         # PHASE 2b: Market anchor — blend with market for low-signal leagues
         from app.ml.policy import apply_market_anchor, get_policy_config
         _policy_cfg = get_policy_config()

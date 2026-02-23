@@ -2109,6 +2109,20 @@ async def get_predictions(
             ts_stats["ts_eligible"], ts_stats["os_kept"],
         )
 
+    # ── LATAM overlay for LATAM leagues (v1.3.0, 18f with geo) ──
+    _t4a2 = time.time()
+    from app.ml.latam_serving import overlay_latam_predictions
+    predictions, latam_stats = overlay_latam_predictions(
+        predictions, feature_df=df, ml_engine=ml_engine,
+    )
+    _stage_times["latam_overlay_ms"] = (time.time() - _t4a2) * 1000
+    if latam_stats.get("latam_hits", 0) > 0:
+        logger.info(
+            "latam_serving | hits=%d eligible=%d errors=%d global_kept=%d",
+            latam_stats["latam_hits"], latam_stats["latam_eligible"],
+            latam_stats["latam_errors"], latam_stats["global_kept"],
+        )
+
     # Overlay Family S from DB for Tier 3 NS matches (Mandato D - Fase 4b)
     _t4b = time.time()
     predictions, fs_stats = await _overlay_family_s_predictions(session, predictions)
@@ -2854,6 +2868,26 @@ async def get_match_prediction(
             from app.ml.twostage_serving import get_ts_engine
             pred["model_version_served"] = get_ts_engine().model_version
 
+    # Overlay LATAM for LATAM leagues (v1.3.0, 18f with geo)
+    from app.ml.latam_serving import predict_single_latam, is_latam_loaded, is_latam_league
+    if (match.status == "NS"
+        and is_latam_league(match.league_id)
+        and is_latam_loaded()
+        and not pred.get("skip_market_anchor")):  # Don't override if TS already applied
+
+        latam_result = predict_single_latam(df, match.home_team_id, match.away_team_id)
+        if latam_result:
+            h, d, a = latam_result
+            pred["probabilities"] = {"home": round(h, 4), "draw": round(d, 4), "away": round(a, 4)}
+            pred["fair_odds"] = {
+                "home": round(1.0 / h, 2) if h > 0.001 else None,
+                "draw": round(1.0 / d, 2) if d > 0.001 else None,
+                "away": round(1.0 / a, 2) if a > 0.001 else None,
+            }
+            from app.ml.latam_serving import get_latam_engine
+            pred["model_version_served"] = get_latam_engine().model_version
+            pred["latam_overlay"] = True
+
     # Overlay Family S prediction from DB if applicable (overrides TS for Tier 3)
     from app.ml.family_s import is_family_s_loaded
     from app.ml.league_router import TIER_3
@@ -3531,6 +3565,23 @@ async def get_match_details(
                         prediction["skip_market_anchor"] = True
                         from app.ml.twostage_serving import get_ts_engine
                         prediction["model_version_served"] = get_ts_engine().model_version
+
+            # Overlay LATAM for LATAM leagues (v1.3.0, 18f with geo)
+            if prediction and not prediction.get("is_frozen") and not prediction.get("skip_market_anchor"):
+                from app.ml.latam_serving import predict_single_latam, is_latam_loaded, is_latam_league
+                if is_latam_league(match.league_id) and is_latam_loaded():
+                    latam_result = predict_single_latam(df, match.home_team_id, match.away_team_id)
+                    if latam_result:
+                        h, d, a = latam_result
+                        prediction["probabilities"] = {"home": round(h, 4), "draw": round(d, 4), "away": round(a, 4)}
+                        prediction["fair_odds"] = {
+                            "home": round(1.0 / h, 2) if h > 0.001 else None,
+                            "draw": round(1.0 / d, 2) if d > 0.001 else None,
+                            "away": round(1.0 / a, 2) if a > 0.001 else None,
+                        }
+                        from app.ml.latam_serving import get_latam_engine
+                        prediction["model_version_served"] = get_latam_engine().model_version
+                        prediction["latam_overlay"] = True
 
             # Overlay Family S prediction from DB if applicable (overrides TS for Tier 3)
             from app.ml.family_s import is_family_s_loaded

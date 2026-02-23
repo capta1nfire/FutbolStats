@@ -43,6 +43,10 @@ def stamp_serving_metadata(predictions, baseline_version):
             served_version = (pred.get("model_version_served")
                               or pred.get("family_s_model_version")
                               or served_version)
+        elif pred.get("latam_overlay"):
+            # LATAM overlay (v1.3.0, 18f with geo) — treated as baseline variant
+            served_strategy = "latam_baseline"
+            served_version = pred.get("model_version_served", served_version)
         elif pred.get("model_version_served"):
             # TS overlay sets model_version_served
             served_strategy = "twostage"
@@ -55,8 +59,9 @@ def stamp_serving_metadata(predictions, baseline_version):
 
         # Actual alpha applied (TS/FS skip anchor, so alpha=0 for them)
         # policy.py stores anchor info in policy_metadata.market_anchor
+        # LATAM baseline also receives market anchor downstream
         alpha_applied = 0.0
-        if served_strategy == "baseline":
+        if served_strategy in ("baseline", "latam_baseline"):
             anchor_meta = (pred.get("policy_metadata") or {}).get("market_anchor")
             if anchor_meta and anchor_meta.get("applied"):
                 alpha_applied = anchor_meta.get("alpha", alpha)

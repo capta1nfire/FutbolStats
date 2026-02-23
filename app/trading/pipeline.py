@@ -4,15 +4,38 @@ Kelly sizing pipeline — transforms predictions list, same contract as policy.p
 GDT Epoch 2: Trading Core (2026-02-22).
 Pipeline order (GDT VETO): finalize → draw_cap → kelly_sizing → serve/freeze.
 Kelly is the logically FINAL layer before DB/serve.
+
+GDT Sprint 1 Closure: Kelly whitelist — only leagues with demonstrated alpha
+get stake > 0. Others get stake=0 + LEAGUE_NOT_WHITELISTED flag.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 
 from app.trading.kelly import enrich_value_bet_with_kelly
 
 logger = logging.getLogger(__name__)
+
+# ─── Kelly Whitelist ──────────────────────────────────────────────────────────
+# Only leagues with demonstrated alpha (Sprint 1 results) get Kelly stakes.
+# Format: comma-separated league IDs in env var, or hardcoded default.
+# Default: {265: Chile +4.0%, 128: Argentina +1.0%, 242: Ecuador +1.0%}
+_KELLY_WHITELIST_DEFAULT = {265, 128, 242}
+
+def _parse_kelly_whitelist() -> set[int]:
+    """Parse KELLY_WHITELIST env var or return default."""
+    raw = os.environ.get("KELLY_WHITELIST", "")
+    if not raw.strip():
+        return _KELLY_WHITELIST_DEFAULT
+    try:
+        return {int(x.strip()) for x in raw.split(",") if x.strip()}
+    except ValueError:
+        logger.warning("Invalid KELLY_WHITELIST='%s', using default", raw)
+        return _KELLY_WHITELIST_DEFAULT
+
+KELLY_WHITELIST: set[int] = _parse_kelly_whitelist()
 
 
 def apply_kelly_sizing(
@@ -59,6 +82,8 @@ def apply_kelly_sizing(
         max_stake_pct=max_stake_pct,
     )
 
+    n_whitelist_rejected = 0
+
     modified_predictions = []
     for pred in predictions:
         # PIT: frozen/FT untouchable
@@ -70,6 +95,30 @@ def apply_kelly_sizing(
         value_bets = pred.get("value_bets")
         if not value_bets:
             modified_predictions.append(pred)
+            continue
+
+        # Kelly whitelist: leagues without demonstrated alpha get stake=0
+        league_id = pred.get("league_id")
+        if league_id and league_id not in KELLY_WHITELIST:
+            zeroed_vbs = []
+            for vb in value_bets:
+                vb_copy = dict(vb)
+                vb_copy["suggested_stake"] = 0.0
+                vb_copy["stake_units"] = 0.0
+                vb_copy["kelly_fraction"] = 0.0
+                vb_copy["stake_flags"] = ["LEAGUE_NOT_WHITELISTED"]
+                zeroed_vbs.append(vb_copy)
+            modified_pred = dict(pred)
+            modified_pred["value_bets"] = zeroed_vbs
+            # P1-1 (ABE): update best_value_bet to reference zeroed copy
+            if zeroed_vbs:
+                modified_pred["best_value_bet"] = max(
+                    zeroed_vbs, key=lambda x: x.get("edge", 0)
+                )
+            else:
+                modified_pred["best_value_bet"] = None
+            modified_predictions.append(modified_pred)
+            n_whitelist_rejected += 1
             continue
 
         # Enrich each value_bet with Kelly fields
@@ -112,17 +161,21 @@ def apply_kelly_sizing(
         "n_enriched": n_enriched,
         "n_skipped_frozen": n_skipped_frozen,
         "n_match_capped": n_match_capped,
+        "n_whitelist_rejected": n_whitelist_rejected,
         "total_stake_units": round(total_stake_units, 2),
         "fraction": fraction,
         "bankroll_units": bankroll_units,
+        "whitelist": sorted(KELLY_WHITELIST),
     }
 
-    if n_enriched > 0:
+    if n_enriched > 0 or n_whitelist_rejected > 0:
         logger.info(
             f"[KELLY] Sized {n_enriched} predictions | "
             f"match_capped={n_match_capped} | "
+            f"whitelist_rejected={n_whitelist_rejected} | "
             f"total_units={total_stake_units:.1f} | "
-            f"fraction={fraction}"
+            f"fraction={fraction} | "
+            f"whitelist={sorted(KELLY_WHITELIST)}"
         )
 
     return modified_predictions, metadata
