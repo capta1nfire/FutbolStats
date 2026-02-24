@@ -211,7 +211,10 @@ async def log_shadow_prediction(
         return int(record_id) if record_id is not None else None
 
     except Exception as e:
-        logger.error(f"Failed to log shadow prediction for match {match_id}: {e}")
+        if "FEATURE_MISMATCH" in str(e):
+            logger.debug(f"Shadow prediction skipped for match {match_id}: {e}")
+        else:
+            logger.error(f"Failed to log shadow prediction for match {match_id}: {e}")
         return None
 
 
