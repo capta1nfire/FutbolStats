@@ -34,9 +34,9 @@ import xgboost as xgb
 # Configuration — must match production exactly
 # ═══════════════════════════════════════════════════════════════════════════
 
-# GEO-ROUTER tiers (exact from latam_serving.py)
-TIER_GEO_LEAGUES = {344, 250, 281, 299, 265}
-TIER_FLAT_LEAGUES = {128, 71, 239, 242, 268}
+# GEO-ROUTER tiers (v1.4.1: Uruguay moved to GEO, exact from latam_serving.py)
+TIER_GEO_LEAGUES = {344, 250, 281, 299, 265, 268}
+TIER_FLAT_LEAGUES = {128, 71, 239, 242}
 
 LEAGUE_NAMES = {
     128: "Argentina", 71: "Brasil", 239: "Colombia", 242: "Ecuador",

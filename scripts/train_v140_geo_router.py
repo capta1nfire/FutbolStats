@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""V1.4.0 — GEO-ROUTER: Train 2 LATAM specialist models.
+"""V1.4.1 — GEO-ROUTER: Train 2 LATAM specialist models.
 
 GDT FULL CLEARANCE (2026-02-23). ML FREEZE lifted.
 
 Two models bifurcated by geo signal strength:
-  - v1.4.0-latam-geo  (18f): 16 baseline + altitude_diff_m + travel_distance_km
-    Tier Geo: Bolivia(344), Paraguay(250), Peru(281), Venezuela(299), Chile(265)
+  - v1.4.1-latam-geo  (18f): 16 baseline + altitude_diff_m + travel_distance_km
+    Tier Geo: Bolivia(344), Paraguay(250), Peru(281), Venezuela(299), Chile(265), Uruguay(268)
 
-  - v1.4.0-latam-flat (16f): 14 baseline + elo_k10_diff + elo_momentum_diff
-    Tier Flat: Argentina(128), Brasil(71), Colombia(239), Ecuador(242), Uruguay(268)
+  - v1.4.1-latam-flat (16f): 14 baseline + elo_k10_diff + elo_momentum_diff
+    Tier Flat: Argentina(128), Brasil(71), Colombia(239), Ecuador(242)
 
 Architecture: TwoStage, home_away semantic, dw=1.0 (identical to production v1.2.0).
 Hyperparams: Exact production PARAMS_TS_S1 + PARAMS_TS_S2.
@@ -51,6 +51,7 @@ TIER_GEO_LEAGUES = {
     281: "Peru",
     299: "Venezuela",
     265: "Chile",
+    268: "Uruguay",
 }
 
 TIER_FLAT_LEAGUES = {
@@ -58,7 +59,6 @@ TIER_FLAT_LEAGUES = {
     71: "Brasil",
     239: "Colombia",
     242: "Ecuador",
-    268: "Uruguay",
 }
 
 # ─── Feature Sets ─────────────────────────────────────────────────────────────
@@ -432,7 +432,7 @@ async def main():
     if dry_run:
         print("*** DRY RUN MODE — no DB writes ***\n")
 
-    print("V1.4.0 — GEO-ROUTER Training")
+    print("V1.4.1 — GEO-ROUTER Training")
     print("=" * 70)
     print(f"MIN_DATE: {MIN_DATE}")
     print(f"Tier Geo: {sorted(TIER_GEO_LEAGUES.keys())} → 18f (16 + geo)")
@@ -442,7 +442,7 @@ async def main():
 
     # ── Train GEO model ──
     geo_brier, geo_id, geo_n = await train_model(
-        model_version="v1.4.0-latam-geo",
+        model_version="v1.4.1-latam-geo",
         features=FEATURES_18,
         leagues=TIER_GEO_LEAGUES,
         dry_run=dry_run,
@@ -450,7 +450,7 @@ async def main():
 
     # ── Train FLAT model ──
     flat_brier, flat_id, flat_n = await train_model(
-        model_version="v1.4.0-latam-flat",
+        model_version="v1.4.1-latam-flat",
         features=FEATURES_16,
         leagues=TIER_FLAT_LEAGUES,
         dry_run=dry_run,
@@ -468,14 +468,14 @@ async def main():
     print("\n\n" + "=" * 70)
     print("  SUMMARY — V1.4.0 GEO-ROUTER")
     print("=" * 70)
-    print(f"\n  GEO Model (v1.4.0-latam-geo):")
+    print(f"\n  GEO Model (v1.4.1-latam-geo):")
     print(f"    Features:     18f = FEATURES_16 + altitude_diff_m + travel_distance_km")
     print(f"    Leagues:      {sorted(TIER_GEO_LEAGUES.keys())}")
     print(f"    Samples:      {geo_n:,}")
     print(f"    CV Brier:     {geo_brier:.6f}")
     print(f"    Snapshot ID:  {geo_id}")
 
-    print(f"\n  FLAT Model (v1.4.0-latam-flat):")
+    print(f"\n  FLAT Model (v1.4.1-latam-flat):")
     print(f"    Features:     16f = FEATURES_14 + elo_k10_diff + elo_momentum_diff")
     print(f"    Leagues:      {sorted(TIER_FLAT_LEAGUES.keys())}")
     print(f"    Samples:      {flat_n:,}")

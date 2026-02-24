@@ -1,8 +1,8 @@
-"""LATAM serving layer (V1.4.0 GEO-ROUTER).
+"""LATAM serving layer (V1.4.1 GEO-ROUTER).
 
 Two specialist models routed by league tier:
-  - v1.4.0-latam-geo  (18f): Bolivia, Paraguay, Peru, Venezuela, Chile
-  - v1.4.0-latam-flat (16f): Argentina, Brasil, Colombia, Ecuador, Uruguay
+  - v1.4.1-latam-geo  (18f): Bolivia, Paraguay, Peru, Venezuela, Chile, Uruguay
+  - v1.4.1-latam-flat (16f): Argentina, Brasil, Colombia, Ecuador
 
 Mexico (262) stays in LATAM_LEAGUE_IDS but tier=None → baseline global,
 no overlay, no VORP. Deterministic behavior (ABE P0).
@@ -33,14 +33,14 @@ logger = logging.getLogger("futbolstats.latam_serving")
 
 LATAM_LEAGUE_IDS = {128, 71, 239, 242, 262, 265, 268, 281, 299, 344, 250}
 
-# Tier routing (GDT 2026-02-23, ABE P0 confirmed)
-TIER_GEO_LEAGUES = {344, 250, 281, 299, 265}   # Bolivia, Paraguay, Peru, Venezuela, Chile
-TIER_FLAT_LEAGUES = {128, 71, 239, 242, 268}    # Argentina, Brasil, Colombia, Ecuador, Uruguay
+# Tier routing (v1.4.1, Uruguay moved to GEO per Geo Signal Test re-run 2026-02-24)
+TIER_GEO_LEAGUES = {344, 250, 281, 299, 265, 268}  # Bolivia, Paraguay, Peru, Venezuela, Chile, Uruguay
+TIER_FLAT_LEAGUES = {128, 71, 239, 242}             # Argentina, Brasil, Colombia, Ecuador
 # Mexico (262): NOT in either tier → tier=None → baseline global
 
 # Version patterns for model_snapshots lookup
-GEO_VERSION_PATTERN = "v1.4.0-latam-geo%"
-FLAT_VERSION_PATTERN = "v1.4.0-latam-flat%"
+GEO_VERSION_PATTERN = "v1.4.%-latam-geo%"
+FLAT_VERSION_PATTERN = "v1.4.%-latam-flat%"
 LEGACY_VERSION_PATTERN = "v1.3.0-latam%"  # backward compat
 
 # ═══════════════════════════════════════════════════════════════════════════
