@@ -346,16 +346,20 @@ def get_policy_config() -> dict:
     # SSOT: read league overrides from DB-backed cache first
     league_overrides = get_league_overrides_from_cache()
 
-    # Fallback: if cache is empty (startup race condition), parse env var
-    if not league_overrides and settings.MARKET_ANCHOR_LEAGUE_OVERRIDES:
-        for pair in settings.MARKET_ANCHOR_LEAGUE_OVERRIDES.split(","):
-            pair = pair.strip()
-            if ":" in pair:
-                try:
-                    lid, alpha = pair.split(":", 1)
-                    league_overrides[int(lid.strip())] = float(alpha.strip())
-                except (ValueError, TypeError):
-                    pass
+    # Fallback: ONLY when cache is not loaded (startup race condition).
+    # If cache is loaded but contains no anchored leagues, do NOT fallback,
+    # otherwise we can accidentally re-enable anchor via env defaults.
+    if league_overrides is None:
+        league_overrides = {}
+        if settings.MARKET_ANCHOR_LEAGUE_OVERRIDES:
+            for pair in settings.MARKET_ANCHOR_LEAGUE_OVERRIDES.split(","):
+                pair = pair.strip()
+                if ":" in pair:
+                    try:
+                        lid, alpha = pair.split(":", 1)
+                        league_overrides[int(lid.strip())] = float(alpha.strip())
+                    except (ValueError, TypeError):
+                        pass
 
     return {
         "draw_cap_enabled": settings.POLICY_DRAW_CAP_ENABLED,

@@ -204,15 +204,21 @@ def get_serving_config(league_id):
     }
 
 
-def get_league_overrides_from_cache():
+def get_league_overrides_from_cache() -> dict[int, float] | None:
     """
     Return {league_id: alpha} for market anchor policy.
 
     Called by policy.py to replace MARKET_ANCHOR_LEAGUE_OVERRIDES env var.
     Only includes leagues with anchor_alpha > 0.
+
+    IMPORTANT:
+    - Returns None if the serving config cache has NOT been loaded yet.
+    - Returns an empty dict if cache is loaded but no leagues are anchored.
+    This avoids unintentionally re-enabling anchor via env fallback when SSOT
+    explicitly sets anchor_alpha=0.0 for all leagues.
     """
     if not _serving_configs:
-        return {}  # Cache empty — caller should fallback to env var
+        return None  # Cache not loaded — caller may fallback to env var
 
     return {
         lid: cfg["anchor_alpha"]

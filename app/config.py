@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     # Policy: Market anchor for low-signal leagues (ABE P0 2026-02-08)
     MARKET_ANCHOR_ENABLED: bool = False  # Feature flag (default OFF until validated)
     MARKET_ANCHOR_ALPHA_DEFAULT: float = 0.0  # 0.0 = only overrides apply (no global blend)
-    MARKET_ANCHOR_LEAGUE_OVERRIDES: str = "128:1.0"  # "league_id:alpha" — explicit low-signal leagues
+    MARKET_ANCHOR_LEAGUE_OVERRIDES: str = ""  # DEPRECATED: SSOT is league_serving_config DB table
     MARKET_ANCHOR_MIN_SAMPLES: int = 200  # Min FT with odds before accepting per-league α
 
     # Trading Core: Kelly Criterion stake sizing (GDT Epoch 2 2026-02-22)
