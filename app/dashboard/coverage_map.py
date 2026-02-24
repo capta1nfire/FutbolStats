@@ -211,11 +211,12 @@ SELECT
 
   -- ===== P0 =====
 
-  -- xG: Understat OR FotMob (post-match data, PIT N/A)
+  -- xG: Understat OR FotMob OR FootyStats (matches.xg_home)
   COUNT(*) FILTER (WHERE
     EXISTS (SELECT 1 FROM match_understat_team ust WHERE ust.match_id = m.id)
     OR EXISTS (SELECT 1 FROM match_fotmob_stats fmt
                WHERE fmt.match_id = m.id AND fmt.xg_home IS NOT NULL AND fmt.xg_away IS NOT NULL)
+    OR (m.xg_home IS NOT NULL AND m.xg_away IS NOT NULL)
   ) AS xg_n,
 
   -- Canonical odds: match_canonical_odds (single source of truth, cascade-resolved)
@@ -292,6 +293,7 @@ SELECT
               WHERE ust.match_id = m.id AND ust.captured_at < m.date)
       OR EXISTS (SELECT 1 FROM match_fotmob_stats fmt
                  WHERE fmt.match_id = m.id AND fmt.xg_home IS NOT NULL AND fmt.captured_at < m.date)
+      OR (m.xg_home IS NOT NULL AND m.xg_away IS NOT NULL)
       OR EXISTS (SELECT 1 FROM match_lineups ml
                  WHERE ml.match_id = m.id AND array_length(ml.starting_xi_ids, 1) >= 7
                  AND (ml.lineup_confirmed_at IS NULL OR ml.lineup_confirmed_at < m.date))
@@ -378,6 +380,7 @@ SELECT
       EXISTS (SELECT 1 FROM match_understat_team ust WHERE ust.match_id = m.id)
       OR EXISTS (SELECT 1 FROM match_fotmob_stats fmt
                  WHERE fmt.match_id = m.id AND fmt.xg_home IS NOT NULL AND fmt.xg_away IS NOT NULL)
+      OR (m.xg_home IS NOT NULL AND m.xg_away IS NOT NULL)
     )
   ) AS odds_xg_n,
 
@@ -394,6 +397,7 @@ SELECT
       EXISTS (SELECT 1 FROM match_understat_team ust WHERE ust.match_id = m.id)
       OR EXISTS (SELECT 1 FROM match_fotmob_stats fmt
                  WHERE fmt.match_id = m.id AND fmt.xg_home IS NOT NULL AND fmt.xg_away IS NOT NULL)
+      OR (m.xg_home IS NOT NULL AND m.xg_away IS NOT NULL)
     )
     AND EXISTS (
       SELECT 1 FROM (
