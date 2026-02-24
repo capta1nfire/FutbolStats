@@ -358,9 +358,9 @@ export const MATCHES_COLUMN_OPTIONS: ColumnOption[] = [
   { id: "rowIndex", label: "#", enableHiding: false },
   { id: "match", label: "Match", enableHiding: false },
   { id: "leagueName", label: "League", enableHiding: true },
+  { id: "kelly", label: "Kelly", enableHiding: true },
   { id: "kickoffISO", label: "Kickoff", enableHiding: true },
   { id: "score", label: "Score", enableHiding: true },
-  { id: "kelly", label: "Kelly", enableHiding: true },
   { id: "elapsed", label: "Elapsed", enableHiding: true },
   { id: "market", label: "Market", enableHiding: true },
   { id: "consensus", label: "Consensus", enableHiding: true },
@@ -448,9 +448,9 @@ export function MatchesTable({
   const tableMinWidth = useMemo(() => {
     let w = ROW_NUM_WIDTH + MATCH_COL_WIDTH;
     if (isVisible("leagueName")) w += LEAGUE_COL_WIDTH;
+    if (isVisible("kelly")) w += KELLY_COL_WIDTH;
     if (isVisible("kickoffISO")) w += KICKOFF_COL_WIDTH;
     if (isVisible("score")) w += SCORE_COL_WIDTH;
-    if (isVisible("kelly")) w += KELLY_COL_WIDTH;
     if (isVisible("elapsed")) w += ELAPSED_COL_WIDTH;
     if (isVisible("market")) w += MODEL_COL_WIDTH;
     if (isVisible("consensus")) w += MODEL_COL_WIDTH;
@@ -515,9 +515,9 @@ export function MatchesTable({
               <col style={{ width: ROW_NUM_WIDTH }} />
               <col style={{ width: MATCH_COL_WIDTH }} />
               {isVisible("leagueName") && <col style={{ width: LEAGUE_COL_WIDTH }} />}
+              {isVisible("kelly") && <col style={{ width: KELLY_COL_WIDTH }} />}
               {isVisible("kickoffISO") && <col style={{ width: KICKOFF_COL_WIDTH }} />}
               {isVisible("score") && <col style={{ width: SCORE_COL_WIDTH }} />}
-              {isVisible("kelly") && <col style={{ width: KELLY_COL_WIDTH }} />}
               {isVisible("elapsed") && <col style={{ width: ELAPSED_COL_WIDTH }} />}
               {isVisible("market") && <col style={{ width: MODEL_COL_WIDTH }} />}
               {isVisible("consensus") && <col style={{ width: MODEL_COL_WIDTH }} />}
@@ -569,6 +569,14 @@ export function MatchesTable({
                     League
                   </th>
                 )}
+                {isVisible("kelly") && (
+                  <th
+                    className="px-3 py-3 text-center font-semibold text-muted-foreground text-sm whitespace-nowrap"
+                    style={{ minWidth: KELLY_COL_WIDTH }}
+                  >
+                    Kelly
+                  </th>
+                )}
                 {isVisible("kickoffISO") && (
                   <th
                     className="px-3 py-3 text-left font-semibold text-muted-foreground text-sm whitespace-nowrap"
@@ -583,14 +591,6 @@ export function MatchesTable({
                     style={{ minWidth: SCORE_COL_WIDTH }}
                   >
                     Score
-                  </th>
-                )}
-                {isVisible("kelly") && (
-                  <th
-                    className="px-3 py-3 text-center font-semibold text-muted-foreground text-sm whitespace-nowrap"
-                    style={{ minWidth: KELLY_COL_WIDTH }}
-                  >
-                    Kelly
                   </th>
                 )}
                 {isVisible("elapsed") && (
@@ -784,6 +784,22 @@ export function MatchesTable({
                       </td>
                     )}
 
+                    {/* Kelly cell (Trading Core + VORP) */}
+                    {isVisible("kelly") && (
+                      <td className="px-2 py-2.5" style={{ minWidth: KELLY_COL_WIDTH }}>
+                        {(match.vorpApplied || (match.valueBets && match.valueBets.length > 0)) ? (
+                          <div className="flex flex-col gap-1">
+                            <VorpBadge match={match} />
+                            {match.valueBets?.map((vb) => (
+                              <KellyBet key={vb.outcome} vb={vb} />
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-xs text-center block">—</span>
+                        )}
+                      </td>
+                    )}
+
                     {/* Kickoff cell */}
                     {isVisible("kickoffISO") && (
                       <td className="px-3 py-2.5" style={{ minWidth: KICKOFF_COL_WIDTH }}>
@@ -890,22 +906,6 @@ export function MatchesTable({
                         </td>
                       );
                     })()}
-
-                    {/* Kelly cell (Trading Core + VORP) */}
-                    {isVisible("kelly") && (
-                      <td className="px-2 py-2.5" style={{ minWidth: KELLY_COL_WIDTH }}>
-                        {(match.vorpApplied || (match.valueBets && match.valueBets.length > 0)) ? (
-                          <div className="flex flex-col gap-1">
-                            <VorpBadge match={match} />
-                            {match.valueBets?.map((vb) => (
-                              <KellyBet key={vb.outcome} vb={vb} />
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground text-xs text-center block">—</span>
-                        )}
-                      </td>
-                    )}
 
                     {/* Elapsed cell */}
                     {isVisible("elapsed") && (
