@@ -55,6 +55,7 @@ P1_KEYS = [
 P2_KEYS = [
     "match_stats", "match_events", "venue", "referees",
     "player_injuries", "managers", "squad_catalog", "standings",
+    "geo",
 ]
 
 ALL_DIM_KEYS = P0_KEYS + P1_KEYS + P2_KEYS
@@ -97,6 +98,8 @@ DIMENSIONS_META = [
      "source_tables": ["players"], "pit_guardrail": "none"},
     {"key": "standings", "label": "Standings", "priority": "P2", "contributes_to_score": True,
      "source_tables": ["league_standings"], "pit_guardrail": "season = match.season"},
+    {"key": "geo", "label": "Geo (Altitude)", "priority": "P2", "contributes_to_score": True,
+     "source_tables": ["team_wikidata_enrichment"], "pit_guardrail": "static profile"},
     {"key": "data_quality_flags", "label": "Data Quality", "priority": "DIAG", "contributes_to_score": False,
      "source_tables": ["matches.tainted", "odds_history.quarantined"], "pit_guardrail": "diagnostic only"},
 ]
@@ -350,6 +353,16 @@ SELECT
     SELECT 1 FROM league_standings ls WHERE ls.league_id = m.league_id AND ls.season = m.season
   )) AS standings_n,
 
+  -- Geo: both teams have lat/lon/altitude in team_wikidata_enrichment
+  COUNT(*) FILTER (WHERE
+    EXISTS (SELECT 1 FROM team_wikidata_enrichment twh
+            WHERE twh.team_id = m.home_team_id
+            AND twh.lat IS NOT NULL AND twh.lon IS NOT NULL AND twh.stadium_altitude_m IS NOT NULL)
+    AND EXISTS (SELECT 1 FROM team_wikidata_enrichment twa
+                WHERE twa.team_id = m.away_team_id
+                AND twa.lat IS NOT NULL AND twa.lon IS NOT NULL AND twa.stadium_altitude_m IS NOT NULL)
+  ) AS geo_n,
+
   -- ===== INTERSECTIONS (exact, not approximated) =====
 
   -- Odds AND xG
@@ -445,6 +458,7 @@ def _compute_league_data(row) -> dict:
         ("managers_n", "managers"),
         ("squad_catalog_n", "squad_catalog"),
         ("standings_n", "standings"),
+        ("geo_n", "geo"),
     ]
     for col, key in col_map:
         n = getattr(row, col, 0) or 0
