@@ -189,27 +189,47 @@ async def cascade_handler(event: Event):
         prediction_engine = engine  # baseline SSOT (default)
         used_family_s = False
         used_latam = False
+        latam_tier = None
 
-        # LATAM engine priority for LATAM leagues (Sprint 2 Camino B)
+        # LATAM GEO-ROUTER: bifurcate by tier (V1.4.0)
         from app.ml.latam_serving import (
-            is_latam_league, is_latam_loaded, get_latam_engine,
+            is_latam_league, get_latam_tier,
+            is_latam_geo_loaded, is_latam_flat_loaded,
+            get_latam_geo_engine, get_latam_flat_engine,
             compute_geo_features,
         )
-        if is_latam_league(league_id) and is_latam_loaded():
-            latam_eng = get_latam_engine()
-            if latam_eng:
-                # Add geo features for LATAM engine (18f = 16f + 2 geo)
-                home_tid = df_match["home_team_id"].iloc[0] if "home_team_id" in df_match.columns else None
-                away_tid = df_match["away_team_id"].iloc[0] if "away_team_id" in df_match.columns else None
-                if home_tid and away_tid:
-                    geo = compute_geo_features(int(home_tid), int(away_tid))
-                    df_match["altitude_diff_m"] = geo["altitude_diff_m"]
-                    df_match["travel_distance_km"] = geo["travel_distance_km"]
-                prediction_engine = latam_eng
-                used_latam = True
+        if is_latam_league(league_id):
+            latam_tier = get_latam_tier(league_id)
+            if latam_tier == "geo" and is_latam_geo_loaded():
+                latam_eng = get_latam_geo_engine()
+                if latam_eng:
+                    # Add geo features for GEO engine (18f = 16f + 2 geo)
+                    home_tid = df_match["home_team_id"].iloc[0] if "home_team_id" in df_match.columns else None
+                    away_tid = df_match["away_team_id"].iloc[0] if "away_team_id" in df_match.columns else None
+                    if home_tid and away_tid:
+                        geo = compute_geo_features(int(home_tid), int(away_tid))
+                        df_match["altitude_diff_m"] = geo["altitude_diff_m"]
+                        df_match["travel_distance_km"] = geo["travel_distance_km"]
+                    prediction_engine = latam_eng
+                    used_latam = True
+                    logger.info(
+                        f"[CASCADE] Using LATAM GEO engine for match {match_id} "
+                        f"(league={league_id}, tier=geo)"
+                    )
+            elif latam_tier == "flat" and is_latam_flat_loaded():
+                latam_eng = get_latam_flat_engine()
+                if latam_eng:
+                    # NO geo features for FLAT engine (16f only)
+                    prediction_engine = latam_eng
+                    used_latam = True
+                    logger.info(
+                        f"[CASCADE] Using LATAM FLAT engine for match {match_id} "
+                        f"(league={league_id}, tier=flat)"
+                    )
+            elif latam_tier is None:
                 logger.info(
-                    f"[CASCADE] Using LATAM engine for match {match_id} "
-                    f"(league={league_id}, v1.3.0)"
+                    f"[CASCADE] LATAM league {league_id} tier=None, keeping baseline "
+                    f"(match={match_id})"
                 )
         elif (strategy["inject_mtv"]
                 and talent_delta_result
@@ -360,6 +380,7 @@ async def cascade_handler(event: Event):
             f"model={prediction_engine.model_version} "
             f"family_s={'YES' if used_family_s else 'NO'} "
             f"latam={'YES' if used_latam else 'NO'} "
+            f"latam_tier={latam_tier or 'N/A'} "
             f"vorp={'YES' if vorp_applied else 'NO'} "
             f"asof={asof.isoformat()} "
             f"mtv={mtv_status} "

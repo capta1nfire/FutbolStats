@@ -1,13 +1,15 @@
-"""LATAM baseline serving layer (V1.3.0).
+"""LATAM serving layer (V1.4.0 GEO-ROUTER).
 
-Loads the v1.3.0-latam-first model (18f TwoStageEngine: 16f baseline + 2 geo)
-from model_snapshots and provides prediction overlay for LATAM leagues.
+Two specialist models routed by league tier:
+  - v1.4.0-latam-geo  (18f): Bolivia, Paraguay, Peru, Venezuela, Chile
+  - v1.4.0-latam-flat (16f): Argentina, Brasil, Colombia, Ecuador, Uruguay
 
-Alpha Lab Sprint 1 result: T0 (Global LATAM 18f) beat Tprod (23-league 16f)
-with Weighted Skill -1.8% vs -2.2%. Chile +4.0%, Argentina +1.0%.
+Mexico (262) stays in LATAM_LEAGUE_IDS but tier=None → baseline global,
+no overlay, no VORP. Deterministic behavior (ABE P0).
+
+Backward compat: if only v1.3.0 exists, loads as single universal engine.
 
 Pattern: identical to app/ml/twostage_serving.py (global engine, startup init).
-Routing: LATAM league_ids → latam engine, others → keep baseline.
 Fallback: if geo data missing → NaN (XGBoost handles natively via fillna(0)).
 """
 
@@ -31,14 +33,26 @@ logger = logging.getLogger("futbolstats.latam_serving")
 
 LATAM_LEAGUE_IDS = {128, 71, 239, 242, 262, 265, 268, 281, 299, 344, 250}
 
-LATAM_VERSION_PATTERN = "v1.3.0-latam%"
+# Tier routing (GDT 2026-02-23, ABE P0 confirmed)
+TIER_GEO_LEAGUES = {344, 250, 281, 299, 265}   # Bolivia, Paraguay, Peru, Venezuela, Chile
+TIER_FLAT_LEAGUES = {128, 71, 239, 242, 268}    # Argentina, Brasil, Colombia, Ecuador, Uruguay
+# Mexico (262): NOT in either tier → tier=None → baseline global
+
+# Version patterns for model_snapshots lookup
+GEO_VERSION_PATTERN = "v1.4.0-latam-geo%"
+FLAT_VERSION_PATTERN = "v1.4.0-latam-flat%"
+LEGACY_VERSION_PATTERN = "v1.3.0-latam%"  # backward compat
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Global engine + geo cache (loaded at startup)
+# Global engines + geo cache (loaded at startup)
 # ═══════════════════════════════════════════════════════════════════════════
 
-_latam_engine: Optional[TwoStageEngine] = None
-_latam_loaded: bool = False
+_latam_geo_engine: Optional[TwoStageEngine] = None
+_latam_flat_engine: Optional[TwoStageEngine] = None
+_latam_legacy_engine: Optional[TwoStageEngine] = None  # v1.3.0 fallback
+_geo_loaded: bool = False
+_flat_loaded: bool = False
+_legacy_loaded: bool = False
 _geo_cache: dict = {}  # team_id -> {"lat": float, "lon": float, "altitude_m": int}
 
 
@@ -53,48 +67,73 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return R * 2 * math.asin(math.sqrt(min(a, 1.0)))
 
 
-async def init_latam_engine(session: AsyncSession) -> bool:
-    """Load the LATAM engine + geo cache at startup.
-
-    Called regardless of any feature flag so toggling routing on/off
-    doesn't require a redeploy.
-    """
-    global _latam_engine, _latam_loaded, _geo_cache
-
-    # ── Load model snapshot ──
+async def _load_engine(session: AsyncSession, pattern: str, label: str
+                       ) -> Optional[tuple[TwoStageEngine, int]]:
+    """Load a single engine by version pattern. Returns (engine, snapshot_id) or None."""
     result = await session.execute(
         select(ModelSnapshot)
-        .where(ModelSnapshot.model_version.like(LATAM_VERSION_PATTERN))
+        .where(ModelSnapshot.model_version.like(pattern))
         .order_by(ModelSnapshot.created_at.desc())
         .limit(1)
     )
     snapshot = result.scalar_one_or_none()
 
     if not snapshot or not snapshot.model_blob:
-        logger.info(
-            "LATAM model not found in DB. "
-            "All leagues will use global baseline."
-        )
-        _latam_loaded = False
-        return False
+        logger.info("LATAM %s model not found (pattern=%s)", label, pattern)
+        return None
 
     engine = TwoStageEngine(model_version=snapshot.model_version)
     if not engine.load_from_bytes(snapshot.model_blob):
-        logger.error("Failed to deserialize LATAM model blob")
-        _latam_loaded = False
-        return False
+        logger.error("Failed to deserialize LATAM %s model blob", label)
+        return None
 
-    _latam_engine = engine
-    _latam_loaded = True
     logger.info(
-        "LATAM engine loaded: version=%s, brier=%.4f, "
+        "LATAM %s engine loaded: version=%s, brier=%.4f, "
         "features_s1=%d, features_s2=%d, snapshot_id=%d",
+        label,
         snapshot.model_version,
         snapshot.brier_score or 0.0,
         len(engine.active_stage1_features),
         len(engine.active_stage2_features),
         snapshot.id,
     )
+    return engine, snapshot.id
+
+
+async def init_latam_engines(session: AsyncSession) -> bool:
+    """Load LATAM engines + geo cache at startup.
+
+    Tries v1.4.0 geo/flat first. Falls back to v1.3.0 universal if needed.
+    """
+    global _latam_geo_engine, _latam_flat_engine, _latam_legacy_engine
+    global _geo_loaded, _flat_loaded, _legacy_loaded, _geo_cache
+
+    # ── Try v1.4.0 GEO-ROUTER engines ──
+    geo_result = await _load_engine(session, GEO_VERSION_PATTERN, "GEO")
+    if geo_result:
+        _latam_geo_engine, _ = geo_result
+        _geo_loaded = True
+
+    flat_result = await _load_engine(session, FLAT_VERSION_PATTERN, "FLAT")
+    if flat_result:
+        _latam_flat_engine, _ = flat_result
+        _flat_loaded = True
+
+    # ── Fallback: v1.3.0 universal (if v1.4.0 not available) ──
+    if not _geo_loaded or not _flat_loaded:
+        legacy_result = await _load_engine(session, LEGACY_VERSION_PATTERN, "LEGACY")
+        if legacy_result:
+            _latam_legacy_engine, _ = legacy_result
+            _legacy_loaded = True
+            logger.info(
+                "LATAM LEGACY engine loaded as fallback (geo=%s, flat=%s)",
+                _geo_loaded, _flat_loaded,
+            )
+
+    any_loaded = _geo_loaded or _flat_loaded or _legacy_loaded
+
+    if not any_loaded:
+        logger.info("No LATAM models found. All leagues use global baseline.")
 
     # ── Load geo cache from team_wikidata_enrichment ──
     try:
@@ -121,23 +160,90 @@ async def init_latam_engine(session: AsyncSession) -> bool:
         logger.warning("Failed to load geo cache: %s. Geo features will be NaN.", e)
         _geo_cache = {}
 
-    return True
+    return any_loaded
 
 
-def is_latam_loaded() -> bool:
-    """Check if LATAM engine is loaded and ready."""
-    return _latam_loaded and _latam_engine is not None
+# Backward compat alias
+async def init_latam_engine(session: AsyncSession) -> bool:
+    """Backward compat: delegates to init_latam_engines."""
+    return await init_latam_engines(session)
 
 
-def get_latam_engine() -> Optional[TwoStageEngine]:
-    """Get the LATAM engine (or None if not loaded)."""
-    return _latam_engine if _latam_loaded else None
+# ═══════════════════════════════════════════════════════════════════════════
+# Tier routing
+# ═══════════════════════════════════════════════════════════════════════════
+
+def get_latam_tier(league_id: int) -> Optional[str]:
+    """Get the GEO-ROUTER tier for a league.
+
+    Returns "geo", "flat", or None (for Mexico/unrouted).
+    """
+    if league_id in TIER_GEO_LEAGUES:
+        return "geo"
+    if league_id in TIER_FLAT_LEAGUES:
+        return "flat"
+    return None
 
 
 def is_latam_league(league_id: int) -> bool:
     """Check if league_id belongs to LATAM routing."""
     return league_id in LATAM_LEAGUE_IDS
 
+
+def is_latam_loaded() -> bool:
+    """Check if any LATAM engine is loaded and ready."""
+    return _geo_loaded or _flat_loaded or _legacy_loaded
+
+
+def is_latam_geo_loaded() -> bool:
+    """Check if GEO tier engine is loaded."""
+    return _geo_loaded and _latam_geo_engine is not None
+
+
+def is_latam_flat_loaded() -> bool:
+    """Check if FLAT tier engine is loaded."""
+    return _flat_loaded and _latam_flat_engine is not None
+
+
+def get_latam_geo_engine() -> Optional[TwoStageEngine]:
+    """Get the GEO tier engine (or None)."""
+    return _latam_geo_engine if _geo_loaded else None
+
+
+def get_latam_flat_engine() -> Optional[TwoStageEngine]:
+    """Get the FLAT tier engine (or None)."""
+    return _latam_flat_engine if _flat_loaded else None
+
+
+def get_latam_engine() -> Optional[TwoStageEngine]:
+    """Backward compat: get any LATAM engine (prefers v1.4.0 geo, then legacy)."""
+    if _geo_loaded:
+        return _latam_geo_engine
+    if _legacy_loaded:
+        return _latam_legacy_engine
+    return None
+
+
+def _get_engine_for_tier(tier: Optional[str]) -> Optional[TwoStageEngine]:
+    """Get the correct engine for a tier, with legacy fallback."""
+    if tier == "geo":
+        if _geo_loaded:
+            return _latam_geo_engine
+        if _legacy_loaded:
+            return _latam_legacy_engine  # legacy is 18f, works for geo
+        return None
+    elif tier == "flat":
+        if _flat_loaded:
+            return _latam_flat_engine
+        if _legacy_loaded:
+            return _latam_legacy_engine  # legacy 18f works but suboptimal
+        return None
+    return None  # tier=None (Mexico) → no engine → baseline
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Geo features
+# ═══════════════════════════════════════════════════════════════════════════
 
 def compute_geo_features(home_team_id: int, away_team_id: int) -> dict:
     """Compute altitude_diff_m and travel_distance_km from geo cache.
@@ -172,36 +278,38 @@ def compute_geo_features(home_team_id: int, away_team_id: int) -> dict:
 # Single-match prediction (for /predictions/match/{id}, /matches/{id}/details)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def predict_single_latam(feature_df, home_team_id, away_team_id):
-    """Predict for a single match using LATAM engine. Returns (h, d, a) or None.
+def predict_single_latam(feature_df, home_team_id, away_team_id, league_id=None):
+    """Predict for a single match using the correct LATAM engine.
 
     Args:
         feature_df: Single-row DataFrame with baseline features
         home_team_id: int — for geo feature lookup
         away_team_id: int — for geo feature lookup
+        league_id: int — for tier routing (optional, enables GEO-ROUTER)
 
     Returns:
-        (h, d, a) tuple or None if engine not loaded
+        (h, d, a) tuple or None if no engine for this tier
     """
-    if not is_latam_loaded():
-        return None
+    tier = get_latam_tier(league_id) if league_id else None
+    engine = _get_engine_for_tier(tier)
 
-    engine = get_latam_engine()
+    # tier=None (Mexico) or no engine loaded → return None → baseline handles it
     if engine is None:
         return None
 
     try:
         df = feature_df.copy()
 
-        # Add geo features from cache
-        geo = compute_geo_features(int(home_team_id), int(away_team_id))
-        df["altitude_diff_m"] = geo["altitude_diff_m"]
-        df["travel_distance_km"] = geo["travel_distance_km"]
+        # Add geo features only for geo tier
+        if tier == "geo":
+            geo = compute_geo_features(int(home_team_id), int(away_team_id))
+            df["altitude_diff_m"] = geo["altitude_diff_m"]
+            df["travel_distance_km"] = geo["travel_distance_km"]
 
         proba = engine.predict_proba(df)
         return float(proba[0][0]), float(proba[0][1]), float(proba[0][2])
     except Exception as e:
-        logger.warning("LATAM single predict failed: %s", e)
+        logger.warning("LATAM single predict failed (tier=%s): %s", tier, e)
         return None
 
 
@@ -212,8 +320,10 @@ def predict_single_latam(feature_df, home_team_id, away_team_id):
 def overlay_latam_predictions(predictions, feature_df, ml_engine=None):
     """Overlay LATAM engine predictions for LATAM league matches.
 
-    For each NS prediction in a LATAM league, re-predicts using the LATAM
-    engine (18f with geo features) and replaces baseline probabilities.
+    Routes each match to the correct tier engine:
+      - geo tier: 18f engine + geo features
+      - flat tier: 16f engine, no geo features
+      - tier=None (Mexico): skip overlay, keep baseline
 
     Args:
         predictions: List of prediction dicts from engine.predict()
@@ -225,17 +335,16 @@ def overlay_latam_predictions(predictions, feature_df, ml_engine=None):
     """
     stats = {
         "latam_hits": 0,
+        "latam_geo_hits": 0,
+        "latam_flat_hits": 0,
         "latam_no_match": 0,
         "latam_eligible": 0,
         "latam_errors": 0,
+        "latam_tier_none": 0,
         "global_kept": 0,
     }
 
     if not is_latam_loaded():
-        return predictions, stats
-
-    engine = get_latam_engine()
-    if engine is None:
         return predictions, stats
 
     # Build match_id index for fast lookup
@@ -254,6 +363,19 @@ def overlay_latam_predictions(predictions, feature_df, ml_engine=None):
             continue
 
         stats["latam_eligible"] += 1
+
+        # Tier routing
+        tier = get_latam_tier(league_id)
+        if tier is None:
+            # Mexico (262) or unrouted → keep baseline
+            stats["latam_tier_none"] += 1
+            stats["global_kept"] += 1
+            continue
+
+        engine = _get_engine_for_tier(tier)
+        if engine is None:
+            stats["global_kept"] += 1
+            continue
 
         match_id = pred.get("match_id")
 
@@ -277,21 +399,22 @@ def overlay_latam_predictions(predictions, feature_df, ml_engine=None):
                 else:
                     row_data[col] = [float("nan")]
 
-            # Add geo features from cache
-            home_team_id = pred.get("home_team_id") or row.get("home_team_id")
-            away_team_id = pred.get("away_team_id") or row.get("away_team_id")
+            # Add geo features only for geo tier
+            if tier == "geo":
+                home_team_id = pred.get("home_team_id") or row.get("home_team_id")
+                away_team_id = pred.get("away_team_id") or row.get("away_team_id")
 
-            if home_team_id and away_team_id:
-                geo = compute_geo_features(int(home_team_id), int(away_team_id))
-                row_data["altitude_diff_m"] = [geo["altitude_diff_m"]]
-                row_data["travel_distance_km"] = [geo["travel_distance_km"]]
-            else:
-                row_data["altitude_diff_m"] = [float("nan")]
-                row_data["travel_distance_km"] = [float("nan")]
+                if home_team_id and away_team_id:
+                    geo = compute_geo_features(int(home_team_id), int(away_team_id))
+                    row_data["altitude_diff_m"] = [geo["altitude_diff_m"]]
+                    row_data["travel_distance_km"] = [geo["travel_distance_km"]]
+                else:
+                    row_data["altitude_diff_m"] = [float("nan")]
+                    row_data["travel_distance_km"] = [float("nan")]
 
             df_row = pd.DataFrame(row_data)
 
-            # Predict with LATAM engine
+            # Predict with tier engine
             proba = engine.predict_proba(df_row)
             h, d, a = float(proba[0][0]), float(proba[0][1]), float(proba[0][2])
 
@@ -326,12 +449,17 @@ def overlay_latam_predictions(predictions, feature_df, ml_engine=None):
 
             pred["model_version_served"] = engine.model_version
             pred["latam_overlay"] = True
+            pred["latam_tier"] = tier
             stats["latam_hits"] += 1
+            if tier == "geo":
+                stats["latam_geo_hits"] += 1
+            else:
+                stats["latam_flat_hits"] += 1
 
         except Exception as e:
             logger.warning(
-                "LATAM overlay failed for match %s (league %s): %s. Keeping baseline.",
-                match_id, league_id, e,
+                "LATAM overlay failed for match %s (league %s, tier=%s): %s. Keeping baseline.",
+                match_id, league_id, tier, e,
             )
             stats["latam_errors"] += 1
             stats["global_kept"] += 1
