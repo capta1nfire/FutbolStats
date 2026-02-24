@@ -37,6 +37,9 @@ if not DATABASE_URL:
     logger.error("DATABASE_URL environment variable is required")
     sys.exit(1)
 
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+
 # Rate limits
 WIKIDATA_RATE_LIMIT = 0.2  # 5 req/sec
 WIKIPEDIA_RATE_LIMIT = 0.2  # 5 req/sec
@@ -45,23 +48,21 @@ WIKIDATA_ENDPOINT = "https://query.wikidata.org/sparql"
 WIKIPEDIA_API_BASE = "https://en.wikipedia.org/api/rest_v1/page/summary"
 
 SPARQL_QUERY = """
-SELECT ?team
-       (SAMPLE(?teamLabel) AS ?teamLabel)
-       (SAMPLE(?fullName) AS ?fullName)
-       (SAMPLE(?shortName) AS ?shortName)
-       (SAMPLE(?stadium) AS ?stadium)
-       (SAMPLE(?stadiumLabel) AS ?stadiumLabel)
-       (SAMPLE(?capacity) AS ?capacity)
-       (SAMPLE(?altitude) AS ?altitude)
-       (SAMPLE(?stadiumCoords) AS ?stadiumCoords)
-       (SAMPLE(?adminLocation) AS ?adminLocation)
-       (SAMPLE(?adminLocationLabel) AS ?adminLocationLabel)
-       (SAMPLE(?website) AS ?website)
-       (SAMPLE(?twitter) AS ?twitter)
-       (SAMPLE(?instagram) AS ?instagram)
+SELECT ?team ?teamLabel
+       ?fullName ?shortName
+       ?stadium ?stadiumLabel ?capacity ?altitude ?stadiumCoords
+       ?adminLocation ?adminLocationLabel
+       ?website ?twitter ?instagram
 WHERE {{
-  BIND(wd:{qid} AS ?team)
+  VALUES ?team {{ wd:{qid} }}
 
+  # Team label (explicit, not SERVICE — SERVICE fails with subquery BIND)
+  OPTIONAL {{
+    ?team rdfs:label ?teamLabel .
+    FILTER(LANG(?teamLabel) IN ("es", "en"))
+  }}
+
+  # Official names
   OPTIONAL {{
     ?team wdt:P1448 ?fullName .
     FILTER(LANG(?fullName) IN ("en", "es", ""))
@@ -70,31 +71,49 @@ WHERE {{
     ?team wdt:P1813 ?shortName .
     FILTER(LANG(?shortName) IN ("en", "es", ""))
   }}
+
+  # Stadium: pick best by coords-first, then capacity (E3 deterministic)
   OPTIONAL {{
     {{
-      SELECT ?bestStadium (MAX(?cap) AS ?bestCapacity) (MAX(?hasCoords) AS ?coordsFlag) WHERE {{
-        wd:{qid} wdt:P115 ?bestStadium .
-        OPTIONAL {{ ?bestStadium wdt:P1083 ?cap . }}
-        OPTIONAL {{ ?bestStadium wdt:P625 ?bcoords . }}
+      SELECT ?stadium (MAX(?cap) AS ?capacity) (MAX(?hasCoords) AS ?coordsFlag) WHERE {{
+        wd:{qid} wdt:P115 ?stadium .
+        OPTIONAL {{ ?stadium wdt:P1083 ?cap . }}
+        OPTIONAL {{ ?stadium wdt:P625 ?bcoords . }}
         BIND(IF(BOUND(?bcoords), 1, 0) AS ?hasCoords)
       }}
-      GROUP BY ?bestStadium
-      ORDER BY DESC(?coordsFlag) DESC(?bestCapacity)
+      GROUP BY ?stadium
+      ORDER BY DESC(?coordsFlag) DESC(?capacity)
       LIMIT 1
     }}
-    BIND(?bestStadium AS ?stadium)
-    BIND(?bestCapacity AS ?capacity)
+    # Explicit label for stadium (SERVICE wikibase:label can't resolve subquery vars)
+    OPTIONAL {{
+      ?stadium rdfs:label ?stadiumLabel .
+      FILTER(LANG(?stadiumLabel) IN ("en", "es", "it", "de", "fr", "pt", "nl", "tr"))
+    }}
     OPTIONAL {{ ?stadium wdt:P2044 ?altitude . }}
     OPTIONAL {{ ?stadium wdt:P625 ?stadiumCoords . }}
   }}
-  OPTIONAL {{ ?team wdt:P131 ?adminLocation . }}
+
+  # Admin location with explicit label resolution
+  OPTIONAL {{
+    {{
+      SELECT ?adminLocation WHERE {{
+        {{ wd:{qid} wdt:P131 ?adminLocation . }}
+        UNION
+        {{ wd:{qid} wdt:P159 ?adminLocation . }}
+      }}
+      LIMIT 1
+    }}
+    OPTIONAL {{ ?adminLocation rdfs:label ?adminLabel_en . FILTER(LANG(?adminLabel_en) = "en") }}
+    OPTIONAL {{ ?adminLocation rdfs:label ?adminLabel_es . FILTER(LANG(?adminLabel_es) = "es") }}
+    BIND(COALESCE(?adminLabel_en, ?adminLabel_es) AS ?adminLocationLabel)
+  }}
+
+  # Web/Social
   OPTIONAL {{ ?team wdt:P856 ?website . }}
   OPTIONAL {{ ?team wdt:P2002 ?twitter . }}
   OPTIONAL {{ ?team wdt:P2003 ?instagram . }}
-
-  SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en,es". }}
 }}
-GROUP BY ?team
 """
 
 
