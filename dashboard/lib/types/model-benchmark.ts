@@ -23,7 +23,7 @@ export interface DailyModelStats {
   sensor_b_correct: number;
   /** Correct predictions by Family S (Tier 3 MTV model) */
   family_s_correct: number;
-  /** Model A version used that day: "1.0", "1.0.1", or "1.0/1.0.1" (mixed/transition) */
+  /** Predominant Model A baseline version that day (e.g. "v1.2.0-league-only") */
   model_a_version?: string | null;
 }
 

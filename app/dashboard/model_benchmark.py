@@ -15,7 +15,6 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.database import get_async_session
 from app.security import verify_dashboard_token
 
@@ -59,7 +58,7 @@ class DailyModelStats(BaseModel):
     shadow_correct: int
     sensor_b_correct: int
     family_s_correct: int = 0
-    model_a_version: Optional[str] = None  # "1.0" or "1.0.1" (predominant version that day)
+    model_a_version: Optional[str] = None  # Predominant baseline version that day (e.g. "v1.2.0-league-only")
 
 
 class ModelSummary(BaseModel):
@@ -212,6 +211,10 @@ async def get_model_benchmark(
 
         # Build dynamic query - returns raw probabilities for Python co-pick processing
         # Use America/Los_Angeles timezone to match dashboard UI grouping
+        #
+        # Model A: version-blind via LEFT JOIN LATERAL + LIKE pattern.
+        # Matches any '*-league-only' version OR legacy 'v1.0.0'.
+        # Single join returns model_version + probs — no COALESCE chain.
         query = text("""
             WITH match_data AS (
                 SELECT
@@ -241,36 +244,11 @@ async def get_model_benchmark(
                         ELSE NULL
                     END as market_away_prob,
 
-                    -- Model A: detect which version was used (true = active, false = fallback)
-                    (EXISTS (SELECT 1 FROM predictions p
-                       WHERE p.match_id = m.id AND p.model_version = :model_a_version)
-                    ) as model_a_is_active,
-
-                    -- Model A raw probabilities (hybrid: prefer active version, fallback to predecessor)
-                    COALESCE(
-                      (SELECT p.home_prob FROM predictions p
-                       WHERE p.match_id = m.id AND p.model_version = :model_a_version
-                       ORDER BY p.created_at DESC LIMIT 1),
-                      (SELECT p.home_prob FROM predictions p
-                       WHERE p.match_id = m.id AND p.model_version = :model_a_fallback
-                       ORDER BY p.created_at DESC LIMIT 1)
-                    ) as model_a_home,
-                    COALESCE(
-                      (SELECT p.draw_prob FROM predictions p
-                       WHERE p.match_id = m.id AND p.model_version = :model_a_version
-                       ORDER BY p.created_at DESC LIMIT 1),
-                      (SELECT p.draw_prob FROM predictions p
-                       WHERE p.match_id = m.id AND p.model_version = :model_a_fallback
-                       ORDER BY p.created_at DESC LIMIT 1)
-                    ) as model_a_draw,
-                    COALESCE(
-                      (SELECT p.away_prob FROM predictions p
-                       WHERE p.match_id = m.id AND p.model_version = :model_a_version
-                       ORDER BY p.created_at DESC LIMIT 1),
-                      (SELECT p.away_prob FROM predictions p
-                       WHERE p.match_id = m.id AND p.model_version = :model_a_fallback
-                       ORDER BY p.created_at DESC LIMIT 1)
-                    ) as model_a_away,
+                    -- Model A: version-blind baseline (LEFT JOIN LATERAL)
+                    ma.model_version as model_a_model_version,
+                    ma.home_prob as model_a_home,
+                    ma.draw_prob as model_a_draw,
+                    ma.away_prob as model_a_away,
 
                     -- Shadow raw probabilities
                     (SELECT shp.shadow_home_prob FROM shadow_predictions shp
@@ -306,6 +284,14 @@ async def get_model_benchmark(
                      ORDER BY p.created_at DESC LIMIT 1) as family_s_away_prob
 
                 FROM matches m
+                LEFT JOIN LATERAL (
+                    SELECT p.model_version, p.home_prob, p.draw_prob, p.away_prob
+                    FROM predictions p
+                    WHERE p.match_id = m.id
+                      AND (p.model_version LIKE '%%-league-only%%' OR p.model_version = 'v1.0.0')
+                    ORDER BY p.created_at DESC
+                    LIMIT 1
+                ) ma ON TRUE
                 WHERE m.status IN ('FT', 'PEN')  -- Include penalties (90' result is draw)
                     AND m.date >= :start_date
                     AND m.home_goals IS NOT NULL
@@ -322,13 +308,10 @@ async def get_model_benchmark(
             ORDER BY match_date
         """)
 
-        settings = get_settings()
         result = await db.execute(
             query,
             {
                 "start_date": start_date,
-                "model_a_version": settings.MODEL_VERSION,
-                "model_a_fallback": "v1.0.0",
                 "include_market": include_market,
                 "include_model_a": include_model_a,
                 "include_shadow": include_shadow,
@@ -356,7 +339,7 @@ async def get_model_benchmark(
             'shadow_correct': 0,
             'sensor_b_correct': 0,
             'family_s_correct': 0,
-            'model_a_active_count': 0,  # How many used active version (vs fallback)
+            'model_a_versions': defaultdict(int),  # version -> count per day
         })
 
         for row in rows:
@@ -371,12 +354,10 @@ async def get_model_benchmark(
                 ):
                     daily_stats[day]['market_correct'] += 1
 
-            # Track which Model A version was used for this match
-            if include_model_a and row.model_a_home is not None and row.model_a_is_active:
-                daily_stats[day]['model_a_active_count'] += 1
-
-            # Model A (co-pick logic)
+            # Model A (co-pick logic) — version tracked via LATERAL join
             if include_model_a and row.model_a_home is not None:
+                if row.model_a_model_version:
+                    daily_stats[day]['model_a_versions'][row.model_a_model_version] += 1
                 if is_prediction_correct(
                     row.model_a_home, row.model_a_draw, row.model_a_away, actual
                 ):
@@ -403,19 +384,11 @@ async def get_model_benchmark(
                 ):
                     daily_stats[day]['family_s_correct'] += 1
 
-        # Convert to list sorted by date
-        # Determine predominant Model A version per day:
-        #   majority active → "1.0.1", majority fallback → "1.0", mixed → "1.0/1.0.1"
-        def _resolve_model_a_version(stats: dict) -> Optional[str]:
-            total = stats['matches']
-            active = stats['model_a_active_count']
-            if total == 0:
+        # Predominant Model A version per day: most frequent version string
+        def _predominant_version(versions: dict) -> Optional[str]:
+            if not versions:
                 return None
-            if active == total:
-                return "1.0.1"
-            if active == 0:
-                return "1.0"
-            return "1.0/1.0.1"  # mixed day (transition)
+            return max(versions, key=versions.get)
 
         daily_data = [
             DailyModelStats(
@@ -426,7 +399,7 @@ async def get_model_benchmark(
                 shadow_correct=stats['shadow_correct'],
                 sensor_b_correct=stats['sensor_b_correct'],
                 family_s_correct=stats['family_s_correct'],
-                model_a_version=_resolve_model_a_version(stats) if include_model_a else None,
+                model_a_version=_predominant_version(stats['model_a_versions']) if include_model_a else None,
             )
             for day, stats in sorted(daily_stats.items())
         ]
