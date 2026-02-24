@@ -71,8 +71,19 @@ WHERE {{
     FILTER(LANG(?shortName) IN ("en", "es", ""))
   }}
   OPTIONAL {{
-    ?team wdt:P115 ?stadium .
-    OPTIONAL {{ ?stadium wdt:P1083 ?capacity . }}
+    {{
+      SELECT ?bestStadium (MAX(?cap) AS ?bestCapacity) (MAX(?hasCoords) AS ?coordsFlag) WHERE {{
+        wd:{qid} wdt:P115 ?bestStadium .
+        OPTIONAL {{ ?bestStadium wdt:P1083 ?cap . }}
+        OPTIONAL {{ ?bestStadium wdt:P625 ?bcoords . }}
+        BIND(IF(BOUND(?bcoords), 1, 0) AS ?hasCoords)
+      }}
+      GROUP BY ?bestStadium
+      ORDER BY DESC(?coordsFlag) DESC(?bestCapacity)
+      LIMIT 1
+    }}
+    BIND(?bestStadium AS ?stadium)
+    BIND(?bestCapacity AS ?capacity)
     OPTIONAL {{ ?stadium wdt:P2044 ?altitude . }}
     OPTIONAL {{ ?stadium wdt:P625 ?stadiumCoords . }}
   }}

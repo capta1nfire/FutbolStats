@@ -23,10 +23,12 @@ import httpx
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql://postgres:heFyxqRYCUMNkVSCgcpXHprpjAPcfJAQ@maglev.proxy.rlwy.net:24997/railway",
-)
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    print("ERROR: DATABASE_URL environment variable is required", file=sys.stderr)
+    sys.exit(1)
+if "+asyncpg" in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://", 1)
 
 SPARQL_ENDPOINT = "https://query.wikidata.org/sparql"
 

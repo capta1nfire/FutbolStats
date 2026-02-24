@@ -33,10 +33,12 @@ from sqlalchemy.orm import sessionmaker
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+asyncpg://postgres:heFyxqRYCUMNkVSCgcpXHprpjAPcfJAQ@maglev.proxy.rlwy.net:24997/railway",
-)
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    logger.error("DATABASE_URL environment variable is required")
+    sys.exit(1)
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 WIKIPEDIA_API_BASE = "https://en.wikipedia.org/api/rest_v1/page/summary"
 

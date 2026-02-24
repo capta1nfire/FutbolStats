@@ -1,59 +1,61 @@
 #!/usr/bin/env python3
 """
-Wikidata ID Validation & Reconciliation Script.
+Wikidata QID Reconciliation v2 — Country-aware + Wikipedia-first.
 
-Based on Kimi recommendation: Hybrid approach (SPARQL validation + API reconciliation)
-
-Phases:
-1. SPARQL batch validation (50 QIDs per query) - identify invalid QIDs
-2. API reconciliation (wbsearchentities) - get correct QIDs for invalid ones
-3. Auto-accept high confidence, flag low confidence for manual review
+4-phase approach:
+  1. Wikipedia Search → get QID via wikibase_item (high confidence)
+  2. SPARQL Validation → verify type + country (P17, P131*/P17 fallback)
+  3. Fallback wbsearchentities → batch SPARQL with VALUES (1 req per team)
+  4. Confidence scoring + auto-apply (HIGH/MED only if country_match)
 
 Usage:
-    python scripts/validate_wikidata_ids.py --phase 1  # Validate only
-    python scripts/validate_wikidata_ids.py --phase 2  # Reconcile invalid
-    python scripts/validate_wikidata_ids.py --phase 3  # Apply corrections
-    python scripts/validate_wikidata_ids.py --all      # Run all phases
+    python scripts/validate_wikidata_ids.py --scope latam --dry-run
+    python scripts/validate_wikidata_ids.py --scope Bolivia --apply
+    python scripts/validate_wikidata_ids.py --team-id 4325 --apply
+    python scripts/validate_wikidata_ids.py --all --apply
 
-Author: Master (per Kimi recommendation)
-Date: 2026-02-05
+Author: Master (per ABE reconciliation_v2 directive, 2026-02-23)
 """
 
 import argparse
 import asyncio
 import json
 import logging
+import os
+import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+import re
+
 import httpx
 
-# Database connection
-DATABASE_URL = "postgresql+asyncpg://postgres:heFyxqRYCUMNkVSCgcpXHprpjAPcfJAQ@maglev.proxy.rlwy.net:24997/railway"
+# Shared constants
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wikidata_common import (
+    COUNTRY_QID_MAP,
+    LATAM_COUNTRIES,
+    REVERSE_COUNTRY_MAP,
+    SPARQL_ENDPOINT,
+    VALID_TYPES,
+    WIKIDATA_API,
+    WIKIPEDIA_API,
+)
 
-# Wikidata endpoints
-SPARQL_ENDPOINT = "https://query.wikidata.org/sparql"
-WIKIDATA_API = "https://www.wikidata.org/w/api.php"
-
-# Valid entity types for football teams
-VALID_TYPES = [
-    "Q476028",      # association football club
-    "Q6979593",     # men's national association football team
-    "Q15944511",    # women's national association football team
-    "Q103229495",   # association football team (generic)
-    "Q17270031",    # national under-21 football team
-    "Q1194951",     # national under-23 football team
-]
+# Database connection (P0-SEC: no hardcoded credentials)
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    print("ERROR: DATABASE_URL environment variable is required", file=sys.stderr)
+    sys.exit(1)
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 # Rate limiting
-SPARQL_DELAY = 5.0      # 1 request every 5 seconds
-RECONCILE_DELAY = 3.0   # 1 request every 3 seconds (conservative)
-
-# Confidence thresholds
-AUTO_ACCEPT_SCORE = 0.95
-MANUAL_REVIEW_SCORE = 0.70
+WIKIPEDIA_DELAY = 0.2   # 5 req/sec
+SPARQL_DELAY = 2.0      # Conservative for SPARQL
+WBSEARCH_DELAY = 1.0    # Wikidata API
 
 # Logging
 logging.basicConfig(
@@ -62,502 +64,740 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Output files
 OUTPUT_DIR = Path("logs")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+USER_AGENT = "BonJogo/2.0 (wikidata-reconciliation-v2)"
+
+# Stop words for name comparison (common prefixes/suffixes in club names)
+_NAME_STOP = frozenset({
+    "fc", "cf", "sc", "ac", "cd", "de", "del", "la", "el", "los", "las",
+    "club", "deportivo", "deportiva", "atletico", "athletic", "united",
+    "city", "real", "sporting", "sport", "futbol", "football", "soccer",
+    "y", "e", "da", "do", "dos", "san", "santa",
+})
+
+# Description keywords that indicate a club/team entity
+_CLUB_KEYWORDS = [
+    "football club", "soccer club", "football team", "soccer team",
+    "sports club", "sporting club", "association football",
+]
+
+# Description keywords that indicate a NON-club entity (person, season, etc.)
+_EXCLUDED_KEYWORDS = [
+    "footballer", "football player", "soccer player",
+    "manager", "coach",
+    " season", "tournament", "rivalry", "stadium",
+    "national team",  # avoid matching national teams for club searches
+]
+
+
+def _name_overlap(team_name: str, wiki_title: str) -> bool:
+    """
+    Check that at least one significant word token (len≥3) overlaps
+    between the team name and the Wikipedia article title.
+
+    Prevents accepting articles about completely different entities
+    (e.g., "Emelec" → "Universidad Católica" article).
+    """
+    def sig_tokens(s: str) -> set[str]:
+        raw = set(re.sub(r"[^\w\s]", "", s.lower()).split())
+        return {t for t in raw if len(t) >= 3} - _NAME_STOP
+
+    t1 = sig_tokens(team_name)
+    t2 = sig_tokens(wiki_title)
+
+    if not t1:
+        # Fallback: use all tokens ≥2 chars (for short names like "ADT")
+        t1 = {t for t in re.sub(r"[^\w\s]", "", team_name.lower()).split() if len(t) >= 2}
+    if not t2:
+        t2 = {t for t in re.sub(r"[^\w\s]", "", wiki_title.lower()).split() if len(t) >= 2}
+
+    return bool(t1 & t2)
+
+
+def _is_football_club_desc(desc: str) -> bool:
+    """
+    Check if a Wikipedia description indicates a football club/team entity.
+
+    Returns True only if it matches club keywords AND doesn't match exclusion
+    patterns (persons, seasons, tournaments, stadiums).
+    """
+    desc_lower = desc.lower()
+    is_club = any(kw in desc_lower for kw in _CLUB_KEYWORDS)
+    is_excluded = any(kw in desc_lower for kw in _EXCLUDED_KEYWORDS)
+    return is_club and not is_excluded
+
 
 # =============================================================================
-# Phase 1: SPARQL Batch Validation
+# Phase 1: Wikipedia Search (primary method)
 # =============================================================================
 
-SPARQL_VALIDATION_QUERY = """
-SELECT ?item ?itemLabel ?type WHERE {{
-  VALUES ?item {{ {qids} }}
-  ?item wdt:P31/wdt:P279* ?type .
-  FILTER (?type IN ({types}))
-  SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en,es". }}
+async def wikipedia_search_qid(
+    team_name: str,
+    country: str,
+    client: httpx.AsyncClient,
+) -> Optional[dict]:
+    """
+    Search Wikipedia for team, extract QID via wikibase_item.
+
+    Tries multiple search variants. Validates description contains football keywords.
+    """
+    search_url = f"{WIKIPEDIA_API}/w/api.php"
+    summary_url = f"{WIKIPEDIA_API}/api/rest_v1/page/summary"
+
+    # Search variants: most specific → least specific
+    variants = [
+        f"{team_name} {country} football club",
+        f"{team_name} FC",
+        team_name,
+    ]
+
+    for query in variants:
+        params = {
+            "action": "query",
+            "list": "search",
+            "srsearch": query,
+            "srlimit": 5,
+            "format": "json",
+        }
+        try:
+            resp = await client.get(search_url, params=params, timeout=30.0)
+            if resp.status_code != 200:
+                continue
+
+            results = resp.json().get("query", {}).get("search", [])
+            for result in results:
+                title = result["title"].replace(" ", "_")
+                await asyncio.sleep(WIKIPEDIA_DELAY)
+
+                try:
+                    summary_resp = await client.get(f"{summary_url}/{title}", timeout=30.0)
+                    if summary_resp.status_code != 200:
+                        continue
+                    data = summary_resp.json()
+                except Exception:
+                    continue
+
+                qid = data.get("wikibase_item")
+                if not qid:
+                    continue
+
+                desc = data.get("description") or ""
+                wiki_title_clean = data.get("title") or ""
+
+                # Gate 1: Must be a football club/team (not person/season/tournament)
+                if not _is_football_club_desc(desc):
+                    continue
+
+                # Gate 2: Name overlap — wiki article must relate to our team
+                if not _name_overlap(team_name, wiki_title_clean):
+                    logger.debug(f"    Name mismatch: '{team_name}' vs '{wiki_title_clean}' — skipping")
+                    continue
+
+                return {
+                    "qid": qid,
+                    "title": wiki_title_clean,
+                    "description": desc,
+                    "method": "wikipedia",
+                }
+
+        except Exception as e:
+            logger.debug(f"Wikipedia search error for '{query}': {e}")
+            continue
+
+        await asyncio.sleep(WIKIPEDIA_DELAY)
+
+    return None
+
+
+# =============================================================================
+# Phase 2: SPARQL Validation (type + country with P131*/P17 fallback)
+# =============================================================================
+
+SPARQL_VALIDATE_QUERY = """
+SELECT ?type ?country ?locCountry ?stadium WHERE {{
+  OPTIONAL {{ wd:{qid} wdt:P31/wdt:P279* ?type .
+    FILTER (?type IN ({types})) }}
+  OPTIONAL {{ wd:{qid} wdt:P17 ?country . }}
+  OPTIONAL {{ wd:{qid} wdt:P131*/wdt:P17 ?locCountry . }}
+  OPTIONAL {{ wd:{qid} wdt:P115 ?stadium . }}
+}}
+LIMIT 10
+"""
+
+
+async def sparql_validate_candidate(
+    qid: str,
+    expected_country: str,
+    client: httpx.AsyncClient,
+) -> dict:
+    """
+    Validate QID via SPARQL: check type, country (P17 + P131*/P17 fallback), stadium.
+
+    If expected_country not in COUNTRY_QID_MAP → degrade to LOW without crash.
+    """
+    types_str = ", ".join(f"wd:{t}" for t in VALID_TYPES)
+    query = SPARQL_VALIDATE_QUERY.format(qid=qid, types=types_str)
+
+    result = {
+        "type_valid": False,
+        "country_match": False,
+        "has_stadium": False,
+        "country_qid": None,
+    }
+
+    try:
+        resp = await client.get(
+            SPARQL_ENDPOINT,
+            params={"query": query, "format": "json"},
+            headers={"User-Agent": USER_AGENT},
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        bindings = resp.json().get("results", {}).get("bindings", [])
+
+        expected_qid = COUNTRY_QID_MAP.get(expected_country)
+        if not expected_qid:
+            logger.warning(f"Country '{expected_country}' not in COUNTRY_QID_MAP — will degrade to LOW")
+
+        for b in bindings:
+            # Type check
+            if b.get("type", {}).get("value"):
+                result["type_valid"] = True
+
+            # Stadium check
+            if b.get("stadium", {}).get("value"):
+                result["has_stadium"] = True
+
+            # Country check: P17 direct first, fallback P131*/P17
+            country_uri = b.get("country", {}).get("value", "")
+            loc_country_uri = b.get("locCountry", {}).get("value", "")
+
+            for uri in [country_uri, loc_country_uri]:
+                if uri and "/entity/Q" in uri:
+                    found_qid = uri.split("/")[-1]
+                    result["country_qid"] = found_qid
+                    if expected_qid and found_qid == expected_qid:
+                        result["country_match"] = True
+                        break
+
+            if result["country_match"]:
+                break
+
+    except Exception as e:
+        logger.warning(f"SPARQL validation failed for {qid}: {e}")
+
+    return result
+
+
+# =============================================================================
+# Phase 3: Fallback wbsearchentities + batch SPARQL validation
+# =============================================================================
+
+SPARQL_BATCH_VALIDATE = """
+SELECT ?item ?type ?country ?locCountry ?stadium WHERE {{
+  VALUES ?item {{ {items} }}
+  OPTIONAL {{ ?item wdt:P31/wdt:P279* ?type .
+    FILTER (?type IN ({types})) }}
+  OPTIONAL {{ ?item wdt:P17 ?country . }}
+  OPTIONAL {{ ?item wdt:P131*/wdt:P17 ?locCountry . }}
+  OPTIONAL {{ ?item wdt:P115 ?stadium . }}
 }}
 """
 
 
-async def validate_qids_batch(
-    qids: list[str],
-    client: httpx.AsyncClient,
-) -> set[str]:
-    """
-    Validate a batch of QIDs via SPARQL.
-
-    Returns set of valid QIDs (those that are football teams).
-    QIDs not in the result set are invalid.
-    """
-    # Format QIDs for SPARQL
-    qids_str = " ".join(f"wd:{qid}" for qid in qids)
-    types_str = ", ".join(f"wd:{t}" for t in VALID_TYPES)
-
-    query = SPARQL_VALIDATION_QUERY.format(qids=qids_str, types=types_str)
-
-    try:
-        response = await client.get(
-            SPARQL_ENDPOINT,
-            params={"query": query, "format": "json"},
-            headers={"User-Agent": "FutbolStats/1.0 (wikidata-validation)"},
-            timeout=60.0,
-        )
-        response.raise_for_status()
-        data = response.json()
-
-        # Extract valid QIDs from results
-        valid = set()
-        for binding in data.get("results", {}).get("bindings", []):
-            item_uri = binding.get("item", {}).get("value", "")
-            if "/entity/Q" in item_uri:
-                qid = item_uri.split("/")[-1]
-                valid.add(qid)
-
-        return valid
-
-    except Exception as e:
-        logger.error(f"SPARQL validation failed: {e}")
-        return set()
-
-
-async def phase1_validate_all(session) -> dict[str, Any]:
-    """
-    Phase 1: Validate all wikidata_ids in teams table.
-
-    Returns dict with valid_qids, invalid_qids, and stats.
-    """
-    from sqlalchemy import text
-
-    logger.info("=" * 60)
-    logger.info("PHASE 1: SPARQL Batch Validation")
-    logger.info("=" * 60)
-
-    # Get all teams with wikidata_id
-    result = await session.execute(text("""
-        SELECT id, name, wikidata_id, country
-        FROM teams
-        WHERE wikidata_id IS NOT NULL
-        ORDER BY
-            CASE WHEN country IS NULL THEN 1 ELSE 0 END,  -- Clubs first
-            id
-    """))
-    teams = result.fetchall()
-
-    logger.info(f"Found {len(teams)} teams with wikidata_id")
-
-    # Build team lookup
-    team_lookup = {t.wikidata_id: {"id": t.id, "name": t.name, "country": t.country}
-                   for t in teams}
-    all_qids = list(team_lookup.keys())
-
-    # Validate in batches of 50
-    BATCH_SIZE = 50
-    valid_qids = set()
-
-    async with httpx.AsyncClient() as client:
-        for i in range(0, len(all_qids), BATCH_SIZE):
-            batch = all_qids[i:i + BATCH_SIZE]
-            logger.info(f"Validating batch {i // BATCH_SIZE + 1}/{(len(all_qids) + BATCH_SIZE - 1) // BATCH_SIZE} ({len(batch)} QIDs)")
-
-            batch_valid = await validate_qids_batch(batch, client)
-            valid_qids.update(batch_valid)
-
-            logger.info(f"  Valid: {len(batch_valid)}/{len(batch)}")
-
-            # Rate limit
-            if i + BATCH_SIZE < len(all_qids):
-                await asyncio.sleep(SPARQL_DELAY)
-
-    # Compute invalid
-    invalid_qids = set(all_qids) - valid_qids
-
-    # Build detailed results
-    invalid_teams = []
-    for qid in invalid_qids:
-        team = team_lookup[qid]
-        invalid_teams.append({
-            "team_id": team["id"],
-            "team_name": team["name"],
-            "country": team["country"],
-            "wikidata_id": qid,
-            "is_national": team["country"] is None,
-        })
-
-    # Sort: clubs first (have country), then nationals
-    invalid_teams.sort(key=lambda x: (x["is_national"], x["team_id"]))
-
-    results = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "total_teams": len(teams),
-        "valid_count": len(valid_qids),
-        "invalid_count": len(invalid_qids),
-        "valid_pct": round(100 * len(valid_qids) / len(teams), 1),
-        "invalid_teams": invalid_teams,
-    }
-
-    # Save results
-    output_file = OUTPUT_DIR / f"wikidata_validation_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
-    with open(output_file, "w") as f:
-        json.dump(results, f, indent=2)
-
-    logger.info("")
-    logger.info(f"Results saved to: {output_file}")
-    logger.info(f"Total: {len(teams)} | Valid: {len(valid_qids)} ({results['valid_pct']}%) | Invalid: {len(invalid_qids)}")
-
-    # Show sample of invalid
-    logger.info("")
-    logger.info("Sample invalid teams (first 10):")
-    for team in invalid_teams[:10]:
-        logger.info(f"  {team['team_id']:5} | {team['team_name'][:30]:30} | {team['wikidata_id']} | {'NATIONAL' if team['is_national'] else team['country']}")
-
-    return results
-
-
-# =============================================================================
-# Phase 2: Reconciliation (wbsearchentities API)
-# =============================================================================
-
-async def reconcile_team(
+async def wbsearch_with_validation(
     team_name: str,
-    is_national: bool,
-    country: Optional[str],
+    country: str,
     client: httpx.AsyncClient,
-) -> Optional[dict[str, Any]]:
+    limit: int = 10,
+) -> list[dict]:
     """
-    Reconcile a team name to Wikidata QID using wbsearchentities.
+    Search Wikidata wbsearchentities, then batch-validate all candidates in 1 SPARQL.
 
-    Returns dict with qid, label, description, confidence.
+    Returns ranked list of candidates with validation results.
     """
-    # Build search term (heuristic for nationals)
-    if is_national:
-        search_term = f"{team_name} national football team"
-    else:
-        search_term = team_name
-
+    # Step 1: wbsearchentities
     params = {
         "action": "wbsearchentities",
-        "search": search_term,
+        "search": team_name,
         "language": "en",
         "type": "item",
         "format": "json",
-        "limit": 5,
+        "limit": limit,
     }
 
     try:
-        response = await client.get(
+        resp = await client.get(
             WIKIDATA_API,
             params=params,
-            headers={"User-Agent": "FutbolStats/1.0 (wikidata-reconciliation)"},
+            headers={"User-Agent": USER_AGENT},
             timeout=30.0,
         )
-        response.raise_for_status()
-        data = response.json()
+        resp.raise_for_status()
+        candidates = resp.json().get("search", [])
+    except Exception as e:
+        logger.warning(f"wbsearchentities failed for '{team_name}': {e}")
+        return []
 
-        candidates = data.get("search", [])
-        if not candidates:
-            return None
+    if not candidates:
+        return []
 
-        # Score candidates
-        for c in candidates:
-            desc = (c.get("description") or "").lower()
-            label = (c.get("label") or "").lower()
+    # Step 2: Batch SPARQL validation (1 request for all candidates)
+    qids = [c["id"] for c in candidates]
+    items_str = " ".join(f"wd:{q}" for q in qids)
+    types_str = ", ".join(f"wd:{t}" for t in VALID_TYPES)
+    query = SPARQL_BATCH_VALIDATE.format(items=items_str, types=types_str)
 
-            # Calculate confidence
-            confidence = 0.5  # Base
+    validation_map: dict[str, dict] = {q: {"type_valid": False, "country_match": False, "has_stadium": False, "country_qid": None} for q in qids}
 
-            # Type match
-            if is_national:
-                if "national" in desc and ("football" in desc or "soccer" in desc):
-                    confidence += 0.4
-                elif "national team" in desc:
-                    confidence += 0.3
-            else:
-                if "football club" in desc or "soccer club" in desc:
-                    confidence += 0.4
-                elif "football" in desc:
-                    confidence += 0.2
+    try:
+        await asyncio.sleep(SPARQL_DELAY)
+        resp = await client.get(
+            SPARQL_ENDPOINT,
+            params={"query": query, "format": "json"},
+            headers={"User-Agent": USER_AGENT},
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        bindings = resp.json().get("results", {}).get("bindings", [])
 
-            # Name similarity
-            if team_name.lower() in label or label in team_name.lower():
-                confidence += 0.1
+        expected_qid = COUNTRY_QID_MAP.get(country)
 
-            # Country match (for clubs)
-            if country and country.lower() in desc:
-                confidence += 0.1
+        for b in bindings:
+            item_uri = b.get("item", {}).get("value", "")
+            if "/entity/Q" not in item_uri:
+                continue
+            item_qid = item_uri.split("/")[-1]
+            if item_qid not in validation_map:
+                continue
 
-            c["confidence"] = min(confidence, 1.0)
+            v = validation_map[item_qid]
 
-        # Sort by confidence
-        candidates.sort(key=lambda x: x.get("confidence", 0), reverse=True)
-        best = candidates[0]
+            if b.get("type", {}).get("value"):
+                v["type_valid"] = True
+            if b.get("stadium", {}).get("value"):
+                v["has_stadium"] = True
 
-        return {
-            "qid": best.get("id"),
-            "label": best.get("label"),
-            "description": best.get("description"),
-            "confidence": best.get("confidence", 0.5),
-            "all_candidates": [{"qid": c["id"], "label": c.get("label"), "confidence": c.get("confidence")}
-                              for c in candidates[:3]],
-        }
+            for key in ["country", "locCountry"]:
+                uri = b.get(key, {}).get("value", "")
+                if uri and "/entity/Q" in uri:
+                    found_qid = uri.split("/")[-1]
+                    v["country_qid"] = found_qid
+                    if expected_qid and found_qid == expected_qid:
+                        v["country_match"] = True
 
     except Exception as e:
-        logger.warning(f"Reconciliation failed for {team_name}: {e}")
-        return None
+        logger.warning(f"Batch SPARQL validation failed: {e}")
+
+    # Step 3: Build ranked results
+    results = []
+    for c in candidates:
+        qid = c["id"]
+        v = validation_map[qid]
+        label = (c.get("label") or "").lower()
+
+        # Name similarity bonus
+        name_sim = 0.0
+        if team_name.lower() in label or label in team_name.lower():
+            name_sim = 0.10
+
+        results.append({
+            "qid": qid,
+            "label": c.get("label"),
+            "description": c.get("description"),
+            "method": "wbsearch",
+            **v,
+            "name_sim": name_sim,
+        })
+
+    return results
 
 
-async def phase2_reconcile(validation_file: str) -> dict[str, Any]:
+# =============================================================================
+# Phase 4: Confidence Scoring + Apply
+# =============================================================================
+
+def compute_confidence(
+    method: str,
+    type_valid: bool,
+    country_match: bool,
+    has_stadium: bool,
+    name_sim: float,
+) -> tuple[float, str]:
     """
-    Phase 2: Reconcile invalid QIDs.
+    Compute confidence score and tier.
 
-    Reads validation results from Phase 1 and attempts to find correct QIDs.
+    Returns (score, tier) where tier is HIGH/MED/LOW.
     """
-    logger.info("=" * 60)
-    logger.info("PHASE 2: API Reconciliation")
-    logger.info("=" * 60)
+    if method == "wikipedia":
+        score = 0.40  # Wikipedia-first base
+    else:
+        score = 0.20  # wbsearch base
 
-    # Load validation results
-    with open(validation_file) as f:
-        validation = json.load(f)
+    if type_valid:
+        score += 0.25
+    if country_match:
+        score += 0.25
+    if has_stadium:
+        score += 0.10
+    score += name_sim
 
-    invalid_teams = validation.get("invalid_teams", [])
-    logger.info(f"Found {len(invalid_teams)} invalid teams to reconcile")
+    score = min(score, 1.0)
 
-    # Separate by priority: clubs first, then nationals
-    clubs = [t for t in invalid_teams if not t["is_national"]]
-    nationals = [t for t in invalid_teams if t["is_national"]]
+    # Tier assignment — LOW if no country match regardless of score
+    if score >= 0.85:
+        tier = "HIGH"
+    elif score >= 0.60 and country_match:
+        tier = "MED"
+    else:
+        tier = "LOW"
 
-    logger.info(f"  Clubs: {len(clubs)}")
-    logger.info(f"  Nationals: {len(nationals)}")
+    return score, tier
 
-    # Process in priority order
-    reconciled = []
-    failed = []
 
-    async with httpx.AsyncClient() as client:
-        # Process clubs first
-        for i, team in enumerate(clubs + nationals):
-            logger.info(f"[{i+1}/{len(invalid_teams)}] Reconciling: {team['team_name']}")
+async def process_team(
+    team_id: int,
+    team_name: str,
+    country: str,
+    current_qid: Optional[str],
+    client: httpx.AsyncClient,
+) -> dict:
+    """
+    Process a single team through the 4-phase reconciliation pipeline.
+    """
+    result = {
+        "team_id": team_id,
+        "team_name": team_name,
+        "country": country,
+        "current_qid": current_qid,
+        "new_qid": None,
+        "method": None,
+        "confidence": 0.0,
+        "tier": "LOW",
+        "type_valid": False,
+        "country_match": False,
+        "has_stadium": False,
+        "status": "not_found",
+    }
 
-            result = await reconcile_team(
-                team["team_name"],
-                team["is_national"],
-                team.get("country"),
-                client,
+    # Phase 1: Wikipedia Search
+    wiki_result = await wikipedia_search_qid(team_name, country, client)
+
+    if wiki_result:
+        qid = wiki_result["qid"]
+        logger.info(f"  Phase 1 (Wikipedia): {qid} — {wiki_result.get('description', '')[:60]}")
+
+        # Phase 2: SPARQL Validation
+        await asyncio.sleep(SPARQL_DELAY)
+        validation = await sparql_validate_candidate(qid, country, client)
+
+        score, tier = compute_confidence(
+            "wikipedia",
+            validation["type_valid"],
+            validation["country_match"],
+            validation["has_stadium"],
+            0.0,
+        )
+
+        result.update({
+            "new_qid": qid,
+            "method": "wikipedia",
+            "confidence": score,
+            "tier": tier,
+            "type_valid": validation["type_valid"],
+            "country_match": validation["country_match"],
+            "has_stadium": validation["has_stadium"],
+            "wiki_title": wiki_result.get("title"),
+            "wiki_description": wiki_result.get("description"),
+        })
+
+        if tier in ("HIGH", "MED"):
+            result["status"] = "auto_applied"
+            return result
+        # Wikipedia found but LOW confidence — try wbsearch
+        logger.info(f"  Phase 1 result LOW ({score:.2f}) — trying wbsearch fallback")
+
+    # Phase 3: Fallback wbsearchentities
+    await asyncio.sleep(WBSEARCH_DELAY)
+    candidates = await wbsearch_with_validation(team_name, country, client)
+
+    if candidates:
+        # Rank by confidence
+        ranked = []
+        for c in candidates:
+            score, tier = compute_confidence(
+                "wbsearch",
+                c["type_valid"],
+                c["country_match"],
+                c["has_stadium"],
+                c["name_sim"],
             )
+            ranked.append({**c, "confidence": score, "tier": tier})
 
-            if result:
-                entry = {
-                    **team,
-                    "old_qid": team["wikidata_id"],
-                    "new_qid": result["qid"],
-                    "new_label": result["label"],
-                    "new_description": result["description"],
-                    "confidence": result["confidence"],
-                    "candidates": result["all_candidates"],
-                    "status": "auto_accept" if result["confidence"] >= AUTO_ACCEPT_SCORE
-                             else "manual_review" if result["confidence"] >= MANUAL_REVIEW_SCORE
-                             else "low_confidence",
-                }
-                reconciled.append(entry)
+        ranked.sort(key=lambda x: x["confidence"], reverse=True)
+        best = ranked[0]
 
-                status_emoji = "✓" if entry["status"] == "auto_accept" else "?" if entry["status"] == "manual_review" else "✗"
-                logger.info(f"  {status_emoji} {result['qid']} ({result['confidence']:.2f}) - {result['label'][:40]}")
-            else:
-                failed.append({
-                    **team,
-                    "status": "not_found",
-                })
-                logger.info(f"  ✗ No candidates found")
+        logger.info(f"  Phase 3 (wbsearch): {best['qid']} ({best['confidence']:.2f}/{best['tier']}) — {(best.get('description') or '')[:60]}")
 
-            # Rate limit
-            if i + 1 < len(invalid_teams):
-                await asyncio.sleep(RECONCILE_DELAY)
+        # If wbsearch produced better result than Wikipedia LOW
+        if best["confidence"] > result.get("confidence", 0):
+            result.update({
+                "new_qid": best["qid"],
+                "method": "wbsearch",
+                "confidence": best["confidence"],
+                "tier": best["tier"],
+                "type_valid": best["type_valid"],
+                "country_match": best["country_match"],
+                "has_stadium": best["has_stadium"],
+                "wbsearch_label": best.get("label"),
+                "wbsearch_description": best.get("description"),
+                "candidates": [{"qid": c["qid"], "confidence": c.get("confidence", 0)} for c in ranked[:3]],
+            })
 
-    # Summary
-    auto_accept = [r for r in reconciled if r["status"] == "auto_accept"]
-    manual_review = [r for r in reconciled if r["status"] == "manual_review"]
-    low_confidence = [r for r in reconciled if r["status"] == "low_confidence"]
+    # Final status
+    if result["new_qid"]:
+        if result["tier"] in ("HIGH", "MED"):
+            result["status"] = "auto_applied"
+        elif result["tier"] == "LOW":
+            result["status"] = "low_confidence"
+        else:
+            result["status"] = "manual_review"
+    else:
+        result["status"] = "not_found"
 
-    results = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "total_invalid": len(invalid_teams),
-        "reconciled": len(reconciled),
-        "failed": len(failed),
-        "auto_accept": len(auto_accept),
-        "manual_review": len(manual_review),
-        "low_confidence": len(low_confidence),
-        "corrections": reconciled,
-        "not_found": failed,
-    }
-
-    # Save results
-    output_file = OUTPUT_DIR / f"wikidata_reconciliation_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
-    with open(output_file, "w") as f:
-        json.dump(results, f, indent=2)
-
-    logger.info("")
-    logger.info(f"Results saved to: {output_file}")
-    logger.info(f"Summary:")
-    logger.info(f"  Auto-accept (>={AUTO_ACCEPT_SCORE}): {len(auto_accept)}")
-    logger.info(f"  Manual review ({MANUAL_REVIEW_SCORE}-{AUTO_ACCEPT_SCORE}): {len(manual_review)}")
-    logger.info(f"  Low confidence (<{MANUAL_REVIEW_SCORE}): {len(low_confidence)}")
-    logger.info(f"  Not found: {len(failed)}")
-
-    return results
+    return result
 
 
 # =============================================================================
-# Phase 3: Apply Corrections
-# =============================================================================
-
-async def phase3_apply(reconciliation_file: str, dry_run: bool = True) -> dict[str, Any]:
-    """
-    Phase 3: Apply corrections to database.
-
-    Only applies auto_accept corrections unless --force is specified.
-    """
-    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-    from sqlalchemy.orm import sessionmaker
-    from sqlalchemy import text
-
-    logger.info("=" * 60)
-    logger.info(f"PHASE 3: Apply Corrections {'(DRY RUN)' if dry_run else '(LIVE)'}")
-    logger.info("=" * 60)
-
-    # Load reconciliation results
-    with open(reconciliation_file) as f:
-        reconciliation = json.load(f)
-
-    corrections = reconciliation.get("corrections", [])
-    auto_accept = [c for c in corrections if c["status"] == "auto_accept"]
-
-    logger.info(f"Total corrections: {len(corrections)}")
-    logger.info(f"Auto-accept: {len(auto_accept)}")
-
-    if dry_run:
-        logger.info("")
-        logger.info("DRY RUN - No changes will be made")
-        logger.info("Corrections that would be applied:")
-        for c in auto_accept[:20]:
-            logger.info(f"  {c['team_id']:5} | {c['team_name'][:25]:25} | {c['old_qid']} -> {c['new_qid']} ({c['confidence']:.2f})")
-        if len(auto_accept) > 20:
-            logger.info(f"  ... and {len(auto_accept) - 20} more")
-        return {"dry_run": True, "would_apply": len(auto_accept)}
-
-    # Apply corrections - commit each update individually to avoid transaction abort
-    engine = create_async_engine(DATABASE_URL, echo=False)
-    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    applied = 0
-    errors = 0
-    skipped = 0
-
-    for c in auto_accept:
-        async with async_session() as session:
-            try:
-                # Update teams table
-                result = await session.execute(
-                    text("UPDATE teams SET wikidata_id = :new_qid WHERE id = :team_id AND wikidata_id = :old_qid"),
-                    {"new_qid": c["new_qid"], "team_id": c["team_id"], "old_qid": c["old_qid"]}
-                )
-
-                if result.rowcount == 0:
-                    skipped += 1
-                    logger.info(f"  ~ {c['team_name']}: skipped (already updated or old_qid mismatch)")
-                    await session.rollback()
-                    continue
-
-                # Delete old enrichment if exists
-                await session.execute(
-                    text("DELETE FROM team_wikidata_enrichment WHERE team_id = :team_id"),
-                    {"team_id": c["team_id"]}
-                )
-
-                await session.commit()
-                applied += 1
-                logger.info(f"  ✓ {c['team_name']}: {c['old_qid']} -> {c['new_qid']}")
-
-            except Exception as e:
-                await session.rollback()
-                errors += 1
-                logger.error(f"  ✗ {c['team_name']}: {e}")
-
-    await engine.dispose()
-    logger.info(f"  Skipped (already updated): {skipped}")
-
-    results = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "applied": applied,
-        "errors": errors,
-    }
-
-    logger.info("")
-    logger.info(f"Applied: {applied} | Errors: {errors}")
-
-    return results
-
-
-# =============================================================================
-# Main
+# Main orchestration
 # =============================================================================
 
 async def main():
-    parser = argparse.ArgumentParser(description="Wikidata ID Validation & Reconciliation")
-    parser.add_argument("--phase", type=int, choices=[1, 2, 3], help="Run specific phase")
-    parser.add_argument("--all", action="store_true", help="Run all phases")
-    parser.add_argument("--validation-file", type=str, help="Validation file for phase 2")
-    parser.add_argument("--reconciliation-file", type=str, help="Reconciliation file for phase 3")
-    parser.add_argument("--apply", action="store_true", help="Actually apply corrections (phase 3)")
+    parser = argparse.ArgumentParser(description="Wikidata QID Reconciliation v2")
+    parser.add_argument("--scope", type=str, default="latam",
+                        help="Country scope: 'latam', 'all', or specific country name")
+    parser.add_argument("--team-id", type=int, help="Process single team by ID")
+    parser.add_argument("--apply", action="store_true", help="Apply corrections to DB")
+    parser.add_argument("--dry-run", action="store_true", help="Dry run (default)")
+    parser.add_argument("--force", action="store_true", help="Re-check even high-confidence teams")
     args = parser.parse_args()
 
-    if args.phase == 1 or args.all:
-        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-        from sqlalchemy.orm import sessionmaker
+    apply = args.apply and not args.dry_run
+    if not apply:
+        logger.info("DRY RUN mode (use --apply to commit changes)")
 
-        engine = create_async_engine(DATABASE_URL, echo=False)
-        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.orm import sessionmaker
 
+    engine = create_async_engine(DATABASE_URL, echo=False)
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    # Build scope query
+    if args.team_id:
+        scope_sql = "SELECT t.id, t.name, t.country, t.wikidata_id, t.wiki_source, t.wiki_confidence FROM teams t WHERE t.id = :team_id"
+        params = {"team_id": args.team_id}
+    else:
+        force = args.force
+        scope = args.scope
+
+        conditions = ["t.country IS NOT NULL"]
+
+        if not force:
+            conditions.append("(t.wikidata_id IS NULL OR t.wiki_confidence IS NULL OR t.wiki_confidence < 0.85)")
+
+        if scope == "latam":
+            countries = ", ".join(f"'{c}'" for c in LATAM_COUNTRIES)
+            conditions.append(f"t.country IN ({countries})")
+        elif scope != "all":
+            conditions.append(f"t.country = '{scope}'")
+
+        where = " AND ".join(conditions)
+        scope_sql = f"SELECT t.id, t.name, t.country, t.wikidata_id, t.wiki_source, t.wiki_confidence FROM teams t WHERE {where} ORDER BY t.country, t.id"
+        params = {}
+
+    # Fetch teams
+    async with async_session() as session:
+        result = await session.execute(text(scope_sql), params)
+        teams = result.fetchall()
+
+    logger.info(f"Found {len(teams)} teams to process (scope={args.scope or 'team-id'}, force={args.force})")
+
+    # Process teams — collect all results first, then dedup, then apply
+    all_results: list[dict] = []
+    already_valid: list[dict] = []
+
+    async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT}) as client:
+        for i, team in enumerate(teams):
+            team_id, name, country, current_qid, wiki_source, wiki_confidence = (
+                team.id, team.name, team.country, team.wikidata_id, team.wiki_source, team.wiki_confidence
+            )
+
+            logger.info(f"\n[{i+1}/{len(teams)}] {team_id} {name} ({country}) — current: {current_qid or 'NULL'}")
+
+            # Skip if already validated at HIGH confidence and not forcing
+            if not args.force and wiki_confidence and wiki_confidence >= 0.85 and current_qid:
+                logger.info(f"  SKIP: already validated (confidence={wiki_confidence})")
+                already_valid.append({
+                    "team_id": team_id,
+                    "team_name": name,
+                    "country": country,
+                    "qid": current_qid,
+                    "confidence": wiki_confidence,
+                })
+                continue
+
+            result = await process_team(team_id, name, country, current_qid, client)
+            all_results.append(result)
+
+            if result["status"] == "auto_applied":
+                logger.info(f"  WOULD APPLY: {result['new_qid']} (conf={result['confidence']:.2f}, tier={result['tier']})")
+
+    # ---------------------------------------------------------------
+    # Duplicate QID dedup: if multiple teams got the same new_qid,
+    # keep only the one with highest confidence; demote the rest to LOW
+    # ---------------------------------------------------------------
+    qid_owners: dict[str, list[dict]] = {}
+    for r in all_results:
+        qid = r.get("new_qid")
+        if qid and r["status"] == "auto_applied":
+            qid_owners.setdefault(qid, []).append(r)
+
+    demoted_count = 0
+    for qid, owners in qid_owners.items():
+        if len(owners) <= 1:
+            continue
+        # Sort by confidence DESC — keep the best, demote the rest
+        owners.sort(key=lambda x: x["confidence"], reverse=True)
+        keeper = owners[0]
+        for dup in owners[1:]:
+            logger.warning(
+                f"  DEDUP: {dup['team_id']} {dup['team_name']} shares QID {qid} "
+                f"with {keeper['team_id']} {keeper['team_name']} — demoting to LOW"
+            )
+            dup["status"] = "low_confidence"
+            dup["tier"] = "LOW"
+            dup["dedup_note"] = f"QID conflict with team_id={keeper['team_id']} ({keeper['team_name']})"
+            demoted_count += 1
+
+    if demoted_count:
+        logger.info(f"\n  Dedup: demoted {demoted_count} entries from auto_applied to LOW")
+
+    # ---------------------------------------------------------------
+    # Categorize results into report buckets + apply
+    # ---------------------------------------------------------------
+    report = {
+        "auto_applied": [],
+        "manual_review": [],
+        "low_confidence": [],
+        "not_found": [],
+        "already_valid": already_valid,
+    }
+
+    for result in all_results:
+        category = result["status"]
+        if category == "auto_applied":
+            report["auto_applied"].append(result)
+        elif category == "low_confidence":
+            report["low_confidence"].append(result)
+        elif category == "manual_review":
+            report["manual_review"].append(result)
+        else:
+            report["not_found"].append(result)
+
+    # Pre-apply: check for QID collisions with existing DB entries
+    if apply or not apply:  # always check, useful for dry-run report too
         async with async_session() as session:
-            results = await phase1_validate_all(session)
+            existing = await session.execute(
+                text("SELECT id, wikidata_id FROM teams WHERE wikidata_id IS NOT NULL"),
+            )
+            db_qid_map: dict[str, int] = {row.wikidata_id: row.id for row in existing.fetchall()}
 
-        await engine.dispose()
+        collision_count = 0
+        safe_auto = []
+        for result in report["auto_applied"]:
+            qid = result["new_qid"]
+            team_id = result["team_id"]
+            if qid and qid in db_qid_map and db_qid_map[qid] != team_id:
+                owner_id = db_qid_map[qid]
+                logger.warning(
+                    f"  DB COLLISION: {team_id} {result['team_name']} wants {qid} "
+                    f"but it belongs to team_id={owner_id} — demoting to LOW"
+                )
+                result["status"] = "low_confidence"
+                result["tier"] = "LOW"
+                result["dedup_note"] = f"QID {qid} already in DB for team_id={owner_id}"
+                report["low_confidence"].append(result)
+                collision_count += 1
+            else:
+                safe_auto.append(result)
+        report["auto_applied"] = safe_auto
 
-        if args.all:
-            validation_file = OUTPUT_DIR / f"wikidata_validation_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
-            # Use the most recent validation file
-            validation_files = sorted(OUTPUT_DIR.glob("wikidata_validation_*.json"))
-            if validation_files:
-                args.validation_file = str(validation_files[-1])
+        if collision_count:
+            logger.info(f"\n  DB collision check: demoted {collision_count} entries")
 
-    if args.phase == 2 or args.all:
-        if not args.validation_file:
-            # Find most recent validation file
-            validation_files = sorted(OUTPUT_DIR.glob("wikidata_validation_*.json"))
-            if not validation_files:
-                logger.error("No validation file found. Run phase 1 first.")
-                return
-            args.validation_file = str(validation_files[-1])
+    # Apply if authorized
+    if apply:
+        applied_count = 0
+        skipped_count = 0
+        for result in report["auto_applied"]:
+            if result["new_qid"]:
+                team_id = result["team_id"]
+                try:
+                    async with async_session() as session:
+                        async with session.begin():
+                            await session.execute(
+                                text("""
+                                    UPDATE teams
+                                    SET wikidata_id = :qid,
+                                        wiki_source = 'reconciliation_v2',
+                                        wiki_confidence = :confidence,
+                                        wiki_matched_at = NOW()
+                                    WHERE id = :team_id
+                                """),
+                                {"qid": result["new_qid"], "confidence": result["confidence"], "team_id": team_id},
+                            )
+                            await session.execute(
+                                text("DELETE FROM team_wikidata_enrichment WHERE team_id = :team_id"),
+                                {"team_id": team_id},
+                            )
+                    logger.info(f"  APPLIED: {result['team_id']} {result['team_name']} → {result['new_qid']} (conf={result['confidence']:.2f})")
+                    applied_count += 1
+                except Exception as e:
+                    logger.error(f"  FAILED: {result['team_id']} {result['team_name']} → {result['new_qid']}: {e}")
+                    skipped_count += 1
+        logger.info(f"\n  Total applied: {applied_count}, skipped: {skipped_count}")
 
-        logger.info(f"Using validation file: {args.validation_file}")
-        results = await phase2_reconcile(args.validation_file)
+    await engine.dispose()
 
-        if args.all:
-            reconciliation_files = sorted(OUTPUT_DIR.glob("wikidata_reconciliation_*.json"))
-            if reconciliation_files:
-                args.reconciliation_file = str(reconciliation_files[-1])
+    # Summary
+    logger.info(f"\n{'='*60}")
+    logger.info("SUMMARY")
+    logger.info(f"  Auto-applied: {len(report['auto_applied'])}")
+    logger.info(f"  Low confidence: {len(report['low_confidence'])}")
+    logger.info(f"  Manual review: {len(report['manual_review'])}")
+    logger.info(f"  Not found: {len(report['not_found'])}")
+    logger.info(f"  Already valid: {len(report['already_valid'])}")
 
-    if args.phase == 3 or args.all:
-        if not args.reconciliation_file:
-            reconciliation_files = sorted(OUTPUT_DIR.glob("wikidata_reconciliation_*.json"))
-            if not reconciliation_files:
-                logger.error("No reconciliation file found. Run phase 2 first.")
-                return
-            args.reconciliation_file = str(reconciliation_files[-1])
+    # Save report
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    report_path = OUTPUT_DIR / f"reconciliation_v2_{ts}.json"
 
-        logger.info(f"Using reconciliation file: {args.reconciliation_file}")
-        results = await phase3_apply(args.reconciliation_file, dry_run=not args.apply)
+    # Clean up non-serializable fields
+    def clean(obj):
+        if isinstance(obj, dict):
+            return {k: clean(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [clean(v) for v in obj]
+        if isinstance(obj, float):
+            return round(obj, 4)
+        return obj
+
+    with open(report_path, "w") as f:
+        json.dump(clean(report), f, indent=2, default=str)
+    logger.info(f"\nReport saved to {report_path}")
 
 
 if __name__ == "__main__":

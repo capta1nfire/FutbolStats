@@ -62,12 +62,14 @@ WHERE {{
   # Stadium: Select the one with MAX capacity using subquery
   OPTIONAL {{
     {{
-      SELECT ?stadium (MAX(?cap) AS ?capacity) WHERE {{
+      SELECT ?stadium (MAX(?cap) AS ?capacity) (MAX(?hasCoords) AS ?coordsFlag) WHERE {{
         wd:{qid} wdt:P115 ?stadium .
         OPTIONAL {{ ?stadium wdt:P1083 ?cap . }}
+        OPTIONAL {{ ?stadium wdt:P625 ?coords . }}
+        BIND(IF(BOUND(?coords), 1, 0) AS ?hasCoords)
       }}
       GROUP BY ?stadium
-      ORDER BY DESC(?capacity)
+      ORDER BY DESC(?coordsFlag) DESC(?capacity)
       LIMIT 1
     }}
     # Get stadium details
@@ -97,6 +99,9 @@ WHERE {{
     }}
     BIND(COALESCE(?adminLabel_en, ?adminLabel_es, ?adminLabel_local) AS ?adminLocationLabel)
   }}
+
+  # Country (P17) — for enrichment fail-safe country mismatch check
+  OPTIONAL {{ wd:{qid} wdt:P17 ?countryP17 . }}
 
   # Web/Social
   OPTIONAL {{ ?team wdt:P856 ?website . }}
@@ -213,6 +218,8 @@ def _parse_wikidata_response(binding: dict, raw: dict) -> dict[str, Any]:
             "instagram": instagram,
         },
         "enrichment_source": "wikidata",
+        # P1 fail-safe: country QID for mismatch detection
+        "country_qid": get_qid("countryP17"),
     }
 
 
@@ -578,7 +585,7 @@ async def run_wikidata_enrichment_batch(
         # Only teams without enrichment
         result = await session.execute(
             text("""
-            SELECT t.id, t.wikidata_id, t.name
+            SELECT t.id, t.wikidata_id, t.name, t.country
             FROM teams t
             LEFT JOIN team_wikidata_enrichment twe ON t.id = twe.team_id
             WHERE t.wikidata_id IS NOT NULL
@@ -591,7 +598,7 @@ async def run_wikidata_enrichment_batch(
         # Refresh: teams with enrichment > 30 days old
         result = await session.execute(
             text("""
-            SELECT t.id, t.wikidata_id, t.name
+            SELECT t.id, t.wikidata_id, t.name, t.country
             FROM teams t
             JOIN team_wikidata_enrichment twe ON t.id = twe.team_id
             WHERE twe.fetched_at < (NOW() AT TIME ZONE 'UTC') - INTERVAL '30 days'
@@ -615,14 +622,29 @@ async def run_wikidata_enrichment_batch(
     team_ids = [t[0] for t in teams]
     overrides_map = await get_overrides_bulk(session, team_ids)
 
+    # P1 fail-safe: COUNTRY_QID_MAP for mismatch detection
+    try:
+        from scripts.wikidata_common import COUNTRY_QID_MAP
+    except ImportError:
+        import importlib.util
+        import pathlib
+        spec = importlib.util.spec_from_file_location(
+            "wikidata_common",
+            pathlib.Path(__file__).resolve().parent.parent.parent / "scripts" / "wikidata_common.py",
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        COUNTRY_QID_MAP = mod.COUNTRY_QID_MAP
+
     enriched = 0
     errors = 0
     skipped = 0
     wikipedia_fallbacks = 0
+    country_mismatch = 0
     override_applied = len(overrides_map)
 
     async with httpx.AsyncClient() as client:
-        for team_id, wikidata_id, team_name in teams:
+        for team_id, wikidata_id, team_name, team_country in teams:
             # Rate limiting (conservative: 5 req/sec)
             await asyncio.sleep(settings.WIKIDATA_RATE_LIMIT_DELAY)
 
@@ -631,6 +653,20 @@ async def run_wikidata_enrichment_batch(
 
             # Step 2: Fetch from Wikidata
             wikidata_data = await fetch_wikidata_for_team(wikidata_id, client)
+
+            # P1 fail-safe: country mismatch detection
+            if wikidata_data and team_country:
+                wd_country_qid = wikidata_data.get("country_qid")
+                expected_qid = COUNTRY_QID_MAP.get(team_country)
+                if expected_qid and wd_country_qid and wd_country_qid != expected_qid:
+                    logger.warning(
+                        f"COUNTRY MISMATCH team_id={team_id} name={team_name}: "
+                        f"Wikidata P17={wd_country_qid} vs expected={expected_qid} ({team_country}). "
+                        f"Skipping enrichment."
+                    )
+                    country_mismatch += 1
+                    skipped += 1
+                    continue
 
             # Step 3: Wikipedia fallback if missing critical fields
             wikipedia_data = None
@@ -675,7 +711,8 @@ async def run_wikidata_enrichment_batch(
     logger.info(
         f"[WIKIDATA] Batch complete: mode={mode}, processed={len(teams)}, "
         f"enriched={enriched}, errors={errors}, "
-        f"wikipedia_fallbacks={wikipedia_fallbacks}, overrides={override_applied}"
+        f"wikipedia_fallbacks={wikipedia_fallbacks}, overrides={override_applied}, "
+        f"country_mismatch={country_mismatch}"
     )
 
     return {
@@ -687,6 +724,7 @@ async def run_wikidata_enrichment_batch(
         "skipped": skipped,
         "wikipedia_fallbacks": wikipedia_fallbacks,
         "override_applied": override_applied,
+        "country_mismatch": country_mismatch,
     }
 
 
