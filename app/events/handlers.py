@@ -26,6 +26,7 @@ Tier routing (GDT M3):
 
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime
 from typing import Optional, Dict, Any
@@ -37,7 +38,8 @@ from app.events.bus import Event
 logger = logging.getLogger("futbolstats.events")
 
 # ATI #3: Hard timeout for talent delta computation
-TALENT_DELTA_TIMEOUT_S = 5.0
+# P0-1 VORP fix: raised from 5s → 15s (empirical: 3-5s against Railway PG)
+TALENT_DELTA_TIMEOUT_S = float(os.environ.get("TALENT_DELTA_TIMEOUT_S", "15.0"))
 
 
 async def cascade_handler(event: Event):
@@ -152,7 +154,11 @@ async def cascade_handler(event: Event):
 
         # ── Step 4a: For T3 + MTV enabled, compute talent_delta BEFORE prediction
         talent_delta_result = None
+        td_status = "skip"  # P1 telemetry
+        td_elapsed_ms = 0
+        td_id_space = None
         if strategy["inject_mtv"]:
+            td_t0 = time.time()
             try:
                 async with get_session_with_retry(max_retries=1, retry_delay=0.5) as session:
                     match_obj = (await session.execute(
@@ -164,22 +170,32 @@ async def cascade_handler(event: Event):
                             compute_match_talent_delta_features(session, match_obj),
                             timeout=TALENT_DELTA_TIMEOUT_S,
                         )
+                        td_elapsed_ms = (time.time() - td_t0) * 1000
+                        td_id_space = talent_delta_result.get("id_space")
                         # Inject MTV features into df_match for Family S model
                         for mtv_col in ["home_talent_delta", "away_talent_delta",
                                         "talent_delta_diff", "shock_magnitude"]:
                             df_match[mtv_col] = talent_delta_result.get(mtv_col)
+                        td_status = "ok"
                         logger.info(
                             f"[CASCADE] T3 MTV INJECTED match_id={match_id}: "
                             f"home={talent_delta_result.get('home_talent_delta')}, "
                             f"away={talent_delta_result.get('away_talent_delta')}, "
                             f"shock={talent_delta_result.get('shock_magnitude')}"
                         )
+                    else:
+                        td_status = "no_lineup"
+                        td_elapsed_ms = (time.time() - td_t0) * 1000
             except asyncio.TimeoutError:
+                td_status = "timeout"
+                td_elapsed_ms = (time.time() - td_t0) * 1000
                 logger.warning(
                     f"[CASCADE] T3 talent_delta TIMEOUT ({TALENT_DELTA_TIMEOUT_S}s) "
                     f"for match {match_id}, falling back to baseline"
                 )
             except Exception as e:
+                td_status = "error"
+                td_elapsed_ms = (time.time() - td_t0) * 1000
                 logger.warning(
                     f"[CASCADE] T3 talent_delta failed for match {match_id}: {e}, "
                     f"falling back to baseline"
@@ -267,6 +283,7 @@ async def cascade_handler(event: Event):
 
         # ── Step 5: For T1/T2, compute talent_delta AFTER prediction (SteamChaser)
         if not strategy["inject_mtv"]:
+            td_t0 = time.time()
             try:
                 async with get_session_with_retry(max_retries=1, retry_delay=0.5) as session:
                     match_obj = (await session.execute(
@@ -278,6 +295,9 @@ async def cascade_handler(event: Event):
                             compute_match_talent_delta_features(session, match_obj),
                             timeout=TALENT_DELTA_TIMEOUT_S,
                         )
+                        td_elapsed_ms = (time.time() - td_t0) * 1000
+                        td_id_space = talent_delta_result.get("id_space")
+                        td_status = "ok"
                         logger.info(
                             f"[CASCADE] SteamChaser talent_delta match_id={match_id} "
                             f"(tier={strategy['tier']}): "
@@ -285,12 +305,19 @@ async def cascade_handler(event: Event):
                             f"away={talent_delta_result.get('away_talent_delta')}, "
                             f"shock={talent_delta_result.get('shock_magnitude')}"
                         )
+                    else:
+                        td_status = "no_lineup"
+                        td_elapsed_ms = (time.time() - td_t0) * 1000
             except asyncio.TimeoutError:
+                td_status = "timeout"
+                td_elapsed_ms = (time.time() - td_t0) * 1000
                 logger.warning(
                     f"[CASCADE] talent_delta TIMEOUT ({TALENT_DELTA_TIMEOUT_S}s) "
                     f"for match {match_id}, proceeding without MTV"
                 )
             except Exception as e:
+                td_status = "error"
+                td_elapsed_ms = (time.time() - td_t0) * 1000
                 logger.warning(
                     f"[CASCADE] talent_delta failed for match {match_id}: {e}, "
                     f"proceeding without MTV"
@@ -384,6 +411,7 @@ async def cascade_handler(event: Event):
             f"vorp={'YES' if vorp_applied else 'NO'} "
             f"asof={asof.isoformat()} "
             f"mtv={mtv_status} "
+            f"td_status={td_status} td_ms={td_elapsed_ms:.0f} td_id_space={td_id_space or 'N/A'} "
             f"lm={'OK' if line_movement and line_movement.get('line_drift_magnitude') is not None else 'SKIP'} "
             f"anchor={'YES' if anchor_applied else 'NO'} "
             f"elapsed={elapsed_ms:.0f}ms"

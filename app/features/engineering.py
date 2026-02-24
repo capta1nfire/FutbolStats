@@ -502,6 +502,7 @@ async def load_recent_team_starting_xis(
     Load a team's recent starting XIs (API-Football player IDs) from match_lineups.
 
     PIT-safe: only uses matches with m.date < match_date.
+    P1 VORP fix: normalizes Sofascore IDs → API-Football IDs in batch.
 
     Notes:
       - match_lineups.starting_xi_ids is stored as INTEGER[] in DB.
@@ -528,12 +529,42 @@ async def load_recent_team_starting_xis(
         },
     )
     rows = result.fetchall()
-    xis: list[list[int]] = []
+    raw_xis: list[list[int]] = []
     for row in rows:
         xi = row.starting_xi_ids
         if isinstance(xi, list) and xi:
-            # Defensive filter: skip None IDs (data quality)
-            xis.append([pid for pid in xi if pid is not None])
+            raw_xis.append([pid for pid in xi if pid is not None])
+
+    if not raw_xis:
+        return raw_xis
+
+    # P1: Batch-normalize Sofascore IDs across all historical XIs
+    all_ids = set()
+    for xi in raw_xis:
+        all_ids.update(xi)
+
+    str_ids = [str(pid) for pid in all_ids]
+    map_result = await session.execute(
+        text("""
+            SELECT sofascore_id, api_football_id
+            FROM player_id_mapping
+            WHERE sofascore_id = ANY(:ids)
+              AND status = 'active'
+              AND confidence >= 0.8
+        """),
+        {"ids": str_ids},
+    )
+    sc_to_api: dict[int, int] = {}
+    for r in map_result.fetchall():
+        sc_to_api[int(r.sofascore_id)] = r.api_football_id
+
+    if not sc_to_api:
+        return raw_xis
+
+    # Translate IDs where mapping exists
+    xis: list[list[int]] = []
+    for xi in raw_xis:
+        xis.append([sc_to_api.get(pid, pid) for pid in xi])
     return xis
 
 
@@ -973,12 +1004,74 @@ async def compute_player_talent_score(
     return float(s["pts"]) if s and s.get("pts") is not None else None
 
 
+async def _normalize_xi_ids_to_api_football(
+    session: AsyncSession,
+    xi_ids: list[int],
+    api_pos_map: dict[int, str],
+    min_mapping_ratio: float = 6 / 11,
+    min_confidence: float = 0.8,
+) -> tuple[list[int], dict[int, str], str]:
+    """
+    Auto-detect Sofascore IDs and translate to API-Football IDs via player_id_mapping.
+
+    Returns (normalized_ids, normalized_pos_map, id_space) where id_space is
+    'api' (no translation needed), 'sofascore' (translated), or 'mixed' (partial).
+    """
+    if not xi_ids:
+        return xi_ids, api_pos_map, "api"
+
+    # Batch lookup: check which IDs have Sofascore→API-Football mappings
+    str_ids = [str(pid) for pid in xi_ids]
+    result = await session.execute(
+        text("""
+            SELECT sofascore_id, api_football_id
+            FROM player_id_mapping
+            WHERE sofascore_id = ANY(:ids)
+              AND status = 'active'
+              AND confidence >= :min_conf
+        """),
+        {"ids": str_ids, "min_conf": min_confidence},
+    )
+    sc_to_api: dict[int, int] = {}
+    for row in result.fetchall():
+        sc_to_api[int(row.sofascore_id)] = row.api_football_id
+
+    mapped_count = sum(1 for pid in xi_ids if pid in sc_to_api)
+    ratio = mapped_count / len(xi_ids) if xi_ids else 0
+
+    if ratio < min_mapping_ratio:
+        # Not enough mappings → assume already API-Football IDs
+        return xi_ids, api_pos_map, "api"
+
+    # Translate: Sofascore → API-Football
+    new_ids = []
+    new_pos_map: dict[int, str] = {}
+    for pid in xi_ids:
+        api_id = sc_to_api.get(pid)
+        if api_id is not None:
+            new_ids.append(api_id)
+            if pid in api_pos_map:
+                new_pos_map[api_id] = api_pos_map[pid]
+        else:
+            # No mapping: keep original (will fall to PTS fallback)
+            new_ids.append(pid)
+            if pid in api_pos_map:
+                new_pos_map[pid] = api_pos_map[pid]
+
+    id_space = "sofascore" if mapped_count == len(xi_ids) else "mixed"
+    return new_ids, new_pos_map, id_space
+
+
 async def load_match_starting_xi(
     session: AsyncSession,
     match_id: int,
     team_id: int,
 ) -> Optional[dict]:
-    """Load starting XI IDs + position codes for a match/team (from match_lineups)."""
+    """Load starting XI IDs + position codes for a match/team (from match_lineups).
+
+    Auto-normalizes Sofascore IDs → API-Football IDs via player_id_mapping
+    when ≥6/11 IDs have a high-confidence mapping (P0-2 VORP fix).
+    """
     result = await session.execute(
         text("""
             SELECT starting_xi_ids, starting_xi_positions
@@ -1009,7 +1102,14 @@ async def load_match_starting_xi(
                 continue
             api_pos_map[int(pid)] = pos
 
-    return {"xi_ids": [int(pid) for pid in xi_ids], "api_pos_map": api_pos_map}
+    xi_ids = [int(pid) for pid in xi_ids]
+
+    # P0-2: Normalize Sofascore IDs → API-Football IDs
+    xi_ids, api_pos_map, id_space = await _normalize_xi_ids_to_api_football(
+        session, xi_ids, api_pos_map
+    )
+
+    return {"xi_ids": xi_ids, "api_pos_map": api_pos_map, "id_space": id_space}
 
 
 async def compute_team_talent_delta(
@@ -1032,10 +1132,11 @@ async def compute_team_talent_delta(
     # Load realized XI (needs lineup for this match)
     lineup = await load_match_starting_xi(session, match_id=match_id, team_id=team_id)
     if not lineup:
-        return {"talent_delta": None, "talent_missing": 1}
+        return {"talent_delta": None, "talent_missing": 1, "id_space": None}
 
     xi_real = lineup["xi_ids"]
     api_pos_real = lineup.get("api_pos_map") or {}
+    id_space = lineup.get("id_space", "api")
 
     if len(xi_real) < 7:
         return {"talent_delta": None, "talent_missing": 1}
@@ -1123,6 +1224,7 @@ async def compute_team_talent_delta(
         "talent_delta_mid": delta_by["MID"],
         "talent_delta_fwd": delta_by["FWD"],
         "talent_missing": 0,
+        "id_space": id_space,
         "expected_history_matches": expected.get("n_history_matches") if expected else None,
         "expected_excluded_count": expected.get("excluded_count") if expected else None,
     }
@@ -1180,12 +1282,26 @@ async def compute_match_talent_delta_features(
     else:
         shock_magnitude = None
 
+    # Determine combined id_space (P1 telemetry)
+    home_id_space = home.get("id_space")
+    away_id_space = away.get("id_space")
+    if home_id_space == away_id_space:
+        combined_id_space = home_id_space  # "api", "sofascore", or None
+    elif home_id_space and away_id_space:
+        combined_id_space = "mixed"
+    else:
+        combined_id_space = home_id_space or away_id_space
+
     out = {
         "home_talent_delta": home_delta,
         "away_talent_delta": away_delta,
         "talent_delta_diff": (home_delta - away_delta) if (home_delta is not None and away_delta is not None) else None,
         "shock_magnitude": shock_magnitude,
         "talent_delta_missing": 1 if (home.get("talent_missing") or away.get("talent_missing")) else 0,
+        # P1 telemetry: ID space detected for lineup normalization
+        "id_space": combined_id_space,
+        "home_id_space": home_id_space,
+        "away_id_space": away_id_space,
         # Optional diagnostics
         "home_expected_history_matches": home.get("expected_history_matches"),
         "away_expected_history_matches": away.get("expected_history_matches"),
