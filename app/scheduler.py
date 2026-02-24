@@ -5427,6 +5427,7 @@ async def sync_odds_for_upcoming_matches() -> dict:
         "api_empty": 0,
         "api_errors": 0,
         "errors_429": 0,
+        "opening_odds_set": 0,
         "started_at": datetime.utcnow().isoformat(),
     }
 
@@ -5443,7 +5444,8 @@ async def sync_odds_for_upcoming_matches() -> dict:
             # LIMIT max_fixtures
             result = await session.execute(text("""
                 SELECT id, external_id, date, league_id,
-                       odds_home, odds_draw, odds_away, odds_recorded_at
+                       odds_home, odds_draw, odds_away, odds_recorded_at,
+                       opening_odds_home
                 FROM matches
                 WHERE status = 'NS'
                   AND date >= NOW()
@@ -5547,6 +5549,29 @@ async def sync_odds_for_upcoming_matches() -> dict:
 
                         # P1: Common snapshot timestamp for all books in this match
                         snapshot_ts = datetime.utcnow()
+
+                        # P0 Opening Odds Live Fill (ABE 2026-02-23)
+                        # Resolve opening_odds from first sync when not yet populated.
+                        # Never overwrites FDUK/OddsPortal (higher quality sources).
+                        if primary_validation.is_usable and match.opening_odds_home is None:
+                            await session.execute(text("""
+                                UPDATE matches
+                                SET opening_odds_home = :oh,
+                                    opening_odds_draw = :od,
+                                    opening_odds_away = :oa,
+                                    opening_odds_source = :src,
+                                    opening_odds_kind = 'earliest_available',
+                                    opening_odds_column = '1x2',
+                                    opening_odds_recorded_at = :ts,
+                                    opening_odds_recorded_at_type = 'first_sync'
+                                WHERE id = :mid AND opening_odds_home IS NULL
+                            """), {
+                                "mid": match_id,
+                                "oh": p_home, "od": p_draw, "oa": p_away,
+                                "src": primary_odds.get("bookmaker", "unknown"),
+                                "ts": snapshot_ts,
+                            })
+                            metrics["opening_odds_set"] += 1
 
                         # Batch is_opening check — one query per match
                         existing_sources_result = await session.execute(text(
@@ -5664,6 +5689,7 @@ async def sync_odds_for_upcoming_matches() -> dict:
             f"odds_history={metrics['odds_history_saved']} "
             f"(books={metrics['bookmakers_captured']}, consensus={metrics['consensus_calculated']}), "
             f"api_calls={metrics['api_calls']}, empty={metrics['api_empty']}, "
+            f"opening_odds_set={metrics['opening_odds_set']}, "
             f"errors_429={metrics['errors_429']}, duration={duration_ms:.0f}ms"
         )
 
