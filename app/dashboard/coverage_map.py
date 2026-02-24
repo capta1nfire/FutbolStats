@@ -694,6 +694,7 @@ async def build_coverage_map(
 
     # Transform rows into league dicts
     leagues = []
+    found_league_ids = set()
     for row in rows:
         lg = _compute_league_data(row)
         lg = _compute_scores(lg)
@@ -703,6 +704,42 @@ async def build_coverage_map(
             lg["universe_tier"] = "insufficient_data"
 
         leagues.append(lg)
+        found_league_ids.add(lg["league_id"])
+
+    # Off-season fallback: for current_season (offset=0), calendar-year leagues
+    # may have 0 finished matches if the new season hasn't started yet (e.g.
+    # Bolivia in Feb 2026). Re-query with offset=1 for missing leagues so they
+    # still appear on the map with their most recent completed season.
+    if per_league_season and season_offset == 0:
+        try:
+            active_result = await session.execute(text(
+                "SELECT league_id FROM admin_leagues WHERE is_active = true"
+            ))
+            active_ids = {r.league_id for r in active_result.fetchall()}
+            missing_ids = sorted(active_ids - found_league_ids)
+        except Exception:
+            missing_ids = []
+
+        if missing_ids:
+            logger.info("coverage_map | off-season fallback for %d leagues: %s",
+                        len(missing_ids), missing_ids[:10])
+            fb_sql, fb_params = _build_coverage_sql(
+                league_ids=missing_ids,
+                country_names=None,
+                per_league_season=True,
+                season_offset=1,
+            )
+            fb_params["season_offset"] = 1
+            try:
+                fb_result = await session.execute(text(fb_sql), fb_params)
+                for row in fb_result.fetchall():
+                    lg = _compute_league_data(row)
+                    lg = _compute_scores(lg)
+                    if lg["eligible_matches"] < min_matches:
+                        lg["universe_tier"] = "insufficient_data"
+                    leagues.append(lg)
+            except Exception as exc:
+                logger.warning("coverage_map fallback query error: %s", str(exc)[:200])
 
     # Aggregate by country (BEFORE stripping data_quality_flags — aggregation needs it)
     countries = _aggregate_by_country(leagues)
