@@ -2837,9 +2837,13 @@ async def get_match_prediction(
 
     features["home_team_name"] = home_team.name if home_team else "Unknown"
     features["away_team_name"] = away_team.name if away_team else "Unknown"
-    features["odds_home"] = match.odds_home
-    features["odds_draw"] = match.odds_draw
-    features["odds_away"] = match.odds_away
+
+    # Canonical odds cascade (same as /predictions/upcoming — ABE P0 consistency)
+    canonical_odds = await feature_engineer._preload_canonical_odds([match_id])
+    oh, od, oa = FeatureEngineer._extract_odds_triplet(match, canonical_odds)
+    features["odds_home"] = oh
+    features["odds_draw"] = od
+    features["odds_away"] = oa
 
     import pandas as pd
 
