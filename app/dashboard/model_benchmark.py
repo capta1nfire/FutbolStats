@@ -227,20 +227,35 @@ async def get_model_benchmark(
                         ELSE 'D'
                     END as actual_outcome,
 
-                    -- Market implied probabilities (normalized, with guardrails)
+                    -- Market implied probabilities (canonical odds preferred, fallback to matches)
                     CASE
-                        WHEN m.odds_home > 0 AND m.odds_draw > 0 AND m.odds_away > 0 THEN
-                            (1.0 / m.odds_home) / (1.0/m.odds_home + 1.0/m.odds_draw + 1.0/m.odds_away)
+                        WHEN COALESCE(co.odds_home, m.odds_home) > 0
+                         AND COALESCE(co.odds_draw, m.odds_draw) > 0
+                         AND COALESCE(co.odds_away, m.odds_away) > 0 THEN
+                            (1.0 / COALESCE(co.odds_home, m.odds_home)) / (
+                                1.0/COALESCE(co.odds_home, m.odds_home)
+                              + 1.0/COALESCE(co.odds_draw, m.odds_draw)
+                              + 1.0/COALESCE(co.odds_away, m.odds_away))
                         ELSE NULL
                     END as market_home_prob,
                     CASE
-                        WHEN m.odds_home > 0 AND m.odds_draw > 0 AND m.odds_away > 0 THEN
-                            (1.0 / m.odds_draw) / (1.0/m.odds_home + 1.0/m.odds_draw + 1.0/m.odds_away)
+                        WHEN COALESCE(co.odds_home, m.odds_home) > 0
+                         AND COALESCE(co.odds_draw, m.odds_draw) > 0
+                         AND COALESCE(co.odds_away, m.odds_away) > 0 THEN
+                            (1.0 / COALESCE(co.odds_draw, m.odds_draw)) / (
+                                1.0/COALESCE(co.odds_home, m.odds_home)
+                              + 1.0/COALESCE(co.odds_draw, m.odds_draw)
+                              + 1.0/COALESCE(co.odds_away, m.odds_away))
                         ELSE NULL
                     END as market_draw_prob,
                     CASE
-                        WHEN m.odds_home > 0 AND m.odds_draw > 0 AND m.odds_away > 0 THEN
-                            (1.0 / m.odds_away) / (1.0/m.odds_home + 1.0/m.odds_draw + 1.0/m.odds_away)
+                        WHEN COALESCE(co.odds_home, m.odds_home) > 0
+                         AND COALESCE(co.odds_draw, m.odds_draw) > 0
+                         AND COALESCE(co.odds_away, m.odds_away) > 0 THEN
+                            (1.0 / COALESCE(co.odds_away, m.odds_away)) / (
+                                1.0/COALESCE(co.odds_home, m.odds_home)
+                              + 1.0/COALESCE(co.odds_draw, m.odds_draw)
+                              + 1.0/COALESCE(co.odds_away, m.odds_away))
                         ELSE NULL
                     END as market_away_prob,
 
@@ -284,6 +299,7 @@ async def get_model_benchmark(
                      ORDER BY p.created_at DESC LIMIT 1) as family_s_away_prob
 
                 FROM matches m
+                LEFT JOIN match_canonical_odds co ON co.match_id = m.id
                 LEFT JOIN LATERAL (
                     SELECT p.model_version, p.home_prob, p.draw_prob, p.away_prob
                     FROM predictions p

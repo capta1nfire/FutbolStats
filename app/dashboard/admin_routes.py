@@ -1457,10 +1457,9 @@ async def dashboard_admin_team_performance(
     """
     Team performance: per-match results, xG, and ratings for charts.
 
-    xG policy: fixed source per league (Understat for top-5 EUR, FotMob for confirmed leagues, null otherwise).
+    xG from canonical SSOT (match_canonical_xg, all leagues, priority cascade resolved).
     Rating: starters only (is_substitute=false), weighted by minutes, null if <7 ratings.
     """
-    from app.etl.sota_constants import UNDERSTAT_SUPPORTED_LEAGUES, FOTMOB_CONFIRMED_XG_LEAGUES
 
     _check_token(request)
 
@@ -1519,25 +1518,12 @@ async def dashboard_admin_team_performance(
                 "data": cached["data"]["data"],
             }
 
-        # xG policy: fixed source per league
-        if league_id in UNDERSTAT_SUPPORTED_LEAGUES:
-            xg_source = "understat"
-            xg_join = "LEFT JOIN match_understat_team xg ON xg.match_id = m.id"
-            xg_cols = """
-                CASE WHEN m.home_team_id = :tid THEN xg.xg_home ELSE xg.xg_away END AS xg_for,
-                CASE WHEN m.home_team_id = :tid THEN xg.xg_away ELSE xg.xg_home END AS xg_against,
+        # xG from canonical SSOT (all leagues, priority cascade already resolved)
+        xg_join = "LEFT JOIN match_canonical_xg cxg ON cxg.match_id = m.id"
+        xg_cols = """
+                CASE WHEN m.home_team_id = :tid THEN cxg.xg_home ELSE cxg.xg_away END AS xg_for,
+                CASE WHEN m.home_team_id = :tid THEN cxg.xg_away ELSE cxg.xg_home END AS xg_against,
             """
-        elif league_id in FOTMOB_CONFIRMED_XG_LEAGUES:
-            xg_source = "fotmob"
-            xg_join = "LEFT JOIN match_fotmob_stats xg ON xg.match_id = m.id"
-            xg_cols = """
-                CASE WHEN m.home_team_id = :tid THEN xg.xg_home ELSE xg.xg_away END AS xg_for,
-                CASE WHEN m.home_team_id = :tid THEN xg.xg_away ELSE xg.xg_home END AS xg_against,
-            """
-        else:
-            xg_source = None
-            xg_join = ""
-            xg_cols = "NULL::double precision AS xg_for, NULL::double precision AS xg_against,"
 
         # Build rating subquery with coverage fallback
         rating_condition = "(ps.team_id = :tid)"
@@ -1643,7 +1629,7 @@ async def dashboard_admin_team_performance(
         "team_name": team.name,
         "league_id": league_id,
         "season": season,
-        "xg_source": xg_source,
+        "xg_source": "canonical",
         "rating_method": "starters_weighted_minutes",
         "matches": matches,
     }

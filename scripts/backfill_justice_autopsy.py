@@ -34,23 +34,14 @@ JUSTICE_ALPHA = 0.5
 
 
 async def resolve_xg(session: AsyncSession, match_id: int):
-    """Resolve best xG: Understat > matches.xg_home (FotMob/FootyStats)."""
+    """Resolve best xG from canonical SSOT (priority cascade already resolved)."""
     r = await session.execute(text(
-        "SELECT xg_home, xg_away FROM match_understat_team "
-        "WHERE match_id = :mid AND xg_home IS NOT NULL LIMIT 1"
+        "SELECT xg_home, xg_away, source FROM match_canonical_xg "
+        "WHERE match_id = :mid"
     ), {"mid": match_id})
     row = r.fetchone()
     if row and row[0] is not None:
-        return float(row[0]), float(row[1]), "understat"
-
-    r2 = await session.execute(text(
-        "SELECT xg_home, xg_away, xg_source FROM matches "
-        "WHERE id = :mid AND xg_home IS NOT NULL"
-    ), {"mid": match_id})
-    row2 = r2.fetchone()
-    if row2 and row2[0] is not None:
-        return float(row2[0]), float(row2[1]), row2[2] or "matches"
-
+        return float(row[0]), float(row[1]), row[2]
     return None, None, None
 
 

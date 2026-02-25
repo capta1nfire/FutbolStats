@@ -333,12 +333,13 @@ async def fetch_prediction_records(
             m.home_goals,
             m.away_goals,
             po.confidence_tier,
-            m.odds_home,
-            m.odds_draw,
-            m.odds_away
+            COALESCE(co.odds_home, m.odds_home) AS odds_home,
+            COALESCE(co.odds_draw, m.odds_draw) AS odds_draw,
+            COALESCE(co.odds_away, m.odds_away) AS odds_away
         FROM matches m
         JOIN predictions p ON p.match_id = m.id
         LEFT JOIN prediction_outcomes po ON po.match_id = m.id
+        LEFT JOIN match_canonical_odds co ON co.match_id = m.id
         WHERE m.status IN ('FT', 'AET', 'PEN')
           AND m.home_goals IS NOT NULL
           AND m.away_goals IS NOT NULL
