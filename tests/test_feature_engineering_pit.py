@@ -163,12 +163,13 @@ class TestPointInTimeWeather:
     @pytest.mark.asyncio
     async def test_weather_prefers_horizon_24_when_available(self):
         """
-        Test that weather loading prefers horizon=24 snapshot.
+        Test that weather loading reads from match_weather_canonical
+        with PIT guard (kind='archive' or captured_at < t0).
         """
         mock_session = AsyncMock()
         mock_row = MagicMock()
         mock_row.temp_c = 15.0
-        mock_row.humidity = 60.0
+        mock_row.humidity_pct = 60.0
         mock_row.wind_ms = 3.0
         mock_row.precip_mm = 0.0
         mock_row.is_daylight = True
@@ -182,10 +183,11 @@ class TestPointInTimeWeather:
 
         result = await load_match_weather(mock_session, match_id, t0, preferred_horizon=24)
 
-        # Verify query orders by horizon preference
+        # Verify query reads from canonical with PIT guard
         call_args = mock_session.execute.call_args
         query_text = str(call_args[0][0])
-        assert "forecast_horizon_hours = :horizon" in query_text
+        assert "match_weather_canonical" in query_text
+        assert "captured_at < :t0" in query_text
 
         assert result is not None
         assert result["weather_forecast_horizon_hours"] == 24
