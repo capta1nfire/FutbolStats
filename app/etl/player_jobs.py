@@ -189,16 +189,20 @@ async def _upsert_injuries(
 
         player_name = player.get("name") or f"Player#{player_ext_id}"
 
+        # PIT-safe: cap captured_at to fixture_date so historical backfills
+        # don't create future timestamps that violate captured_at < match.date
+        captured_at = min(fixture_date, datetime.utcnow()) if fixture_date else datetime.utcnow()
+
         result = await session.execute(
             text("""
                 INSERT INTO player_injuries (
                     player_external_id, player_name, team_id, league_id, season,
                     fixture_external_id, match_id, injury_type, injury_reason,
-                    fixture_date, raw_json
+                    fixture_date, raw_json, captured_at
                 ) VALUES (
                     :player_ext_id, :player_name, :team_id, :league_id, :season,
                     :fixture_ext_id, :match_id, :injury_type, :injury_reason,
-                    :fixture_date, :raw_json
+                    :fixture_date, :raw_json, :captured_at
                 )
                 ON CONFLICT (player_external_id, fixture_external_id)
                 DO UPDATE SET
@@ -221,6 +225,7 @@ async def _upsert_injuries(
                 "injury_reason": player.get("reason"),
                 "fixture_date": fixture_date,
                 "raw_json": json.dumps(entry),
+                "captured_at": captured_at,
             },
         )
         row = result.fetchone()

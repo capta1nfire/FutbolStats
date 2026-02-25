@@ -139,8 +139,8 @@ INJURY_UPSERT_SQL = """
     INSERT INTO player_injuries (
         player_external_id, player_name, team_id, league_id, season,
         fixture_external_id, match_id, injury_type, injury_reason,
-        fixture_date, raw_json
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        fixture_date, raw_json, captured_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, LEAST($10, NOW()))
     ON CONFLICT (player_external_id, fixture_external_id)
     DO UPDATE SET
         injury_type = EXCLUDED.injury_type,

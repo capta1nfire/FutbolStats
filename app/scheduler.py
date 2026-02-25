@@ -7941,7 +7941,7 @@ async def sota_fotmob_refs_sync() -> dict:
         from app.jobs.tracking import record_job_run as record_job_run_db
 
         async with AsyncSessionLocal() as session:
-            stats = await sync_fotmob_refs(session, days=7, limit=200)
+            stats = await sync_fotmob_refs(session, days=21, limit=200)
             metrics.update(stats)
 
             duration_ms = (_time.time() - start_time) * 1000
