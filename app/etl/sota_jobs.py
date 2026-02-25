@@ -14,7 +14,7 @@ Reference: docs/ARCHITECTURE_SOTA.md
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import text
@@ -510,6 +510,11 @@ async def capture_weather_prekickoff(
         "skipped_no_geo": 0,
         "skipped_already_captured": 0,
         "errors": 0,
+        "ideam_checked": 0,
+        "ideam_nowcast": 0,
+        "ideam_upgraded": 0,
+        "ideam_no_station": 0,
+        "ideam_errors": 0,
     }
 
     provider = OpenMeteoProvider(use_mock=False)
@@ -604,9 +609,15 @@ async def capture_weather_prekickoff(
 
         await session.commit()
         logger.info(
-            f"[SOTA_WEATHER] Complete: inserted={metrics['inserted']}, "
+            f"[SOTA_WEATHER] Open-Meteo done: inserted={metrics['inserted']}, "
             f"updated={metrics['updated']}, skipped_no_geo={metrics['skipped_no_geo']}"
         )
+
+        # ----- IDEAM nowcast pass for Colombia (ABE dictamen 2026-02-25) -----
+        # Upgrades Open-Meteo forecasts with real station data when ≤3h from kickoff.
+        # Writes ONLY to canonical (kind='nowcast', source='ideam-socrata').
+        # PIT guard: station captured_at must be strictly < kickoff_utc.
+        await _ideam_nowcast_pass(session, metrics)
 
     except Exception as e:
         metrics["errors"] += 1
@@ -616,6 +627,165 @@ async def capture_weather_prekickoff(
         await provider.close()
 
     return metrics
+
+
+async def _ideam_nowcast_pass(
+    session: AsyncSession,
+    metrics: dict,
+) -> None:
+    """IDEAM Socrata nowcast for Colombia matches ≤3h from kickoff.
+
+    Finds Colombia (league_id=239) NS matches within 3 hours of kickoff
+    that don't already have a 'nowcast' row in canonical. Fetches real
+    station data from IDEAM Socrata and upserts to canonical, upgrading
+    any existing Open-Meteo forecast.
+    """
+    from app.etl.ideam_provider import IdeamSocrataProvider
+
+    ideam_provider = None
+    try:
+        ideam_result = await session.execute(text("""
+            SELECT
+                m.id AS match_id,
+                m.date AS kickoff_utc,
+                COALESCE(vg.lat, twe.lat) AS lat,
+                COALESCE(vg.lon, twe.lon) AS lon
+            FROM matches m
+            JOIN teams t_home ON m.home_team_id = t_home.id
+            LEFT JOIN venue_geo vg
+                ON m.venue_city = vg.venue_city
+                AND t_home.country = vg.country
+            LEFT JOIN team_wikidata_enrichment twe
+                ON m.home_team_id = twe.team_id
+            WHERE m.status = 'NS'
+              AND m.league_id = 239
+              AND m.date >= NOW()
+              AND m.date < NOW() + INTERVAL '3 hours'
+              AND COALESCE(vg.lat, twe.lat) IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM match_weather_canonical mwc
+                  WHERE mwc.match_id = m.id AND mwc.kind = 'nowcast'
+              )
+            ORDER BY m.date ASC
+        """))
+
+        ideam_matches = ideam_result.fetchall()
+        metrics["ideam_checked"] = len(ideam_matches)
+
+        if not ideam_matches:
+            return
+
+        logger.info(
+            f"[SOTA_WEATHER] IDEAM: {len(ideam_matches)} Colombia matches ≤3h from kickoff"
+        )
+
+        ideam_provider = IdeamSocrataProvider()
+
+        for im in ideam_matches:
+            try:
+                reading = await ideam_provider.get_station_reading(
+                    lat=float(im.lat), lon=float(im.lon),
+                )
+
+                if reading is None:
+                    metrics["ideam_no_station"] += 1
+                    logger.debug(
+                        f"[SOTA_WEATHER] IDEAM no station for match {im.match_id}"
+                    )
+                    continue
+
+                # PIT guard: station reading must be BEFORE kickoff
+                if reading.captured_at:
+                    kickoff_aware = im.kickoff_utc
+                    if kickoff_aware.tzinfo is None:
+                        kickoff_aware = kickoff_aware.replace(tzinfo=timezone.utc)
+                    if reading.captured_at >= kickoff_aware:
+                        logger.warning(
+                            f"[SOTA_WEATHER] IDEAM PIT skip: captured_at="
+                            f"{reading.captured_at} >= kickoff={kickoff_aware} "
+                            f"match={im.match_id}"
+                        )
+                        metrics["ideam_errors"] += 1
+                        continue
+
+                # Check if upgrading an existing forecast row
+                existing = await session.execute(text("""
+                    SELECT kind FROM match_weather_canonical
+                    WHERE match_id = :mid
+                """), {"mid": im.match_id})
+                was_forecast = existing.scalar() is not None
+
+                # Upsert — ON CONFLICT upgrades forecast → nowcast
+                await session.execute(text("""
+                    INSERT INTO match_weather_canonical (
+                        match_id, temp_c, humidity_pct, wind_ms, precip_mm,
+                        cloudcover_pct, pressure_hpa, is_daylight, precip_prob,
+                        kind, source, forecast_horizon_hours, captured_at
+                    ) VALUES (
+                        :match_id, :temp_c, :humidity_pct, :wind_ms, :precip_mm,
+                        NULL, :pressure_hpa, NULL, NULL,
+                        'nowcast', 'ideam-socrata', NULL, :captured_at
+                    )
+                    ON CONFLICT (match_id) DO UPDATE SET
+                        temp_c = EXCLUDED.temp_c,
+                        humidity_pct = EXCLUDED.humidity_pct,
+                        wind_ms = EXCLUDED.wind_ms,
+                        precip_mm = EXCLUDED.precip_mm,
+                        cloudcover_pct = NULL,
+                        pressure_hpa = EXCLUDED.pressure_hpa,
+                        is_daylight = NULL,
+                        precip_prob = NULL,
+                        kind = 'nowcast',
+                        source = 'ideam-socrata',
+                        forecast_horizon_hours = NULL,
+                        captured_at = EXCLUDED.captured_at
+                """), {
+                    "match_id": im.match_id,
+                    "temp_c": reading.temp_c,
+                    "humidity_pct": reading.humidity,
+                    "wind_ms": reading.wind_ms,
+                    "precip_mm": reading.precip_mm,
+                    "pressure_hpa": reading.pressure_hpa,
+                    "captured_at": reading.captured_at or datetime.utcnow(),
+                })
+
+                if was_forecast:
+                    metrics["ideam_upgraded"] += 1
+                    logger.info(
+                        f"[SOTA_WEATHER] IDEAM upgraded match {im.match_id} "
+                        f"forecast→nowcast (station={reading.station_name}, "
+                        f"dist={reading.station_dist_km:.1f}km)"
+                    )
+                else:
+                    metrics["ideam_nowcast"] += 1
+                    logger.info(
+                        f"[SOTA_WEATHER] IDEAM nowcast match {im.match_id} "
+                        f"(station={reading.station_name}, "
+                        f"dist={reading.station_dist_km:.1f}km)"
+                    )
+
+            except Exception as e:
+                metrics["ideam_errors"] += 1
+                logger.error(
+                    f"[SOTA_WEATHER] IDEAM error match {im.match_id}: {e}"
+                )
+                continue
+
+        await session.commit()
+        logger.info(
+            f"[SOTA_WEATHER] IDEAM done: nowcast={metrics['ideam_nowcast']}, "
+            f"upgraded={metrics['ideam_upgraded']}, "
+            f"no_station={metrics['ideam_no_station']}, "
+            f"errors={metrics['ideam_errors']}"
+        )
+
+    except Exception as e:
+        metrics["ideam_errors"] += 1
+        logger.error(f"[SOTA_WEATHER] IDEAM pass failed: {e}")
+
+    finally:
+        if ideam_provider:
+            await ideam_provider.close()
 
 
 async def _upsert_weather_data(
