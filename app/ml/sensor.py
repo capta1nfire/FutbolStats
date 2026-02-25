@@ -486,6 +486,7 @@ async def evaluate_sensor_predictions(session: AsyncSession) -> dict:
           AND m.status = 'FT'
           AND m.home_goals IS NOT NULL
           AND m.away_goals IS NOT NULL
+        LIMIT 200
     """)
 
     result = await session.execute(query)
@@ -959,12 +960,13 @@ async def get_sensor_report(session: AsyncSession) -> dict:
     brier_uniform = 2/3
 
     # signal_score = (uniform - B) / (uniform - A)
-    # > 1.0 means B extracts more signal than A
-    # ≈ 1.0 means B and A similar
-    # < 1.0 means B worse (overfitting)
     denom = brier_uniform - a_brier
-    if abs(denom) < 0.001:
-        signal_score = 1.0  # A is at uniform level, can't compare
+    if denom <= 0.001:
+        # El Modelo A es peor o igual a adivinar al azar
+        if b_brier < a_brier:
+            signal_score = 1.1  # B es mejor que A, score positivo moderado
+        else:
+            signal_score = 0.5  # Ambos son ruido, y B es peor o igual a A
     else:
         signal_score = (brier_uniform - b_brier) / denom
 

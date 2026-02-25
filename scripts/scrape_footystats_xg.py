@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FootyStats xG Scraping — Bolivia + Chile + Ecuador
+FootyStats xG Scraping — Bolivia + Chile + Colombia + Ecuador + Peru + Venezuela
 
 4-phase CLI:
   --discover   Team discovery + auto-generate aliases
@@ -9,10 +9,11 @@ FootyStats xG Scraping — Bolivia + Chile + Ecuador
   --ingest     Ingest xG to database (dry-run default)
 
 Flags:
-  --league {bolivia,chile,ecuador}  Target league (required for --scrape)
-  --season LABEL            Single season canary (e.g. "2024", "2013/14")
+  --league {bolivia,chile,colombia,ecuador,peru,venezuela}  Target league (required for --scrape, optional filter for --ingest)
+  --season LABEL            Single season canary/filter (e.g. "2024", "2013/14")
   --resume                  Continue from checkpoint
   --no-dry-run              Actually write to DB (--ingest only)
+  --all-ingest-leagues      Ingest all configured leagues (default ingest scope: peru+venezuela)
 
 Dependencies: playwright, asyncpg (pip install playwright asyncpg && playwright install chromium)
 """
@@ -26,9 +27,10 @@ import os
 import random
 import re
 import sys
+import time
 import unicodedata
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -82,6 +84,21 @@ LEAGUES: Dict[str, Dict[str, Any]] = {
             "2023": 2023, "2024": 2024, "2025": 2025, "2026": 2026,
         },
     },
+    "colombia": {
+        "league_id": 239,
+        "fixtures_url": "https://footystats.org/colombia/categoria-primera-a/fixtures",
+        "country_slug": "colombia",
+        "seasons": [
+            "2013", "2014", "2015", "2016", "2017", "2018",
+            "2019", "2020", "2021", "2022", "2023", "2024", "2025", "2026",
+        ],
+        "db_season_map": {
+            "2013": None, "2014": None, "2015": None, "2016": None,
+            "2017": None, "2018": None,
+            "2019": 2019, "2020": 2020, "2021": 2021, "2022": 2022,
+            "2023": 2023, "2024": 2024, "2025": 2025, "2026": 2026,
+        },
+    },
     "ecuador": {
         "league_id": 242,
         "fixtures_url": "https://footystats.org/ecuador/primera-categoria-serie-a/fixtures",
@@ -92,6 +109,36 @@ LEAGUES: Dict[str, Dict[str, Any]] = {
         ],
         "db_season_map": {
             "2016": None, "2017": None, "2018": None,
+            "2019": 2019, "2020": 2020, "2021": 2021, "2022": 2022,
+            "2023": 2023, "2024": 2024, "2025": 2025, "2026": 2026,
+        },
+    },
+    "peru": {
+        "league_id": 281,
+        "fixtures_url": "https://footystats.org/peru/primera-division/fixtures",
+        "country_slug": "peru",
+        "seasons": [
+            "2013", "2014", "2015", "2016", "2017", "2018",
+            "2019", "2020", "2021", "2022", "2023", "2024", "2025", "2026",
+        ],
+        "db_season_map": {
+            "2013": None, "2014": None, "2015": None, "2016": None,
+            "2017": None, "2018": None,
+            "2019": 2019, "2020": 2020, "2021": 2021, "2022": 2022,
+            "2023": 2023, "2024": 2024, "2025": 2025, "2026": 2026,
+        },
+    },
+    "venezuela": {
+        "league_id": 299,
+        "fixtures_url": "https://footystats.org/venezuela/primera-division/fixtures",
+        "country_slug": "venezuela",
+        "seasons": [
+            "2013/14", "2014/15", "2015", "2016", "2017", "2018",
+            "2019", "2020", "2021", "2022", "2023", "2024", "2025", "2026",
+        ],
+        "db_season_map": {
+            "2013/14": None, "2014/15": None, "2015": None, "2016": None,
+            "2017": None, "2018": None,
             "2019": 2019, "2020": 2020, "2021": 2021, "2022": 2022,
             "2023": 2023, "2024": 2024, "2025": 2025, "2026": 2026,
         },
@@ -112,12 +159,28 @@ EXPECTED_MATCHES: Dict[str, Dict[str, Tuple[int, int]]] = {
         "default": (80, 400),
         "2026": (5, 100),       # En curso
     },
+    "colombia": {
+        "default": (200, 500),
+        "2020": (150, 300),     # COVID-shortened
+        "2026": (5, 100),       # En curso
+    },
     "ecuador": {
         "default": (80, 350),
         "2026": (5, 100),       # En curso
         "2016": (50, 300),
         "2017": (50, 300),
         "2018": (50, 300),
+    },
+    "peru": {
+        "default": (200, 400),
+        "2020": (150, 300),     # COVID-shortened
+        "2021": (150, 300),     # COVID-affected
+        "2026": (5, 100),       # En curso
+    },
+    "venezuela": {
+        "default": (150, 400),
+        "2020": (100, 200),     # COVID-shortened
+        "2026": (5, 100),       # En curso
     },
 }
 
@@ -130,6 +193,14 @@ DELAY_MATCH = (3.0, 5.0)
 DELAY_SEASON = (5.0, 8.0)
 MAX_CONSEC_ERRORS = 10
 SAVE_EVERY = 25
+FIXTURES_SCROLL_MAX = 40
+FIXTURES_STABLE_PASSES = 3
+MATCH_HARD_TIMEOUT_S = 150.0
+MATCH_RENDER_WAIT_MS = 12_000
+MATCH_RENDER_POLL_MS = 1_000
+MATCH_MAX_ATTEMPTS = 3
+MATCH_RETRY_SLEEP = (1.5, 3.0)
+DEFAULT_INGEST_LEAGUES = ("peru", "venezuela")
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -233,19 +304,48 @@ def check_aliases_gate(league_key: str) -> bool:
 
 # ── Progress ───────────────────────────────────────────────────────────────
 
-def load_progress() -> Dict[str, Any]:
-    """Load progress checkpoint."""
-    if PROGRESS_PATH.exists():
-        with PROGRESS_PATH.open() as f:
+def progress_path(league_key: Optional[str] = None) -> Path:
+    """
+    Resolve checkpoint path.
+
+    Per-league files avoid race conditions when two scrapers run in parallel.
+    """
+    if league_key:
+        return DATA_DIR / f"progress_{league_key}.json"
+    return PROGRESS_PATH
+
+
+def load_progress(league_key: Optional[str] = None) -> Dict[str, Any]:
+    """Load progress checkpoint (per league when provided)."""
+    p = progress_path(league_key)
+    if p.exists():
+        with p.open() as f:
             return json.load(f)
     return {}
 
 
-def save_progress(progress: Dict[str, Any]) -> None:
-    """Save progress checkpoint."""
+def save_progress(progress: Dict[str, Any], league_key: Optional[str] = None) -> None:
+    """Save progress checkpoint (per league when provided)."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with PROGRESS_PATH.open("w") as f:
+    p = progress_path(league_key)
+    with p.open("w") as f:
         json.dump(progress, f, indent=2)
+
+
+def load_all_progress() -> Dict[str, Any]:
+    """Merge global + per-league progress files for validation/reporting."""
+    merged: Dict[str, Any] = {"scraped": {}}
+    paths = [PROGRESS_PATH] + sorted(DATA_DIR.glob("progress_*.json"))
+    for p in paths:
+        if not p.exists():
+            continue
+        try:
+            with p.open() as f:
+                data = json.load(f)
+            merged["scraped"].update(data.get("scraped", {}))
+        except Exception:
+            continue
+    return merged
 
 
 def get_scraped_ids(progress: Dict, league_key: str, season_label: str) -> Set[str]:
@@ -304,10 +404,22 @@ async def select_season(page: Page, season_label: str) -> bool:
 
 async def collect_match_urls(page: Page) -> List[Dict[str, Any]]:
     """Scroll fixtures page and collect all completed match URLs with scores."""
-    # Scroll to load lazy content
-    for _ in range(12):
+    # Scroll until match anchors stabilize (faster on short pages, safer on slow pages)
+    stable_passes = 0
+    last_count = -1
+    for _ in range(FIXTURES_SCROLL_MAX):
         await page.mouse.wheel(0, 3_000)
-        await page.wait_for_timeout(800)
+        await page.wait_for_timeout(700)
+        count = await page.evaluate(
+            "() => document.querySelectorAll('a[href*=\"-h2h-stats#\"]').length"
+        )
+        if count == last_count:
+            stable_passes += 1
+            if stable_passes >= FIXTURES_STABLE_PASSES:
+                break
+        else:
+            stable_passes = 0
+            last_count = count
 
     matches = await page.evaluate("""
         () => {
@@ -416,67 +528,114 @@ async def extract_match_xg_with_context(
     url = match_info["url"]
     mid = match_info["match_id"]
 
-    # Fresh context per request — prevents fingerprinting across requests
-    context = await browser.new_context(
-        user_agent=USER_AGENT,
-        viewport={"width": random.randint(1280, 1440), "height": random.randint(800, 1100)},
-    )
-    page = await context.new_page()
+    def _is_blocked_title(title: str) -> bool:
+        t = (title or "").lower()
+        return any(tag in t for tag in ("captcha", "blocked", "403", "just a moment"))
 
-    try:
-        await page.goto(url, wait_until="networkidle", timeout=NAV_TIMEOUT)
-        await page.wait_for_timeout(3_000)
-    except PlaywrightTimeoutError:
-        # networkidle can timeout on slow pages; try domcontentloaded fallback
+    async def _extract_with_polling(page: Page) -> tuple[Optional[Dict[str, Any]], str]:
+        """Poll extraction for slow-rendered historical pages."""
+        deadline = time.monotonic() + (MATCH_RENDER_WAIT_MS / 1000.0)
+        last_data: Dict[str, Any] = {}
+        while time.monotonic() < deadline:
+            try:
+                data = await page.evaluate(EXTRACT_XG_JS)
+            except Exception:
+                data = {}
+            last_data = data or {}
+            if last_data.get("team1_xg") is not None:
+                return last_data, "ok"
+            try:
+                title = await page.title()
+            except Exception:
+                title = ""
+            if _is_blocked_title(title):
+                return last_data, "blocked"
+            await page.wait_for_timeout(MATCH_RENDER_POLL_MS)
+        return last_data, "timeout"
+
+    for attempt in range(1, MATCH_MAX_ATTEMPTS + 1):
+        # Fresh context per attempt — safer against anti-bot and stale page state.
+        context = await browser.new_context(
+            user_agent=USER_AGENT,
+            viewport={"width": random.randint(1280, 1440), "height": random.randint(800, 1100)},
+        )
+        page = await context.new_page()
+
         try:
+            # domcontentloaded is more reliable than networkidle on slow legacy pages.
             await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
-            await page.wait_for_timeout(5_000)
-        except Exception:
-            print(f"    TIMEOUT: match {mid}")
+            try:
+                await page.wait_for_selector("table", timeout=ELEM_TIMEOUT)
+            except PlaywrightTimeoutError:
+                # Keep polling extraction even if selector wait fails.
+                pass
+
+            data, status = await _extract_with_polling(page)
+            title = await page.title()
             await context.close()
-            return None
-    except Exception as e:
-        print(f"    ERROR navigating match {mid}: {e}")
-        await context.close()
-        return None
 
-    try:
-        data = await page.evaluate(EXTRACT_XG_JS)
-    except Exception as e:
-        print(f"    ERROR extracting match {mid}: {e}")
-        await context.close()
-        return None
+            if status == "ok":
+                return {
+                    "match_id": mid,
+                    "team1": data.get("team1") or match_info.get("home_slug", ""),
+                    "team2": data.get("team2") or match_info.get("away_slug", ""),
+                    "home_slug": match_info.get("home_slug"),
+                    "away_slug": match_info.get("away_slug"),
+                    "date": data.get("date"),
+                    "home_score": match_info.get("home_score"),
+                    "away_score": match_info.get("away_score"),
+                    "team1_xg": data["team1_xg"],
+                    "team2_xg": data["team2_xg"],
+                    "source_url": url,
+                }
 
-    # Diagnose failures — return a sentinel dict for NO-XG so caller can distinguish
-    if data.get("team1_xg") is None:
-        has_team = bool(data.get("team1"))
-        title = await page.title()
-        await context.close()
-        if "captcha" in title.lower() or "blocked" in title.lower() or "403" in title:
-            print(f"    BLOCKED: match {mid} (title: {title[:60]})")
-            return None  # Hard failure
-        elif has_team:
-            print(f"    NO-XG: match {mid} (teams: {data.get('team1')} vs {data.get('team2')}, no xG)")
-            return {"_no_xg": True}  # Soft failure: page rendered, just no xG data
-        else:
+            if status == "blocked" or _is_blocked_title(title):
+                print(f"    BLOCKED: match {mid} (title: {title[:60]})")
+                return None
+
+            has_team = bool((data or {}).get("team1"))
+            if has_team:
+                # Page rendered enough to identify teams; xG genuinely missing.
+                print(
+                    f"    NO-XG: match {mid} "
+                    f"(teams: {data.get('team1')} vs {data.get('team2')}, no xG)"
+                )
+                return {"_no_xg": True}
+
+            # EMPTY render: retry before declaring hard failure.
+            if attempt < MATCH_MAX_ATTEMPTS:
+                print(
+                    f"    RETRY: match {mid} attempt {attempt}/{MATCH_MAX_ATTEMPTS} "
+                    f"(slow/empty render)"
+                )
+                await asyncio.sleep(random.uniform(*MATCH_RETRY_SLEEP) * attempt)
+                continue
+
             print(f"    EMPTY: match {mid} (page did not render stats)")
-            return None  # Hard failure
+            return None
 
-    await context.close()
+        except PlaywrightTimeoutError:
+            await context.close()
+            if attempt < MATCH_MAX_ATTEMPTS:
+                print(
+                    f"    RETRY: timeout match {mid} attempt {attempt}/{MATCH_MAX_ATTEMPTS}"
+                )
+                await asyncio.sleep(random.uniform(*MATCH_RETRY_SLEEP) * attempt)
+                continue
+            print(f"    TIMEOUT: match {mid}")
+            return None
+        except Exception as e:
+            await context.close()
+            if attempt < MATCH_MAX_ATTEMPTS:
+                print(
+                    f"    RETRY: error match {mid} attempt {attempt}/{MATCH_MAX_ATTEMPTS} ({e})"
+                )
+                await asyncio.sleep(random.uniform(*MATCH_RETRY_SLEEP) * attempt)
+                continue
+            print(f"    ERROR navigating/extracting match {mid}: {e}")
+            return None
 
-    return {
-        "match_id": mid,
-        "team1": data.get("team1") or match_info.get("home_slug", ""),
-        "team2": data.get("team2") or match_info.get("away_slug", ""),
-        "home_slug": match_info.get("home_slug"),
-        "away_slug": match_info.get("away_slug"),
-        "date": data.get("date"),
-        "home_score": match_info.get("home_score"),
-        "away_score": match_info.get("away_score"),
-        "team1_xg": data["team1_xg"],
-        "team2_xg": data["team2_xg"],
-        "source_url": url,
-    }
+    return None
 
 
 # ── Phase 1: Discovery ────────────────────────────────────────────────────
@@ -640,8 +799,8 @@ async def cmd_discover() -> None:
 # ── Phase 2: Scraping ─────────────────────────────────────────────────────
 
 async def scrape_season(browser, league_key: str, season_label: str,
-                        progress: Dict, resume: bool) -> List[Dict[str, Any]]:
-    """Scrape all matches for one season. Returns list of results with xG."""
+                        progress: Dict, resume: bool) -> Tuple[List[Dict[str, Any]], bool]:
+    """Scrape all matches for one season. Returns (results, stopped_early)."""
     cfg = LEAGUES[league_key]
     rp = raw_path(league_key, season_label)
 
@@ -661,13 +820,16 @@ async def scrape_season(browser, league_key: str, season_label: str,
         viewport={"width": 1366, "height": 2000},
     )
     page = await ctx.new_page()
+    # Warm-up: load FootyStats home to set anti-bot cookies before fixtures
+    await page.goto("https://footystats.org/", wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+    await page.wait_for_timeout(2_000)
     await page.goto(cfg["fixtures_url"], wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
     await page.wait_for_timeout(3_000)
     ok = await select_season(page, season_label)
     if not ok:
         print(f"  SKIP: Could not select season {season_label}")
         await ctx.close()
-        return existing_results
+        return existing_results, False
 
     matches = await collect_match_urls(page)
     await ctx.close()  # Close fixtures context
@@ -695,10 +857,10 @@ async def scrape_season(browser, league_key: str, season_label: str,
         try:
             result = await asyncio.wait_for(
                 extract_match_xg_with_context(browser, match_info),
-                timeout=90.0,  # Hard cap: 90s per match
+                timeout=MATCH_HARD_TIMEOUT_S,  # Hard cap includes retries for slow pages
             )
         except asyncio.TimeoutError:
-            print(f"    GLOBAL-TIMEOUT: match {mid} (>90s)")
+            print(f"    GLOBAL-TIMEOUT: match {mid} (>{int(MATCH_HARD_TIMEOUT_S)}s)")
             result = None
 
         if result and not result.get("_no_xg"):
@@ -724,7 +886,7 @@ async def scrape_season(browser, league_key: str, season_label: str,
 
         # Checkpoint save
         if (i + 1) % SAVE_EVERY == 0:
-            save_progress(progress)
+            save_progress(progress, league_key)
             DATA_DIR.mkdir(parents=True, exist_ok=True)
             with rp.open("w", encoding="utf-8") as f:
                 json.dump(results, f, ensure_ascii=False, indent=2)
@@ -740,8 +902,9 @@ async def scrape_season(browser, league_key: str, season_label: str,
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with rp.open("w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
-    save_progress(progress)
+    save_progress(progress, league_key)
 
+    stopped_early = consec_errors >= MAX_CONSEC_ERRORS
     total = xg_found + xg_missing
     ratio = (xg_found / total * 100) if total > 0 else 0
     print(f"  Season {season_label} done: {xg_found}/{total} with xG ({ratio:.0f}%), {len(results)} total results")
@@ -749,7 +912,7 @@ async def scrape_season(browser, league_key: str, season_label: str,
     if total > 0 and ratio < 50:
         print(f"  WARNING: xG coverage < 50% — possible data quality issue for this season")
 
-    return results
+    return results, stopped_early
 
 
 async def cmd_scrape(league_key: str, season_filter: Optional[str], resume: bool,
@@ -773,7 +936,7 @@ async def cmd_scrape(league_key: str, season_filter: Optional[str], resume: bool
         if skipped:
             print(f"Skipping {skipped} pre-DB seasons (use --all-seasons to include them)")
 
-    progress = load_progress() if resume else {}
+    progress = load_progress(league_key) if resume else {}
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -782,12 +945,12 @@ async def cmd_scrape(league_key: str, season_filter: Optional[str], resume: bool
         stopped_early = False
 
         for season_label in seasons:
-            results = await scrape_season(browser, league_key, season_label, progress, resume)
+            results, season_stopped = await scrape_season(
+                browser, league_key, season_label, progress, resume,
+            )
 
-            # Check if we stopped early due to errors
-            pkey = f"{league_key}_{season_file_label(season_label)}"
-            entry = progress.get("scraped", {}).get(pkey, {})
-            if entry.get("xg_missing", 0) >= MAX_CONSEC_ERRORS:
+            # Check if season stopped due to consecutive hard errors (block/captcha)
+            if season_stopped:
                 print(f"\n  STOPPED EARLY in season {season_label}. Use --resume to continue later.")
                 stopped_early = True
                 break
@@ -796,7 +959,7 @@ async def cmd_scrape(league_key: str, season_filter: Optional[str], resume: bool
 
         await browser.close()
 
-    save_progress(progress)
+    save_progress(progress, league_key)
 
     # Summary
     print(f"\n{'='*60}")
@@ -825,7 +988,7 @@ def cmd_validate() -> None:
     print(f"{'='*65}")
 
     aliases = load_aliases()
-    progress = load_progress()
+    progress = load_all_progress()
 
     for league_key, cfg in LEAGUES.items():
         lid = cfg["league_id"]
@@ -916,7 +1079,12 @@ def cmd_validate() -> None:
 
 # ── Phase 4: Ingestion ────────────────────────────────────────────────────
 
-async def cmd_ingest(dry_run: bool) -> None:
+async def cmd_ingest(
+    dry_run: bool,
+    league_filter: Optional[str] = None,
+    season_filter: Optional[str] = None,
+    all_ingest_leagues: bool = False,
+) -> None:
     """Phase 4: Ingest scraped xG into matches.xg_home/xg_away."""
     if asyncpg is None:
         print("ERROR: asyncpg required for --ingest. Install: pip install asyncpg")
@@ -931,25 +1099,57 @@ async def cmd_ingest(dry_run: bool) -> None:
 
     aliases = load_aliases()
 
-    # Check aliases gate for all leagues
-    for league_key in LEAGUES:
+    if season_filter and not league_filter:
+        print("ERROR: --season for --ingest requires --league (season labels can be ambiguous).")
+        sys.exit(1)
+
+    if league_filter:
+        if league_filter not in LEAGUES:
+            print(f"ERROR: Unknown league '{league_filter}'. Choose: {list(LEAGUES.keys())}")
+            sys.exit(1)
+        target_leagues = [league_filter]
+    elif all_ingest_leagues:
+        target_leagues = list(LEAGUES.keys())
+    else:
+        target_leagues = [lk for lk in DEFAULT_INGEST_LEAGUES if lk in LEAGUES]
+
+    if not target_leagues:
+        print("ERROR: No target leagues configured for ingest.")
+        sys.exit(1)
+
+    # Check aliases gate only for target leagues
+    for league_key in target_leagues:
         if not check_aliases_gate(league_key):
             sys.exit(1)
 
     mode_str = "DRY-RUN" if dry_run else "LIVE WRITE"
     print(f"\n{'='*60}")
     print(f"  FootyStats xG Ingestion ({mode_str})")
+    print(f"  Scope leagues: {', '.join(target_leagues)}")
+    if season_filter:
+        print(f"  Scope season: {season_filter}")
     print(f"{'='*60}")
 
     conn = await asyncpg.connect(db_url)
     try:
-        for league_key, cfg in LEAGUES.items():
+        for league_key in target_leagues:
+            cfg = LEAGUES[league_key]
             lid = cfg["league_id"]
             league_aliases = aliases.get(league_key, {})
 
             stats = defaultdict(int)
 
-            for season_label in cfg["seasons"]:
+            season_labels = cfg["seasons"]
+            if season_filter:
+                if season_filter not in season_labels:
+                    print(
+                        f"ERROR: Season '{season_filter}' not configured for league '{league_key}'. "
+                        f"Available: {season_labels}"
+                    )
+                    sys.exit(1)
+                season_labels = [season_filter]
+
+            for season_label in season_labels:
                 db_season = cfg["db_season_map"].get(season_label)
                 if db_season is None:
                     continue  # Pre-2019, no DB match
@@ -1138,16 +1338,17 @@ async def cmd_ingest(dry_run: bool) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="FootyStats xG Scraping — Bolivia + Chile + Ecuador",
+        description="FootyStats xG Scraping — Bolivia + Chile + Ecuador + Peru + Venezuela",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   python3 scripts/scrape_footystats_xg.py --discover
-  python3 scripts/scrape_footystats_xg.py --scrape --league bolivia --season 2024
-  python3 scripts/scrape_footystats_xg.py --scrape --league chile --resume
+  python3 scripts/scrape_footystats_xg.py --scrape --league peru --season 2024
+  python3 scripts/scrape_footystats_xg.py --scrape --league venezuela --resume
   python3 scripts/scrape_footystats_xg.py --validate
-  python3 scripts/scrape_footystats_xg.py --ingest
-  python3 scripts/scrape_footystats_xg.py --ingest --no-dry-run
+  python3 scripts/scrape_footystats_xg.py --ingest  # default scope: peru + venezuela
+  python3 scripts/scrape_footystats_xg.py --ingest --league peru --no-dry-run
+  python3 scripts/scrape_footystats_xg.py --ingest --all-ingest-leagues
         """,
     )
     parser.add_argument("--discover", action="store_true", help="Phase 1: Team discovery + aliases")
@@ -1155,12 +1356,14 @@ Examples:
     parser.add_argument("--validate", action="store_true", help="Phase 3: Validation report")
     parser.add_argument("--ingest", action="store_true", help="Phase 4: Ingest to DB (dry-run default)")
     parser.add_argument("--league", type=str, choices=list(LEAGUES.keys()),
-                        help="Target league (required for --scrape)")
-    parser.add_argument("--season", type=str, help="Single season for canary (e.g. '2024', '2013/14')")
+                        help="Target league (required for --scrape, optional filter for --ingest)")
+    parser.add_argument("--season", type=str, help="Single season for canary/filter (e.g. '2024', '2013/14')")
     parser.add_argument("--resume", action="store_true", help="Continue from checkpoint")
     parser.add_argument("--no-dry-run", action="store_true", help="Actually write to DB (--ingest only)")
     parser.add_argument("--all-seasons", action="store_true",
                         help="Include pre-DB seasons (db_season_map=None). Default: skip them.")
+    parser.add_argument("--all-ingest-leagues", action="store_true",
+                        help="For --ingest: process all configured leagues (default is peru+venezuela).")
 
     args = parser.parse_args()
 
@@ -1179,7 +1382,12 @@ Examples:
         cmd_validate()
     elif args.ingest:
         dry_run = not args.no_dry_run
-        asyncio.run(cmd_ingest(dry_run))
+        asyncio.run(cmd_ingest(
+            dry_run=dry_run,
+            league_filter=args.league,
+            season_filter=args.season,
+            all_ingest_leagues=args.all_ingest_leagues,
+        ))
 
 
 if __name__ == "__main__":
