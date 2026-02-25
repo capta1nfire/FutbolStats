@@ -2258,17 +2258,15 @@ async def get_matches_dashboard(
     # Use GROUP BY and MAX to get one row per match when there are multiple predictions
     # Weather: use raw SQL subquery with DISTINCT ON to get latest forecast per match
     weather_subq = text("""
-        SELECT DISTINCT ON (match_id)
-            match_id,
+        SELECT match_id,
             temp_c,
-            humidity,
+            humidity_pct AS humidity,
             wind_ms,
             precip_mm,
             precip_prob,
-            cloudcover,
+            cloudcover_pct AS cloudcover,
             is_daylight
-        FROM match_weather
-        ORDER BY match_id, forecast_horizon_hours ASC
+        FROM match_weather_canonical
     """).columns(
         column("match_id"),
         column("temp_c"),
@@ -3524,14 +3522,14 @@ async def _build_data_quality_checks(session: AsyncSession) -> list[dict]:
             text(
                 """
                 SELECT
-                    COUNT(*) FILTER (WHERE mw.match_id IS NOT NULL) AS with_weather,
+                    COUNT(*) FILTER (WHERE mwc.match_id IS NOT NULL) AS with_weather,
                     COUNT(*) AS total_ns
                 FROM matches m
-                LEFT JOIN match_weather mw ON m.id = mw.match_id
+                LEFT JOIN match_weather_canonical mwc ON m.id = mwc.match_id
                 WHERE m.status = 'NS'
                   AND m.date >= NOW()
                   AND m.date < NOW() + INTERVAL '48 hours'
-                """
+"""
             )
         )
         row = res.first()
@@ -4617,7 +4615,7 @@ async def _build_analytics_reports(session: AsyncSession) -> list[dict]:
         result = await session.execute(text("""
             SELECT
                 (SELECT COUNT(*) FROM match_sofascore_lineup) as sofascore_lineups,
-                (SELECT COUNT(*) FROM match_weather) as weather_forecasts,
+                (SELECT COUNT(*) FROM match_weather_canonical) as weather_forecasts,
                 (SELECT COUNT(*) FROM venue_geo) as venue_geos,
                 (SELECT COUNT(*) FROM match_understat_team) as understat_xg
         """))

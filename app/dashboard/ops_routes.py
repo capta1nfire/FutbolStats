@@ -1079,10 +1079,10 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
         res = await session.execute(
             text("""
                 SELECT
-                    COUNT(*) FILTER (WHERE mw.match_id IS NOT NULL) AS with_weather,
+                    COUNT(*) FILTER (WHERE mwc.match_id IS NOT NULL) AS with_weather,
                     COUNT(*) AS total_ns
                 FROM matches m
-                LEFT JOIN match_weather mw ON m.id = mw.match_id
+                LEFT JOIN match_weather_canonical mwc ON m.id = mwc.match_id
                 WHERE m.status = 'NS'
                   AND m.date >= NOW()
                   AND m.date < NOW() + INTERVAL '48 hours'

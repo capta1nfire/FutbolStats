@@ -111,66 +111,44 @@ async def load_match_weather(
     preferred_horizon: int = 24,
 ) -> Optional[dict]:
     """
-    Load weather data for a match, validating point-in-time.
+    Load weather from match_weather_canonical (unified source).
 
-    Prefers the snapshot with forecast_horizon closest to preferred_horizon,
-    but only if captured_at < t0.
+    Canonical table already has dedup (forecast preferred over archive)
+    and normalized units (wind in m/s, humidity in pct).
+
+    For serving/training PIT: caller should check kind='forecast' if strict
+    PIT is required. For coverage/eval, any kind is acceptable.
 
     Args:
         session: Database session.
         match_id: Match ID.
-        t0: Kickoff time.
-        preferred_horizon: Preferred forecast horizon (default 24h).
+        t0: Kickoff time (used for PIT guard on forecast rows).
+        preferred_horizon: Ignored (canonical has 1 row per match).
 
     Returns:
         Dict with weather fields or None if not available.
     """
-    # Get the snapshot with captured_at < t0, prefer horizon=24, then closest to t0
     result = await session.execute(
         text("""
-            SELECT temp_c, humidity, wind_ms, precip_mm, is_daylight,
-                   forecast_horizon_hours, captured_at
-            FROM match_weather
-            WHERE match_id = :match_id AND captured_at < :t0
-            ORDER BY
-                CASE WHEN forecast_horizon_hours = :horizon THEN 0 ELSE 1 END,
-                captured_at DESC
+            SELECT temp_c, humidity_pct, wind_ms, precip_mm, is_daylight,
+                   forecast_horizon_hours, kind, captured_at
+            FROM match_weather_canonical
+            WHERE match_id = :match_id
+              AND (kind = 'archive' OR captured_at < :t0)
             LIMIT 1
         """),
-        {"match_id": match_id, "t0": t0, "horizon": preferred_horizon}
+        {"match_id": match_id, "t0": t0}
     )
     row = result.fetchone()
     if row:
         return {
             "weather_temp_c": row.temp_c,
-            "weather_humidity": row.humidity,
+            "weather_humidity": row.humidity_pct,
             "weather_wind_ms": row.wind_ms,
             "weather_precip_mm": row.precip_mm,
             "is_daylight": row.is_daylight,
             "weather_forecast_horizon_hours": row.forecast_horizon_hours,
         }
-
-    # Fallback: historical archive (match_weather_hist) — no PIT guard needed
-    # (archive data is always from after the match, used for training/eval only)
-    hist = await session.execute(
-        text("""
-            SELECT weather_data FROM match_weather_hist
-            WHERE match_id = :match_id LIMIT 1
-        """),
-        {"match_id": match_id}
-    )
-    hist_row = hist.fetchone()
-    if hist_row and hist_row.weather_data:
-        h0 = hist_row.weather_data.get("h0") if isinstance(hist_row.weather_data, dict) else None
-        if h0:
-            return {
-                "weather_temp_c": h0.get("temp_c"),
-                "weather_humidity": h0.get("humidity_pct"),
-                "weather_wind_ms": (h0.get("wind_kmh") or 0) / 3.6,  # km/h → m/s
-                "weather_precip_mm": h0.get("precip_mm"),
-                "is_daylight": None,
-                "weather_forecast_horizon_hours": -1,  # sentinel: historical archive
-            }
     return None
 
 

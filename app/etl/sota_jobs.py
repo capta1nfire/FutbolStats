@@ -657,7 +657,7 @@ async def _upsert_weather_data(
                 is_daylight = :is_daylight, captured_at = :captured_at
             WHERE match_id = :match_id AND forecast_horizon_hours = :forecast_horizon_hours
         """), params)
-        return "updated"
+        # NO return here — fall through to dual-write to canonical below
     else:
         await session.execute(text("""
             INSERT INTO match_weather (
@@ -670,7 +670,29 @@ async def _upsert_weather_data(
                 :forecast_horizon_hours, :captured_at
             )
         """), params)
-        return "inserted"
+
+    # Dual-write to canonical (forecast always wins over archive)
+    await session.execute(text("""
+        INSERT INTO match_weather_canonical (
+            match_id, temp_c, humidity_pct, wind_ms, precip_mm,
+            cloudcover_pct, pressure_hpa, is_daylight, precip_prob,
+            kind, source, forecast_horizon_hours, captured_at
+        ) VALUES (
+            :match_id, :temp_c, :humidity, :wind_ms, :precip_mm,
+            :cloudcover, :pressure_hpa, :is_daylight, :precip_prob,
+            'forecast', 'open-meteo-forecast', :forecast_horizon_hours, :captured_at
+        )
+        ON CONFLICT (match_id) DO UPDATE SET
+            temp_c = EXCLUDED.temp_c, humidity_pct = EXCLUDED.humidity_pct,
+            wind_ms = EXCLUDED.wind_ms, precip_mm = EXCLUDED.precip_mm,
+            cloudcover_pct = EXCLUDED.cloudcover_pct, pressure_hpa = EXCLUDED.pressure_hpa,
+            is_daylight = EXCLUDED.is_daylight, precip_prob = EXCLUDED.precip_prob,
+            kind = 'forecast', source = 'open-meteo-forecast',
+            forecast_horizon_hours = EXCLUDED.forecast_horizon_hours,
+            captured_at = EXCLUDED.captured_at
+    """), params)
+
+    return "updated" if exists else "inserted"
 
 
 # =============================================================================
