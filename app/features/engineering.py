@@ -2063,9 +2063,9 @@ class FeatureEngineer:
 
         # Thermal shock: T_stadium - T_away_home_month_mean
         if away_profile and away_profile["climate_normals_by_month"]:
-            month_key = f"{t0.month:02d}"
+            month_key = str(t0.month)
             climate = away_profile["climate_normals_by_month"].get(month_key, {})
-            away_temp_mean = climate.get("temp_c_mean")
+            away_temp_mean = climate.get("temp_mean")
             if away_temp_mean is not None:
                 features["thermal_shock"] = round(
                     features["weather_temp_c"] - away_temp_mean, 2

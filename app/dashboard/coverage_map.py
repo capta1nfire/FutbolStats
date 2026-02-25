@@ -74,7 +74,7 @@ DIMENSIONS_META = [
     {"key": "bio_adaptability", "label": "Bio-Adaptability", "priority": "P1", "contributes_to_score": True,
      "source_tables": ["team_home_city_profile"], "pit_guardrail": "static profile"},
     {"key": "sofascore_xi_ratings", "label": "Sofascore XI Ratings", "priority": "P1", "contributes_to_score": True,
-     "source_tables": ["match_sofascore_player"], "pit_guardrail": "data presence"},
+     "source_tables": ["sofascore_player_rating_history"], "pit_guardrail": "post-match ratings (is_starter + rating NOT NULL)"},
     {"key": "external_refs", "label": "External Refs", "priority": "P1", "contributes_to_score": True,
      "source_tables": ["match_external_refs"], "pit_guardrail": "confidence >= 0.90"},
     {"key": "freshness", "label": "Data Freshness", "priority": "P1", "contributes_to_score": True,
@@ -264,18 +264,15 @@ SELECT
                 AND ap.climate_normals_by_month IS NOT NULL)
   ) AS bio_adaptability_n,
 
-  -- Sofascore XI: >=11 rated starters per side
+  -- Sofascore XI: >=11 rated starters per side (post-match ratings from history)
   COUNT(*) FILTER (WHERE EXISTS (
     SELECT 1 FROM (
-      SELECT x.match_id FROM (
-        SELECT msp.match_id, msp.team_side,
-               COUNT(*) FILTER (WHERE msp.is_starter = true
-                 AND (msp.rating_pre_match IS NOT NULL OR msp.rating_recent_form IS NOT NULL)) AS rated
-        FROM match_sofascore_player msp WHERE msp.match_id = m.id
-        GROUP BY msp.match_id, msp.team_side
-      ) x WHERE x.rated >= 11
-      GROUP BY x.match_id HAVING COUNT(*) = 2
+      SELECT sprh.match_id FROM sofascore_player_rating_history sprh
+      WHERE sprh.match_id = m.id AND sprh.is_starter = true AND sprh.rating IS NOT NULL
+      GROUP BY sprh.match_id, sprh.team_side
+      HAVING COUNT(*) >= 11
     ) sub
+    GROUP BY sub.match_id HAVING COUNT(*) = 2
   )) AS sofascore_xi_ratings_n,
 
   -- External refs: >=1 high-confidence from xG/rating sources
