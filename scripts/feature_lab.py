@@ -660,6 +660,10 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
                m.home_team_id, m.away_team_id,
                m.home_goals, m.away_goals,
                m.stats, m.match_weight,
+               co.odds_home AS canonical_home,
+               co.odds_draw AS canonical_draw,
+               co.odds_away AS canonical_away,
+               co.source AS canonical_source,
                m.odds_home AS odds_home_close,
                m.odds_draw AS odds_draw_close,
                m.odds_away AS odds_away_close,
@@ -674,6 +678,7 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
                wa.lat AS away_lat_raw, wa.lon AS away_lon_raw,
                wa.stadium_altitude_m AS away_altitude_raw
         FROM matches m
+        LEFT JOIN match_canonical_odds co ON co.match_id = m.id
         LEFT JOIN match_understat_team u ON m.id = u.match_id
         LEFT JOIN match_fotmob_stats f ON m.id = f.match_id
         LEFT JOIN team_wikidata_enrichment wh ON m.home_team_id = wh.team_id
@@ -687,7 +692,10 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
     """
     matches = pd.read_sql(query, conn, params=(extract_ids,))
 
-    # ── Fix 0: odds_snapshot — consistent triplet, no per-column mixing ──
+    # ── Fix 0: odds — canonical > closing > opening (aligned with serving) ──
+    has_canonical = (matches["canonical_home"].notna() &
+                     matches["canonical_draw"].notna() &
+                     matches["canonical_away"].notna())
     has_close = (matches["odds_home_close"].notna() &
                  matches["odds_draw_close"].notna() &
                  matches["odds_away_close"].notna())
@@ -696,21 +704,25 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
                 matches["odds_away_open"].notna())
 
     matches["odds_snapshot"] = "missing"
-    matches.loc[has_open & ~has_close, "odds_snapshot"] = "opening"
-    matches.loc[has_close, "odds_snapshot"] = "closing"
+    matches.loc[has_open & ~has_close & ~has_canonical, "odds_snapshot"] = "opening"
+    matches.loc[has_close & ~has_canonical, "odds_snapshot"] = "closing"
+    matches.loc[has_canonical, "odds_snapshot"] = "canonical"
 
-    # Use closing triplet if available, else opening triplet, else NaN
-    matches["odds_home"] = matches["odds_home_close"].where(has_close,
-                           matches["odds_home_open"].where(has_open))
-    matches["odds_draw"] = matches["odds_draw_close"].where(has_close,
-                           matches["odds_draw_open"].where(has_open))
-    matches["odds_away"] = matches["odds_away_close"].where(has_close,
-                           matches["odds_away_open"].where(has_open))
+    # Priority: canonical > closing (API-Football) > opening > NaN
+    matches["odds_home"] = matches["canonical_home"].where(has_canonical,
+                           matches["odds_home_close"].where(has_close,
+                           matches["odds_home_open"].where(has_open)))
+    matches["odds_draw"] = matches["canonical_draw"].where(has_canonical,
+                           matches["odds_draw_close"].where(has_close,
+                           matches["odds_draw_open"].where(has_open)))
+    matches["odds_away"] = matches["canonical_away"].where(has_canonical,
+                           matches["odds_away_close"].where(has_close,
+                           matches["odds_away_open"].where(has_open)))
 
     snap_counts = matches["odds_snapshot"].value_counts()
     print(f"  Odds snapshot: {dict(snap_counts)} "
-          f"({snap_counts.get('closing', 0) + snap_counts.get('opening', 0)}/{len(matches)} "
-          f"= {(snap_counts.get('closing', 0) + snap_counts.get('opening', 0)) / len(matches) * 100:.1f}% coverage)")
+          f"({snap_counts.get('canonical', 0) + snap_counts.get('closing', 0) + snap_counts.get('opening', 0)}/{len(matches)} "
+          f"= {(snap_counts.get('canonical', 0) + snap_counts.get('closing', 0) + snap_counts.get('opening', 0)) / len(matches) * 100:.1f}% coverage)")
 
     # ── XI Continuity: load match_lineups ────────────────────
     lineup_query = """
