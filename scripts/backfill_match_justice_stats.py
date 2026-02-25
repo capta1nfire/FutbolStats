@@ -13,6 +13,7 @@ per-match sample weights (W) without joining multiple tables at training time.
 Usage:
     source .env
     python scripts/backfill_match_justice_stats.py [--dry-run] [--since 2023-01-01]
+    python scripts/backfill_match_justice_stats.py --rewrite-existing  # recalc all
 """
 
 import argparse
@@ -41,6 +42,8 @@ async def main():
     parser = argparse.ArgumentParser(description="Backfill match_justice_stats")
     parser.add_argument("--dry-run", action="store_true", help="Don't write to DB")
     parser.add_argument("--since", default="2023-01-01", help="Minimum match date")
+    parser.add_argument("--rewrite-existing", action="store_true",
+                        help="Recalculate and overwrite existing rows (UPSERT)")
     args = parser.parse_args()
 
     db_url = os.environ.get("DATABASE_URL_ASYNC")
@@ -56,8 +59,10 @@ async def main():
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     since_date = datetime.strptime(args.since, "%Y-%m-%d")
+    rewrite = args.rewrite_existing
     prefix = "[DRY-RUN] " if args.dry_run else ""
-    logger.info(f"{prefix}Starting match_justice_stats backfill (since {args.since})")
+    logger.info(f"{prefix}Starting match_justice_stats backfill (since {args.since})"
+                f"{' [REWRITE MODE]' if rewrite else ''}")
 
     async with async_session() as session:
         # Get already-populated match_ids to skip
@@ -79,23 +84,29 @@ async def main():
         all_rows = r_canonical.fetchall()
         logger.info(f"  Canonical xG matches: {len(all_rows)}")
 
-        # Exclude already populated
-        to_insert = [r for r in all_rows if r[0] not in existing_ids]
+        # Filter rows depending on mode
+        if rewrite:
+            to_process = all_rows
+            skipped = 0
+        else:
+            to_process = [r for r in all_rows if r[0] not in existing_ids]
+            skipped = len(all_rows) - len(to_process)
         logger.info(f"  Total with xG: {len(all_rows)}")
-        logger.info(f"  To insert: {len(to_insert)} (skipping {len(all_rows) - len(to_insert)} existing)")
+        logger.info(f"  To process: {len(to_process)} (skipping {skipped}"
+                     f"{'' if rewrite else ' existing'})")
 
-        if not to_insert:
-            logger.info("  Nothing to insert.")
+        if not to_process:
+            logger.info("  Nothing to process.")
             await engine.dispose()
             return
 
         # Vectorized computation
-        match_ids = [r[0] for r in to_insert]
-        home_goals = np.array([float(r[1]) for r in to_insert])
-        away_goals = np.array([float(r[2]) for r in to_insert])
-        xg_home = np.array([float(r[3]) for r in to_insert])
-        xg_away = np.array([float(r[4]) for r in to_insert])
-        xg_sources = [r[5] for r in to_insert]
+        match_ids = [r[0] for r in to_process]
+        home_goals = np.array([float(r[1]) for r in to_process])
+        away_goals = np.array([float(r[2]) for r in to_process])
+        xg_home = np.array([float(r[3]) for r in to_process])
+        xg_away = np.array([float(r[4]) for r in to_process])
+        xg_sources = [r[5] for r in to_process]
 
         # Batch Y_soft computation (vectorized Dixon-Coles)
         y_soft = compute_y_soft_batch(xg_home, xg_away)
@@ -110,25 +121,50 @@ async def main():
                      f"median={np.median(justice_w):.4f}, "
                      f"min={justice_w.min():.4f}, max={justice_w.max():.4f}")
 
-        # Insert in batches
+        # Choose SQL template based on mode
+        if rewrite:
+            upsert_sql = text("""
+                INSERT INTO match_justice_stats
+                    (match_id, xg_home, xg_away, xg_source,
+                     y_soft_home, y_soft_draw, y_soft_away,
+                     justice_weight, justice_alpha, dixon_coles_rho)
+                VALUES
+                    (:mid, :xgh, :xga, :src,
+                     :yh, :yd, :ya,
+                     :w, :alpha, :rho)
+                ON CONFLICT (match_id) DO UPDATE SET
+                    xg_home = EXCLUDED.xg_home,
+                    xg_away = EXCLUDED.xg_away,
+                    xg_source = EXCLUDED.xg_source,
+                    y_soft_home = EXCLUDED.y_soft_home,
+                    y_soft_draw = EXCLUDED.y_soft_draw,
+                    y_soft_away = EXCLUDED.y_soft_away,
+                    justice_weight = EXCLUDED.justice_weight,
+                    justice_alpha = EXCLUDED.justice_alpha,
+                    dixon_coles_rho = EXCLUDED.dixon_coles_rho
+            """)
+        else:
+            upsert_sql = text("""
+                INSERT INTO match_justice_stats
+                    (match_id, xg_home, xg_away, xg_source,
+                     y_soft_home, y_soft_draw, y_soft_away,
+                     justice_weight, justice_alpha, dixon_coles_rho)
+                VALUES
+                    (:mid, :xgh, :xga, :src,
+                     :yh, :yd, :ya,
+                     :w, :alpha, :rho)
+                ON CONFLICT (match_id) DO NOTHING
+            """)
+
+        # Process in batches
         BATCH_SIZE = 500
-        inserted = 0
-        for batch_start in range(0, len(to_insert), BATCH_SIZE):
-            batch_end = min(batch_start + BATCH_SIZE, len(to_insert))
+        processed = 0
+        for batch_start in range(0, len(to_process), BATCH_SIZE):
+            batch_end = min(batch_start + BATCH_SIZE, len(to_process))
 
             if not args.dry_run:
                 for j in range(batch_start, batch_end):
-                    await session.execute(text("""
-                        INSERT INTO match_justice_stats
-                            (match_id, xg_home, xg_away, xg_source,
-                             y_soft_home, y_soft_draw, y_soft_away,
-                             justice_weight, justice_alpha, dixon_coles_rho)
-                        VALUES
-                            (:mid, :xgh, :xga, :src,
-                             :yh, :yd, :ya,
-                             :w, :alpha, :rho)
-                        ON CONFLICT (match_id) DO NOTHING
-                    """), {
+                    await session.execute(upsert_sql, {
                         "mid": match_ids[j],
                         "xgh": round(float(xg_home[j]), 4),
                         "xga": round(float(xg_away[j]), 4),
@@ -142,17 +178,20 @@ async def main():
                     })
                 await session.commit()
 
-            inserted += (batch_end - batch_start)
-            logger.info(f"  Inserted batch {batch_start}-{batch_end} "
-                         f"({inserted}/{len(to_insert)})")
+            processed += (batch_end - batch_start)
+            verb = "Upserted" if rewrite else "Inserted"
+            logger.info(f"  {verb} batch {batch_start}-{batch_end} "
+                         f"({processed}/{len(to_process)})")
 
     await engine.dispose()
 
+    mode_label = "REWRITE (upsert)" if rewrite else "INSERT-ONLY"
     logger.info(f"""
 {prefix}=== MATCH JUSTICE STATS COMPLETE ===
+Mode:                              {mode_label}
 Total matches with xG (canonical): {len(all_rows)}
-Already in table:                  {len(all_rows) - len(to_insert)}
-Newly inserted:                    {len(to_insert)}
+Already in table:                  {len(existing_ids)}
+Processed:                         {len(to_process)}
 Justice W: mean={justice_w.mean():.4f}, median={np.median(justice_w):.4f}
 """)
 

@@ -1784,10 +1784,18 @@ class FeatureEngineer:
         self,
         values: list[float],
         weights: list[float],
-    ) -> float:
-        """Calculate weighted average with match and decay weights."""
+        default: float | None = None,
+    ) -> float | None:
+        """Calculate weighted average with match and decay weights.
+
+        Args:
+            default: Value returned when no data is available.
+                     Use None for xG (missing signal ≠ zero xG).
+                     Baseline callers rely on early-return guards so
+                     this default is a safety net, not the primary path.
+        """
         if not values or not weights or sum(weights) == 0:
-            return 0.0
+            return default
 
         return sum(v * w for v, w in zip(values, weights)) / sum(weights)
 
@@ -1839,16 +1847,16 @@ class FeatureEngineer:
         weights = [s["combined_weight"] for s in match_stats]
 
         goals_scored_avg = self._calculate_weighted_average(
-            [s["goals_scored"] for s in match_stats], weights
+            [s["goals_scored"] for s in match_stats], weights, default=0.0
         )
         goals_conceded_avg = self._calculate_weighted_average(
-            [s["goals_conceded"] for s in match_stats], weights
+            [s["goals_conceded"] for s in match_stats], weights, default=0.0
         )
         shots_avg = self._calculate_weighted_average(
-            [s["shots"] for s in match_stats], weights
+            [s["shots"] for s in match_stats], weights, default=0.0
         )
         corners_avg = self._calculate_weighted_average(
-            [s["corners"] for s in match_stats], weights
+            [s["corners"] for s in match_stats], weights, default=0.0
         )
 
         # Rest days since last match
@@ -1949,24 +1957,22 @@ class FeatureEngineer:
             away_goals_total += goals
             away_xg_total += xg_for
 
-        # Calculate weighted averages
-        features["home_xg_for_avg"] = round(
-            self._calculate_weighted_average(home_xg_for, home_weights), 3
-        )
-        features["home_xg_against_avg"] = round(
-            self._calculate_weighted_average(home_xg_against, home_weights), 3
-        )
-        features["away_xg_for_avg"] = round(
-            self._calculate_weighted_average(away_xg_for, away_weights), 3
-        )
-        features["away_xg_against_avg"] = round(
-            self._calculate_weighted_average(away_xg_against, away_weights), 3
-        )
+        # Calculate weighted averages (None when no history)
+        _hxf = self._calculate_weighted_average(home_xg_for, home_weights)
+        _hxa = self._calculate_weighted_average(home_xg_against, home_weights)
+        _axf = self._calculate_weighted_average(away_xg_for, away_weights)
+        _axa = self._calculate_weighted_average(away_xg_against, away_weights)
 
-        # Derived: xg_diff_avg
-        features["xg_diff_avg"] = round(
-            features["home_xg_for_avg"] - features["away_xg_for_avg"], 3
-        )
+        features["home_xg_for_avg"] = round(_hxf, 3) if _hxf is not None else None
+        features["home_xg_against_avg"] = round(_hxa, 3) if _hxa is not None else None
+        features["away_xg_for_avg"] = round(_axf, 3) if _axf is not None else None
+        features["away_xg_against_avg"] = round(_axa, 3) if _axa is not None else None
+
+        # Derived: xg_diff_avg (None if either component missing)
+        if _hxf is not None and _axf is not None:
+            features["xg_diff_avg"] = round(_hxf - _axf, 3)
+        else:
+            features["xg_diff_avg"] = None
 
         # xPTS: not available in canonical (Understat-specific). Always 0.
         features["xpts_diff_avg"] = 0.0
@@ -2281,13 +2287,13 @@ class FeatureEngineer:
                 await self.session.rollback()
             except Exception:
                 pass
-            # Set defaults with missing flag
+            # Set defaults with missing flag — None for xG (not 0.0)
             features.update({
-                "home_xg_for_avg": 0.0,
-                "home_xg_against_avg": 0.0,
-                "away_xg_for_avg": 0.0,
-                "away_xg_against_avg": 0.0,
-                "xg_diff_avg": 0.0,
+                "home_xg_for_avg": None,
+                "home_xg_against_avg": None,
+                "away_xg_for_avg": None,
+                "away_xg_against_avg": None,
+                "xg_diff_avg": None,
                 "xpts_diff_avg": 0.0,
                 "home_justice_shrunk": 0.0,
                 "away_justice_shrunk": 0.0,
