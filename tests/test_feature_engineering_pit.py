@@ -49,17 +49,17 @@ class TestPointInTimeUnderstat:
     @pytest.mark.asyncio
     async def test_understat_snapshot_ignored_if_captured_after_kickoff(self):
         """
-        Test that understat data with captured_at >= t0 is ignored.
+        Test that canonical xG data with captured_at >= t0 is ignored.
 
         Scenario:
         - Match kickoff at 2026-01-15 15:00 UTC
-        - Understat snapshot captured at 2026-01-15 16:00 UTC (after kickoff)
+        - xG snapshot captured at 2026-01-15 16:00 UTC (after kickoff)
         - Should return None (no valid snapshot)
         """
         # Mock session
         mock_session = AsyncMock()
         mock_result = MagicMock()
-        mock_result.fetchone.return_value = None  # No valid row (filtered by captured_at < t0)
+        mock_result.fetchone.return_value = None  # No valid row (filtered by PIT)
         mock_session.execute.return_value = mock_result
 
         t0 = datetime(2026, 1, 15, 15, 0, 0)  # Kickoff
@@ -67,10 +67,10 @@ class TestPointInTimeUnderstat:
 
         result = await load_match_understat(mock_session, match_id, t0)
 
-        # Verify the query includes captured_at < t0 filter
+        # Verify the query includes PIT filter (COALESCE for NULL captured_at safety)
         call_args = mock_session.execute.call_args
         query_text = str(call_args[0][0])
-        assert "captured_at < :t0" in query_text
+        assert "captured_at" in query_text and "< :t0" in query_text
 
         # Result should be None since no valid snapshot
         assert result is None
@@ -78,11 +78,11 @@ class TestPointInTimeUnderstat:
     @pytest.mark.asyncio
     async def test_understat_snapshot_used_if_captured_before_kickoff(self):
         """
-        Test that understat data with captured_at < t0 is correctly used.
+        Test that canonical xG data with captured_at < t0 is correctly used.
 
         Scenario:
         - Match kickoff at 2026-01-15 15:00 UTC
-        - Understat snapshot captured at 2026-01-15 10:00 UTC (before kickoff)
+        - xG snapshot captured at 2026-01-15 10:00 UTC (before kickoff)
         - Should return the snapshot data
         """
         # Mock session with valid data
@@ -90,8 +90,8 @@ class TestPointInTimeUnderstat:
         mock_row = MagicMock()
         mock_row.xg_home = 1.5
         mock_row.xg_away = 0.8
-        mock_row.xpts_home = 1.2
-        mock_row.xpts_away = 0.9
+        mock_row.source = "understat"
+        mock_row.captured_at = datetime(2026, 1, 15, 10, 0, 0)
         mock_result = MagicMock()
         mock_result.fetchone.return_value = mock_row
         mock_session.execute.return_value = mock_result
@@ -104,17 +104,18 @@ class TestPointInTimeUnderstat:
         assert result is not None
         assert result["xg_home"] == 1.5
         assert result["xg_away"] == 0.8
+        assert result["xg_source"] == "understat"
 
     @pytest.mark.asyncio
     async def test_understat_history_only_uses_matches_before_t0(self):
         """
-        Test that rolling understat history only includes matches before t0.
+        Test that rolling canonical xG history only includes matches before t0.
 
         The SQL query should filter:
         - m.date < :before_date (historical match must be before target kickoff)
-        - mut.captured_at < :before_date (understat snapshot must exist before target kickoff)
+        - captured_at < :before_date (xG snapshot must exist before target kickoff)
 
-        Note: Understat xG is POST-match data, so captured_at will always be AFTER
+        Note: xG is POST-match data, so captured_at will always be AFTER
         the historical match. The PIT constraint ensures the snapshot was captured
         before the TARGET match kickoff, not before the historical match kickoff.
         """
@@ -132,7 +133,7 @@ class TestPointInTimeUnderstat:
         call_args = mock_session.execute.call_args
         query_text = str(call_args[0][0])
         assert "m.date < :before_date" in query_text  # Historical match before target
-        assert "mut.captured_at < :before_date" in query_text  # Snapshot before target kickoff
+        assert "captured_at" in query_text and "< :before_date" in query_text  # PIT filter
 
 
 class TestPointInTimeWeather:
