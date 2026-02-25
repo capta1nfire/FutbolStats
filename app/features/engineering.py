@@ -2,16 +2,16 @@
 
 This module implements the baseline features and SOTA extensions:
 - Baseline: rolling goals/shots/corners averages (API-Football)
-- SOTA Understat: xG rolling, justice regression
+- SOTA Canonical xG: xG rolling from match_canonical_xg (SSOT, multi-source), justice regression
 - SOTA Weather/Bio: temperature, humidity, thermal shock, circadian disruption
 
 Point-in-time enforcement:
 - All features use only data with Match.date < t0 (kickoff)
-- Snapshot features (weather, understat) require captured_at < t0
+- Snapshot features (weather, canonical xG) require captured_at < t0
 
 Imputations and flags:
 - When data is missing, impute with reasonable defaults and set *_missing=1
-- understat_missing: set if insufficient xG history
+- understat_missing: set if insufficient xG history (from canonical SSOT)
 - weather_missing: set if no valid weather snapshot
 - thermal_shock defaults to 0 if away team profile missing
 - circadian_disruption defaults to 0 if insufficient history
@@ -65,29 +65,28 @@ XI_POSITION_WEIGHTS = {
 # SOTA Data Loading Helpers (point-in-time safe)
 # ============================================================================
 
-async def load_match_understat(
+async def load_match_canonical_xg(
     session: AsyncSession,
     match_id: int,
     t0: datetime,
 ) -> Optional[dict]:
     """
-    Load Understat xG data for a match, validating point-in-time.
+    Load canonical xG data for a match from SSOT table, validating point-in-time.
 
     Args:
         session: Database session.
         match_id: Match ID.
-        t0: Kickoff time (only use data with captured_at < t0).
+        t0: Kickoff time (only use data captured before this).
 
     Returns:
-        Dict with xg_home, xg_away, xpts_home, xpts_away or None if not available.
+        Dict with xg_home, xg_away, source or None if not available.
     """
     result = await session.execute(
         text("""
-            SELECT xg_home, xg_away, xpts_home, xpts_away, captured_at
-            FROM match_understat_team
-            WHERE match_id = :match_id AND captured_at < :t0
-            ORDER BY captured_at DESC
-            LIMIT 1
+            SELECT xg_home, xg_away, source, captured_at
+            FROM match_canonical_xg
+            WHERE match_id = :match_id
+              AND COALESCE(captured_at, resolved_at) < :t0
         """),
         {"match_id": match_id, "t0": t0}
     )
@@ -96,10 +95,13 @@ async def load_match_understat(
         return {
             "xg_home": row.xg_home,
             "xg_away": row.xg_away,
-            "xpts_home": row.xpts_home,
-            "xpts_away": row.xpts_away,
+            "xg_source": row.source,
         }
     return None
+
+
+# Backward-compat alias for tests
+load_match_understat = load_match_canonical_xg
 
 
 async def load_match_weather(
@@ -182,24 +184,19 @@ async def load_team_profile(
     return None
 
 
-async def load_team_understat_history(
+async def load_team_canonical_xg_history(
     session: AsyncSession,
     team_id: int,
     before_date: datetime,
     limit: int = 20,
 ) -> list[dict]:
     """
-    Load Understat xG history for a team's recent matches.
+    Load canonical xG history for a team's recent matches from SSOT table.
 
-    Only loads matches where:
-    - Team played (home or away)
-    - Match finished before before_date (the target match kickoff)
-    - Understat data captured before before_date (point-in-time safe for target match)
+    Reads from match_canonical_xg which unifies all xG sources
+    (Understat, FotMob, FBRef, FootyStats, Sofascore) with priority cascade.
 
-    Note: Understat xG is post-match data, so captured_at will always be AFTER
-    the historical match ended. The PIT constraint is that the snapshot must
-    exist before the TARGET match kickoff (before_date), not before the
-    historical match kickoff.
+    Point-in-time safe: only uses data captured before the target match kickoff.
 
     Args:
         session: Database session.
@@ -220,18 +217,16 @@ async def load_team_understat_history(
                 m.home_goals,
                 m.away_goals,
                 m.match_weight,
-                mut.xg_home,
-                mut.xg_away,
-                mut.xpts_home,
-                mut.xpts_away
+                cxg.xg_home,
+                cxg.xg_away
             FROM matches m
-            JOIN match_understat_team mut ON mut.match_id = m.id
+            JOIN match_canonical_xg cxg ON cxg.match_id = m.id
             WHERE (m.home_team_id = :team_id OR m.away_team_id = :team_id)
               AND m.status IN ('FT', 'AET', 'PEN')
               AND m.date < :before_date
               AND m.home_goals IS NOT NULL
               AND m.tainted = FALSE
-              AND mut.captured_at < :before_date
+              AND COALESCE(cxg.captured_at, cxg.resolved_at) < :before_date
             ORDER BY m.date DESC
             LIMIT :limit
         """),
@@ -248,11 +243,13 @@ async def load_team_understat_history(
             "match_weight": row.match_weight or 1.0,
             "xg_home": row.xg_home,
             "xg_away": row.xg_away,
-            "xpts_home": row.xpts_home,
-            "xpts_away": row.xpts_away,
         }
         for row in rows
     ]
+
+
+# Backward-compat alias
+load_team_understat_history = load_team_canonical_xg_history
 
 
 async def load_match_sofascore_xi(
@@ -1867,39 +1864,43 @@ class FeatureEngineer:
         }
 
     # ========================================================================
-    # SOTA Feature Methods: Understat (xG, Justice)
+    # SOTA Feature Methods: Canonical xG (multi-source SSOT, Justice)
     # ========================================================================
 
-    async def get_understat_features(
+    async def get_canonical_xg_features(
         self,
         match: Match,
     ) -> dict:
         """
-        Calculate Understat-based features for a match.
+        Calculate xG-based features from canonical SSOT table.
+
+        Reads from match_canonical_xg which unifies all xG sources
+        (Understat, FotMob, FBRef, FootyStats, Sofascore). Covers all
+        leagues with xG data, not just Big 5.
 
         Features:
         - home_xg_for_avg, home_xg_against_avg: Rolling xG averages for home team
         - away_xg_for_avg, away_xg_against_avg: Rolling xG averages for away team
         - xg_diff_avg: home_xg_for_avg - away_xg_for_avg
-        - xpts_diff_avg: Rolling xPTS difference (if available)
+        - xpts_diff_avg: Always 0 (xPTS only available from Understat, not in canonical)
         - home_justice_shrunk, away_justice_shrunk: Regression to mean indicator
         - justice_diff: Difference in justice
 
-        Point-in-time: Only uses understat data with captured_at < match.date.
+        Point-in-time: Only uses canonical xG data with captured_at < match.date.
         """
         t0 = match.date
         features = {}
 
-        # Load history for both teams
-        home_history = await load_team_understat_history(
+        # Load history for both teams from canonical SSOT
+        home_history = await load_team_canonical_xg_history(
             self.session, match.home_team_id, t0, limit=self.rolling_window
         )
-        away_history = await load_team_understat_history(
+        away_history = await load_team_canonical_xg_history(
             self.session, match.away_team_id, t0, limit=self.rolling_window
         )
 
         # Process home team
-        home_xg_for, home_xg_against, home_xpts = [], [], []
+        home_xg_for, home_xg_against = [], []
         home_goals_total, home_xg_total = 0.0, 0.0
         home_weights = []
 
@@ -1913,22 +1914,18 @@ class FeatureEngineer:
                 xg_for = h["xg_home"] or 0
                 xg_against = h["xg_away"] or 0
                 goals = h["home_goals"]
-                xpts = h["xpts_home"]
             else:
                 xg_for = h["xg_away"] or 0
                 xg_against = h["xg_home"] or 0
                 goals = h["away_goals"]
-                xpts = h["xpts_away"]
 
             home_xg_for.append(xg_for)
             home_xg_against.append(xg_against)
             home_goals_total += goals
             home_xg_total += xg_for
-            if xpts is not None:
-                home_xpts.append(xpts)
 
         # Process away team
-        away_xg_for, away_xg_against, away_xpts = [], [], []
+        away_xg_for, away_xg_against = [], []
         away_goals_total, away_xg_total = 0.0, 0.0
         away_weights = []
 
@@ -1942,19 +1939,15 @@ class FeatureEngineer:
                 xg_for = h["xg_home"] or 0
                 xg_against = h["xg_away"] or 0
                 goals = h["home_goals"]
-                xpts = h["xpts_home"]
             else:
                 xg_for = h["xg_away"] or 0
                 xg_against = h["xg_home"] or 0
                 goals = h["away_goals"]
-                xpts = h["xpts_away"]
 
             away_xg_for.append(xg_for)
             away_xg_against.append(xg_against)
             away_goals_total += goals
             away_xg_total += xg_for
-            if xpts is not None:
-                away_xpts.append(xpts)
 
         # Calculate weighted averages
         features["home_xg_for_avg"] = round(
@@ -1975,10 +1968,8 @@ class FeatureEngineer:
             features["home_xg_for_avg"] - features["away_xg_for_avg"], 3
         )
 
-        # xPTS diff (if available)
-        home_xpts_avg = self._calculate_weighted_average(home_xpts, home_weights[:len(home_xpts)]) if home_xpts else 0
-        away_xpts_avg = self._calculate_weighted_average(away_xpts, away_weights[:len(away_xpts)]) if away_xpts else 0
-        features["xpts_diff_avg"] = round(home_xpts_avg - away_xpts_avg, 3)
+        # xPTS: not available in canonical (Understat-specific). Always 0.
+        features["xpts_diff_avg"] = 0.0
 
         # Justice calculation: (G - XG) / sqrt(XG + eps)
         # Then shrinkage: rho = n / (n + k), justice_shrunk = rho * justice
@@ -2003,12 +1994,15 @@ class FeatureEngineer:
             features["home_justice_shrunk"] - features["away_justice_shrunk"], 3
         )
 
-        # Flags
+        # Flags (keep understat_* names for backward compat with tests/docs)
         features["understat_missing"] = 1 if (n_home == 0 or n_away == 0) else 0
         features["understat_samples_home"] = n_home
         features["understat_samples_away"] = n_away
 
         return features
+
+    # Backward-compat alias
+    get_understat_features = get_canonical_xg_features
 
     # ========================================================================
     # SOTA Feature Methods: Weather + Bio-adaptability
@@ -2277,12 +2271,12 @@ class FeatureEngineer:
         away_net = features["away_goals_scored_avg"] - features["away_goals_conceded_avg"]
         features["abs_strength_gap"] = abs(home_net - away_net)
 
-        # === SOTA Features: Understat (xG, Justice) ===
+        # === SOTA Features: Canonical xG (multi-source SSOT, Justice) ===
         try:
-            understat_features = await self.get_understat_features(match)
-            features.update(understat_features)
+            xg_features = await self.get_canonical_xg_features(match)
+            features.update(xg_features)
         except Exception as e:
-            logger.warning(f"Understat features failed for match {match.id}: {e}")
+            logger.warning(f"Canonical xG features failed for match {match.id}: {e}")
             try:
                 await self.session.rollback()
             except Exception:

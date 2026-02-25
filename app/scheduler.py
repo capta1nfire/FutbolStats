@@ -5318,6 +5318,116 @@ async def canonical_odds_sweeper() -> dict:
     return stats
 
 
+async def canonical_xg_sweeper() -> dict:
+    """
+    Materialize canonical xG for recently finished matches.
+
+    Runs every 6 hours. Scope: FT matches from last 7 days.
+    Only sweeps P1 (Understat) and P2 (FotMob) — P3-P5 are historical,
+    covered by the one-shot build script.
+
+    Anti-downgrade guardrail (GDT Guardrail 1):
+      WHERE match_canonical_xg.priority >= EXCLUDED.priority
+      P1 refreshes P1 stale, P1 overwrites P2+, but P2 never overwrites P1.
+    """
+    logger.info("canonical_xg_sweeper: starting")
+    t0 = time.time()
+    stats = {"p1_upserted": 0, "p2_upserted": 0, "errors": 0}
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # P1: Understat (Opta-grade, Big 5)
+            result_p1 = await session.execute(text("""
+                INSERT INTO match_canonical_xg
+                    (match_id, xg_home, xg_away, xgot_home, xgot_away,
+                     npxg_home, npxg_away, source, priority, captured_at)
+                SELECT
+                    u.match_id,
+                    u.xg_home,
+                    u.xg_away,
+                    NULL,
+                    NULL,
+                    u.npxg_home,
+                    u.npxg_away,
+                    'understat',
+                    1,
+                    u.captured_at
+                FROM match_understat_team u
+                JOIN matches m ON m.id = u.match_id
+                WHERE m.status IN ('FT', 'AET', 'PEN')
+                  AND m.date >= NOW() - INTERVAL '7 days'
+                  AND u.xg_home IS NOT NULL
+                  AND u.xg_away IS NOT NULL
+                ON CONFLICT (match_id) DO UPDATE SET
+                    xg_home = EXCLUDED.xg_home,
+                    xg_away = EXCLUDED.xg_away,
+                    xgot_home = EXCLUDED.xgot_home,
+                    xgot_away = EXCLUDED.xgot_away,
+                    npxg_home = EXCLUDED.npxg_home,
+                    npxg_away = EXCLUDED.npxg_away,
+                    source = EXCLUDED.source,
+                    priority = EXCLUDED.priority,
+                    captured_at = EXCLUDED.captured_at,
+                    updated_at = NOW()
+                WHERE match_canonical_xg.priority >= EXCLUDED.priority
+            """))
+            try:
+                stats["p1_upserted"] = int(result_p1.rowcount) if result_p1.rowcount >= 0 else 0
+            except Exception:
+                pass
+
+            # P2: FotMob (Tier 2/3 leagues)
+            result_p2 = await session.execute(text("""
+                INSERT INTO match_canonical_xg
+                    (match_id, xg_home, xg_away, xgot_home, xgot_away,
+                     npxg_home, npxg_away, source, priority, captured_at)
+                SELECT
+                    f.match_id,
+                    f.xg_home,
+                    f.xg_away,
+                    f.xgot_home,
+                    f.xgot_away,
+                    NULL,
+                    NULL,
+                    'fotmob',
+                    2,
+                    f.captured_at
+                FROM match_fotmob_stats f
+                JOIN matches m ON m.id = f.match_id
+                WHERE m.status IN ('FT', 'AET', 'PEN')
+                  AND m.date >= NOW() - INTERVAL '7 days'
+                  AND f.xg_home IS NOT NULL
+                  AND f.xg_away IS NOT NULL
+                ON CONFLICT (match_id) DO UPDATE SET
+                    xg_home = EXCLUDED.xg_home,
+                    xg_away = EXCLUDED.xg_away,
+                    xgot_home = EXCLUDED.xgot_home,
+                    xgot_away = EXCLUDED.xgot_away,
+                    npxg_home = EXCLUDED.npxg_home,
+                    npxg_away = EXCLUDED.npxg_away,
+                    source = EXCLUDED.source,
+                    priority = EXCLUDED.priority,
+                    captured_at = EXCLUDED.captured_at,
+                    updated_at = NOW()
+                WHERE match_canonical_xg.priority >= EXCLUDED.priority
+            """))
+            try:
+                stats["p2_upserted"] = int(result_p2.rowcount) if result_p2.rowcount >= 0 else 0
+            except Exception:
+                pass
+
+            await session.commit()
+
+    except Exception as e:
+        logger.error(f"canonical_xg_sweeper error: {e}", exc_info=True)
+        stats["errors"] += 1
+
+    elapsed = time.time() - t0
+    stats["elapsed_s"] = round(elapsed, 1)
+    logger.info(f"canonical_xg_sweeper: done in {elapsed:.1f}s — {stats}")
+    return stats
+
+
 async def score_clv_post_match() -> dict:
     """
     Score CLV for predictions of recently finished matches.
@@ -8936,6 +9046,23 @@ def start_scheduler(ml_engine):
         name="Canonical Odds Sweeper (every 6h)",
         replace_existing=True,
         next_run_time=datetime.utcnow() + timedelta(seconds=105),  # Offset: +105s
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=6 * 3600,
+    )
+
+    # Canonical xG Sweeper: Every 6 hours
+    # Materializes canonical xG for FT matches in last 7 days.
+    # Only P1 (Understat) + P2 (FotMob). P3-P5 are historical (build script only).
+    # GDT Guardrail 1: WHERE priority >= EXCLUDED.priority (auto-healing, anti-downgrade).
+    # 0 API calls — reads only from existing DB tables.
+    scheduler.add_job(
+        canonical_xg_sweeper,
+        trigger=IntervalTrigger(hours=6),
+        id="canonical_xg_sweeper",
+        name="Canonical xG Sweeper (every 6h)",
+        replace_existing=True,
+        next_run_time=datetime.utcnow() + timedelta(seconds=120),  # Offset: +120s (after odds)
         max_instances=1,
         coalesce=True,
         misfire_grace_time=6 * 3600,

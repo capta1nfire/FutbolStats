@@ -536,12 +536,14 @@ class FeatureMatrixMaterializer:
         league_id: Optional[int] = None,
         limit: int = None,
     ) -> Optional[XGFeatures]:
-        """Compute Tier 1b xG features from Understat or FotMob.
+        """Compute Tier 1b xG features from canonical SSOT table.
 
-        Source selection (deterministic, per ABE P0-9):
-        - league_id in UNDERSTAT_SUPPORTED_LEAGUES → match_understat_team (has xga, npxg)
-        - league_id in FOTMOB_CONFIRMED_XG_LEAGUES → match_fotmob_stats (xga derived, npxg=None)
-        - Neither → None (no xG source available)
+        Reads from match_canonical_xg which unifies all xG sources
+        (Understat, FotMob, FBRef, FootyStats, Sofascore) with priority cascade.
+        No league-based source selection needed — cascade already resolved.
+
+        xGA derived as opponent's xG (verified: xga_home == xg_away for 100% of rows).
+        npxG populated only for Understat sources (NULL for others).
 
         Uses proper subquery pattern per auditor requirement:
         SELECT AVG(...) FROM (SELECT ... ORDER BY date DESC LIMIT N) t
@@ -552,50 +554,17 @@ class FeatureMatrixMaterializer:
             home_team_id: Home team ID
             away_team_id: Away team ID
             kickoff_utc: Target match kickoff (for PIT filter)
-            league_id: Match league_id for deterministic source selection
+            league_id: Unused (kept for signature compat). Cascade resolved in canonical.
             limit: Number of recent matches (default from config.XG_ROLLING_WINDOW)
 
         Returns:
-            XGFeatures or None if insufficient data or no xG source
+            XGFeatures or None if insufficient data
         """
-        from app.etl.sota_constants import UNDERSTAT_SUPPORTED_LEAGUES, FOTMOB_CONFIRMED_XG_LEAGUES
-
         if limit is None:
             limit = titan_settings.XG_ROLLING_WINDOW
 
-        # Determine xG source based on league_id (ABE P0-9: deterministic, no heuristic)
-        use_understat = league_id is not None and league_id in UNDERSTAT_SUPPORTED_LEAGUES
-        use_fotmob = (not use_understat and league_id is not None
-                      and league_id in FOTMOB_CONFIRMED_XG_LEAGUES)
-
-        if not use_understat and not use_fotmob:
-            # No league_id provided: fall back to Understat (backwards compat)
-            if league_id is None:
-                use_understat = True
-            else:
-                logger.debug(f"No xG source for league_id={league_id}")
-                return None
-
-        if use_understat:
-            xg_join = "JOIN public.match_understat_team xg ON m.id = xg.match_id"
-            xg_select = """
-                    CASE WHEN m.home_team_id = :team_id THEN xg.xg_home ELSE xg.xg_away END as xg,
-                    CASE WHEN m.home_team_id = :team_id THEN xg.xga_home ELSE xg.xga_away END as xga,
-                    CASE WHEN m.home_team_id = :team_id THEN xg.npxg_home ELSE xg.npxg_away END as npxg"""
-            pit_filter = ""
-            has_npxg = True
-        else:
-            # FotMob: xGA derived as opponent's xG; npxg not available (NULL)
-            xg_join = "JOIN public.match_fotmob_stats xg ON m.id = xg.match_id"
-            xg_select = """
-                    CASE WHEN m.home_team_id = :team_id THEN xg.xg_home ELSE xg.xg_away END as xg,
-                    CASE WHEN m.home_team_id = :team_id THEN xg.xg_away ELSE xg.xg_home END as xga,
-                    NULL::double precision as npxg"""
-            pit_filter = "AND xg.captured_at < :kickoff"
-            has_npxg = False
-
-        # Build query (same structure for both sources)
-        query_template = f"""
+        # Single query for all leagues — canonical table resolves source cascade
+        xg_query = text("""
             SELECT
                 AVG(t.xg) as avg_xg,
                 AVG(t.xga) as avg_xga,
@@ -603,18 +572,19 @@ class FeatureMatrixMaterializer:
                 COUNT(*) as match_count
             FROM (
                 SELECT
-                    {xg_select}
+                    CASE WHEN m.home_team_id = :team_id THEN cxg.xg_home ELSE cxg.xg_away END as xg,
+                    CASE WHEN m.home_team_id = :team_id THEN cxg.xg_away ELSE cxg.xg_home END as xga,
+                    CASE WHEN m.home_team_id = :team_id THEN cxg.npxg_home ELSE cxg.npxg_away END as npxg
                 FROM public.matches m
-                {xg_join}
+                JOIN public.match_canonical_xg cxg ON m.id = cxg.match_id
                 WHERE (m.home_team_id = :team_id OR m.away_team_id = :team_id)
                   AND m.date < :kickoff
                   AND m.status IN ('FT', 'AET', 'PEN')
-                  {pit_filter}
+                  AND COALESCE(cxg.captured_at, cxg.resolved_at) < :kickoff
                 ORDER BY m.date DESC
                 LIMIT :limit
             ) t
-        """
-        xg_query = text(query_template)
+        """)
 
         # public.matches.date is TIMESTAMP (naive), so strip timezone for comparison
         kickoff_naive = kickoff_utc.replace(tzinfo=None) if kickoff_utc.tzinfo else kickoff_utc
@@ -641,20 +611,20 @@ class FeatureMatrixMaterializer:
         if home_count < limit or away_count < limit:
             logger.debug(
                 f"Insufficient xG data for match: home={home_count}/{limit}, away={away_count}/{limit}"
-                f" (source={'understat' if use_understat else 'fotmob'})"
+                f" (source=canonical)"
             )
             return None
 
         # Check for NULL values (shouldn't happen but defensive)
         if home_row[0] is None or away_row[0] is None:
-            logger.warning("xG query returned NULL values despite having enough matches")
+            logger.warning("Canonical xG query returned NULL values despite having enough matches")
             return None
 
-        # Build XGFeatures with Decimal-safe guards for npxg (None for FotMob)
+        # npxG: populated only for Understat (P1), NULL for other sources
         npxg_home = (Decimal(str(round(home_row[2], 2)))
-                     if has_npxg and home_row[2] is not None else None)
+                     if home_row[2] is not None else None)
         npxg_away = (Decimal(str(round(away_row[2], 2)))
-                     if has_npxg and away_row[2] is not None else None)
+                     if away_row[2] is not None else None)
 
         return XGFeatures(
             xg_home_last5=Decimal(str(round(home_row[0], 2))),

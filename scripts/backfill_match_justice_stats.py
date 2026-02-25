@@ -2,7 +2,10 @@
 Backfill match_justice_stats table for training data.
 
 Populates Dixon-Coles Y_soft + Justice Weight W for ALL matches FT 2023+
-that have xG data (Understat or FotMob/FootyStats). Target: ~8,800 rows.
+that have xG data in match_canonical_xg (SSOT).
+
+Reads from match_canonical_xg which unifies all xG sources with priority cascade:
+  P1: Understat, P2: FotMob, P3: FBRef, P4: FootyStats, P5: Sofascore
 
 This table is used by the training script (train_v104_justice.py) to get
 per-match sample weights (W) without joining multiple tables at training time.
@@ -25,7 +28,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from app.ml.justice import compute_y_soft_batch
+from app.ml.justice import compute_y_soft_batch, compute_justice_weight
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -64,36 +67,22 @@ async def main():
         existing_ids = {r[0] for r in existing.fetchall()}
         logger.info(f"  Existing rows: {len(existing_ids)}")
 
-        # Source 1: Understat xG (Opta-grade, Big 5 + a few more)
-        r1 = await session.execute(text("""
+        # ── Single query from canonical SSOT (replaces 4-source cascade) ──
+        r_canonical = await session.execute(text("""
             SELECT m.id, m.home_goals, m.away_goals,
-                   mut.xg_home, mut.xg_away, 'understat' as xg_source
+                   cxg.xg_home, cxg.xg_away, cxg.source as xg_source
             FROM matches m
-            JOIN match_understat_team mut ON mut.match_id = m.id
+            JOIN match_canonical_xg cxg ON cxg.match_id = m.id
             WHERE m.status IN ('FT', 'AET', 'PEN')
               AND m.date >= :since
-              AND mut.xg_home IS NOT NULL AND mut.xg_away IS NOT NULL
         """), {"since": since_date})
-        understat_rows = r1.fetchall()
-        logger.info(f"  Understat xG matches: {len(understat_rows)}")
+        all_rows = r_canonical.fetchall()
+        logger.info(f"  Canonical xG matches: {len(all_rows)}")
 
-        # Source 2: matches.xg_home (FotMob/FootyStats) — only if NOT in Understat
-        understat_ids = {r[0] for r in understat_rows}
-        r2 = await session.execute(text("""
-            SELECT m.id, m.home_goals, m.away_goals,
-                   m.xg_home, m.xg_away, COALESCE(m.xg_source, 'matches') as xg_source
-            FROM matches m
-            WHERE m.status IN ('FT', 'AET', 'PEN')
-              AND m.date >= :since
-              AND m.xg_home IS NOT NULL AND m.xg_away IS NOT NULL
-        """), {"since": since_date})
-        matches_rows = [r for r in r2.fetchall() if r[0] not in understat_ids]
-        logger.info(f"  FotMob/FootyStats xG matches (excl. Understat): {len(matches_rows)}")
-
-        # Combine all, excluding already populated
-        all_rows = understat_rows + matches_rows
+        # Exclude already populated
         to_insert = [r for r in all_rows if r[0] not in existing_ids]
-        logger.info(f"  Total to insert: {len(to_insert)} (skipping {len(all_rows) - len(to_insert)} existing)")
+        logger.info(f"  Total with xG: {len(all_rows)}")
+        logger.info(f"  To insert: {len(to_insert)} (skipping {len(all_rows) - len(to_insert)} existing)")
 
         if not to_insert:
             logger.info("  Nothing to insert.")
@@ -111,13 +100,10 @@ async def main():
         # Batch Y_soft computation (vectorized Dixon-Coles)
         y_soft = compute_y_soft_batch(xg_home, xg_away)
 
-        # Batch Justice Weight computation
-        gd = home_goals - away_goals
-        xgd = xg_home - xg_away
-        with np.errstate(invalid='ignore'):
-            std_dev = np.sqrt(xg_home + xg_away + 1.0)
-            scaled_error = np.abs(gd - xgd) / std_dev
-        justice_w = np.exp(-JUSTICE_ALPHA * scaled_error)
+        # Batch Justice Weight computation (DRY — uses compute_justice_weight)
+        justice_w = compute_justice_weight(
+            home_goals, away_goals, xg_home, xg_away, alpha=JUSTICE_ALPHA,
+        )
 
         logger.info(f"  Y_soft computed: shape={y_soft.shape}")
         logger.info(f"  Justice W: mean={justice_w.mean():.4f}, "
@@ -164,10 +150,9 @@ async def main():
 
     logger.info(f"""
 {prefix}=== MATCH JUSTICE STATS COMPLETE ===
-Total matches with xG:   {len(all_rows)}
-Already in table:        {len(all_rows) - len(to_insert)}
-Newly inserted:          {len(to_insert)}
-Sources: Understat={len(understat_rows)}, FotMob/FootyStats={len(matches_rows)}
+Total matches with xG (canonical): {len(all_rows)}
+Already in table:                  {len(all_rows) - len(to_insert)}
+Newly inserted:                    {len(to_insert)}
 Justice W: mean={justice_w.mean():.4f}, median={np.median(justice_w):.4f}
 """)
 

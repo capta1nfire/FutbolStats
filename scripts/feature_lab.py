@@ -671,16 +671,16 @@ def extract_league_data(league_id: int, output_dir: str = "scripts/output/lab") 
                m.opening_odds_draw AS odds_draw_open,
                m.opening_odds_away AS odds_away_open,
                m.opening_odds_kind,
-               COALESCE(u.xg_home, f.xg_home, m.xg_home) AS xg_home_raw,
-               COALESCE(u.xg_away, f.xg_away, m.xg_away) AS xg_away_raw,
+               cxg.xg_home AS xg_home_raw,
+               cxg.xg_away AS xg_away_raw,
+               cxg.source AS canonical_xg_source,
                wh.lat AS home_lat_raw, wh.lon AS home_lon_raw,
                wh.stadium_altitude_m AS home_altitude_raw,
                wa.lat AS away_lat_raw, wa.lon AS away_lon_raw,
                wa.stadium_altitude_m AS away_altitude_raw
         FROM matches m
         LEFT JOIN match_canonical_odds co ON co.match_id = m.id
-        LEFT JOIN match_understat_team u ON m.id = u.match_id
-        LEFT JOIN match_fotmob_stats f ON m.id = f.match_id
+        LEFT JOIN match_canonical_xg cxg ON cxg.match_id = m.id
         LEFT JOIN team_wikidata_enrichment wh ON m.home_team_id = wh.team_id
         LEFT JOIN team_wikidata_enrichment wa ON m.away_team_id = wa.team_id
         WHERE m.status = 'FT'

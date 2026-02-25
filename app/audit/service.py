@@ -59,49 +59,19 @@ JUSTICE_ALPHA = 0.5
 async def resolve_xg_for_match(
     session: AsyncSession, match_id: int,
 ) -> tuple[Optional[float], Optional[float], Optional[str]]:
-    """Resolve best available xG for a match.
+    """Resolve best available xG for a match via SSOT canonical table.
 
-    GDT-mandated priority chain:
-      1. match_understat_team (Opta-grade, Big 5)
-      2. match_fotmob_stats  (FotMob raw — massive Tier-2/3 coverage)
-      3. matches.xg_home     (FootyStats / API-Football generic fallback)
-      4. match_sofascore_stats (Sofascore, last resort)
+    Single query to match_canonical_xg (populated by build_canonical_xg.py).
+    Priority already resolved: P1 Understat > P2 FotMob > P3 FBRef >
+    P4 FootyStats > P5 Sofascore.
     """
-    # 1. Understat (Opta-grade, Big 5)
     r = await session.execute(text(
-        "SELECT xg_home, xg_away FROM match_understat_team "
-        "WHERE match_id = :mid AND xg_home IS NOT NULL LIMIT 1"
+        "SELECT xg_home, xg_away, source FROM match_canonical_xg "
+        "WHERE match_id = :mid"
     ), {"mid": match_id})
     row = r.fetchone()
     if row and row[0] is not None:
-        return float(row[0]), float(row[1]), "understat"
-
-    # 2. match_fotmob_stats (GDT Priority 2 — ~11K matches, Tier-2/3)
-    r2 = await session.execute(text(
-        "SELECT xg_home, xg_away FROM match_fotmob_stats "
-        "WHERE match_id = :mid AND xg_home IS NOT NULL LIMIT 1"
-    ), {"mid": match_id})
-    row2 = r2.fetchone()
-    if row2 and row2[0] is not None:
-        return float(row2[0]), float(row2[1]), "fotmob_stats"
-
-    # 3. matches table (FootyStats / API-Football generic fallback)
-    r3 = await session.execute(text(
-        "SELECT xg_home, xg_away, xg_source FROM matches "
-        "WHERE id = :mid AND xg_home IS NOT NULL"
-    ), {"mid": match_id})
-    row3 = r3.fetchone()
-    if row3 and row3[0] is not None:
-        return float(row3[0]), float(row3[1]), row3[2]
-
-    # 4. match_sofascore_stats (Sofascore, ~650 matches)
-    r4 = await session.execute(text(
-        "SELECT xg_home, xg_away FROM match_sofascore_stats "
-        "WHERE match_id = :mid AND xg_home IS NOT NULL LIMIT 1"
-    ), {"mid": match_id})
-    row4 = r4.fetchone()
-    if row4 and row4[0] is not None:
-        return float(row4[0]), float(row4[1]), "sofascore_stats"
+        return float(row[0]), float(row[1]), row[2]
 
     return None, None, None
 
