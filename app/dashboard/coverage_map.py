@@ -70,7 +70,7 @@ DIMENSIONS_META = [
     {"key": "lineups", "label": "Lineups", "priority": "P0", "contributes_to_score": True,
      "source_tables": ["match_lineups"], "pit_guardrail": "lineup_confirmed_at < match.date"},
     {"key": "weather", "label": "Weather", "priority": "P1", "contributes_to_score": True,
-     "source_tables": ["match_weather"], "pit_guardrail": "captured_at < match.date"},
+     "source_tables": ["match_weather", "match_weather_hist"], "pit_guardrail": "captured_at < match.date OR archive data"},
     {"key": "bio_adaptability", "label": "Bio-Adaptability", "priority": "P1", "contributes_to_score": True,
      "source_tables": ["team_home_city_profile"], "pit_guardrail": "static profile"},
     {"key": "sofascore_xi_ratings", "label": "Sofascore XI Ratings", "priority": "P1", "contributes_to_score": True,
@@ -250,9 +250,11 @@ SELECT
 
   -- ===== P1 =====
 
-  -- Weather (PIT-safe)
+  -- Weather (PIT-safe): forecast OR historical archive
   COUNT(*) FILTER (WHERE EXISTS (
     SELECT 1 FROM match_weather mw WHERE mw.match_id = m.id AND mw.captured_at < m.date
+  ) OR EXISTS (
+    SELECT 1 FROM match_weather_hist mwh WHERE mwh.match_id = m.id
   )) AS weather_n,
 
   -- Bio-adaptability: both teams timezone, away has climate normals

@@ -149,6 +149,28 @@ async def load_match_weather(
             "is_daylight": row.is_daylight,
             "weather_forecast_horizon_hours": row.forecast_horizon_hours,
         }
+
+    # Fallback: historical archive (match_weather_hist) — no PIT guard needed
+    # (archive data is always from after the match, used for training/eval only)
+    hist = await session.execute(
+        text("""
+            SELECT weather_data FROM match_weather_hist
+            WHERE match_id = :match_id LIMIT 1
+        """),
+        {"match_id": match_id}
+    )
+    hist_row = hist.fetchone()
+    if hist_row and hist_row.weather_data:
+        h0 = hist_row.weather_data.get("h0") if isinstance(hist_row.weather_data, dict) else None
+        if h0:
+            return {
+                "weather_temp_c": h0.get("temp_c"),
+                "weather_humidity": h0.get("humidity_pct"),
+                "weather_wind_ms": (h0.get("wind_kmh") or 0) / 3.6,  # km/h → m/s
+                "weather_precip_mm": h0.get("precip_mm"),
+                "is_daylight": None,
+                "weather_forecast_horizon_hours": -1,  # sentinel: historical archive
+            }
     return None
 
 
