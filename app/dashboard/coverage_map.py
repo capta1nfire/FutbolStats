@@ -211,12 +211,10 @@ SELECT
 
   -- ===== P0 =====
 
-  -- xG: Understat OR FotMob OR FootyStats (matches.xg_home)
+  -- xG: Canonical SSOT (match_canonical_xg, excl. quarantined)
   COUNT(*) FILTER (WHERE
-    EXISTS (SELECT 1 FROM match_understat_team ust WHERE ust.match_id = m.id)
-    OR EXISTS (SELECT 1 FROM match_fotmob_stats fmt
-               WHERE fmt.match_id = m.id AND fmt.xg_home IS NOT NULL AND fmt.xg_away IS NOT NULL)
-    OR (m.xg_home IS NOT NULL AND m.xg_away IS NOT NULL)
+    EXISTS (SELECT 1 FROM match_canonical_xg cxg
+            WHERE cxg.match_id = m.id AND cxg.source NOT LIKE '%_quarantined')
   ) AS xg_n,
 
   -- Canonical odds: match_canonical_odds (single source of truth, cascade-resolved)
@@ -282,15 +280,17 @@ SELECT
     AND mer.confidence >= 0.90
   )) AS external_refs_n,
 
-  -- Freshness: real-time pipeline timeliness (odds pre-kickoff + xG/lineups pre-kickoff)
+  -- Freshness: odds pre-kickoff (real-time OR canonical closing) + supporting data
   COUNT(*) FILTER (WHERE
-    m.odds_recorded_at IS NOT NULL AND m.odds_recorded_at < m.date
+    (
+      (m.odds_recorded_at IS NOT NULL AND m.odds_recorded_at < m.date)
+      OR EXISTS (SELECT 1 FROM match_canonical_odds co
+                 WHERE co.match_id = m.id AND co.is_closing = true
+                 AND co.odds_home > 1.0 AND co.odds_draw > 1.0 AND co.odds_away > 1.0)
+    )
     AND (
-      EXISTS (SELECT 1 FROM match_understat_team ust
-              WHERE ust.match_id = m.id AND ust.captured_at < m.date)
-      OR EXISTS (SELECT 1 FROM match_fotmob_stats fmt
-                 WHERE fmt.match_id = m.id AND fmt.xg_home IS NOT NULL AND fmt.captured_at < m.date)
-      OR (m.xg_home IS NOT NULL AND m.xg_away IS NOT NULL)
+      EXISTS (SELECT 1 FROM match_canonical_xg cxg
+              WHERE cxg.match_id = m.id AND cxg.source NOT LIKE '%_quarantined')
       OR EXISTS (SELECT 1 FROM match_lineups ml
                  WHERE ml.match_id = m.id AND array_length(ml.starting_xi_ids, 1) >= 7
                  AND (ml.lineup_confirmed_at IS NULL OR ml.lineup_confirmed_at < m.date))
@@ -374,10 +374,8 @@ SELECT
                  AND (ohc.quarantined IS NULL OR ohc.quarantined = false))
     )
     AND (
-      EXISTS (SELECT 1 FROM match_understat_team ust WHERE ust.match_id = m.id)
-      OR EXISTS (SELECT 1 FROM match_fotmob_stats fmt
-                 WHERE fmt.match_id = m.id AND fmt.xg_home IS NOT NULL AND fmt.xg_away IS NOT NULL)
-      OR (m.xg_home IS NOT NULL AND m.xg_away IS NOT NULL)
+      EXISTS (SELECT 1 FROM match_canonical_xg cxg
+              WHERE cxg.match_id = m.id AND cxg.source NOT LIKE '%_quarantined')
     )
   ) AS odds_xg_n,
 
@@ -391,10 +389,8 @@ SELECT
                  AND (ohc.quarantined IS NULL OR ohc.quarantined = false))
     )
     AND (
-      EXISTS (SELECT 1 FROM match_understat_team ust WHERE ust.match_id = m.id)
-      OR EXISTS (SELECT 1 FROM match_fotmob_stats fmt
-                 WHERE fmt.match_id = m.id AND fmt.xg_home IS NOT NULL AND fmt.xg_away IS NOT NULL)
-      OR (m.xg_home IS NOT NULL AND m.xg_away IS NOT NULL)
+      EXISTS (SELECT 1 FROM match_canonical_xg cxg
+              WHERE cxg.match_id = m.id AND cxg.source NOT LIKE '%_quarantined')
     )
     AND EXISTS (
       SELECT 1 FROM (
