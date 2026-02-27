@@ -103,6 +103,8 @@ class AggregatesService:
 
         for m in matches:
             stats = m.stats or {}
+            if not isinstance(stats, dict):
+                stats = {}
             home_stats = stats.get("home", {})
             away_stats = stats.get("away", {})
 
@@ -291,7 +293,12 @@ class AggregatesService:
                 m = d["match"]
                 is_home = d["is_home"]
                 stats = m.stats or {}
-                events = m.events or []
+                events = m.events if isinstance(m.events, list) else []
+
+                # Guard: some matches store stats as raw API-Football array
+                # instead of normalised {home: {}, away: {}} dict
+                if not isinstance(stats, dict):
+                    stats = {}
 
                 # Get team stats
                 team_stats_data = stats.get("home" if is_home else "away", {})
