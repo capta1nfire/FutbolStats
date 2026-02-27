@@ -810,148 +810,6 @@ async def pit_dashboard_debug(request: Request):
     return result
 
 
-@router.get("/dashboard/debug/experiment-gating/{match_id}")
-async def debug_experiment_gating(
-    match_id: int,
-    request: Request,
-    variant: str = Query("A", regex="^[ABCD]$"),
-    session: AsyncSession = Depends(get_async_session),
-):
-    """
-    Debug endpoint for ext-A/B/C/D experiment gating. Read-only.
-
-    Explains why a match does/doesn't have an ext prediction.
-    Uses EXACT same gating logic as the job (strict inequalities).
-
-    ATI: Observability endpoint - no side effects.
-    """
-    if not verify_dashboard_token_bool(request):
-        raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
-
-    from pathlib import Path
-
-    # Config por variante
-    variant_config = {
-        "A": (settings.EXTA_SHADOW_ENABLED, settings.EXTA_SHADOW_MODEL_VERSION, settings.EXTA_SHADOW_MODEL_PATH),
-        "B": (settings.EXTB_SHADOW_ENABLED, settings.EXTB_SHADOW_MODEL_VERSION, settings.EXTB_SHADOW_MODEL_PATH),
-        "C": (settings.EXTC_SHADOW_ENABLED, settings.EXTC_SHADOW_MODEL_VERSION, settings.EXTC_SHADOW_MODEL_PATH),
-        "D": (settings.EXTD_SHADOW_ENABLED, settings.EXTD_SHADOW_MODEL_VERSION, settings.EXTD_SHADOW_MODEL_PATH),
-    }
-    enabled, model_version, model_path = variant_config[variant]
-    start_at = settings.EXT_SHADOW_START_AT
-
-    checks = []
-    failure_reason = None
-
-    # 1. Get match info
-    match_result = await session.execute(text("""
-        SELECT m.id, m.date as kickoff_at, m.status, ht.name as home_team, at.name as away_team
-        FROM matches m
-        LEFT JOIN teams ht ON m.home_team_id = ht.id
-        LEFT JOIN teams at ON m.away_team_id = at.id
-        WHERE m.id = :match_id
-    """), {"match_id": match_id})
-    match_row = match_result.fetchone()
-    if not match_row:
-        raise HTTPException(status_code=404, detail=f"Match {match_id} not found")
-
-    kickoff_at = match_row[1]
-
-    # 2. Check lineup_confirmed snapshot exists
-    snapshot_result = await session.execute(text("""
-        SELECT os.id, os.snapshot_at FROM odds_snapshots os
-        WHERE os.match_id = :match_id AND os.snapshot_type = 'lineup_confirmed'
-        ORDER BY os.snapshot_at DESC LIMIT 1
-    """), {"match_id": match_id})
-    snapshot_row = snapshot_result.fetchone()
-
-    has_lineup = snapshot_row is not None
-    checks.append({"check": "lineup_confirmed_exists", "status": "PASS" if has_lineup else "FAIL"})
-    if not has_lineup:
-        failure_reason = "no_lineup_confirmed"
-
-    snapshot_id = snapshot_row[0] if has_lineup else None
-    snapshot_at = snapshot_row[1] if has_lineup else None
-    delta_minutes = None
-    has_pred = None
-
-    if has_lineup:
-        delta_minutes = (kickoff_at - snapshot_at).total_seconds() / 60
-
-        # 3. Check snapshot_after_start_at
-        start_dt = datetime.fromisoformat(start_at)
-        is_after_start = snapshot_at >= start_dt
-        checks.append({
-            "check": "snapshot_after_start_at",
-            "status": "PASS" if is_after_start else "FAIL",
-            "detail": f"snapshot_at={snapshot_at.isoformat()}, start_at={start_at}"
-        })
-        if not is_after_start and not failure_reason:
-            failure_reason = "snapshot_before_start_at"
-
-        # 4. Check window (STRICT: > 10 and < 90, matching job logic)
-        # Job uses: m.date > os.snapshot_at + INTERVAL '10 minutes'
-        #           m.date < os.snapshot_at + INTERVAL '90 minutes'
-        in_window = delta_minutes > 10 and delta_minutes < 90
-        window_detail = f"delta={round(delta_minutes, 1)}min"
-        if delta_minutes <= 10:
-            window_detail += " (<=10min, too late)"
-        elif delta_minutes >= 90:
-            window_detail += " (>=90min, too early)"
-        checks.append({
-            "check": "window_10_90_min_strict",
-            "status": "PASS" if in_window else "FAIL",
-            "detail": window_detail
-        })
-        if not in_window and not failure_reason:
-            failure_reason = "outside_window_too_late" if delta_minutes <= 10 else "outside_window_too_early"
-
-        # 5. Check model exists
-        model_exists = Path(model_path).exists()
-        checks.append({
-            "check": "model_exists",
-            "status": "PASS" if model_exists else "FAIL",
-            "detail": f"path={model_path}"
-        })
-        if not model_exists and not failure_reason:
-            failure_reason = "model_not_found"
-
-        # 6. Check existing prediction (PIT-safe: by match_id + model_version with snapshot_at <= kickoff)
-        # ATI FIX: No buscar por snapshot_id, buscar por match_id + model_version
-        pred_result = await session.execute(text("""
-            SELECT pe.id, pe.snapshot_at
-            FROM predictions_experiments pe
-            WHERE pe.match_id = :match_id
-              AND pe.model_version = :model_version
-              AND pe.snapshot_at <= :kickoff_at
-            ORDER BY pe.snapshot_at DESC
-            LIMIT 1
-        """), {"match_id": match_id, "model_version": model_version, "kickoff_at": kickoff_at})
-        pred_row = pred_result.fetchone()
-        has_pred = pred_row is not None
-        checks.append({
-            "check": "has_pit_safe_prediction",
-            "status": "PASS" if has_pred else "FAIL",
-            "detail": f"prediction_snapshot_at={pred_row[1].isoformat() if has_pred else 'none'}"
-        })
-
-    return {
-        "match_id": match_id,
-        "variant": variant,
-        "variant_enabled": enabled,
-        "model_version": model_version,
-        "kickoff_at": kickoff_at.isoformat() if kickoff_at else None,
-        "match_info": {"home_team": match_row[3], "away_team": match_row[4], "status": match_row[2]},
-        "latest_lineup_confirmed_snapshot_at": snapshot_at.isoformat() if snapshot_at else None,
-        "snapshot_id": snapshot_id,
-        "delta_minutes_to_kickoff": round(delta_minutes, 1) if delta_minutes else None,
-        "start_at": start_at,
-        "has_prediction_experiment": has_pred,
-        "failure_reason": failure_reason,
-        "checks": checks,
-    }
-
-
 @router.post("/dashboard/pit/trigger")
 async def pit_trigger_evaluation(request: Request):
     """
@@ -2278,54 +2136,6 @@ async def get_matches_dashboard(
         column("is_daylight"),
     ).subquery("weather")
 
-    # Experimental predictions (ext-A/B/C) from predictions_experiments
-    # Uses DISTINCT ON with PIT guard (snapshot_at <= kickoff) and tie-break
-    ext_subq = text("""
-        WITH latest AS (
-          SELECT DISTINCT ON (pe.match_id, pe.model_version)
-            pe.match_id,
-            pe.model_version,
-            pe.home_prob,
-            pe.draw_prob,
-            pe.away_prob
-          FROM predictions_experiments pe
-          JOIN matches m ON m.id = pe.match_id
-          WHERE pe.model_version IN ('v1.0.2-ext-A','v1.0.2-ext-B','v1.0.2-ext-C','v1.0.1-league-only-20260202')
-            AND pe.snapshot_at <= m.date
-          ORDER BY pe.match_id, pe.model_version, pe.snapshot_at DESC, pe.created_at DESC
-        )
-        SELECT
-          match_id,
-          MAX(CASE WHEN model_version='v1.0.2-ext-A' THEN home_prob END) AS ext_a_home,
-          MAX(CASE WHEN model_version='v1.0.2-ext-A' THEN draw_prob END) AS ext_a_draw,
-          MAX(CASE WHEN model_version='v1.0.2-ext-A' THEN away_prob END) AS ext_a_away,
-          MAX(CASE WHEN model_version='v1.0.2-ext-B' THEN home_prob END) AS ext_b_home,
-          MAX(CASE WHEN model_version='v1.0.2-ext-B' THEN draw_prob END) AS ext_b_draw,
-          MAX(CASE WHEN model_version='v1.0.2-ext-B' THEN away_prob END) AS ext_b_away,
-          MAX(CASE WHEN model_version='v1.0.2-ext-C' THEN home_prob END) AS ext_c_home,
-          MAX(CASE WHEN model_version='v1.0.2-ext-C' THEN draw_prob END) AS ext_c_draw,
-          MAX(CASE WHEN model_version='v1.0.2-ext-C' THEN away_prob END) AS ext_c_away,
-          MAX(CASE WHEN model_version='v1.0.1-league-only-20260202' THEN home_prob END) AS ext_d_home,
-          MAX(CASE WHEN model_version='v1.0.1-league-only-20260202' THEN draw_prob END) AS ext_d_draw,
-          MAX(CASE WHEN model_version='v1.0.1-league-only-20260202' THEN away_prob END) AS ext_d_away
-        FROM latest
-        GROUP BY match_id
-    """).columns(
-        column("match_id"),
-        column("ext_a_home"),
-        column("ext_a_draw"),
-        column("ext_a_away"),
-        column("ext_b_home"),
-        column("ext_b_draw"),
-        column("ext_b_away"),
-        column("ext_c_home"),
-        column("ext_c_draw"),
-        column("ext_c_away"),
-        column("ext_d_home"),
-        column("ext_d_draw"),
-        column("ext_d_away"),
-    ).subquery("ext")
-
     # Family S predictions (Tier 3 MTV model, from predictions table)
     family_s_subq = text("""
         SELECT DISTINCT ON (match_id)
@@ -2480,19 +2290,6 @@ async def get_matches_dashboard(
             weather_subq.c.precip_prob.label("weather_precip_prob"),
             weather_subq.c.cloudcover.label("weather_cloudcover"),
             weather_subq.c.is_daylight.label("weather_is_daylight"),
-            # Ext-A/B/C experimental predictions (use MAX to avoid GROUP BY issues)
-            func.max(ext_subq.c.ext_a_home).label("ext_a_home"),
-            func.max(ext_subq.c.ext_a_draw).label("ext_a_draw"),
-            func.max(ext_subq.c.ext_a_away).label("ext_a_away"),
-            func.max(ext_subq.c.ext_b_home).label("ext_b_home"),
-            func.max(ext_subq.c.ext_b_draw).label("ext_b_draw"),
-            func.max(ext_subq.c.ext_b_away).label("ext_b_away"),
-            func.max(ext_subq.c.ext_c_home).label("ext_c_home"),
-            func.max(ext_subq.c.ext_c_draw).label("ext_c_draw"),
-            func.max(ext_subq.c.ext_c_away).label("ext_c_away"),
-            func.max(ext_subq.c.ext_d_home).label("ext_d_home"),
-            func.max(ext_subq.c.ext_d_draw).label("ext_d_draw"),
-            func.max(ext_subq.c.ext_d_away).label("ext_d_away"),
             # Family S (Tier 3 MTV model)
             func.max(family_s_subq.c.family_s_version).label("family_s_version"),
             func.max(family_s_subq.c.family_s_home).label("family_s_home"),
@@ -2516,7 +2313,6 @@ async def get_matches_dashboard(
         .outerjoin(ShadowPrediction, ShadowPrediction.match_id == Match.id)
         .outerjoin(SensorPrediction, SensorPrediction.match_id == Match.id)
         .outerjoin(weather_subq, weather_subq.c.match_id == Match.id)
-        .outerjoin(ext_subq, ext_subq.c.match_id == Match.id)
         .outerjoin(family_s_subq, family_s_subq.c.match_id == Match.id)
         .outerjoin(odds_market_subq, odds_market_subq.c.match_id == Match.id)
         .outerjoin(autopsy_subq, autopsy_subq.c.match_id == Match.id)
@@ -2752,38 +2548,6 @@ async def get_matches_dashboard(
                 "home": round(row.sensor_b_home, 3),
                 "draw": round(row.sensor_b_draw, 3),
                 "away": round(row.sensor_b_away, 3),
-            }
-
-        # Ext-A experimental prediction
-        if row.ext_a_home is not None:
-            match_data["extA"] = {
-                "home": round(float(row.ext_a_home), 3),
-                "draw": round(float(row.ext_a_draw), 3),
-                "away": round(float(row.ext_a_away), 3),
-            }
-
-        # Ext-B experimental prediction
-        if row.ext_b_home is not None:
-            match_data["extB"] = {
-                "home": round(float(row.ext_b_home), 3),
-                "draw": round(float(row.ext_b_draw), 3),
-                "away": round(float(row.ext_b_away), 3),
-            }
-
-        # Ext-C experimental prediction
-        if row.ext_c_home is not None:
-            match_data["extC"] = {
-                "home": round(float(row.ext_c_home), 3),
-                "draw": round(float(row.ext_c_draw), 3),
-                "away": round(float(row.ext_c_away), 3),
-            }
-
-        # Ext-D experimental prediction (league-only retrained)
-        if row.ext_d_home is not None:
-            match_data["extD"] = {
-                "home": round(float(row.ext_d_home), 3),
-                "draw": round(float(row.ext_d_draw), 3),
-                "away": round(float(row.ext_d_away), 3),
             }
 
         # Family S (Tier 3 MTV model)

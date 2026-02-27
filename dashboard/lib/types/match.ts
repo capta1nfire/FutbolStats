@@ -117,14 +117,6 @@ export interface MatchSummary {
   shadowVersion?: string;
   /** Sensor B prediction (calibration diagnostic) */
   sensorB?: ProbabilitySet;
-  /** Experimental ext-A prediction */
-  extA?: ProbabilitySet;
-  /** Experimental ext-B prediction */
-  extB?: ProbabilitySet;
-  /** Experimental ext-C prediction */
-  extC?: ProbabilitySet;
-  /** Experimental ext-D prediction (league-only retrained) */
-  extD?: ProbabilitySet;
   /** Family S prediction (Tier 3 MTV model) */
   familyS?: ProbabilitySet;
   /** Family S model version (dynamic from DB) */

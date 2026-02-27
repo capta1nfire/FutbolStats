@@ -194,22 +194,6 @@ export function adaptMatch(raw: unknown): MatchSummary | null {
   const sensorB = parseProbabilitySet(raw.sensor_b);
   if (sensorB) result.sensorB = sensorB;
 
-  // Optional: Ext-A experimental prediction
-  const extA = parseProbabilitySet(raw.extA ?? raw.ext_a);
-  if (extA) result.extA = extA;
-
-  // Optional: Ext-B experimental prediction
-  const extB = parseProbabilitySet(raw.extB ?? raw.ext_b);
-  if (extB) result.extB = extB;
-
-  // Optional: Ext-C experimental prediction
-  const extC = parseProbabilitySet(raw.extC ?? raw.ext_c);
-  if (extC) result.extC = extC;
-
-  // Optional: Ext-D experimental prediction (league-only retrained)
-  const extD = parseProbabilitySet(raw.extD ?? raw.ext_d);
-  if (extD) result.extD = extD;
-
   // Optional: Family S prediction (Tier 3 MTV model)
   const familyS = parseProbabilitySet(raw.familyS ?? raw.family_s);
   if (familyS) result.familyS = familyS;

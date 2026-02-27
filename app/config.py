@@ -118,44 +118,6 @@ class Settings(BaseSettings):
     SHADOW_EVAL_STALE_MINUTES: int = 120  # Alert if oldest pending > this
     SENSOR_EVAL_STALE_MINUTES: int = 120  # Alert if oldest pending > this
 
-    # ═══════════════════════════════════════════════════════════════
-    # SHADOW ext-A/B/C (experimental model evaluation)
-    # ATI: Un solo job genérico procesa todas las variantes habilitadas
-    # ═══════════════════════════════════════════════════════════════
-    # ext-A: min_date 2024-01-01
-    EXTA_SHADOW_ENABLED: bool = False  # ATI: default OFF
-    EXTA_SHADOW_MODEL_VERSION: str = "v1.0.2-ext-A"
-    EXTA_SHADOW_MODEL_PATH: str = "models/xgb_v1.0.2-ext-A_20260201.json"
-
-    # ext-B: min_date 2023-11-01
-    EXTB_SHADOW_ENABLED: bool = False  # ATI: default OFF
-    EXTB_SHADOW_MODEL_VERSION: str = "v1.0.2-ext-B"
-    EXTB_SHADOW_MODEL_PATH: str = "models/xgb_v1.0.2-ext-B_20260201.json"
-
-    # ext-C: min_date 2023-08-01 (ya existente)
-    EXTC_SHADOW_ENABLED: bool = False  # ATI: default OFF, activar explícitamente en Railway
-    EXTC_SHADOW_MODEL_VERSION: str = "v1.0.2-ext-C"
-    EXTC_SHADOW_MODEL_PATH: str = "models/xgb_v1.0.2-ext-C_20260201.json"
-
-    # ext-D: league-only candidato (v1.0.1-league-only trained 2026-02-02)
-    # ATI: Shadow paralelo para evaluación extendida sin tocar ext-A/B/C
-    EXTD_SHADOW_ENABLED: bool = False  # ATI: default OFF
-    EXTD_SHADOW_MODEL_VERSION: str = "v1.0.1-league-only-20260202"
-    EXTD_SHADOW_MODEL_PATH: str = "models/xgb_v1.0.1-league-only_20260202.json"
-
-    # Shared settings for all ext variants
-    EXT_SHADOW_BATCH_SIZE: int = 200  # Max snapshots per run per variant
-    EXT_SHADOW_INTERVAL_MINUTES: int = 30  # Run every 30 min
-    # ATI: Controlar si backfill o solo OOS forward
-    EXT_SHADOW_START_AT: str = "2026-02-01"  # ISO date, cambiar para backfill
-    EXT_SHADOW_OOS_ONLY: bool = True  # True = solo snapshots recientes (desde deploy)
-
-    # Legacy aliases (for backwards compatibility)
-    EXTC_SHADOW_BATCH_SIZE: int = 200
-    EXTC_SHADOW_INTERVAL_MINUTES: int = 30
-    EXTC_SHADOW_START_AT: str = "2026-02-01"
-    EXTC_SHADOW_OOS_ONLY: bool = True
-
     # Development settings
     SKIP_AUTO_TRAIN: bool = False  # Skip auto-training on startup (useful during dev)
 

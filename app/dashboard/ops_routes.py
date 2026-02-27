@@ -683,93 +683,6 @@ async def _calculate_sensor_b_summary(session) -> dict:
         }
 
 
-async def _calculate_extc_shadow_summary(session) -> dict:
-    """
-    Calculate ext-C shadow model summary for ops dashboard.
-
-    ext-C is an experimental model evaluation job that generates
-    shadow predictions for the v1.0.2-ext-C model variant.
-
-    States:
-    - DISABLED: EXTC_SHADOW_ENABLED=false
-    - ACTIVE: Job is enabled and running
-    - ERROR: Issue with job execution
-    """
-    from app.config import get_settings
-    from app.telemetry.metrics import (
-        EXTC_SHADOW_INSERTED,
-        EXTC_SHADOW_ERRORS,
-        EXTC_SHADOW_LAST_SUCCESS,
-    )
-
-    extc_settings = get_settings()
-
-    if not extc_settings.EXTC_SHADOW_ENABLED:
-        return {
-            "state": "DISABLED",
-            "reason": "EXTC_SHADOW_ENABLED=false",
-            "model_version": extc_settings.EXTC_SHADOW_MODEL_VERSION,
-        }
-
-    try:
-        # Get metrics from Prometheus
-        inserted_total = 0
-        errors_total = 0
-        last_success_ts = None
-
-        try:
-            inserted_total = int(EXTC_SHADOW_INSERTED._value.get() or 0)
-        except Exception:
-            pass
-
-        try:
-            errors_total = int(EXTC_SHADOW_ERRORS._value.get() or 0)
-        except Exception:
-            pass
-
-        try:
-            ts = EXTC_SHADOW_LAST_SUCCESS._value.get()
-            if ts and ts > 0:
-                last_success_ts = datetime.utcfromtimestamp(ts).isoformat() + "Z"
-        except Exception:
-            pass
-
-        # Get count from predictions_experiments table
-        predictions_count = 0
-        try:
-            result = await session.execute(text("""
-                SELECT COUNT(*) as n
-                FROM predictions_experiments
-                WHERE model_version = :model_version
-            """), {"model_version": extc_settings.EXTC_SHADOW_MODEL_VERSION})
-            row = result.first()
-            predictions_count = int(row[0]) if row else 0
-        except Exception as e:
-            logger.debug(f"[EXTC_SHADOW] Count query failed: {e}")
-
-        return {
-            "state": "ACTIVE",
-            "model_version": extc_settings.EXTC_SHADOW_MODEL_VERSION,
-            "model_path": extc_settings.EXTC_SHADOW_MODEL_PATH,
-            "interval_minutes": extc_settings.EXTC_SHADOW_INTERVAL_MINUTES,
-            "batch_size": extc_settings.EXTC_SHADOW_BATCH_SIZE,
-            "oos_only": extc_settings.EXTC_SHADOW_OOS_ONLY,
-            "start_at": extc_settings.EXTC_SHADOW_START_AT,
-            "predictions_count": predictions_count,
-            "inserted_total": inserted_total,
-            "errors_total": errors_total,
-            "last_success_at": last_success_ts,
-        }
-
-    except Exception as e:
-        logger.warning(f"ext-C shadow summary failed: {e}")
-        return {
-            "state": "ERROR",
-            "reason": str(e)[:100],
-            "model_version": extc_settings.EXTC_SHADOW_MODEL_VERSION,
-        }
-
-
 async def _calculate_jobs_health_summary(session) -> dict:
     """
     Calculate P0 jobs health summary for OPS dashboard.
@@ -4101,7 +4014,6 @@ async def _load_ops_data() -> dict:
         telemetry_data,
         shadow_mode_data,
         sensor_b_data,
-        extc_shadow_data,
         rerun_serving_data,
         jobs_health_data,
         sota_enrichment_data,
@@ -4122,7 +4034,6 @@ async def _load_ops_data() -> dict:
         _calc(_calculate_telemetry_summary),
         _calc(_calculate_shadow_mode_summary),
         _calc(_calculate_sensor_b_summary),
-        _calc(_calculate_extc_shadow_summary),
         _calc(_calculate_rerun_serving_summary),
         _calc(_calculate_jobs_health_summary),
         _calc(_calculate_sota_enrichment_summary),
@@ -4196,7 +4107,6 @@ async def _load_ops_data() -> dict:
         "llm_cost": llm_cost_data,
         "shadow_mode": shadow_mode_data,
         "sensor_b": sensor_b_data,
-        "extc_shadow": extc_shadow_data,
         "rerun_serving": rerun_serving_data,
         "jobs_health": jobs_health_data,
         "sota_enrichment": sota_enrichment_data,

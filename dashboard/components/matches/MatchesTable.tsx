@@ -22,7 +22,7 @@ import {
 // Model Accuracy Calculation
 // =============================================================================
 
-type ModelKey = "market" | "consensus" | "pinnacle" | "modelA" | "shadow" | "sensorB" | "familyS" | "extA" | "extB" | "extC" | "extD";
+type ModelKey = "market" | "consensus" | "pinnacle" | "modelA" | "shadow" | "sensorB" | "familyS";
 
 interface ModelAccuracyStats {
   correct: number;
@@ -41,10 +41,6 @@ function calculateModelAccuracies(
     shadow: { correct: 0, total: 0, accuracy: null },
     sensorB: { correct: 0, total: 0, accuracy: null },
     familyS: { correct: 0, total: 0, accuracy: null },
-    extA: { correct: 0, total: 0, accuracy: null },
-    extB: { correct: 0, total: 0, accuracy: null },
-    extC: { correct: 0, total: 0, accuracy: null },
-    extD: { correct: 0, total: 0, accuracy: null },
   };
 
   for (const match of data) {
@@ -61,10 +57,6 @@ function calculateModelAccuracies(
       { key: "shadow", probs: match.shadow },
       { key: "sensorB", probs: match.sensorB },
       { key: "familyS", probs: match.familyS },
-      { key: "extA", probs: match.extA },
-      { key: "extB", probs: match.extB },
-      { key: "extC", probs: match.extC },
-      { key: "extD", probs: match.extD },
     ];
 
     for (const { key, probs } of models) {
@@ -107,10 +99,6 @@ const MODEL_TOOLTIPS: Record<string, string> = {
   "Consensus": "Median of de-vigged bookmaker odds (fair market consensus)",
   "Pinnacle": "Pinnacle sharp line (implied probabilities)",
   "Sensor B": "Sensor B — calibration diagnostic",
-  "Ext A": "Experimental slot A",
-  "Ext B": "Experimental slot B",
-  "Ext C": "Experimental slot C",
-  "Ext D": "Experimental slot D",
 };
 
 /** Autopsy tag visual config — Financial Autopsy (6 mutually exclusive post-match tags) */
@@ -369,10 +357,6 @@ export const MATCHES_COLUMN_OPTIONS: ColumnOption[] = [
   { id: "shadow", label: "Shadow", enableHiding: true },
   { id: "sensorB", label: "Sensor B", enableHiding: true },
   { id: "familyS", label: "Family S", enableHiding: true },
-  { id: "extA", label: "Ext A", enableHiding: true },
-  { id: "extB", label: "Ext B", enableHiding: true },
-  { id: "extC", label: "Ext C", enableHiding: true },
-  { id: "extD", label: "Ext D", enableHiding: true },
 ];
 
 export const MATCHES_DEFAULT_VISIBILITY: VisibilityState = {};
@@ -459,10 +443,6 @@ export function MatchesTable({
     if (isVisible("shadow")) w += MODEL_COL_WIDTH;
     if (isVisible("sensorB")) w += MODEL_COL_WIDTH;
     if (isVisible("familyS")) w += MODEL_COL_WIDTH;
-    if (isVisible("extA")) w += MODEL_COL_WIDTH;
-    if (isVisible("extB")) w += MODEL_COL_WIDTH;
-    if (isVisible("extC")) w += MODEL_COL_WIDTH;
-    if (isVisible("extD")) w += MODEL_COL_WIDTH;
     return w;
   }, [columnVisibility]);
 
@@ -526,10 +506,6 @@ export function MatchesTable({
               {isVisible("shadow") && <col style={{ width: MODEL_COL_WIDTH }} />}
               {isVisible("sensorB") && <col style={{ width: MODEL_COL_WIDTH }} />}
               {isVisible("familyS") && <col style={{ width: MODEL_COL_WIDTH }} />}
-              {isVisible("extA") && <col style={{ width: MODEL_COL_WIDTH }} />}
-              {isVisible("extB") && <col style={{ width: MODEL_COL_WIDTH }} />}
-              {isVisible("extC") && <col style={{ width: MODEL_COL_WIDTH }} />}
-              {isVisible("extD") && <col style={{ width: MODEL_COL_WIDTH }} />}
             </colgroup>
 
             {/* Sticky header */}
@@ -655,38 +631,6 @@ export function MatchesTable({
                     style={{ minWidth: MODEL_COL_WIDTH }}
                   >
                     <ModelHeader label="Family S" stats={modelAccuracies.familyS} dynamicTooltip={dynamicTooltips["Family S"]} />
-                  </th>
-                )}
-                {isVisible("extA") && (
-                  <th
-                    className="px-3 py-3 text-center font-semibold text-sm whitespace-nowrap"
-                    style={{ minWidth: MODEL_COL_WIDTH }}
-                  >
-                    <ModelHeader label="Ext A" stats={modelAccuracies.extA} />
-                  </th>
-                )}
-                {isVisible("extB") && (
-                  <th
-                    className="px-3 py-3 text-center font-semibold text-sm whitespace-nowrap"
-                    style={{ minWidth: MODEL_COL_WIDTH }}
-                  >
-                    <ModelHeader label="Ext B" stats={modelAccuracies.extB} />
-                  </th>
-                )}
-                {isVisible("extC") && (
-                  <th
-                    className="px-3 py-3 text-center font-semibold text-sm whitespace-nowrap"
-                    style={{ minWidth: MODEL_COL_WIDTH }}
-                  >
-                    <ModelHeader label="Ext C" stats={modelAccuracies.extC} />
-                  </th>
-                )}
-                {isVisible("extD") && (
-                  <th
-                    className="px-3 py-3 text-center font-semibold text-sm whitespace-nowrap"
-                    style={{ minWidth: MODEL_COL_WIDTH }}
-                  >
-                    <ModelHeader label="Ext D" stats={modelAccuracies.extD} />
                   </th>
                 )}
               </tr>
@@ -969,33 +913,6 @@ export function MatchesTable({
                       </td>
                     )}
 
-                    {/* Ext A cell */}
-                    {isVisible("extA") && (
-                      <td className="px-3 py-2.5 text-center" style={{ minWidth: MODEL_COL_WIDTH }}>
-                        <ProbabilityCell probs={match.extA} outcome={outcome} compact={compactPredictions} />
-                      </td>
-                    )}
-
-                    {/* Ext B cell */}
-                    {isVisible("extB") && (
-                      <td className="px-3 py-2.5 text-center" style={{ minWidth: MODEL_COL_WIDTH }}>
-                        <ProbabilityCell probs={match.extB} outcome={outcome} compact={compactPredictions} />
-                      </td>
-                    )}
-
-                    {/* Ext C cell */}
-                    {isVisible("extC") && (
-                      <td className="px-3 py-2.5 text-center" style={{ minWidth: MODEL_COL_WIDTH }}>
-                        <ProbabilityCell probs={match.extC} outcome={outcome} compact={compactPredictions} />
-                      </td>
-                    )}
-
-                    {/* Ext D cell */}
-                    {isVisible("extD") && (
-                      <td className="px-3 py-2.5 text-center" style={{ minWidth: MODEL_COL_WIDTH }}>
-                        <ProbabilityCell probs={match.extD} outcome={outcome} compact={compactPredictions} />
-                      </td>
-                    )}
                   </tr>
                 );
               })}
