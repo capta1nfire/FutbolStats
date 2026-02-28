@@ -142,7 +142,7 @@ async def dashboard_settings_summary(request: Request):
         }
 
     # Build fresh data
-    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat()
 
     try:
         integrations = {
@@ -241,7 +241,7 @@ async def dashboard_settings_feature_flags(
     limit = min(max(1, limit), 100)
     page = max(1, page)
 
-    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat()
 
     try:
         # Get all flags (always fresh since they depend on env)
@@ -313,7 +313,7 @@ async def dashboard_settings_model_versions(request: Request):
     """
     _check_token(request)
 
-    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat()
 
     # Check cache
     hit, cached = _settings_models_cache.get()
@@ -342,7 +342,7 @@ async def dashboard_settings_model_versions(request: Request):
             if model_files:
                 latest_file = max(model_files, key=os.path.getmtime)
                 mtime = os.path.getmtime(latest_file)
-                model_updated_at = datetime.utcfromtimestamp(mtime).isoformat() + "Z"
+                model_updated_at = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
         except Exception:
             pass
 
@@ -424,7 +424,7 @@ async def dashboard_settings_ia_features_get(request: Request):
     """
     _check_token(request)
 
-    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat()
 
     # Check cache
     hit, cached = _ia_features_cache.get()
@@ -568,7 +568,7 @@ async def dashboard_settings_ia_features_patch(request: Request):
             logger.info(f"[SETTINGS] IA Features updated: {updates}")
 
             return {
-                "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
                 "data": new_config,
                 "updated_fields": list(updates.keys()),
             }

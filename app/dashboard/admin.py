@@ -1049,7 +1049,7 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
             "wiki_url_cached": getattr(team_row, "wiki_url_cached", None),
             "wiki_source": getattr(team_row, "wiki_source", None),
             "wiki_confidence": getattr(team_row, "wiki_confidence", None),
-            "wiki_matched_at": (wiki_matched_at.isoformat() + "Z") if wiki_matched_at else None,
+            "wiki_matched_at": (wiki_matched_at.isoformat()) if wiki_matched_at else None,
         }
 
     if enrichment_supported:
@@ -1061,7 +1061,7 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
 
             payload["wikidata_enrichment"] = {
                 "wikidata_id": getattr(enrichment_row, "wikidata_id", None),
-                "wikidata_updated_at": (fetched_at.isoformat() + "Z") if fetched_at else None,
+                "wikidata_updated_at": (fetched_at.isoformat()) if fetched_at else None,
                 # Merged effective values (COALESCE override > wikidata)
                 "stadium_name": getattr(enrichment_row, "stadium_name", None),
                 "stadium_wikidata_id": getattr(enrichment_row, "stadium_wikidata_id", None),
@@ -1093,7 +1093,7 @@ async def build_team_detail(session: AsyncSession, team_id: int) -> Optional[dic
                     "instagram": getattr(enrichment_row, "override_instagram", None),
                     "source": getattr(enrichment_row, "override_source", None),
                     "notes": getattr(enrichment_row, "override_notes", None),
-                    "updated_at": (override_updated_at.isoformat() + "Z") if override_updated_at else None,
+                    "updated_at": (override_updated_at.isoformat()) if override_updated_at else None,
                 } if has_override else None,
             }
         else:
@@ -1415,7 +1415,7 @@ async def patch_team_wiki(
             "wiki_url_cached": updated.wiki_url_cached,
             "wiki_source": updated.wiki_source,
             "wiki_confidence": updated.wiki_confidence,
-            "wiki_matched_at": (wiki_matched_at.isoformat() + "Z") if wiki_matched_at else None,
+            "wiki_matched_at": (wiki_matched_at.isoformat()) if wiki_matched_at else None,
         },
     }
 

@@ -489,7 +489,7 @@ class SofascoreProvider:
                 kickoff_utc = None
                 if start_timestamp:
                     try:
-                        kickoff_utc = datetime.utcfromtimestamp(start_timestamp)
+                        kickoff_utc = datetime.fromtimestamp(start_timestamp, tz=timezone.utc)
                     except (ValueError, TypeError):
                         pass
 

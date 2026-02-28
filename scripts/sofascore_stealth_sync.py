@@ -30,7 +30,7 @@ import os
 import random
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 # Add project root to path
@@ -298,7 +298,7 @@ def parse_scheduled_events(data: dict) -> list[dict]:
         kickoff = None
         if start_ts:
             try:
-                kickoff = datetime.utcfromtimestamp(start_ts)
+                kickoff = datetime.fromtimestamp(start_ts, tz=timezone.utc)
             except (ValueError, TypeError):
                 pass
         events.append({

@@ -128,8 +128,8 @@ async def get_jobs_health_from_db(session: AsyncSession) -> dict:
         job_name = row[0]
         jobs_data[job_name] = {
             "last_run_status": row[1],
-            "last_run_at": row[2].isoformat() + "Z" if row[2] else None,
-            "last_success_at": success_map.get(job_name).isoformat() + "Z" if success_map.get(job_name) else None,
+            "last_run_at": row[2].isoformat() if row[2] else None,
+            "last_success_at": success_map.get(job_name).isoformat() if success_map.get(job_name) else None,
             "duration_ms": row[3],
             "last_error": row[4] if row[1] == "error" else None,
         }

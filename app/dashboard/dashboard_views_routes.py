@@ -358,7 +358,7 @@ async def dashboard_feature_coverage_json(request: Request):
 
     # Update cache
     _feature_coverage_cache["data"] = {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "data": data,
     }
     _feature_coverage_cache["timestamp"] = now
@@ -836,7 +836,7 @@ async def pit_trigger_evaluation(request: Request):
 def _make_v2_wrapper(data: dict, cached: bool = False, cache_age_seconds: float = 0) -> dict:
     """Build standard v2 wrapper for dashboard endpoints."""
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": cached,
         "cache_age_seconds": round(cache_age_seconds, 1),
         "data": data,
@@ -1174,7 +1174,7 @@ async def dashboard_predictions_missing(
         for row in all_missing:
             missing_list.append({
                 "match_id": row[0],
-                "kickoff_utc": row[1].isoformat() + "Z" if row[1] else None,
+                "kickoff_utc": row[1].isoformat() if row[1] else None,
                 "league_id": row[2],
                 "home": row[3],
                 "away": row[4],
@@ -1303,12 +1303,12 @@ async def dashboard_movement_recent(
             for row in lineup_result.fetchall():
                 items.append({
                     "match_id": row[0],
-                    "kickoff_utc": row[1].isoformat() + "Z" if row[1] else None,
+                    "kickoff_utc": row[1].isoformat() if row[1] else None,
                     "league_id": row[2],
                     "home": row[3],
                     "away": row[4],
                     "type": "lineup",
-                    "captured_at": row[5].isoformat() + "Z" if row[5] else None,
+                    "captured_at": row[5].isoformat() if row[5] else None,
                     "source": "sofascore",
                 })
 
@@ -1335,12 +1335,12 @@ async def dashboard_movement_recent(
             for row in market_result.fetchall():
                 items.append({
                     "match_id": row[0],
-                    "kickoff_utc": row[1].isoformat() + "Z" if row[1] else None,
+                    "kickoff_utc": row[1].isoformat() if row[1] else None,
                     "league_id": row[2],
                     "home": row[3],
                     "away": row[4],
                     "type": "market",
-                    "captured_at": row[5].isoformat() + "Z" if row[5] else None,
+                    "captured_at": row[5].isoformat() if row[5] else None,
                     "source": row[6] if row[6] else "unknown",
                 })
 
@@ -1483,13 +1483,13 @@ async def dashboard_movement_top(
                 for row in market_result.fetchall():
                     movers.append({
                         "match_id": row[0],
-                        "kickoff_utc": row[1].isoformat() + "Z" if row[1] else None,
+                        "kickoff_utc": row[1].isoformat() if row[1] else None,
                         "league_id": row[2],
                         "home": row[3],
                         "away": row[4],
                         "type": "market",
                         "value": round(float(row[5]) * 100, 2) if row[5] else 0,  # As percentage points
-                        "captured_at": row[6].isoformat() + "Z" if row[6] else None,
+                        "captured_at": row[6].isoformat() if row[6] else None,
                         "source": "api-football",
                     })
             except Exception as market_err:
@@ -1925,12 +1925,12 @@ async def get_upcoming_matches_dashboard(
             "away": row.away_name,
             "home_display_name": display_map.get(row.home_team_id, row.home_name),
             "away_display_name": display_map.get(row.away_team_id, row.away_name),
-            "kickoff_iso": row.date.isoformat() + "Z" if row.date else None,
+            "kickoff_iso": row.date.isoformat() if row.date else None,
             "league_name": league_name_by_id.get(row.league_id, f"League {row.league_id}"),
             "has_prediction": bool(row.has_prediction),
         })
 
-    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat()
 
     # Update cache
     _upcoming_matches_cache["data"] = {
@@ -2465,7 +2465,7 @@ async def get_matches_dashboard(
     for row in rows:
         match_data = {
             "id": row.id,
-            "kickoff_iso": row.date.isoformat() + "Z" if row.date else None,
+            "kickoff_iso": row.date.isoformat() if row.date else None,
             "league_id": row.league_id,
             "league_name": league_name_by_id.get(row.league_id, f"League {row.league_id}"),
             "league_country": LEAGUE_COUNTRY.get(row.league_id, ""),
@@ -2617,7 +2617,7 @@ async def get_matches_dashboard(
 
         matches.append(match_data)
 
-    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat()
     pages = (total + limit - 1) // limit if limit > 0 else 1
 
     response_data = {
@@ -2702,7 +2702,7 @@ async def get_market_snapshot(
     if not rows:
         return {
             "match_id": match_id,
-            "kickoff": kickoff.isoformat() + "Z",
+            "kickoff": kickoff.isoformat(),
             "n_books": 0,
             "consensus": None,
             "books": [],
@@ -2731,7 +2731,7 @@ async def get_market_snapshot(
                 "prob_home": round(1 / h, 4) if h > 0 else None,
                 "prob_draw": round(1 / d, 4) if d > 0 else None,
                 "prob_away": round(1 / a, 4) if a > 0 else None,
-                "recorded_at": row.recorded_at.isoformat() + "Z",
+                "recorded_at": row.recorded_at.isoformat(),
             }
             continue
 
@@ -2753,7 +2753,7 @@ async def get_market_snapshot(
             "prob_away": round(pa, 4) if pa else None,
             "margin_pct": margin,
             "is_sharp": source == "Pinnacle",
-            "recorded_at": row.recorded_at.isoformat() + "Z",
+            "recorded_at": row.recorded_at.isoformat(),
         })
 
         odds_home_list.append(h)
@@ -2787,7 +2787,7 @@ async def get_market_snapshot(
 
     return {
         "match_id": match_id,
-        "kickoff": kickoff.isoformat() + "Z",
+        "kickoff": kickoff.isoformat(),
         "n_books": len(books),
         "consensus": consensus_entry,
         "books": books,
@@ -2909,8 +2909,8 @@ async def get_jobs_dashboard(
             "id": row.id,
             "job_name": row.job_name,
             "status": row.status,
-            "started_at": row.started_at.isoformat() + "Z" if row.started_at else None,
-            "finished_at": row.finished_at.isoformat() + "Z" if row.finished_at else None,
+            "started_at": row.started_at.isoformat() if row.started_at else None,
+            "finished_at": row.finished_at.isoformat() if row.finished_at else None,
             "duration_ms": row.duration_ms,
         }
 
@@ -2928,7 +2928,7 @@ async def get_jobs_dashboard(
     from app.jobs.tracking import get_jobs_health_from_db
     jobs_summary = await get_jobs_health_from_db(session)
 
-    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat()
     pages = (total + limit - 1) // limit if limit > 0 else 1
 
     response_data = {
@@ -3015,7 +3015,7 @@ async def _build_data_quality_checks(session: AsyncSession) -> list[dict]:
     Build a stable list of Data Quality checks.
     Best-effort: if a single source fails, degrade that check (do not fail whole endpoint).
     """
-    now_iso = datetime.now(timezone.utc).isoformat() + "Z"
+    now_iso = datetime.now(timezone.utc).isoformat()
     checks: list[dict] = []
 
     # Helper to append checks with consistent shape
@@ -3575,7 +3575,7 @@ async def dashboard_data_quality_json(
     end = start + limit
     page_checks = filtered[start:end]
 
-    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat()
     response_data = {
         "checks": page_checks,
         "total": total,
@@ -3659,7 +3659,7 @@ async def dashboard_data_quality_check_json(
                 {
                     "odds_history_id": int(r[0]),
                     "match_id": int(r[1]) if r[1] is not None else None,
-                    "recorded_at": r[2].isoformat() + "Z" if r[2] else None,
+                    "recorded_at": r[2].isoformat() if r[2] else None,
                     "source": r[3],
                 }
                 for r in res.fetchall()
@@ -3682,7 +3682,7 @@ async def dashboard_data_quality_check_json(
             affected_items = [
                 {
                     "match_id": int(r[0]),
-                    "date": r[1].isoformat() + "Z" if r[1] else None,
+                    "date": r[1].isoformat() if r[1] else None,
                     "league_id": int(r[2]) if r[2] is not None else None,
                     "status": r[3],
                 }
@@ -3734,7 +3734,7 @@ async def dashboard_data_quality_check_json(
             affected_items = [
                 {
                     "match_id": int(r[0]),
-                    "kickoff_utc": r[1].isoformat() + "Z" if r[1] else None,
+                    "kickoff_utc": r[1].isoformat() if r[1] else None,
                     "league_id": int(r[2]) if r[2] is not None else None,
                 }
                 for r in res.fetchall()
@@ -3743,7 +3743,7 @@ async def dashboard_data_quality_check_json(
         # Best-effort: don't fail endpoint if affected_items query fails
         affected_items = [{"error": f"degraded: {str(e)[:120]}"}]
 
-    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat()
     response_data = {
         "check": check,
         "affected_items": affected_items,
@@ -3812,7 +3812,7 @@ async def dashboard_predictions_json(
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
     now = time.time()
-    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat()
 
     try:
         from sqlalchemy import text
@@ -3983,7 +3983,7 @@ async def dashboard_predictions_json(
                     "match_id": row.match_id,
                     "league_id": row.league_id,
                     "league_name": league_names.get(row.league_id, f"League {row.league_id}"),
-                    "kickoff_utc": row.kickoff_utc.isoformat() + "Z" if row.kickoff_utc else None,
+                    "kickoff_utc": row.kickoff_utc.isoformat() if row.kickoff_utc else None,
                     "home_team": row.home_team,
                     "away_team": row.away_team,
                     "status": row.status,
@@ -3998,7 +3998,7 @@ async def dashboard_predictions_json(
                     "is_frozen": None,  # Shadow doesn't use frozen concept
                     "frozen_at": None,
                     "confidence_tier": None,
-                    "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
                 })
 
             return {
@@ -4108,7 +4108,7 @@ async def dashboard_predictions_json(
                 "match_id": row.match_id,
                 "league_id": row.league_id,
                 "league_name": league_names.get(row.league_id, f"League {row.league_id}"),
-                "kickoff_utc": row.kickoff_utc.isoformat() + "Z" if row.kickoff_utc else None,
+                "kickoff_utc": row.kickoff_utc.isoformat() if row.kickoff_utc else None,
                 "home_team": row.home_team,
                 "away_team": row.away_team,
                 "status": row.status,
@@ -4118,9 +4118,9 @@ async def dashboard_predictions_json(
                 "pick": pick,
                 "probs": probs,
                 "is_frozen": row.is_frozen,
-                "frozen_at": row.frozen_at.isoformat() + "Z" if row.frozen_at else None,
+                "frozen_at": row.frozen_at.isoformat() if row.frozen_at else None,
                 "confidence_tier": row.frozen_confidence_tier,
-                "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
             })
 
         return {
@@ -4215,7 +4215,7 @@ async def _build_analytics_reports(session: AsyncSession) -> list[dict]:
                 "title": f"Model Performance ({row.window_days}d)",
                 "subtitle": f"Report date: {row.report_date}" if row.report_date else None,
                 "status": status,
-                "updated_at": row.generated_at.isoformat() + "Z" if row.generated_at else None,
+                "updated_at": row.generated_at.isoformat() if row.generated_at else None,
                 "tags": ["xgb", f"{row.window_days}d", row.source or "auto"],
                 "summary": {
                     "primary_label": "Accuracy",
@@ -4271,7 +4271,7 @@ async def _build_analytics_reports(session: AsyncSession) -> list[dict]:
                 "title": f"PIT Report ({row.report_type.capitalize()})",
                 "subtitle": f"Date: {row.report_date.strftime('%Y-%m-%d')}" if row.report_date else None,
                 "status": status,
-                "updated_at": (row.updated_at or row.created_at).isoformat() + "Z" if (row.updated_at or row.created_at) else None,
+                "updated_at": (row.updated_at or row.created_at).isoformat() if (row.updated_at or row.created_at) else None,
                 "tags": ["pit", row.report_type, row.source or "auto"],
                 "summary": {
                     "primary_label": "Accuracy",
@@ -4315,7 +4315,7 @@ async def _build_analytics_reports(session: AsyncSession) -> list[dict]:
                 "title": f"Daily Ops Rollup",
                 "subtitle": f"Date: {row.day.isoformat()}",
                 "status": status,
-                "updated_at": (row.updated_at or row.created_at).isoformat() + "Z" if (row.updated_at or row.created_at) else None,
+                "updated_at": (row.updated_at or row.created_at).isoformat() if (row.updated_at or row.created_at) else None,
                 "tags": ["ops", "daily", "system"],
                 "summary": {
                     "primary_label": "API Calls",
@@ -4359,7 +4359,7 @@ async def _build_analytics_reports(session: AsyncSession) -> list[dict]:
                 "title": "Job Executions (24h)",
                 "subtitle": f"Top jobs: {', '.join(r.job_name[:20] for r in rows[:3])}",
                 "status": status,
-                "updated_at": datetime.now(timezone.utc).isoformat() + "Z",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
                 "tags": ["jobs", "api", "24h"],
                 "summary": {
                     "primary_label": "Success Rate",
@@ -4394,7 +4394,7 @@ async def _build_analytics_reports(session: AsyncSession) -> list[dict]:
                 "title": "SOTA Enrichment Summary",
                 "subtitle": f"XI: {row.sofascore_lineups}, Weather: {row.weather_forecasts}, Geo: {row.venue_geos}",
                 "status": "ok" if total_enrichments > 100 else "warning",
-                "updated_at": datetime.now(timezone.utc).isoformat() + "Z",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
                 "tags": ["sota", "enrichment", "coverage"],
                 "summary": {
                     "primary_label": "Total Enrichments",
@@ -4442,7 +4442,7 @@ async def dashboard_analytics_reports(
 
     now = time.time()
     cache = _analytics_reports_cache
-    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat()
 
     try:
         # Check cache (only for unfiltered requests)
@@ -4614,7 +4614,7 @@ async def _build_audit_events(
                 "actor_kind": actor_kind,
                 "actor_display": actor_display,
                 "message": message,
-                "created_at": row["created_at"].isoformat() + "Z" if row.get("created_at") else None,
+                "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
                 "correlation_id": row.get("request_id"),
                 "runbook_url": None,
             })
@@ -4655,7 +4655,7 @@ async def _build_audit_events(
                 "actor_kind": "system",
                 "actor_display": "scheduler",
                 "message": message,
-                "created_at": row["started_at"].isoformat() + "Z" if row.get("started_at") else None,
+                "created_at": row["started_at"].isoformat() if row.get("started_at") else None,
                 "correlation_id": None,
                 "runbook_url": "/docs/OPS_RUNBOOK.md" if severity == "error" else None,
             })
@@ -4722,7 +4722,7 @@ async def dashboard_audit_logs(
     if not verify_dashboard_token_bool(request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
-    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat()
 
     # Parse multi-value filters
     types = [t.strip() for t in type.split(",")] if type else None
@@ -4830,7 +4830,7 @@ async def dashboard_team_logos(
     if not verify_dashboard_token_bool(request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
-    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat()
     now = time.time()
     cache = _team_logos_cache
 
@@ -4978,7 +4978,7 @@ async def dashboard_coverage_map(
             include_quality_flags=include_quality_flags,
         )
     elapsed_ms = round((time.time() - t0) * 1000)
-    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat()
     logger.info("coverage_map | computed in %dms | leagues=%d", elapsed_ms, data.get("summary", {}).get("leagues", 0))
 
     # Store in cache

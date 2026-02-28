@@ -727,7 +727,7 @@ async def _calculate_jobs_health_summary(session) -> dict:
         try:
             ts = job_last_success_timestamp.labels(job=job_name)._value.get()
             if ts and ts > 0:
-                last_success = datetime.utcfromtimestamp(ts)
+                last_success = datetime.fromtimestamp(ts, tz=timezone.utc)
         except Exception:
             pass
 
@@ -751,7 +751,7 @@ async def _calculate_jobs_health_summary(session) -> dict:
             elif gap_minutes > max_gap_minutes:
                 status = "warn"
             return {
-                "last_success_at": last_success.isoformat() + "Z",
+                "last_success_at": last_success.isoformat(),
                 "minutes_since_success": round(gap_minutes, 1),
                 "status": status,
                 "source": source,  # For debugging
@@ -4205,7 +4205,7 @@ async def ops_dashboard_logs_json(
 
     compact = mode == "compact"
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "limit": limit,
         "since_minutes": since_minutes,
         "level": level,
@@ -5899,8 +5899,8 @@ async def ops_job_runs(
             "id": row[0],
             "job_name": row[1],
             "status": row[2],
-            "started_at": row[3].isoformat() + "Z" if row[3] else None,
-            "finished_at": row[4].isoformat() + "Z" if row[4] else None,
+            "started_at": row[3].isoformat() if row[3] else None,
+            "finished_at": row[4].isoformat() if row[4] else None,
             "duration_ms": row[5],
             "error_message": row[6],
             "metrics": row[7],
@@ -5917,7 +5917,7 @@ async def ops_job_runs(
     """))
     summary_rows = summary_result.fetchall()
     summary = {
-        row[0]: row[1].isoformat() + "Z" if row[1] else None
+        row[0]: row[1].isoformat() if row[1] else None
         for row in summary_rows
     }
 
@@ -6516,7 +6516,7 @@ async def debug_log(request: Request):
 
     # Build log entry (no token/headers logged)
     entry = {
-        "ts": datetime.now(timezone.utc).isoformat() + "Z",
+        "ts": datetime.now(timezone.utc).isoformat(),
         "component": payload.get("component"),
         "endpoint": payload.get("endpoint"),
         "message": payload.get("message"),
@@ -6599,7 +6599,7 @@ async def _detect_active_incidents(session) -> list[dict]:
     """
     incidents = []
     now = datetime.now(timezone.utc)
-    now_iso = now.isoformat() + "Z"
+    now_iso = now.isoformat()
 
     # =========================================================================
     # OPTIMIZATION: Launch HTTP-only sources as tasks
@@ -6851,7 +6851,7 @@ async def _upsert_incidents(session, detected: list[dict]) -> None:
 
     import json as _json
     now = datetime.now(timezone.utc)
-    now_iso = now.isoformat() + "Z"
+    now_iso = now.isoformat()
 
     # Build parallel arrays for unnest (ABE: text[] for JSONB to avoid asyncpg type issues)
     ids: list[int] = []
@@ -6976,7 +6976,7 @@ async def _auto_resolve_stale_incidents(session) -> int:
     Returns count of auto-resolved incidents.
     """
     now = datetime.now(timezone.utc)
-    now_iso = now.isoformat() + "Z"
+    now_iso = now.isoformat()
     grace_cutoff = now - timedelta(minutes=_RESOLVE_GRACE_MINUTES)
 
     result = await session.execute(
@@ -7145,7 +7145,7 @@ async def get_incidents_dashboard(
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
     now = time.time()
-    now_iso = datetime.now(timezone.utc).isoformat() + "Z"
+    now_iso = datetime.now(timezone.utc).isoformat()
 
     # Check cache
     if (
@@ -7267,7 +7267,7 @@ async def patch_incident(
         raise HTTPException(status_code=400, detail="Already resolved")
 
     now = datetime.now(timezone.utc)
-    now_iso = now.isoformat() + "Z"
+    now_iso = now.isoformat()
 
     # Build timeline event
     old_timeline = row["timeline"] or []

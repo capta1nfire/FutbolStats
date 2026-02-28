@@ -1018,7 +1018,7 @@ async def build_nationals_countries_list(session: AsyncSession) -> dict:
             "teams_count": r.teams_count,
             "total_matches": r.total_matches,
             "competitions_count": r.competitions_count,
-            "last_match": r.last_match.isoformat() + "Z" if r.last_match else None
+            "last_match": r.last_match.isoformat() if r.last_match else None
         })
         total_teams += r.teams_count
 
@@ -1135,7 +1135,7 @@ async def build_nationals_country_detail(session: AsyncSession, country: str) ->
     recent_matches = [
         {
             "match_id": r.match_id,
-            "date": r.date.isoformat() + "Z" if r.date else None,
+            "date": r.date.isoformat() if r.date else None,
             "competition_name": intl_leagues.get(r.league_id, "Unknown"),
             "home_team": r.home_team,
             "away_team": r.away_team,
@@ -1307,7 +1307,7 @@ async def build_nationals_team_detail(session: AsyncSession, team_id: int) -> Op
 
         recent_matches.append({
             "match_id": r.match_id,
-            "date": r.date.isoformat() + "Z" if r.date else None,
+            "date": r.date.isoformat() if r.date else None,
             "competition_id": r.league_id,
             "competition_name": intl_leagues.get(r.league_id, "Unknown"),
             "opponent": opponent,
@@ -1460,8 +1460,8 @@ async def build_tournaments_list(session: AsyncSession) -> dict:
                 "total_matches": total,
                 "matches_30d": r.matches_30d or 0,
                 "seasons_range": [r.first_season, r.last_season] if r.first_season else None,
-                "last_match": r.last_match.isoformat() + "Z" if r.last_match else None,
-                "next_match": r.next_match.isoformat() + "Z" if r.next_match else None,
+                "last_match": r.last_match.isoformat() if r.last_match else None,
+                "next_match": r.next_match.isoformat() if r.next_match else None,
                 "with_stats_pct": round(with_stats * 100 / total, 1) if total > 0 else None,
                 "with_odds_pct": round(with_odds * 100 / total, 1) if total > 0 else None,
                 "participants_count": participants_by_league.get(r.league_id, 0)
@@ -1583,7 +1583,7 @@ async def build_world_cup_overview(session: AsyncSession) -> dict:
         summary["groups_count"] = len(groups)
         summary["teams_count"] = len(standings_data)
         summary["standings_source"] = standings_row.source or "db"
-        summary["standings_captured_at"] = standings_row.captured_at.isoformat() + "Z" if standings_row.captured_at else None
+        summary["standings_captured_at"] = standings_row.captured_at.isoformat() if standings_row.captured_at else None
     else:
         summary["standings_source"] = "missing"
         alerts.append({"type": "standings_missing", "message": "No standings data available", "value": None})
@@ -1605,7 +1605,7 @@ async def build_world_cup_overview(session: AsyncSession) -> dict:
         summary["matches_total"] = matches_row.total or 0
         summary["matches_played"] = matches_row.played or 0
         summary["matches_upcoming"] = matches_row.upcoming or 0
-        summary["next_match_at"] = matches_row.next_match.isoformat() + "Z" if matches_row.next_match else None
+        summary["next_match_at"] = matches_row.next_match.isoformat() if matches_row.next_match else None
 
     if summary["matches_total"] == 0:
         alerts.append({"type": "fixtures_missing", "message": "No fixtures available yet", "value": None})
@@ -1655,7 +1655,7 @@ async def build_world_cup_overview(session: AsyncSession) -> dict:
 
             upcoming.append({
                 "match_id": r.match_id,
-                "date": r.date.isoformat() + "Z" if r.date else None,
+                "date": r.date.isoformat() if r.date else None,
                 "group": match_group,
                 "home_team": r.home_team,
                 "away_team": r.away_team,
@@ -1861,7 +1861,7 @@ async def build_world_cup_group_detail(session: AsyncSession, group: str) -> Opt
         for r in matches_result.fetchall():
             matches.append({
                 "match_id": r.match_id,
-                "date": r.date.isoformat() + "Z" if r.date else None,
+                "date": r.date.isoformat() if r.date else None,
                 "status": r.status,
                 "home_team": r.home_team,
                 "away_team": r.away_team,

@@ -62,7 +62,7 @@ async def dashboard_football_nav(request: Request):
 
     if cached_data:
         return {
-            "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "cached": True,
             "cache_age_seconds": cache_age,
             "data": cached_data,
@@ -76,7 +76,7 @@ async def dashboard_football_nav(request: Request):
     _set_football_cache(cache_key, data)
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
         "cache_age_seconds": None,
         "data": data,
@@ -97,7 +97,7 @@ async def dashboard_football_countries(request: Request):
 
     if cached_data:
         return {
-            "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "cached": True,
             "cache_age_seconds": cache_age,
             "data": cached_data,
@@ -111,7 +111,7 @@ async def dashboard_football_countries(request: Request):
     _set_football_cache(cache_key, data)
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
         "cache_age_seconds": None,
         "data": data,
@@ -134,7 +134,7 @@ async def dashboard_football_country_detail(request: Request, country: str):
 
     if cached_data:
         return {
-            "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "cached": True,
             "cache_age_seconds": cache_age,
             "data": cached_data,
@@ -151,7 +151,7 @@ async def dashboard_football_country_detail(request: Request, country: str):
     _set_football_cache(cache_key, data)
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
         "cache_age_seconds": None,
         "data": data,
@@ -172,7 +172,7 @@ async def dashboard_football_league_detail(request: Request, league_id: int):
 
     if cached_data:
         return {
-            "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "cached": True,
             "cache_age_seconds": cache_age,
             "data": cached_data,
@@ -189,7 +189,7 @@ async def dashboard_football_league_detail(request: Request, league_id: int):
     _set_football_cache(cache_key, data)
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
         "cache_age_seconds": None,
         "data": data,
@@ -210,7 +210,7 @@ async def dashboard_football_group_detail(request: Request, group_id: int):
 
     if cached_data:
         return {
-            "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "cached": True,
             "cache_age_seconds": cache_age,
             "data": cached_data,
@@ -227,7 +227,7 @@ async def dashboard_football_group_detail(request: Request, group_id: int):
     _set_football_cache(cache_key, data)
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
         "cache_age_seconds": None,
         "data": data,
@@ -249,7 +249,7 @@ async def dashboard_football_overview(request: Request):
 
     if cached_data:
         return {
-            "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "cached": True,
             "cache_age_seconds": cache_age,
             "data": cached_data,
@@ -263,7 +263,7 @@ async def dashboard_football_overview(request: Request):
     _set_football_cache(cache_key, data)
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
         "cache_age_seconds": None,
         "data": data,
@@ -290,7 +290,7 @@ async def dashboard_football_nationals_countries(request: Request):
 
     if cached_data:
         return {
-            "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "cached": True,
             "cache_age_seconds": cache_age,
             "data": cached_data,
@@ -304,7 +304,7 @@ async def dashboard_football_nationals_countries(request: Request):
     _set_football_cache(cache_key, data)
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
         "cache_age_seconds": None,
         "data": data,
@@ -328,7 +328,7 @@ async def dashboard_football_nationals_country(request: Request, country: str):
 
     if cached_data:
         return {
-            "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "cached": True,
             "cache_age_seconds": cache_age,
             "data": cached_data,
@@ -345,7 +345,7 @@ async def dashboard_football_nationals_country(request: Request, country: str):
     _set_football_cache(cache_key, data)
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
         "cache_age_seconds": None,
         "data": data,
@@ -368,7 +368,7 @@ async def dashboard_football_nationals_team(request: Request, team_id: int):
 
     if cached_data:
         return {
-            "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "cached": True,
             "cache_age_seconds": cache_age,
             "data": cached_data,
@@ -385,7 +385,7 @@ async def dashboard_football_nationals_team(request: Request, team_id: int):
     _set_football_cache(cache_key, data)
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
         "cache_age_seconds": None,
         "data": data,
@@ -413,7 +413,7 @@ async def dashboard_football_tournaments(request: Request):
 
     if cached_data:
         return {
-            "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "cached": True,
             "cache_age_seconds": cache_age,
             "data": cached_data,
@@ -427,7 +427,7 @@ async def dashboard_football_tournaments(request: Request):
     _set_football_cache(cache_key, data)
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
         "cache_age_seconds": None,
         "data": data,
@@ -455,7 +455,7 @@ async def dashboard_football_world_cup_overview(request: Request):
 
     if cached_data:
         return {
-            "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "cached": True,
             "cache_age_seconds": cache_age,
             "data": cached_data,
@@ -469,7 +469,7 @@ async def dashboard_football_world_cup_overview(request: Request):
     _set_football_cache(cache_key, data)
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
         "cache_age_seconds": None,
         "data": data,
@@ -492,7 +492,7 @@ async def dashboard_football_world_cup_groups(request: Request):
 
     if cached_data:
         return {
-            "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "cached": True,
             "cache_age_seconds": cache_age,
             "data": cached_data,
@@ -506,7 +506,7 @@ async def dashboard_football_world_cup_groups(request: Request):
     _set_football_cache(cache_key, data)
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
         "cache_age_seconds": None,
         "data": data,
@@ -531,7 +531,7 @@ async def dashboard_football_world_cup_group_detail(request: Request, group: str
 
     if cached_data:
         return {
-            "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "cached": True,
             "cache_age_seconds": cache_age,
             "data": cached_data,
@@ -548,7 +548,7 @@ async def dashboard_football_world_cup_group_detail(request: Request, group: str
     _set_football_cache(cache_key, data)
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
         "cache_age_seconds": None,
         "data": data,

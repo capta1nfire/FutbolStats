@@ -149,11 +149,11 @@ class OpsLogBufferHandler(logging.Handler):
             _seen_scheduler_started = True
 
         ts = getattr(record, "created", None)
-        dt = datetime.utcfromtimestamp(ts) if isinstance(ts, (int, float)) else datetime.now(timezone.utc)
+        dt = datetime.fromtimestamp(ts, tz=timezone.utc) if isinstance(ts, (int, float)) else datetime.now(timezone.utc)
 
         _ops_log_buffer.append(
             {
-                "ts_utc": dt.isoformat() + "Z",
+                "ts_utc": dt.isoformat(),
                 "level": record.levelname,
                 "logger": record.name,
                 "message": message,

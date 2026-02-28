@@ -76,7 +76,7 @@ async def dashboard_admin_overview(request: Request):
         data = await build_overview(session)
 
     result = {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "data": data,
     }
     cache["data"] = result
@@ -112,7 +112,7 @@ async def dashboard_admin_leagues(request: Request):
         data = await build_leagues_list(session)
 
     result = {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "data": data,
     }
     cache["data"] = result
@@ -153,7 +153,7 @@ async def dashboard_admin_league_detail(request: Request, league_id: int):
         raise HTTPException(status_code=404, detail=f"League {league_id} not found.")
 
     result = {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "data": data,
     }
     cache[cache_key] = {"data": result, "timestamp": now}
@@ -208,7 +208,7 @@ async def dashboard_admin_teams(
         data = await build_teams_list(session, team_type=team_type, country=country, search=search, limit=limit, offset=offset)
 
     result = {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "data": data,
     }
 
@@ -251,7 +251,7 @@ async def dashboard_admin_team_detail(request: Request, team_id: int):
         raise HTTPException(status_code=404, detail=f"Team {team_id} not found.")
 
     result = {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "data": data,
     }
     cache[cache_key] = {"data": result, "timestamp": now}
@@ -545,7 +545,7 @@ async def dashboard_admin_patch_league(request: Request, league_id: int):
     _coverage_map_cache["params"] = None
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "data": result,
     }
 
@@ -634,7 +634,7 @@ async def dashboard_admin_audit(
         raise HTTPException(status_code=400, detail=str(e))
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
         "data": data,
     }
@@ -655,7 +655,7 @@ async def dashboard_admin_league_groups(request: Request):
         data = await build_league_groups_list(session)
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
         "cache_age_seconds": None,
         "data": data,
@@ -680,7 +680,7 @@ async def dashboard_admin_league_group_detail(request: Request, group_id: int):
         raise HTTPException(status_code=404, detail=f"Group {group_id} not found")
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
         "cache_age_seconds": None,
         "data": data,
@@ -806,7 +806,7 @@ async def dashboard_admin_match_squad(request: Request, match_id: int):
         )
 
     data = {"match_id": match_id, "home": home, "away": away}
-    result_obj = {"generated_at": datetime.now(timezone.utc).isoformat() + "Z", "data": data}
+    result_obj = {"generated_at": datetime.now(timezone.utc).isoformat(), "data": data}
     cache[cache_key] = {"data": result_obj, "timestamp": now}
 
     return {
@@ -928,7 +928,7 @@ async def dashboard_admin_team_squad(request: Request, team_id: int):
         "manager_history": manager_history,
         "current_injuries": current_injuries,
     }
-    result_obj = {"generated_at": datetime.now(timezone.utc).isoformat() + "Z", "data": data}
+    result_obj = {"generated_at": datetime.now(timezone.utc).isoformat(), "data": data}
     cache[cache_key] = {"data": result_obj, "timestamp": now}
 
     return {
@@ -990,7 +990,7 @@ async def dashboard_admin_team_squad_stats(
                 "available_seasons": [],
                 "players": [],
             }
-            result_obj = {"generated_at": datetime.now(timezone.utc).isoformat() + "Z", "data": data}
+            result_obj = {"generated_at": datetime.now(timezone.utc).isoformat(), "data": data}
             cache[cache_key] = {"data": result_obj, "timestamp": now}
             return {
                 "generated_at": result_obj["generated_at"],
@@ -1166,7 +1166,7 @@ async def dashboard_admin_team_squad_stats(
         "team_matches_played": team_matches_played,
         "players": players,
     }
-    result_obj = {"generated_at": datetime.now(timezone.utc).isoformat() + "Z", "data": data}
+    result_obj = {"generated_at": datetime.now(timezone.utc).isoformat(), "data": data}
     cache[cache_key] = {"data": result_obj, "timestamp": now}
 
     return {
@@ -1217,7 +1217,7 @@ async def dashboard_admin_players_managers(
         else:
             data = await _build_managers_view(session, league_id, limit)
 
-    result_obj = {"generated_at": datetime.now(timezone.utc).isoformat() + "Z", "data": data}
+    result_obj = {"generated_at": datetime.now(timezone.utc).isoformat(), "data": data}
     cache[cache_key] = {"data": result_obj, "timestamp": now}
 
     return {
@@ -1494,7 +1494,7 @@ async def dashboard_admin_team_performance(
             season = latest.scalar()
             if season is None:
                 return {
-                    "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
                     "cached": False,
                     "cache_age_seconds": None,
                     "data": {
@@ -1634,7 +1634,7 @@ async def dashboard_admin_team_performance(
         "matches": matches,
     }
 
-    result_obj = {"generated_at": datetime.now(timezone.utc).isoformat() + "Z", "data": data}
+    result_obj = {"generated_at": datetime.now(timezone.utc).isoformat(), "data": data}
     cache[cache_key] = {"data": result_obj, "timestamp": now}
 
     return {

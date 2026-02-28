@@ -149,7 +149,7 @@ async def build_ml_health_data(session: AsyncSession) -> dict:
         health = "error"
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "health": health,
         "data": data,
     }
@@ -633,5 +633,5 @@ def _compute_fuel_gauge(data: dict, degraded_sections: list[str]) -> dict:
     return {
         "status": status,
         "reasons": reasons,
-        "as_of_utc": datetime.now(timezone.utc).isoformat() + "Z",
+        "as_of_utc": datetime.now(timezone.utc).isoformat(),
     }
