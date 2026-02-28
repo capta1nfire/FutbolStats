@@ -12,7 +12,7 @@ This service:
 import logging
 import math
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import numpy as np
@@ -553,7 +553,7 @@ class PostMatchAuditService:
                 )
                 audit.llm_narrative_status = llm_result.status
                 audit.llm_narrative_json = llm_result.narrative_json
-                audit.llm_narrative_generated_at = datetime.utcnow()
+                audit.llm_narrative_generated_at = datetime.now(timezone.utc)
                 audit.llm_narrative_model = llm_result.model
                 audit.llm_narrative_delay_ms = llm_result.delay_ms
                 audit.llm_narrative_exec_ms = llm_result.exec_ms
@@ -1124,7 +1124,7 @@ class PostMatchAuditService:
         Returns:
             Summary of audit results
         """
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
         # Find completed matches with predictions that haven't been audited
         # Eager load home_team and away_team for narrative insights

@@ -28,7 +28,7 @@ import asyncio
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 from sqlalchemy import text, select
@@ -121,7 +121,7 @@ async def cascade_handler(event: Event):
 
         # Canonical asof timestamp for this cascade run (PIT anchor for auditing).
         # Prefer lineup_detected_at if provided; fallback to now.
-        asof = lineup_detected_at if isinstance(lineup_detected_at, datetime) else datetime.utcnow()
+        asof = lineup_detected_at if isinstance(lineup_detected_at, datetime) else datetime.now(timezone.utc)
 
         # ── Step 2: Use baseline ML engine (P0-4 SSOT singleton) ────────────
         engine = ml_engine

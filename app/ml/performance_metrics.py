@@ -13,7 +13,7 @@ These metrics allow distinguishing variance from bugs.
 import logging
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import numpy as np
@@ -280,7 +280,7 @@ async def fetch_prediction_records(
     ABE P0-2: Filters by model_version to prevent mixing cohorts and uses
     DISTINCT ON to deduplicate (1 match = 1 row, latest prediction wins).
     """
-    cutoff = datetime.utcnow() - timedelta(days=window_days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
 
     # GDT SSOT: resolve model_version from model_snapshots.is_active=true (canonical)
     # Fallback: most recent prediction if no active snapshot (degraded integrity)
@@ -513,7 +513,7 @@ async def generate_performance_report(
 
     report = {
         "window_days": window_days,
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "confidence": confidence,
         "min_n_for_high_confidence": min_n_confidence,
         "global": global_metrics,

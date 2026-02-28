@@ -7,7 +7,7 @@ Usage:
     from app.jobs.tracking import record_job_run
 
     # In scheduler job:
-    start = datetime.utcnow()
+    start = datetime.now(timezone.utc)
     try:
         # ... job logic ...
         await record_job_run(session, "stats_backfill", "ok", start, metrics={"rows": 5})
@@ -17,7 +17,7 @@ Usage:
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select, text
@@ -47,7 +47,7 @@ async def record_job_run(
         error: Error message if failed.
         metrics: Optional job-specific metrics dict.
     """
-    finished_at = datetime.utcnow()
+    finished_at = datetime.now(timezone.utc)
     duration_ms = int((finished_at - started_at).total_seconds() * 1000)
 
     job_run = JobRun(

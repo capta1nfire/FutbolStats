@@ -1,7 +1,7 @@
 """ETL pipeline orchestrator."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select
@@ -110,7 +110,7 @@ class ETLPipeline:
             finished_statuses = ("FT", "AET", "PEN")
             if new_status in finished_statuses and old_status not in finished_statuses:
                 if existing_match.finished_at is None:
-                    existing_match.finished_at = datetime.utcnow()
+                    existing_match.finished_at = datetime.now(timezone.utc)
                     logger.info(f"Match {existing_match.id} finished: {old_status} -> {new_status}")
 
             existing_match.status = match_data.status
@@ -149,7 +149,7 @@ class ETLPipeline:
 
                     # Save odds snapshot if odds changed
                     if odds_changed:
-                        existing_match.odds_recorded_at = datetime.utcnow()
+                        existing_match.odds_recorded_at = datetime.now(timezone.utc)
                         await self._save_odds_history(
                             existing_match.id,
                             match_data.odds_home,
@@ -166,7 +166,7 @@ class ETLPipeline:
             return existing_match
 
         # Create new match - validate odds before including
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         odds_home_validated = None
         odds_draw_validated = None
         odds_away_validated = None

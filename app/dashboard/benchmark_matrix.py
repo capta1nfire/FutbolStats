@@ -17,7 +17,7 @@ import logging
 import math
 import random
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -118,7 +118,7 @@ def _get_cutoff(period: str) -> date:
     if period == "all":
         return ALL_CUTOFF
     days = int(period.replace("d", ""))
-    return (datetime.utcnow() - timedelta(days=days)).date()
+    return (datetime.now(timezone.utc) - timedelta(days=days)).date()
 
 
 def _get_label(status: str, home_goals: int, away_goals: int) -> int:
@@ -607,7 +607,7 @@ async def get_benchmark_matrix(
             ))
 
     response = BenchmarkMatrixResponse(
-        generated_at=datetime.utcnow().isoformat(),
+        generated_at=datetime.now(timezone.utc).isoformat(),
         period=period,
         anchor="Pinnacle",
         leagues=leagues,

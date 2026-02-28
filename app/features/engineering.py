@@ -19,7 +19,7 @@ Imputations and flags:
 
 import logging
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import numpy as np
@@ -1328,7 +1328,7 @@ async def compute_line_movement_features(
     Returns dict with all features (None if data insufficient).
     """
     if asof_timestamp is None:
-        asof_timestamp = datetime.utcnow()
+        asof_timestamp = datetime.now(timezone.utc)
 
     # Fetch latest T60 and T30 snapshots for this match, PIT-filtered
     # (DISTINCT ON guards against any duplicate rows per snapshot_type).
@@ -2708,7 +2708,7 @@ class FeatureEngineer:
 
         # Calculate date range using calendar days (start of day in UTC)
         # days_back=1 means yesterday at 00:00, days_ahead=1 means tomorrow at 23:59:59
-        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         recent_cutoff = today_start - timedelta(days=include_recent_days)
 
         # Calculate future cutoff (end of the target day)

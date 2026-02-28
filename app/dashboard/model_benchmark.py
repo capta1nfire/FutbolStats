@@ -7,7 +7,7 @@ Supports Market, Model A, Shadow, and Sensor B models.
 
 import logging
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -339,7 +339,7 @@ async def get_model_benchmark(
 
         if not rows:
             return ModelBenchmarkResponse(
-                generated_at=datetime.utcnow().isoformat(),
+                generated_at=datetime.now(timezone.utc).isoformat(),
                 start_date=start_date.isoformat(),
                 selected_models=selected,
                 total_matches=0,
@@ -514,7 +514,7 @@ async def get_model_benchmark(
             ))
 
         return ModelBenchmarkResponse(
-            generated_at=datetime.utcnow().isoformat(),
+            generated_at=datetime.now(timezone.utc).isoformat(),
             start_date=start_date.isoformat(),
             selected_models=selected,
             total_matches=total_matches,

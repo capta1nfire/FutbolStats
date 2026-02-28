@@ -35,7 +35,7 @@ API Discovery (Jan 2026):
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -263,7 +263,7 @@ class UnderstatProvider:
                 xga_home=round(xg_away, 2),  # xGA home = xG away
                 xga_away=round(xg_home, 2),  # xGA away = xG home
                 source_version=self.SOURCE_VERSION,
-                captured_at=datetime.utcnow(),
+                captured_at=datetime.now(timezone.utc),
             )
 
         except Exception as e:
@@ -292,7 +292,7 @@ class UnderstatProvider:
             xga_home=round(xg_away, 2),  # xGA home = xG away
             xga_away=round(xg_home, 2),  # xGA away = xG home
             source_version=f"{self.SOURCE_VERSION}_mock",
-            captured_at=datetime.utcnow(),
+            captured_at=datetime.now(timezone.utc),
         )
 
     async def close(self) -> None:

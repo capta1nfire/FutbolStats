@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from collections import deque
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -28,7 +28,7 @@ async def _record_provider_error(error_type: str, status_code: int, message: str
     """Record an error for ops.json visibility."""
     async with _error_lock:
         _error_log.append({
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "type": error_type,
             "status_code": status_code,
             "message": message[:200],  # Truncate long messages
@@ -37,7 +37,7 @@ async def _record_provider_error(error_type: str, status_code: int, message: str
 
 def get_provider_health() -> dict:
     """Get API-Football provider health stats for ops.json."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     cutoff_24h = now - timedelta(hours=24)
 
     # Count errors in last 24h
@@ -106,7 +106,7 @@ async def _budget_check_and_increment(cost: int = 1) -> None:
         # Backward compatible: if not configured, do not enforce budget.
         return
 
-    today = datetime.utcnow().date()
+    today = datetime.now(timezone.utc).date()
     async with _budget_lock:
         if _budget_day != today:
             _budget_day = today
@@ -394,7 +394,7 @@ class APIFootballProvider(DataProvider):
             if match_date.tzinfo is not None:
                 match_date = match_date.replace(tzinfo=None)
         except ValueError:
-            match_date = datetime.utcnow()
+            match_date = datetime.now(timezone.utc)
 
         # Extract status info (short code + elapsed minute + extra time)
         status_info = fixture_info.get("status", {})

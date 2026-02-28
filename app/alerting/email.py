@@ -7,7 +7,7 @@ Sends SMTP alerts with cooldown to prevent spam.
 import asyncio
 import logging
 import smtplib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from enum import Enum
@@ -38,12 +38,12 @@ def _can_send_alert(alert_type: AlertType) -> bool:
     if last_sent is None:
         return True
 
-    return datetime.utcnow() - last_sent >= cooldown
+    return datetime.now(timezone.utc) - last_sent >= cooldown
 
 
 def _record_alert_sent(alert_type: AlertType) -> None:
     """Record that an alert was sent."""
-    _last_alert_times[alert_type] = datetime.utcnow()
+    _last_alert_times[alert_type] = datetime.now(timezone.utc)
 
 
 def _build_predictions_health_email(

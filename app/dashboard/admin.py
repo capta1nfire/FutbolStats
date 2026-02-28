@@ -1367,7 +1367,7 @@ async def patch_team_wiki(
 
     # If both are now cleared, clear all derived fields too
     clear_all = final_wiki_url is None and final_wikidata_id is None
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     update_sql = text("""
         UPDATE teams

@@ -38,11 +38,11 @@ def _has_valid_ops_session(request: Request) -> bool:
 
         issued_at = session.get("issued_at")
         if issued_at:
-            from datetime import datetime, timedelta
+            from datetime import datetime, timedelta, timezone
 
             issued = datetime.fromisoformat(issued_at)
             ttl_hours = settings.OPS_SESSION_TTL_HOURS
-            if datetime.utcnow() - issued > timedelta(hours=ttl_hours):
+            if datetime.now(timezone.utc) - issued > timedelta(hours=ttl_hours):
                 return False
 
         return True

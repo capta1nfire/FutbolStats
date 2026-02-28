@@ -1253,10 +1253,10 @@ def record_job_run(
     # Run in background to avoid blocking
     try:
         import asyncio
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         # Calculate started_at from duration
-        finished_at = datetime.utcnow()
+        finished_at = datetime.now(timezone.utc)
         started_at = finished_at - timedelta(milliseconds=duration_ms)
 
         async def _persist_to_db():

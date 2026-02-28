@@ -10,7 +10,7 @@ All endpoints require X-Dashboard-Token authentication.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -204,8 +204,8 @@ async def upload_team_logo(
         team_logo.r2_key_original = r2_key
         team_logo.r2_key_original_svg = r2_key_svg
         team_logo.status = "pending"
-        team_logo.uploaded_at = datetime.utcnow()
-        team_logo.updated_at = datetime.utcnow()
+        team_logo.uploaded_at = datetime.now(timezone.utc)
+        team_logo.updated_at = datetime.now(timezone.utc)
         team_logo.fallback_url = team.logo_url
         team_logo.revision = revision
         # Clear previous variants (will be regenerated)
@@ -220,7 +220,7 @@ async def upload_team_logo(
             r2_key_original=r2_key,
             r2_key_original_svg=r2_key_svg,
             status="pending",
-            uploaded_at=datetime.utcnow(),
+            uploaded_at=datetime.now(timezone.utc),
             fallback_url=team.logo_url,
             revision=revision,
         )
@@ -448,7 +448,7 @@ async def _generate_team_background(
                         team_logo.status = "error"
                         team_logo.error_message = error or "Generation failed"
                         team_logo.error_phase = "background_generation"
-                        team_logo.updated_at = datetime.utcnow()
+                        team_logo.updated_at = datetime.now(timezone.utc)
                         await session.commit()
                         logger.info(f"Marked team {team_id} as error after failed generation")
                 except Exception as update_err:
@@ -468,7 +468,7 @@ async def _generate_team_background(
                     team_logo.status = "error"
                     team_logo.error_message = str(e)
                     team_logo.error_phase = "background_exception"
-                    team_logo.updated_at = datetime.utcnow()
+                    team_logo.updated_at = datetime.now(timezone.utc)
                     await session.commit()
             except Exception as inner_e:
                 logger.error(f"Failed to update error status: {inner_e}")
@@ -522,7 +522,7 @@ async def generate_team_logo(
 
     # Update status to processing immediately
     team_logo.status = "processing"
-    team_logo.processing_started_at = datetime.utcnow()
+    team_logo.processing_started_at = datetime.now(timezone.utc)
     team_logo.generation_mode = request.generation_mode
     team_logo.ia_model = request.ia_model
     team_logo.ia_prompt_version = request.prompt_version
@@ -668,7 +668,7 @@ async def review_team_logo(
     if not team_logo:
         raise HTTPException(status_code=404, detail="Team logo not found")
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     if request.action == "approve":
         team_logo.review_status = "approved"
@@ -723,7 +723,7 @@ async def approve_league_logos(
     session: AsyncSession = Depends(get_async_session),
 ):
     """Bulk approve or reject all pending logos in a league."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     if request.action == "approve_all":
         new_status = "approved"

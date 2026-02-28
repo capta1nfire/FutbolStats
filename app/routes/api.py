@@ -1229,7 +1229,7 @@ async def _predictions_catchup_on_startup():
     try:
         # Pre-check with short-lived session (closes before daily_save_predictions)
         async with AsyncSessionLocal() as session:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
             # 1) Check hours since last prediction saved
             res = await session.execute(
@@ -2211,7 +2211,7 @@ async def get_predictions(
     # Save predictions to database if requested
     # asof_timestamp = NOW() captures the PIT boundary for this prediction batch
     if save:
-        asof_ts = datetime.utcnow()
+        asof_ts = datetime.now(timezone.utc)
         saved_count = await _save_predictions_to_db(
             session, predictions, ml_engine.model_version, asof_timestamp=asof_ts
         )
@@ -2326,7 +2326,7 @@ async def _save_predictions_to_db(
     from app.db_utils import upsert
 
     if asof_timestamp is None:
-        asof_timestamp = datetime.utcnow()
+        asof_timestamp = datetime.now(timezone.utc)
 
     saved = 0
     for pred in predictions:
@@ -2426,7 +2426,7 @@ async def _overlay_rerun_predictions(
 
     # Freshness threshold
     freshness_hours = settings.RERUN_FRESHNESS_HOURS
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # Overlay rerun predictions where fresh
     for pred in predictions:
@@ -4586,7 +4586,7 @@ async def get_audit_summary(
 
     if days:
         from datetime import timedelta
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         query = query.where(PredictionOutcome.audited_at >= cutoff)
 
     result = await session.execute(query)
@@ -5058,7 +5058,7 @@ async def get_lineup_snapshots(
     """
     from sqlalchemy import text
 
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     result = await session.execute(text("""
         SELECT

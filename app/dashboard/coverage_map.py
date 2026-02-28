@@ -6,7 +6,7 @@ Endpoint: GET /dashboard/coverage-map.json
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
@@ -128,7 +128,7 @@ def resolve_date_range(
     Returns (None, None) for per-league season modes (current_season,
     prev_season, prev_season_2) — date filtering is done per-league in SQL.
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     if window == "custom":
         return date_from, date_to
     if window == "since_2023":

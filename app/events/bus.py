@@ -15,7 +15,7 @@ GDT Directive: DB-backed — queue loss on crash is recoverable via sweeper.
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from sqlalchemy import text
@@ -35,7 +35,7 @@ class Event:
     def __init__(self, event_type: str, payload: Dict[str, Any]):
         self.event_type = event_type
         self.payload = payload
-        self.created_at = datetime.utcnow()
+        self.created_at = datetime.now(timezone.utc)
 
     def __repr__(self):
         return f"Event({self.event_type}, match_id={self.payload.get('match_id')}, src={self.payload.get('source', '?')})"

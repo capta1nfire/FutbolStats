@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -358,7 +358,7 @@ async def dashboard_feature_coverage_json(request: Request):
 
     # Update cache
     _feature_coverage_cache["data"] = {
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
         "data": data,
     }
     _feature_coverage_cache["timestamp"] = now
@@ -836,7 +836,7 @@ async def pit_trigger_evaluation(request: Request):
 def _make_v2_wrapper(data: dict, cached: bool = False, cache_age_seconds: float = 0) -> dict:
     """Build standard v2 wrapper for dashboard endpoints."""
     return {
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
         "cached": cached,
         "cache_age_seconds": round(cache_age_seconds, 1),
         "data": data,
@@ -989,7 +989,7 @@ async def dashboard_sentry_issues(
             issues_url = f"https://sentry.io/api/0/projects/{org_slug}/{project_slug}/issues/"
 
             # Time boundary
-            now_dt = datetime.utcnow()
+            now_dt = datetime.now(timezone.utc)
             time_ago = (now_dt - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
 
             env_query = f"environment:{env_filter}" if env_filter else ""
@@ -1133,7 +1133,7 @@ async def dashboard_predictions_missing(
     try:
         from sqlalchemy import text
 
-        now_dt = datetime.utcnow()
+        now_dt = datetime.now(timezone.utc)
         cutoff = now_dt + timedelta(hours=hours)
 
         # Build query for matches without predictions
@@ -1277,7 +1277,7 @@ async def dashboard_movement_recent(
     }
 
     try:
-        now_dt = datetime.utcnow()
+        now_dt = datetime.now(timezone.utc)
         cutoff = now_dt - timedelta(hours=hours)
 
         items = []
@@ -1425,7 +1425,7 @@ async def dashboard_movement_top(
     }
 
     try:
-        now_dt = datetime.utcnow()
+        now_dt = datetime.now(timezone.utc)
         cutoff = now_dt - timedelta(hours=hours)
 
         movers = []
@@ -1851,7 +1851,7 @@ async def get_upcoming_matches_dashboard(
     from sqlalchemy import exists, literal_column
     from sqlalchemy.orm import aliased
 
-    now_dt = datetime.utcnow()
+    now_dt = datetime.now(timezone.utc)
     cutoff_dt = now_dt + timedelta(hours=hours)
 
     # Subquery: EXISTS prediction for this match
@@ -1930,7 +1930,7 @@ async def get_upcoming_matches_dashboard(
             "has_prediction": bool(row.has_prediction),
         })
 
-    generated_at = datetime.utcnow().isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
 
     # Update cache
     _upcoming_matches_cache["data"] = {
@@ -2070,7 +2070,7 @@ async def get_matches_dashboard(
     from sqlalchemy import func
     from sqlalchemy.orm import aliased
 
-    now_dt = datetime.utcnow()
+    now_dt = datetime.now(timezone.utc)
 
     # Time window: use from_time/to_time if provided, otherwise calculate from hours
     if parsed_from_time and parsed_to_time:
@@ -2617,7 +2617,7 @@ async def get_matches_dashboard(
 
         matches.append(match_data)
 
-    generated_at = datetime.utcnow().isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
     pages = (total + limit - 1) // limit if limit > 0 else 1
 
     response_data = {
@@ -2873,7 +2873,7 @@ async def get_jobs_dashboard(
 
     from sqlalchemy import func
 
-    now_dt = datetime.utcnow()
+    now_dt = datetime.now(timezone.utc)
     cutoff_dt = now_dt - timedelta(hours=hours)
 
     # Base query
@@ -2928,7 +2928,7 @@ async def get_jobs_dashboard(
     from app.jobs.tracking import get_jobs_health_from_db
     jobs_summary = await get_jobs_health_from_db(session)
 
-    generated_at = datetime.utcnow().isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
     pages = (total + limit - 1) // limit if limit > 0 else 1
 
     response_data = {
@@ -3015,7 +3015,7 @@ async def _build_data_quality_checks(session: AsyncSession) -> list[dict]:
     Build a stable list of Data Quality checks.
     Best-effort: if a single source fails, degrade that check (do not fail whole endpoint).
     """
-    now_iso = datetime.utcnow().isoformat() + "Z"
+    now_iso = datetime.now(timezone.utc).isoformat() + "Z"
     checks: list[dict] = []
 
     # Helper to append checks with consistent shape
@@ -3575,7 +3575,7 @@ async def dashboard_data_quality_json(
     end = start + limit
     page_checks = filtered[start:end]
 
-    generated_at = datetime.utcnow().isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
     response_data = {
         "checks": page_checks,
         "total": total,
@@ -3743,7 +3743,7 @@ async def dashboard_data_quality_check_json(
         # Best-effort: don't fail endpoint if affected_items query fails
         affected_items = [{"error": f"degraded: {str(e)[:120]}"}]
 
-    generated_at = datetime.utcnow().isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
     response_data = {
         "check": check,
         "affected_items": affected_items,
@@ -3812,13 +3812,13 @@ async def dashboard_predictions_json(
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
     now = time.time()
-    generated_at = datetime.utcnow().isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
 
     try:
         from sqlalchemy import text
 
         # Build date range
-        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         from_date = today - timedelta(days=days_back)
         to_date = today + timedelta(days=days_ahead + 1)  # +1 to include full day
 
@@ -4206,7 +4206,7 @@ async def _build_analytics_reports(session: AsyncSession) -> list[dict]:
             status = "ok"
             if accuracy is not None and accuracy < 0.35:
                 status = "warning"
-            elif row.generated_at and (datetime.utcnow() - row.generated_at).days > 2:
+            elif row.generated_at and (datetime.now(timezone.utc) - row.generated_at).days > 2:
                 status = "stale"
 
             reports.append({
@@ -4260,7 +4260,7 @@ async def _build_analytics_reports(session: AsyncSession) -> list[dict]:
 
             # Determine status
             status = "ok"
-            if row.created_at and (datetime.utcnow() - row.created_at).days > 3:
+            if row.created_at and (datetime.now(timezone.utc) - row.created_at).days > 3:
                 status = "stale"
             elif accuracy is not None and accuracy < 0.30:
                 status = "warning"
@@ -4306,7 +4306,7 @@ async def _build_analytics_reports(session: AsyncSession) -> list[dict]:
             status = "ok"
             if job_status == "error":
                 status = "warning"
-            elif row.day and (datetime.utcnow().date() - row.day).days > 2:
+            elif row.day and (datetime.now(timezone.utc).date() - row.day).days > 2:
                 status = "stale"
 
             reports.append({
@@ -4359,7 +4359,7 @@ async def _build_analytics_reports(session: AsyncSession) -> list[dict]:
                 "title": "Job Executions (24h)",
                 "subtitle": f"Top jobs: {', '.join(r.job_name[:20] for r in rows[:3])}",
                 "status": status,
-                "updated_at": datetime.utcnow().isoformat() + "Z",
+                "updated_at": datetime.now(timezone.utc).isoformat() + "Z",
                 "tags": ["jobs", "api", "24h"],
                 "summary": {
                     "primary_label": "Success Rate",
@@ -4394,7 +4394,7 @@ async def _build_analytics_reports(session: AsyncSession) -> list[dict]:
                 "title": "SOTA Enrichment Summary",
                 "subtitle": f"XI: {row.sofascore_lineups}, Weather: {row.weather_forecasts}, Geo: {row.venue_geos}",
                 "status": "ok" if total_enrichments > 100 else "warning",
-                "updated_at": datetime.utcnow().isoformat() + "Z",
+                "updated_at": datetime.now(timezone.utc).isoformat() + "Z",
                 "tags": ["sota", "enrichment", "coverage"],
                 "summary": {
                     "primary_label": "Total Enrichments",
@@ -4442,7 +4442,7 @@ async def dashboard_analytics_reports(
 
     now = time.time()
     cache = _analytics_reports_cache
-    generated_at = datetime.utcnow().isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
 
     try:
         # Check cache (only for unfiltered requests)
@@ -4571,7 +4571,7 @@ async def _build_audit_events(
 ) -> list[dict]:
     """Build audit events from multiple sources."""
     events = []
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     # Source 1: ops_audit_log
     try:
@@ -4722,7 +4722,7 @@ async def dashboard_audit_logs(
     if not verify_dashboard_token_bool(request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
-    generated_at = datetime.utcnow().isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
 
     # Parse multi-value filters
     types = [t.strip() for t in type.split(",")] if type else None
@@ -4830,7 +4830,7 @@ async def dashboard_team_logos(
     if not verify_dashboard_token_bool(request):
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
-    generated_at = datetime.utcnow().isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
     now = time.time()
     cache = _team_logos_cache
 
@@ -4978,7 +4978,7 @@ async def dashboard_coverage_map(
             include_quality_flags=include_quality_flags,
         )
     elapsed_ms = round((time.time() - t0) * 1000)
-    generated_at = datetime.utcnow().isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
     logger.info("coverage_map | computed in %dms | leagues=%d", elapsed_ms, data.get("summary", {}).get("leagues", 0))
 
     # Store in cache

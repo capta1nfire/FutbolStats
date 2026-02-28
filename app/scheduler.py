@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -157,7 +157,7 @@ async def get_tracked_leagues(session) -> list[int]:
     """
     global _tracked_leagues_cache, _tracked_leagues_cache_at
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     if _tracked_leagues_cache and _tracked_leagues_cache_at:
         if (now - _tracked_leagues_cache_at).total_seconds() < _TRACKED_LEAGUES_TTL_SECONDS:
             return _tracked_leagues_cache
@@ -211,7 +211,7 @@ async def global_sync_today() -> dict:
     """
     global _last_live_sync
 
-    today = datetime.utcnow()
+    today = datetime.now(timezone.utc)
     yesterday = today - timedelta(days=1)
 
     try:
@@ -259,7 +259,7 @@ async def global_sync_today() -> dict:
         # Freeze predictions for matches that have started
         freeze_result = await freeze_predictions_before_kickoff()
 
-        _last_live_sync = datetime.utcnow()
+        _last_live_sync = datetime.now(timezone.utc)
         logger.info(f"Global sync complete: {synced} matches updated, {freeze_result.get('frozen_count', 0)} predictions frozen")
 
         return {
@@ -302,7 +302,7 @@ async def global_sync_window(days_ahead: int = 10, days_back: int = 1) -> dict:
                 return {"matches_synced": 0, "days_processed": 0}
 
             pipeline = ETLPipeline(provider, session)
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             total_synced = 0
             days_processed = 0
             by_date = {}
@@ -386,7 +386,7 @@ async def ensure_kickoff_predictions() -> dict:
             # - Avoid JOIN teams (not needed for gating)
             # - Use parameters instead of NOW() to help planner/cache stability
             # - LIMIT to bound work under contention
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             end = now + timedelta(minutes=30)
             max_candidates = 50
 
@@ -555,7 +555,7 @@ async def freeze_predictions_before_kickoff() -> dict:
 
     try:
         async with get_session_with_retry(max_retries=3, retry_delay=1.0) as session:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
             # STEP 1: Count total not frozen (for observability only, lightweight)
             count_result = await session.execute(
@@ -904,7 +904,7 @@ def reset_lineup_capture_metrics():
     _lineup_capture_metrics = {
         "critical": {"api_errors_429": 0, "api_errors_timeout": 0, "api_errors_other": 0, "captures": 0, "latencies_ms": []},
         "full": {"api_errors_429": 0, "api_errors_timeout": 0, "api_errors_other": 0, "captures": 0, "latencies_ms": []},
-        "last_reset": datetime.utcnow().isoformat(),
+        "last_reset": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -990,7 +990,7 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
     try:
         # --- Phase 1: Read candidates into memory ---
         async with AsyncSessionLocal() as session:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             try:
                 league_ids = await resolve_lineup_monitoring_leagues(session)
             except Exception as e:
@@ -1077,13 +1077,13 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                     # Cooldown: if we recently checked this fixture and it wasn't confirmed, skip.
                     if external_id:
                         last = _lineup_check_cooldown.get(int(external_id))
-                        if last and (datetime.utcnow() - last).total_seconds() < _LINEUP_COOLDOWN_SECONDS:
+                        if last and (datetime.now(timezone.utc) - last).total_seconds() < _LINEUP_COOLDOWN_SECONDS:
                             continue
 
                     if lineup_calls >= max_lineup_checks:
                         break
 
-                    capture_start_time = datetime.utcnow()
+                    capture_start_time = datetime.now(timezone.utc)
 
                     # --- Dual-source lineup fetch (API-Football + Sofascore) ---
                     # ABE guardrail: asyncio.gather(return_exceptions=True)
@@ -1149,7 +1149,7 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
 
                     if not lineup_data:
                         if external_id:
-                            _lineup_check_cooldown[int(external_id)] = datetime.utcnow()
+                            _lineup_check_cooldown[int(external_id)] = datetime.now(timezone.utc)
                         continue
 
                     home_lineup = lineup_data.get("home")
@@ -1157,14 +1157,14 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
 
                     if not home_lineup or not away_lineup:
                         if external_id:
-                            _lineup_check_cooldown[int(external_id)] = datetime.utcnow()
+                            _lineup_check_cooldown[int(external_id)] = datetime.now(timezone.utc)
                         continue
 
                     home_xi = home_lineup.get("starting_xi", [])
                     away_xi = away_lineup.get("starting_xi", [])
 
                     if 8 <= len(home_xi) < 11 or 8 <= len(away_xi) < 11:
-                        minutes_to_ko = (match.date - datetime.utcnow()).total_seconds() / 60 if match.date else 0
+                        minutes_to_ko = (match.date - datetime.now(timezone.utc)).total_seconds() / 60 if match.date else 0
                         logger.info(
                             f"PARTIAL_LINEUP: match_id={match_id} external={external_id} "
                             f"home={len(home_xi)}/11 away={len(away_xi)}/11 "
@@ -1173,7 +1173,7 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
 
                     if len(home_xi) < 11 or len(away_xi) < 11:
                         if external_id:
-                            _lineup_check_cooldown[int(external_id)] = datetime.utcnow()
+                            _lineup_check_cooldown[int(external_id)] = datetime.now(timezone.utc)
                         continue
 
                     if any(p is None for p in home_xi) or any(p is None for p in away_xi):
@@ -1187,7 +1187,7 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                     logger.info(f"Lineup confirmed for match {match_id} (external: {external_id}, provider: {lineup_source})")
 
                     kickoff_time = match.date
-                    lineup_detected_at = datetime.utcnow()
+                    lineup_detected_at = datetime.now(timezone.utc)
 
                     if odds_calls >= LINEUP_MAX_ODDS_PER_RUN:
                         logger.info(f"{log_prefix} Odds cap reached ({LINEUP_MAX_ODDS_PER_RUN}), deferring odds capture.")
@@ -1225,7 +1225,7 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                     prob_draw = raw_draw / total
                     prob_away = raw_away / total
 
-                    snapshot_at = datetime.utcnow()
+                    snapshot_at = datetime.now(timezone.utc)
 
                     if kickoff_time and snapshot_at >= kickoff_time:
                         logger.warning(
@@ -1420,7 +1420,7 @@ async def monitor_lineups_and_capture_odds(critical_window_only: bool = False) -
                         logger.warning(f"Failed to emit LINEUP_CONFIRMED for match {match_id}: {evt_err}")
 
                     # Track metrics
-                    capture_end_time = datetime.utcnow()
+                    capture_end_time = datetime.now(timezone.utc)
                     latency_ms = int((capture_end_time - capture_start_time).total_seconds() * 1000)
                     _lineup_capture_metrics[job_type]["captures"] += 1
                     _lineup_capture_metrics[job_type]["latencies_ms"].append(latency_ms)
@@ -1556,7 +1556,7 @@ async def capture_market_movement_snapshots() -> dict:
         # --- Phase 1: Read candidates into memory ---
         candidates = []  # list of (match_id, external_id, kickoff_time, minutes_to_kickoff, bucket)
         async with AsyncSessionLocal() as session:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             league_ids = await resolve_lineup_monitoring_leagues(session)
 
             window_start = now + timedelta(minutes=3)
@@ -1644,7 +1644,7 @@ async def capture_market_movement_snapshots() -> dict:
                 prob_home = raw_home / total
                 prob_draw = raw_draw / total
                 prob_away = raw_away / total
-                snapshot_at = datetime.utcnow()
+                snapshot_at = datetime.now(timezone.utc)
 
                 # Short tx with deadlock retry + consistent lock ordering
                 async def _write_snapshot(
@@ -1968,7 +1968,7 @@ async def capture_lineup_relative_movement() -> dict:
                     float(match.lineup_prob_away or 0),
                     prob_home, prob_draw, prob_away
                 )
-                snapshot_at = datetime.utcnow()
+                snapshot_at = datetime.now(timezone.utc)
 
                 # Short tx: INSERT snapshot + check completion + UPDATE matches
                 async def _write_movement(
@@ -2269,7 +2269,7 @@ async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
             # Query next NS match date for logging
             next_ns_result = await session.execute(
                 select(func.min(Match.date))
-                .where(Match.status == "NS", Match.date > datetime.utcnow())
+                .where(Match.status == "NS", Match.date > datetime.now(timezone.utc))
             )
             next_ns_date = next_ns_result.scalar()
         # Session closed here - connection returned to pool
@@ -2304,7 +2304,7 @@ async def daily_save_predictions(return_metrics: bool = False) -> dict | None:
         # =================================================================
         # ABE P2: Capture PIT boundary BEFORE predicting — all information
         # used for these predictions was available at this timestamp.
-        asof_timestamp = datetime.utcnow()
+        asof_timestamp = datetime.now(timezone.utc)
 
         # League Router: log tier distribution for observability (GDT M3)
         from app.ml.league_router import get_league_tier
@@ -3264,7 +3264,7 @@ async def _record_recalib_run(
     """
     from datetime import datetime, timedelta
     duration_ms = (time.time() - start_time) * 1000
-    job_started_at = datetime.utcnow() - timedelta(milliseconds=duration_ms)
+    job_started_at = datetime.now(timezone.utc) - timedelta(milliseconds=duration_ms)
     # DB persist (reliable, session-based)
     try:
         async with get_session_with_retry(max_retries=2, retry_delay=0.5) as s:
@@ -3340,7 +3340,7 @@ async def _record_shadow_run(
     """
     from datetime import timedelta
     duration_ms = (time.time() - start_time) * 1000
-    job_started_at = datetime.utcnow() - timedelta(milliseconds=duration_ms)
+    job_started_at = datetime.now(timezone.utc) - timedelta(milliseconds=duration_ms)
     try:
         async with get_session_with_retry(max_retries=2, retry_delay=0.5) as s:
             from app.jobs.tracking import record_job_run as record_job_run_db
@@ -3379,7 +3379,7 @@ async def _should_trigger_shadow_retrain(session) -> tuple[bool, str]:
         return True, "first_run"
 
     # Interval trigger
-    days_since = (datetime.utcnow() - last_approved_at).days
+    days_since = (datetime.now(timezone.utc) - last_approved_at).days
     if days_since >= SHADOW_RETRAIN_INTERVAL_DAYS:
         return True, f"interval_{days_since}d"
 
@@ -3878,12 +3878,12 @@ async def capture_finished_match_stats() -> dict:
         "api_calls": 0,
         "errors_429": 0,
         "errors_other": 0,
-        "started_at": datetime.utcnow().isoformat(),
+        "started_at": datetime.now(timezone.utc).isoformat(),
     }
 
     try:
         async with AsyncSessionLocal() as session:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
             # Select finished matches that need stats
             # - status IN ('FT', 'AET', 'PEN')
@@ -4013,7 +4013,7 @@ async def capture_finished_match_stats() -> dict:
 
         # Log summary
         duration_ms = (time.time() - start_time) * 1000
-        metrics["completed_at"] = datetime.utcnow().isoformat()
+        metrics["completed_at"] = datetime.now(timezone.utc).isoformat()
         metrics["duration_ms"] = round(duration_ms, 1)
         metrics["ft_pending"] = ft_pending
 
@@ -4032,7 +4032,7 @@ async def capture_finished_match_stats() -> dict:
         # Save log file
         logs_dir = Path("logs")
         logs_dir.mkdir(exist_ok=True)
-        log_file = logs_dir / f"finished_match_stats_backfill_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.log"
+        log_file = logs_dir / f"finished_match_stats_backfill_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.log"
         with open(log_file, "w") as f:
             f.write(json.dumps(metrics, indent=2))
 
@@ -4102,7 +4102,7 @@ async def capture_finished_match_player_stats() -> dict:
         "skipped_no_data": 0,
         "skipped_no_players": 0,
         "errors": 0,
-        "started_at": datetime.utcnow().isoformat(),
+        "started_at": datetime.now(timezone.utc).isoformat(),
         "delay_hours": delay_hours,
         "max_calls": max_calls,
     }
@@ -4365,7 +4365,7 @@ async def capture_finished_match_player_stats() -> dict:
                 await provider.close()
 
         duration_ms = (time.time() - start_time) * 1000
-        metrics["completed_at"] = datetime.utcnow().isoformat()
+        metrics["completed_at"] = datetime.now(timezone.utc).isoformat()
         metrics["duration_ms"] = round(duration_ms, 1)
         record_job_run(job="player_stats_sync", status="ok", duration_ms=duration_ms)
 
@@ -4373,7 +4373,7 @@ async def capture_finished_match_player_stats() -> dict:
         try:
             logs_dir = Path("logs")
             logs_dir.mkdir(exist_ok=True)
-            log_file = logs_dir / f"player_stats_sync_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.log"
+            log_file = logs_dir / f"player_stats_sync_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.log"
             with open(log_file, "w") as f:
                 f.write(json.dumps(metrics, indent=2))
             metrics["log_file"] = str(log_file)
@@ -4475,7 +4475,7 @@ async def historical_stats_backfill() -> dict:
         "marked_no_stats": 0,
         "errors": 0,
         "api_calls": 0,
-        "started_at": datetime.utcnow().isoformat(),
+        "started_at": datetime.now(timezone.utc).isoformat(),
     }
 
     try:
@@ -4696,7 +4696,7 @@ async def refresh_recent_ft_stats(lookback_hours: int = 6, max_calls: int = 50) 
         "api_calls": 0,
         "errors_429": 0,
         "errors_other": 0,
-        "started_at": datetime.utcnow().isoformat(),
+        "started_at": datetime.now(timezone.utc).isoformat(),
     }
 
     try:
@@ -4781,7 +4781,7 @@ async def refresh_recent_ft_stats(lookback_hours: int = 6, max_calls: int = 50) 
                 await provider.close()
 
         duration_ms = (time.time() - start_time) * 1000
-        metrics["completed_at"] = datetime.utcnow().isoformat()
+        metrics["completed_at"] = datetime.now(timezone.utc).isoformat()
         metrics["duration_ms"] = round(duration_ms, 1)
 
         logger.info(
@@ -5210,12 +5210,12 @@ async def sync_odds_for_upcoming_matches() -> dict:
         "api_errors": 0,
         "errors_429": 0,
         "opening_odds_set": 0,
-        "started_at": datetime.utcnow().isoformat(),
+        "started_at": datetime.now(timezone.utc).isoformat(),
     }
 
     try:
         async with AsyncSessionLocal() as session:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
             # Select NS matches needing odds:
             # - status = 'NS' (not started)
@@ -5330,7 +5330,7 @@ async def sync_odds_for_upcoming_matches() -> dict:
                             )
 
                         # P1: Common snapshot timestamp for all books in this match
-                        snapshot_ts = datetime.utcnow()
+                        snapshot_ts = datetime.now(timezone.utc)
 
                         # P0 Opening Odds Live Fill (ABE 2026-02-23)
                         # Resolve opening_odds from first sync when not yet populated.
@@ -5458,7 +5458,7 @@ async def sync_odds_for_upcoming_matches() -> dict:
 
         # Log summary
         duration_ms = (time.time() - start_time) * 1000
-        metrics["completed_at"] = datetime.utcnow().isoformat()
+        metrics["completed_at"] = datetime.now(timezone.utc).isoformat()
         metrics["duration_ms"] = round(duration_ms, 1)
 
         record_odds_sync_batch(metrics["scanned"], metrics["updated"])
@@ -5578,7 +5578,7 @@ async def _save_pit_report_to_db(report_type: str, payload: dict, source: str = 
     from app.database import AsyncSessionLocal
     import json
 
-    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
     async with AsyncSessionLocal() as session:
         try:
@@ -5644,7 +5644,7 @@ async def weekly_pit_report():
         # ============================================================
         # Load daily PIT reports from DB (persistent across deploys)
         # ============================================================
-        cutoff_dt = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=7)
+        cutoff_dt = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=7)
         daily_reports: list[dict] = []
         async with AsyncSessionLocal() as session:
             res = await session.execute(text("""
@@ -5739,7 +5739,7 @@ async def weekly_pit_report():
                 # CAPTURE DELTA: Compare this week vs last week in ideal [45-75] window
                 # This tracks if our adaptive frequency optimization is working
                 # =====================================================================
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc)
                 this_week_start = now - timedelta(days=7)
                 last_week_start = now - timedelta(days=14)
                 last_week_end = now - timedelta(days=7)
@@ -5924,7 +5924,7 @@ async def weekly_pit_report():
         # Save weekly consolidated report
         weekly_report = {
             "report_type": "pit_weekly_consolidated",
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "evaluations_analyzed": len(daily_reports),
             "latest_evaluation": latest_ref,
             # Carry latest evaluation metrics for auditing (Brier vs market/uniform, ROI/EV + CI when available)
@@ -5984,7 +5984,7 @@ async def weekly_pit_report():
         try:
             logs_dir = "logs"
             os.makedirs(logs_dir, exist_ok=True)
-            report_file = f"{logs_dir}/pit_weekly_{datetime.utcnow().strftime('%Y%m%d')}.json"
+            report_file = f"{logs_dir}/pit_weekly_{datetime.now(timezone.utc).strftime('%Y%m%d')}.json"
             with open(report_file, "w") as f:
                 json.dump(weekly_report, f, indent=2)
             logger.info(f"Weekly report saved (filesystem): {report_file}")
@@ -6228,7 +6228,7 @@ async def daily_ops_rollup() -> dict:
     try:
         async with AsyncSessionLocal() as session:
             payload = {
-                "generated_at": datetime.utcnow().isoformat(),
+                "generated_at": datetime.now(timezone.utc).isoformat(),
                 "day": str(today),
             }
 
@@ -6599,7 +6599,7 @@ async def update_predictions_health_metrics():
 
     try:
         async with AsyncSessionLocal() as session:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
             # 1) Hours since last prediction saved
             res = await session.execute(
@@ -6763,7 +6763,7 @@ async def fast_postmatch_narratives() -> dict:
     # Check if job is enabled
     enabled = os.environ.get("FASTPATH_ENABLED", str(settings.FASTPATH_ENABLED)).lower()
     if enabled in ("false", "0", "no"):
-        _fastpath_metrics["last_tick_at"] = datetime.utcnow()
+        _fastpath_metrics["last_tick_at"] = datetime.now(timezone.utc)
         _fastpath_metrics["last_tick_result"] = {"status": "disabled"}
         return {"status": "disabled"}
 
@@ -6776,7 +6776,7 @@ async def fast_postmatch_narratives() -> dict:
                 duration_ms = int((time.time() - start_time) * 1000)
 
                 # Update in-memory metrics
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc)
                 _fastpath_metrics["last_tick_at"] = now
                 _fastpath_metrics["last_tick_result"] = result
                 _fastpath_metrics["ticks_total"] += 1
@@ -6839,7 +6839,7 @@ async def fast_postmatch_narratives() -> dict:
     except Exception as e:
         logger.error(f"[FASTPATH] tick failed: {e}", exc_info=True)
         sentry_capture_exception(e, job_id="fastpath")
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         duration_ms = int((time.time() - start_time) * 1000)
         _fastpath_metrics["last_tick_at"] = now
         _fastpath_metrics["last_tick_result"] = {"status": "error", "error": str(e)}
@@ -6887,7 +6887,7 @@ async def sota_understat_refs_sync() -> dict:
     from datetime import datetime
 
     start_time = _time.time()
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     job_name = "sota_understat_refs_sync"
 
     # Check if enabled
@@ -6960,7 +6960,7 @@ async def sota_understat_ft_backfill() -> dict:
     from datetime import datetime
 
     start_time = _time.time()
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     job_name = "sota_understat_ft_backfill"
 
     # Check if enabled
@@ -7038,7 +7038,7 @@ async def sota_weather_capture_prekickoff() -> dict:
     from datetime import datetime
 
     start_time = _time.time()
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     job_name = "sota_weather_capture"
 
     # Check if enabled
@@ -7114,7 +7114,7 @@ async def sota_venue_geo_expand() -> dict:
     from datetime import datetime
 
     start_time = _time.time()
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     job_name = "sota_venue_geo_expand"
 
     # Check if enabled (default off - requires geocoding API)
@@ -7183,7 +7183,7 @@ async def sota_team_home_city_sync() -> dict:
     from datetime import datetime
 
     start_time = _time.time()
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     job_name = "sota_team_home_city_sync"
 
     # Check if enabled (default off)
@@ -7196,7 +7196,7 @@ async def sota_team_home_city_sync() -> dict:
         from app.jobs.tracking import record_job_run as record_job_run_db
 
         # Full on Sundays (weekday 6), delta otherwise
-        mode = "full" if datetime.utcnow().weekday() == 6 else "delta"
+        mode = "full" if datetime.now(timezone.utc).weekday() == 6 else "delta"
         llm_enabled = os.environ.get("TEAM_PROFILE_LLM_ENABLED", "false").lower() in ("true", "1")
 
         async with AsyncSessionLocal() as session:
@@ -7247,7 +7247,7 @@ async def sota_wikidata_team_enrich() -> dict:
     from datetime import datetime
 
     start_time = _time.time()
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     job_name = "sota_wikidata_team_enrich"
 
     # Check if enabled (default off)
@@ -7268,7 +7268,7 @@ async def sota_wikidata_team_enrich() -> dict:
                 # CATCH-UP mode: process teams without enrichment
                 mode = "catch-up"
                 batch_size = int(os.environ.get("WIKIDATA_ENRICH_BATCH_SIZE", "100"))
-            elif datetime.utcnow().weekday() == 6:  # Sunday
+            elif datetime.now(timezone.utc).weekday() == 6:  # Sunday
                 # REFRESH mode: refresh > 30 days (only Sundays)
                 mode = "refresh"
                 batch_size = 50
@@ -7329,7 +7329,7 @@ async def sota_sofascore_refs_sync() -> dict:
     from datetime import datetime
 
     start_time = _time.time()
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     job_name = "sota_sofascore_refs_sync"
 
     # Check if enabled (default off)
@@ -7409,7 +7409,7 @@ async def sota_sofascore_xi_capture() -> dict:
     from datetime import datetime
 
     start_time = _time.time()
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     job_name = "sota_sofascore_xi_capture"
 
     # Check if enabled (default off - scraping requires careful rate limiting)
@@ -7483,7 +7483,7 @@ async def sota_sofascore_ratings_backfill() -> dict:
     from datetime import datetime
 
     start_time = _time.time()
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     job_name = "sota_sofascore_ratings_backfill"
 
     if os.environ.get("SOTA_SOFASCORE_RATINGS_ENABLED", "false").lower() in ("false", "0", "no"):
@@ -7539,7 +7539,7 @@ async def sota_sofascore_stats_backfill() -> dict:
     from datetime import datetime
 
     start_time = _time.time()
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     job_name = "sota_sofascore_stats_backfill"
 
     if os.environ.get("SOTA_SOFASCORE_STATS_ENABLED", "false").lower() in ("false", "0", "no"):
@@ -7594,7 +7594,7 @@ async def sota_fotmob_refs_sync() -> dict:
     from datetime import datetime
 
     start_time = _time.time()
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     job_name = "sota_fotmob_refs_sync"
 
     try:
@@ -7656,7 +7656,7 @@ async def sota_fotmob_xg_backfill() -> dict:
     from datetime import datetime
 
     start_time = _time.time()
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     job_name = "sota_fotmob_xg_backfill"
 
     try:
@@ -7723,7 +7723,7 @@ async def titan_feature_matrix_runner() -> dict:
     from datetime import datetime, date, timedelta
 
     start_time = _time.time()
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     job_name = "titan_feature_matrix_runner"
 
     # Check if enabled (default ON for TITAN)
@@ -8072,7 +8072,7 @@ async def player_injuries_sync() -> dict:
     import time as _time
 
     start_time = _time.time()
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     job_name = "player_injuries_sync"
 
     if os.environ.get("INJURIES_SYNC_ENABLED", "false").lower() in ("false", "0", "no"):
@@ -8128,7 +8128,7 @@ async def player_manager_sync() -> dict:
     import time as _time
 
     start_time = _time.time()
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     job_name = "player_manager_sync"
 
     if os.environ.get("MANAGER_SYNC_ENABLED", "false").lower() in ("false", "0", "no"):
@@ -8182,7 +8182,7 @@ async def player_squad_sync() -> dict:
     import time as _time
 
     start_time = _time.time()
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     job_name = "player_squad_sync"
 
     if os.environ.get("SQUAD_SYNC_ENABLED", "false").lower() in ("false", "0", "no"):
@@ -8236,7 +8236,7 @@ async def lineup_sync() -> dict:
     import time as _time
 
     start_time = _time.time()
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     job_name = "lineup_sync"
 
     if os.environ.get("LINEUP_SYNC_ENABLED", "false").lower() in ("false", "0", "no"):
@@ -8376,7 +8376,7 @@ def start_scheduler(ml_engine):
         id="predictions_safety_net",
         name="Predictions Safety Net (every 6h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=55),  # Offset: +55s
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=55),  # Offset: +55s
         max_instances=1,
         coalesce=True,
         misfire_grace_time=6 * 3600,  # 6h grace for 6h interval
@@ -8451,7 +8451,7 @@ def start_scheduler(ml_engine):
             id="retrain_sensor_model",
             name=f"Sensor B Retrain (every {sensor_settings.SENSOR_RETRAIN_INTERVAL_HOURS}h)",
             replace_existing=True,
-            next_run_time=datetime.utcnow() + timedelta(seconds=65),  # Offset: +65s
+            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=65),  # Offset: +65s
             max_instances=1,
             coalesce=True,
             misfire_grace_time=sensor_settings.SENSOR_RETRAIN_INTERVAL_HOURS * 3600,  # Grace = interval
@@ -8624,7 +8624,7 @@ def start_scheduler(ml_engine):
         id="finished_match_player_stats_sync",
         name="Finished Match Player Stats Sync (every 60 min)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=135),  # Offset from stats_backfill
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=135),  # Offset from stats_backfill
         max_instances=1,
         coalesce=True,
         misfire_grace_time=3600,  # 1h grace for 60min interval
@@ -8641,7 +8641,7 @@ def start_scheduler(ml_engine):
         id="historical_stats_backfill",
         name="Historical Stats Backfill (every 60 min)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=120),  # Offset: +120s (after regular backfill)
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=120),  # Offset: +120s (after regular backfill)
         max_instances=1,
         coalesce=True,
         misfire_grace_time=3600,  # 1h grace
@@ -8656,7 +8656,7 @@ def start_scheduler(ml_engine):
         id="stats_refresh_recent",
         name="Stats Refresh Recent FT (every 2h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=75),  # Offset: +75s
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=75),  # Offset: +75s
         max_instances=1,
         coalesce=True,
         misfire_grace_time=2 * 3600,  # 2h grace for 2h interval
@@ -8671,7 +8671,7 @@ def start_scheduler(ml_engine):
         id="clv_scoring_post_match",
         name="CLV Scoring Post-Match (every 2h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=95),
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=95),
         max_instances=1,
         coalesce=True,
         misfire_grace_time=2 * 3600,
@@ -8687,7 +8687,7 @@ def start_scheduler(ml_engine):
         id="canonical_odds_sweeper",
         name="Canonical Odds Sweeper (every 6h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=105),  # Offset: +105s
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=105),  # Offset: +105s
         max_instances=1,
         coalesce=True,
         misfire_grace_time=6 * 3600,
@@ -8704,7 +8704,7 @@ def start_scheduler(ml_engine):
         id="canonical_xg_sweeper",
         name="Canonical xG Sweeper (every 6h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=120),  # Offset: +120s (after odds)
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=120),  # Offset: +120s (after odds)
         max_instances=1,
         coalesce=True,
         misfire_grace_time=6 * 3600,
@@ -8722,7 +8722,7 @@ def start_scheduler(ml_engine):
             id="odds_sync_upcoming",
             name=f"Odds Sync (every {_odds_settings.ODDS_SYNC_INTERVAL_HOURS}h)",
             replace_existing=True,
-            next_run_time=datetime.utcnow() + timedelta(seconds=85),  # Offset: +85s
+            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=85),  # Offset: +85s
             max_instances=1,
             coalesce=True,
             misfire_grace_time=_odds_settings.ODDS_SYNC_INTERVAL_HOURS * 3600,  # Grace = interval
@@ -8852,7 +8852,7 @@ def start_scheduler(ml_engine):
         id="sota_understat_refs_sync",
         name="SOTA Understat Refs Sync (every 12h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=5),  # Offset: +5s
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=5),  # Offset: +5s
         max_instances=1,
         coalesce=True,
         misfire_grace_time=12 * 3600,  # 12h grace for 12h interval
@@ -8866,7 +8866,7 @@ def start_scheduler(ml_engine):
         id="sota_understat_ft_backfill",
         name="SOTA Understat xG Backfill (every 6h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=15),  # Offset: +15s
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=15),  # Offset: +15s
         max_instances=1,
         coalesce=True,
         misfire_grace_time=6 * 3600,  # 6h grace for 6h interval
@@ -8880,7 +8880,7 @@ def start_scheduler(ml_engine):
         id="sota_weather_capture",
         name="SOTA Weather Capture (every 60 min)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=25),  # Offset: +25s
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=25),  # Offset: +25s
         max_instances=1,
         coalesce=True,
         misfire_grace_time=3600,  # 1h grace for 1h interval
@@ -8935,7 +8935,7 @@ def start_scheduler(ml_engine):
         id="sota_sofascore_refs_sync",
         name="SOTA Sofascore Refs Sync (every 6h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=35),  # Offset: +35s
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=35),  # Offset: +35s
         max_instances=1,
         coalesce=True,
         misfire_grace_time=6 * 3600,  # 6h grace for 6h interval
@@ -8949,7 +8949,7 @@ def start_scheduler(ml_engine):
         id="sota_sofascore_xi_capture",
         name="SOTA Sofascore XI Capture (every 30 min)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=45),  # Offset: +45s
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=45),  # Offset: +45s
         max_instances=1,
         coalesce=True,
         misfire_grace_time=1800,  # 30min grace for 30min interval
@@ -8963,7 +8963,7 @@ def start_scheduler(ml_engine):
         id="sota_sofascore_ratings_backfill",
         name="SOTA Sofascore Ratings Backfill (every 6h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=55),  # Offset: +55s
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=55),  # Offset: +55s
         max_instances=1,
         coalesce=True,
         misfire_grace_time=6 * 3600,
@@ -8977,7 +8977,7 @@ def start_scheduler(ml_engine):
         id="sota_sofascore_stats_backfill",
         name="SOTA Sofascore Stats Backfill (every 6h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=65),  # Offset: +65s
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=65),  # Offset: +65s
         max_instances=1,
         coalesce=True,
         misfire_grace_time=6 * 3600,
@@ -8990,7 +8990,7 @@ def start_scheduler(ml_engine):
         id="sota_fotmob_refs_sync",
         name="SOTA FotMob Refs Sync (every 12h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=75),  # Offset: +75s
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=75),  # Offset: +75s
         max_instances=1,
         coalesce=True,
         misfire_grace_time=12 * 3600,
@@ -9003,7 +9003,7 @@ def start_scheduler(ml_engine):
         id="sota_fotmob_xg_backfill",
         name="SOTA FotMob xG Backfill (every 6h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=85),  # Offset: +85s
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=85),  # Offset: +85s
         max_instances=1,
         coalesce=True,
         misfire_grace_time=6 * 3600,
@@ -9017,7 +9017,7 @@ def start_scheduler(ml_engine):
         id="titan_feature_matrix_runner",
         name="TITAN Feature Matrix Runner (every 2h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=60),  # Offset: +60s (run soon after start)
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=60),  # Offset: +60s (run soon after start)
         max_instances=1,
         coalesce=True,
         misfire_grace_time=2 * 3600,  # 2h grace for 2h interval
@@ -9031,7 +9031,7 @@ def start_scheduler(ml_engine):
         id="titan_outcome_sync",
         name="TITAN Outcome Sync (every 30 min)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=90),  # Offset: +90s
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=90),  # Offset: +90s
         max_instances=1,
         coalesce=True,
         misfire_grace_time=1800,  # 30min grace
@@ -9046,7 +9046,7 @@ def start_scheduler(ml_engine):
         id="titan_lineup_fixup",
         name="TITAN Lineup Fixup (every 1h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=95),  # Offset: +95s
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=95),  # Offset: +95s
         max_instances=1,
         coalesce=True,
         misfire_grace_time=3600,  # 1h grace
@@ -9062,7 +9062,7 @@ def start_scheduler(ml_engine):
         id="titan_xg_fixup",
         name="TITAN xG Fixup (every 1h)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=110),  # Offset: +110s
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=110),  # Offset: +110s
         max_instances=1,
         coalesce=True,
         misfire_grace_time=3600,  # 1h grace
@@ -9077,7 +9077,7 @@ def start_scheduler(ml_engine):
         id="logo_resize_pending",
         name="Logo Resize Pending (every 5 min)",
         replace_existing=True,
-        next_run_time=datetime.utcnow() + timedelta(seconds=120),  # Offset: +120s
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=120),  # Offset: +120s
         max_instances=1,
         coalesce=True,
         misfire_grace_time=300,  # 5min grace

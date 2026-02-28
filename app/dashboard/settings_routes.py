@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -142,7 +142,7 @@ async def dashboard_settings_summary(request: Request):
         }
 
     # Build fresh data
-    generated_at = datetime.utcnow().isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
 
     try:
         integrations = {
@@ -241,7 +241,7 @@ async def dashboard_settings_feature_flags(
     limit = min(max(1, limit), 100)
     page = max(1, page)
 
-    generated_at = datetime.utcnow().isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
 
     try:
         # Get all flags (always fresh since they depend on env)
@@ -313,7 +313,7 @@ async def dashboard_settings_model_versions(request: Request):
     """
     _check_token(request)
 
-    generated_at = datetime.utcnow().isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
 
     # Check cache
     hit, cached = _settings_models_cache.get()
@@ -424,7 +424,7 @@ async def dashboard_settings_ia_features_get(request: Request):
     """
     _check_token(request)
 
-    generated_at = datetime.utcnow().isoformat() + "Z"
+    generated_at = datetime.now(timezone.utc).isoformat() + "Z"
 
     # Check cache
     hit, cached = _ia_features_cache.get()
@@ -568,7 +568,7 @@ async def dashboard_settings_ia_features_patch(request: Request):
             logger.info(f"[SETTINGS] IA Features updated: {updates}")
 
             return {
-                "generated_at": datetime.utcnow().isoformat() + "Z",
+                "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
                 "data": new_config,
                 "updated_fields": list(updates.keys()),
             }
@@ -905,7 +905,7 @@ def _check_playground_rate_limit(token: str) -> tuple[bool, int, datetime]:
 
     Returns: (allowed, remaining, reset_at)
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     hour_ago = now - timedelta(hours=1)
 
     # Clean old calls

@@ -8,7 +8,7 @@ import logging
 import os
 from collections import deque
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import FastAPI
@@ -149,7 +149,7 @@ class OpsLogBufferHandler(logging.Handler):
             _seen_scheduler_started = True
 
         ts = getattr(record, "created", None)
-        dt = datetime.utcfromtimestamp(ts) if isinstance(ts, (int, float)) else datetime.utcnow()
+        dt = datetime.utcfromtimestamp(ts) if isinstance(ts, (int, float)) else datetime.now(timezone.utc)
 
         _ops_log_buffer.append(
             {
@@ -182,7 +182,7 @@ def _get_ops_logs(
     rows = list(_ops_log_buffer)
 
     # Filter by since (UTC)
-    cutoff = datetime.utcnow() - timedelta(minutes=since_minutes)
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=since_minutes)
     filtered = []
     for r in rows:
         ts_str = r.get("ts_utc")

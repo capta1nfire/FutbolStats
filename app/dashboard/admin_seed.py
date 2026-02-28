@@ -8,7 +8,7 @@ Provides idempotent seed/sync functionality for admin_leagues table.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import text
@@ -339,7 +339,7 @@ async def full_sync(session: AsyncSession, dry_run: bool = False) -> dict:
     return {
         "seed": seed_result,
         "observed": observed_result,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 

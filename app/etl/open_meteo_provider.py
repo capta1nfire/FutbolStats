@@ -21,7 +21,7 @@ Reference: docs/ARCHITECTURE_SOTA.md section 1.3 (match_weather)
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import aiohttp
@@ -216,7 +216,7 @@ class OpenMeteoProvider:
                 cloudcover=cloudcover,
                 is_daylight=is_daylight,
                 forecast_horizon_hours=horizon_hours,
-                captured_at=datetime.utcnow(),
+                captured_at=datetime.now(timezone.utc),
             )
 
         except (KeyError, IndexError, TypeError) as e:
@@ -282,7 +282,7 @@ class OpenMeteoProvider:
             cloudcover=round(random.uniform(0, 100), 0),
             is_daylight=6 <= kickoff_utc.hour < 20,
             forecast_horizon_hours=horizon_hours,
-            captured_at=datetime.utcnow(),
+            captured_at=datetime.now(timezone.utc),
         )
 
     # =========================================================================

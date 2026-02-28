@@ -12,7 +12,7 @@ This module handles:
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import func, select, and_, or_, case
@@ -112,7 +112,7 @@ class RecalibrationEngine:
         Returns:
             Dictionary with adjustment results
         """
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
         # Get HOME outcomes with their audits
         home_query = (
@@ -255,7 +255,7 @@ class RecalibrationEngine:
                 away_predictions=away_total,
                 away_correct=away_correct,
                 away_anomalies=away_anomalies,
-                last_updated=datetime.utcnow(),
+                last_updated=datetime.now(timezone.utc),
                 adjustment_reason=combined_reason,
             ).on_conflict_do_update(
                 index_elements=["team_id"],
@@ -274,7 +274,7 @@ class RecalibrationEngine:
                     "away_predictions": away_total,
                     "away_correct": away_correct,
                     "away_anomalies": away_anomalies,
-                    "last_updated": datetime.utcnow(),
+                    "last_updated": datetime.now(timezone.utc),
                     "adjustment_reason": combined_reason,
                 }
             )
@@ -365,7 +365,7 @@ class RecalibrationEngine:
 
             if consecutive != adj.consecutive_minimal_count:
                 adj.consecutive_minimal_count = consecutive
-                adj.last_updated = datetime.utcnow()
+                adj.last_updated = datetime.now(timezone.utc)
 
                 # Apply recovery if threshold met
                 if consecutive >= RECOVERY_THRESHOLD and (adj.home_multiplier < 1.0 or adj.away_multiplier < 1.0):
@@ -475,7 +475,7 @@ class RecalibrationEngine:
         Args:
             days_ahead: How many days ahead to look for matches
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         upcoming_window = now + timedelta(days=days_ahead)
 
         # Get upcoming domestic matches
@@ -554,12 +554,12 @@ class RecalibrationEngine:
         stmt = pg_insert(TeamAdjustment).values(
             team_id=team_id,
             international_penalty=penalty,
-            last_updated=datetime.utcnow(),
+            last_updated=datetime.now(timezone.utc),
         ).on_conflict_do_update(
             index_elements=["team_id"],
             set_={
                 "international_penalty": penalty,
-                "last_updated": datetime.utcnow(),
+                "last_updated": datetime.now(timezone.utc),
             }
         )
         await self.session.execute(stmt)
@@ -601,7 +601,7 @@ class RecalibrationEngine:
         _drift_cache["misses"] += 1
         logger.info(f"drift_cache MISS (misses={_drift_cache['misses']}, computing...)")
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         week_ago = now - timedelta(days=7)
         historical_cutoff = now - timedelta(weeks=LEAGUE_DRIFT_LOOKBACK_WEEKS)
 
@@ -827,7 +827,7 @@ class RecalibrationEngine:
         Returns summary of matches with significant market movement.
         Uses batch query to avoid N+1 problem.
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         cutoff = now + timedelta(days=days_ahead)
 
         # Batch query: get all predictions with their matches in ONE query
@@ -1170,7 +1170,7 @@ class RecalibrationEngine:
         """
         Evaluate if model retraining should be triggered.
         """
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
         query = (
             select(PredictionOutcome, PostMatchAudit)
@@ -1340,7 +1340,7 @@ class RecalibrationEngine:
         adj_result = await self.session.execute(adj_query)
         teams_adjusted = adj_result.scalar() or 0
 
-        cutoff = datetime.utcnow() - timedelta(days=7)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
         outcome_query = (
             select(PredictionOutcome)
             .where(PredictionOutcome.audited_at >= cutoff)

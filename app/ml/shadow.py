@@ -231,7 +231,7 @@ async def evaluate_shadow_outcomes(session: AsyncSession) -> dict:
         - baseline/shadow accuracy and brier metrics
     """
     from sqlalchemy import and_
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     from app.models import Match
 
@@ -302,7 +302,7 @@ async def evaluate_shadow_outcomes(session: AsyncSession) -> dict:
         shadow_pred.shadow_correct = s_correct
         shadow_pred.baseline_brier = b_brier
         shadow_pred.shadow_brier = s_brier
-        shadow_pred.evaluated_at = datetime.utcnow()
+        shadow_pred.evaluated_at = datetime.now(timezone.utc)
 
         session.add(shadow_pred)
 
@@ -508,7 +508,7 @@ async def get_shadow_health_metrics(session: AsyncSession) -> dict:
     eval_lag_minutes = 0.0
 
     if row.oldest_created:
-        delta = datetime.utcnow() - row.oldest_created
+        delta = datetime.now(timezone.utc) - row.oldest_created
         eval_lag_minutes = delta.total_seconds() / 60.0
 
     return {

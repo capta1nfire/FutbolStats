@@ -26,7 +26,7 @@ import logging
 import os
 import random
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from curl_cffi.requests import AsyncSession
@@ -291,7 +291,7 @@ class SofascoreProvider:
         if error:
             return SofascoreMatchLineup(
                 source_event_id=sofascore_event_id,
-                captured_at=datetime.utcnow(),
+                captured_at=datetime.now(timezone.utc),
                 error=error,
             )
 
@@ -301,7 +301,7 @@ class SofascoreProvider:
             logger.error(f"[SOFASCORE] Schema break parsing lineups for {sofascore_event_id}: {e}")
             return SofascoreMatchLineup(
                 source_event_id=sofascore_event_id,
-                captured_at=datetime.utcnow(),
+                captured_at=datetime.now(timezone.utc),
                 error=f"schema_break: {str(e)[:100]}",
             )
 
@@ -329,7 +329,7 @@ class SofascoreProvider:
             "away": {...}
         }
         """
-        captured_at = datetime.utcnow()
+        captured_at = datetime.now(timezone.utc)
 
         home_data = data.get("home", {})
         away_data = data.get("away", {})
@@ -585,7 +585,7 @@ class SofascoreProvider:
                 formation=random.choice(formations),
                 players=make_players("away"),
             ),
-            captured_at=datetime.utcnow(),
+            captured_at=datetime.now(timezone.utc),
             integrity_score=1.0,
         )
 

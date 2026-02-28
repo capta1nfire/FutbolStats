@@ -23,7 +23,7 @@ Usage:
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -317,14 +317,14 @@ async def process_team_logo(
             generation_mode=batch_job.generation_mode,
             ia_model=batch_job.ia_model,
             ia_prompt_version=batch_job.prompt_version,
-            processing_started_at=datetime.utcnow(),
+            processing_started_at=datetime.now(timezone.utc),
             revision=revision,
         )
         session.add(team_logo)
     else:
         team_logo.status = "processing"
         team_logo.batch_job_id = batch_job.id
-        team_logo.processing_started_at = datetime.utcnow()
+        team_logo.processing_started_at = datetime.now(timezone.utc)
         team_logo.revision = revision
 
     await session.commit()
@@ -346,7 +346,7 @@ async def process_team_logo(
         return False, "Failed to upload original"
 
     team_logo.r2_key_original = original_key
-    team_logo.uploaded_at = datetime.utcnow()
+    team_logo.uploaded_at = datetime.now(timezone.utc)
 
     # Determine which variants to generate
     variants = []
@@ -463,7 +463,7 @@ async def process_team_logo(
 
     # Update status to pending_resize
     team_logo.status = "pending_resize"
-    team_logo.processing_completed_at = datetime.utcnow()
+    team_logo.processing_completed_at = datetime.now(timezone.utc)
     team_logo.ia_cost_usd = total_cost
     team_logo.retry_count = 0
     team_logo.error_message = None
@@ -551,9 +551,9 @@ async def process_team_thumbnails(
     # Update team logo
     team_logo.urls = urls
     team_logo.status = "ready"
-    team_logo.resize_completed_at = datetime.utcnow()
+    team_logo.resize_completed_at = datetime.now(timezone.utc)
     team_logo.review_status = "pending"
-    team_logo.updated_at = datetime.utcnow()
+    team_logo.updated_at = datetime.now(timezone.utc)
 
     await session.commit()
 
@@ -603,8 +603,8 @@ async def process_batch(
     if not teams_to_process:
         # All done
         batch_job.status = "pending_review"
-        batch_job.completed_at = datetime.utcnow()
-        batch_job.updated_at = datetime.utcnow()
+        batch_job.completed_at = datetime.now(timezone.utc)
+        batch_job.updated_at = datetime.now(timezone.utc)
         await session.commit()
         return {
             "processed": 0,
@@ -669,7 +669,7 @@ async def process_batch(
     # Update batch progress
     batch_job.processed_teams += processed + failed
     batch_job.failed_teams += failed
-    batch_job.updated_at = datetime.utcnow()
+    batch_job.updated_at = datetime.now(timezone.utc)
     await session.commit()
 
     remaining = len(team_ids) - batch_job.processed_teams
@@ -692,7 +692,7 @@ async def pause_batch(session: AsyncSession, batch_id: UUID) -> bool:
                 LogoBatchJob.status == "running",
             )
         )
-        .values(status="paused", paused_at=datetime.utcnow(), updated_at=datetime.utcnow())
+        .values(status="paused", paused_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc))
     )
     await session.commit()
     return result.rowcount > 0
@@ -708,7 +708,7 @@ async def resume_batch(session: AsyncSession, batch_id: UUID) -> bool:
                 LogoBatchJob.status == "paused",
             )
         )
-        .values(status="running", paused_at=None, updated_at=datetime.utcnow())
+        .values(status="running", paused_at=None, updated_at=datetime.now(timezone.utc))
     )
     await session.commit()
     return result.rowcount > 0
@@ -724,7 +724,7 @@ async def cancel_batch(session: AsyncSession, batch_id: UUID) -> bool:
                 LogoBatchJob.status.in_(["running", "paused"]),
             )
         )
-        .values(status="cancelled", updated_at=datetime.utcnow())
+        .values(status="cancelled", updated_at=datetime.now(timezone.utc))
     )
     await session.commit()
     return result.rowcount > 0
@@ -850,7 +850,7 @@ async def generate_single_team(
 
     # Update status to processing
     team_logo.status = "processing"
-    team_logo.processing_started_at = datetime.utcnow()
+    team_logo.processing_started_at = datetime.now(timezone.utc)
     team_logo.generation_mode = generation_mode
     team_logo.ia_model = ia_model
     team_logo.ia_prompt_version = prompt_version
@@ -968,11 +968,11 @@ async def generate_single_team(
 
     # Update status
     team_logo.status = "pending_resize"
-    team_logo.processing_completed_at = datetime.utcnow()
+    team_logo.processing_completed_at = datetime.now(timezone.utc)
     team_logo.ia_cost_usd = total_cost
     team_logo.error_message = None
     team_logo.error_phase = None
-    team_logo.updated_at = datetime.utcnow()
+    team_logo.updated_at = datetime.now(timezone.utc)
 
     await session.commit()
 

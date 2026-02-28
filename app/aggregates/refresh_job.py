@@ -6,7 +6,7 @@ Runs as part of the scheduler or can be triggered manually.
 """
 
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional
 
 from sqlalchemy import select, func, and_
@@ -36,14 +36,14 @@ async def refresh_all_aggregates(
     start_time = time.time()
 
     if as_of_date is None:
-        as_of_date = datetime.utcnow().date()
+        as_of_date = datetime.now(timezone.utc).date()
 
     metrics = {
         "leagues_processed": 0,
         "baselines_created": 0,
         "profiles_created": 0,
         "errors": [],
-        "started_at": datetime.utcnow().isoformat(),
+        "started_at": datetime.now(timezone.utc).isoformat(),
     }
 
     service = AggregatesService(session)
@@ -86,7 +86,7 @@ async def refresh_all_aggregates(
     await session.commit()
 
     duration_ms = (time.time() - start_time) * 1000
-    metrics["completed_at"] = datetime.utcnow().isoformat()
+    metrics["completed_at"] = datetime.now(timezone.utc).isoformat()
     metrics["duration_ms"] = duration_ms
 
     # Get final counts for telemetry
@@ -145,7 +145,7 @@ async def refresh_single_league(
         Dict with refresh results
     """
     if as_of_date is None:
-        as_of_date = datetime.utcnow().date()
+        as_of_date = datetime.now(timezone.utc).date()
 
     service = AggregatesService(session)
 

@@ -6,7 +6,7 @@ All metrics are deterministic and verifiable.
 """
 
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional
 
 from sqlalchemy import select, and_, func
@@ -45,7 +45,7 @@ class AggregatesService:
             LeagueSeasonBaseline or None if insufficient data
         """
         if as_of_date is None:
-            as_of_date = datetime.utcnow().date()
+            as_of_date = datetime.now(timezone.utc).date()
 
         as_of_datetime = datetime.combine(as_of_date, datetime.max.time())
 
@@ -147,7 +147,7 @@ class AggregatesService:
             corners_avg_per_match=round(corners_total / corners_count, 1) if corners_count > 0 else None,
             yellow_cards_avg_per_match=round(yellow_total / yellow_count, 1) if yellow_count > 0 else None,
             red_cards_avg_per_match=round(red_total / red_count, 2) if red_count > 0 else None,
-            last_computed_at=datetime.utcnow(),
+            last_computed_at=datetime.now(timezone.utc),
         )
 
         # Upsert
@@ -199,7 +199,7 @@ class AggregatesService:
             List of LeagueTeamProfile objects
         """
         if as_of_date is None:
-            as_of_date = datetime.utcnow().date()
+            as_of_date = datetime.now(timezone.utc).date()
 
         as_of_datetime = datetime.combine(as_of_date, datetime.max.time())
 
@@ -440,7 +440,7 @@ class AggregatesService:
                 goals_scored_76_90p_pct=round(ts["goals_76_90p_pct"], 1) if ts["goals_76_90p_pct"] is not None else None,
                 goals_conceded_0_15_pct=round(ts["conceded_0_15_pct"], 1) if ts["conceded_0_15_pct"] is not None else None,
                 goals_conceded_76_90p_pct=round(ts["conceded_76_90p_pct"], 1) if ts["conceded_76_90p_pct"] is not None else None,
-                last_computed_at=datetime.utcnow(),
+                last_computed_at=datetime.now(timezone.utc),
             )
 
             # Upsert

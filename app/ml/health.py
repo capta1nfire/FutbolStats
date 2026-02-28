@@ -8,7 +8,7 @@ Endpoint: GET /dashboard/ml_health.json
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine
 
 from sqlalchemy import text
@@ -149,7 +149,7 @@ async def build_ml_health_data(session: AsyncSession) -> dict:
         health = "error"
 
     return {
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
         "health": health,
         "data": data,
     }
@@ -633,5 +633,5 @@ def _compute_fuel_gauge(data: dict, degraded_sections: list[str]) -> dict:
     return {
         "status": status,
         "reasons": reasons,
-        "as_of_utc": datetime.utcnow().isoformat() + "Z",
+        "as_of_utc": datetime.now(timezone.utc).isoformat() + "Z",
     }

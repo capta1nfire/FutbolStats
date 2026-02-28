@@ -15,7 +15,7 @@ across Gunicorn workers.
 import asyncio
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
@@ -147,7 +147,7 @@ async def _pick_next_league(session) -> dict:
     if not rows:
         return None
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     best = None
     best_overdue = -1
 

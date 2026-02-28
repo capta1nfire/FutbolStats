@@ -11,7 +11,7 @@ PIT policy: captured_at < kickoff (strict). Backfills are NOT PIT-safe for train
 
 import json
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional
 
 from sqlalchemy import text
@@ -34,7 +34,7 @@ def _current_season(league_id: int) -> int:
     For simplicity, use current year. If league hasn't started yet, API returns
     data for the most recent season.
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     month = now.month
     # European leagues start Aug/Sep, so before Aug use previous year
     # South American leagues are calendar year
@@ -191,7 +191,7 @@ async def _upsert_injuries(
 
         # PIT-safe: cap captured_at to fixture_date so historical backfills
         # don't create future timestamps that violate captured_at < match.date
-        captured_at = min(fixture_date, datetime.utcnow()) if fixture_date else datetime.utcnow()
+        captured_at = min(fixture_date, datetime.now(timezone.utc)) if fixture_date else datetime.now(timezone.utc)
 
         result = await session.execute(
             text("""

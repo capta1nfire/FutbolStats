@@ -11,7 +11,7 @@ GOVERNANCE RULES:
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
@@ -142,7 +142,7 @@ class SensorEngine:
 
             # Update state
             self.training_samples = len(df)
-            self.trained_at = datetime.utcnow()
+            self.trained_at = datetime.now(timezone.utc)
             self.model_version = f"logreg_l2_w{self.window_size}_v1"
             self.is_ready = True
 
@@ -347,7 +347,7 @@ async def retrain_sensor(session: AsyncSession) -> dict:
 
     # Train
     result = _sensor_engine.train(df)
-    _sensor_last_trained = datetime.utcnow()
+    _sensor_last_trained = datetime.now(timezone.utc)
 
     return result
 
@@ -1076,7 +1076,7 @@ async def get_sensor_health_metrics(session: AsyncSession) -> dict:
 
     if row.oldest_created:
         from datetime import datetime
-        delta = datetime.utcnow() - row.oldest_created
+        delta = datetime.now(timezone.utc) - row.oldest_created
         eval_lag_minutes = delta.total_seconds() / 60.0
 
     # Determine current state

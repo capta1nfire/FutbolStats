@@ -196,7 +196,7 @@ async def upsert_match_external_ref(
     """
     if created_at is None:
         # Use naive datetime (match_external_refs.created_at is timestamp without timezone)
-        created_at = datetime.utcnow()
+        created_at = datetime.now(timezone.utc)
 
     # Check if exists
     check = await session.execute(
