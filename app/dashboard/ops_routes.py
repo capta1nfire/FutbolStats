@@ -12,7 +12,7 @@ import logging
 import os
 import time
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -90,7 +90,7 @@ async def _calculate_telemetry_summary(session) -> dict:
     - WARN: unmapped_entities > 0 (and tainted/quarantined == 0)
     - OK: all counters == 0
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # NOTE (2026-02): Keep /dashboard/ops.json cheap.
     # Consolidate multiple counts into a single statement to reduce
@@ -279,7 +279,7 @@ async def _calculate_shadow_mode_summary(session) -> dict:
     from app.config import get_settings
 
     settings = get_settings()
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # State info
     shadow_arch = settings.MODEL_SHADOW_ARCHITECTURE
@@ -708,7 +708,7 @@ async def _calculate_jobs_health_summary(session) -> dict:
         fastpath_backlog_ready_gauge,
     )
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # P1-B: Preload DB fallback data for all jobs
     db_fallback = {}
@@ -929,7 +929,7 @@ async def _calculate_sota_enrichment_summary(session) -> dict:
         "note": string | null
     }
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     result = {"status": "ok", "generated_at": now.isoformat()}
 
     # Helper to build unavailable response
@@ -1279,7 +1279,7 @@ async def _calculate_titan_summary() -> dict:
     Lightweight query for ops.json inclusion.
     Creates its own session to avoid scope issues.
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     result = {
         "status": "ok",
         "generated_at": now.isoformat(),
@@ -1491,7 +1491,7 @@ async def _calculate_predictions_health(session) -> dict:
 
     PERF: Single CTE query replaces 8 sequential queries (fixes N+1 pattern).
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # Single consolidated query using CTEs (8 queries → 1)
     res = await session.execute(
@@ -1971,7 +1971,7 @@ async def _calculate_fastpath_health(session) -> dict:
     from app.config import get_settings
 
     settings = get_settings()
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # Read ticks from DB (canonical source - survives restarts/multi-process)
     last_tick_at = None
@@ -2741,7 +2741,7 @@ async def audit_metrics_endpoint(
     from sqlalchemy import text
 
     result = {
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "audits": {},
     }
 
@@ -2997,7 +2997,7 @@ async def _fetch_sentry_health() -> dict:
     import httpx
 
     now_ts = time_module.time()
-    now_iso = datetime.utcnow().isoformat()
+    now_iso = datetime.now(timezone.utc).isoformat()
 
     # Check cache first
     if _sentry_health_cache["data"] and (now_ts - _sentry_health_cache["timestamp"]) < _sentry_health_cache["ttl"]:
@@ -3052,7 +3052,7 @@ async def _fetch_sentry_health() -> dict:
 
             # Calculate time boundaries for filtering by lastSeen/firstSeen
             from datetime import timedelta
-            now_dt = datetime.utcnow()
+            now_dt = datetime.now(timezone.utc)
             one_hour_ago = (now_dt - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S")
             one_day_ago = (now_dt - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S")
 
@@ -3278,7 +3278,7 @@ async def _fetch_budget_status() -> dict:
         from zoneinfo import ZoneInfo
         tz_name = "America/Los_Angeles"
         reset_hour, reset_minute = 16, 0
-        now_utc = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC"))
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=ZoneInfo("UTC"))
         now_la = now_utc.astimezone(ZoneInfo(tz_name))
         next_reset_la = now_la.replace(hour=reset_hour, minute=reset_minute, second=0, microsecond=0)
         if next_reset_la <= now_la:
@@ -3818,7 +3818,7 @@ async def _calculate_sofascore_cron_health(session) -> dict:
                 (SELECT COUNT(*) FROM sofascore_player_rating_history WHERE captured_at > NOW() - INTERVAL '24 hours') AS ratings_24h
         """))
         r = row.first()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         def _evaluate_job(last_at, count_24h, warn_hours, red_hours):
             if not last_at:
@@ -3965,7 +3965,7 @@ async def _load_ops_data() -> dict:
     """
     from app.scheduler import get_last_sync_time
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     league_mode = os.environ.get("LEAGUE_MODE", "tracked").strip().lower()
     last_sync = get_last_sync_time()
     league_name_by_id = _build_league_name_map()
@@ -4137,7 +4137,7 @@ async def _get_cached_ops_data(blocking: bool = True) -> dict:
         # Cold start: schedule refresh and return a minimal placeholder
         _schedule_ops_dashboard_cache_refresh(reason="cold_start_nonblocking")
         return {
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "status": "warming_cache",
             "note": "OPS cache warming in background (non-blocking). Retry in a few seconds.",
         }
@@ -4158,7 +4158,7 @@ async def _get_cached_ops_data(blocking: bool = True) -> dict:
 
     # Extremely rare: still no data (DB down on cold start). Fail-soft.
     return {
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "status": "unavailable",
         "note": "Could not load OPS data (DB unavailable).",
     }
@@ -4205,7 +4205,7 @@ async def ops_dashboard_logs_json(
 
     compact = mode == "compact"
     return {
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
         "limit": limit,
         "since_minutes": since_minutes,
         "level": level,
@@ -5447,7 +5447,7 @@ async def ops_login_submit(request: Request):
 
     # Create session
     request.session["ops_authenticated"] = True
-    request.session["issued_at"] = datetime.utcnow().isoformat()
+    request.session["issued_at"] = datetime.now(timezone.utc).isoformat()
     logger.info(f"[OPS_LOGIN] Successful login from {request.client.host}")
 
     # Redirect to dashboard JSON
@@ -5506,7 +5506,7 @@ async def ops_daily_counts(
 
     import re
 
-    target_date = date or datetime.utcnow().strftime("%Y-%m-%d")
+    target_date = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     # Validate date format (YYYY-MM-DD) to prevent SQL injection
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", target_date):
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
@@ -6193,7 +6193,7 @@ async def ops_alerts_webhook(
                 ends_at = ends_at.replace(tzinfo=None)
 
             # Upsert into ops_alerts
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
             # Check if exists
             existing = await session.execute(
@@ -6348,7 +6348,7 @@ async def ops_alerts_ack(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     updated = 0
 
     if body.get("ack_all"):
@@ -6516,7 +6516,7 @@ async def debug_log(request: Request):
 
     # Build log entry (no token/headers logged)
     entry = {
-        "ts": datetime.utcnow().isoformat() + "Z",
+        "ts": datetime.now(timezone.utc).isoformat() + "Z",
         "component": payload.get("component"),
         "endpoint": payload.get("endpoint"),
         "message": payload.get("message"),
@@ -6598,7 +6598,7 @@ async def _detect_active_incidents(session) -> list[dict]:
     This is the "detection" phase only — does NOT persist anything.
     """
     incidents = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     now_iso = now.isoformat() + "Z"
 
     # =========================================================================
@@ -6850,7 +6850,7 @@ async def _upsert_incidents(session, detected: list[dict]) -> None:
         return
 
     import json as _json
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     now_iso = now.isoformat() + "Z"
 
     # Build parallel arrays for unnest (ABE: text[] for JSONB to avoid asyncpg type issues)
@@ -6975,7 +6975,7 @@ async def _auto_resolve_stale_incidents(session) -> int:
 
     Returns count of auto-resolved incidents.
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     now_iso = now.isoformat() + "Z"
     grace_cutoff = now - timedelta(minutes=_RESOLVE_GRACE_MINUTES)
 
@@ -7145,7 +7145,7 @@ async def get_incidents_dashboard(
         raise HTTPException(status_code=401, detail="Dashboard access requires valid token.")
 
     now = time.time()
-    now_iso = datetime.utcnow().isoformat() + "Z"
+    now_iso = datetime.now(timezone.utc).isoformat() + "Z"
 
     # Check cache
     if (
@@ -7266,7 +7266,7 @@ async def patch_incident(
     if new_status == "resolved" and current_status == "resolved":
         raise HTTPException(status_code=400, detail="Already resolved")
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     now_iso = now.isoformat() + "Z"
 
     # Build timeline event
