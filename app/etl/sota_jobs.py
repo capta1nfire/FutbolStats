@@ -249,7 +249,7 @@ async def _fetch_understat_candidates(
                     "source_match_id": str(u_match.get("id")),
                     "kickoff_utc": datetime.strptime(
                         u_match.get("datetime", ""), "%Y-%m-%d %H:%M:%S"
-                    ),
+                    ).replace(tzinfo=timezone.utc),
                     "home_team": u_match.get("home_team"),
                     "away_team": u_match.get("away_team"),
                     "league_id": league_id,
@@ -270,7 +270,7 @@ def _is_match_candidate(
     """Check if Understat match could match the API match."""
     try:
         u_kickoff_str = u_match.get("datetime", "")
-        u_kickoff = datetime.strptime(u_kickoff_str, "%Y-%m-%d %H:%M:%S")
+        u_kickoff = datetime.strptime(u_kickoff_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
     except (ValueError, TypeError):
         return False
 

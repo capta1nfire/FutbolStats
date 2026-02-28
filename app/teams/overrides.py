@@ -15,7 +15,7 @@ Usage:
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select, and_
@@ -252,10 +252,10 @@ async def apply_team_overrides_to_standings(
 
     if is_calendar_year:
         # Calendar year (LATAM): 2026 season starts Jan 2026
-        as_of = datetime(season, 1, 1)
+        as_of = datetime(season, 1, 1, tzinfo=timezone.utc)
     else:
         # European: 2025-26 season means it started Jul 2025
-        as_of = datetime(season, 7, 1)
+        as_of = datetime(season, 7, 1, tzinfo=timezone.utc)
 
     # Extract all team_ids for batch preload
     team_ids = [s.get("team_id") for s in standings if s.get("team_id")]
