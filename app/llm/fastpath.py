@@ -14,7 +14,7 @@ Architecture:
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import select, and_, or_
@@ -79,7 +79,7 @@ def _check_circuit_breaker() -> tuple[bool, str]:
     # Check if enough time has passed to retry
     opened_at = _circuit_breaker["gemini_circuit_opened_at"]
     if opened_at:
-        elapsed = (datetime.utcnow() - opened_at).total_seconds()
+        elapsed = (datetime.now(timezone.utc) - opened_at).total_seconds()
         if elapsed >= _circuit_breaker["reset_after_seconds"]:
             # Half-open: allow one request to test
             logger.info("[CIRCUIT] Half-open: allowing Gemini test request")
@@ -112,7 +112,7 @@ def _record_gemini_failure():
             f"Will retry in {_circuit_breaker['reset_after_seconds']}s"
         )
         _circuit_breaker["gemini_circuit_open"] = True
-        _circuit_breaker["gemini_circuit_opened_at"] = datetime.utcnow()
+        _circuit_breaker["gemini_circuit_opened_at"] = datetime.now(timezone.utc)
 
     # Emit metrics
     _update_circuit_breaker_metrics()
@@ -246,7 +246,7 @@ class FastPathService:
                     "skip_reason": "fastpath_disabled_env",
                 }
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         lookback = now - timedelta(minutes=self.settings.FASTPATH_LOOKBACK_MINUTES)
 
         metrics = {
@@ -800,7 +800,7 @@ class FastPathService:
 
                             audit.llm_narrative_request_id = f"gemini-{match.id}"
                             audit.llm_narrative_model = result.model_version or self.settings.GEMINI_MODEL
-                            audit.llm_narrative_generated_at = datetime.utcnow()
+                            audit.llm_narrative_generated_at = datetime.now(timezone.utc)
                             audit.llm_narrative_delay_ms = 0
                             audit.llm_narrative_exec_ms = result.exec_ms
                             audit.llm_narrative_tokens_in = result.tokens_in
@@ -936,21 +936,17 @@ class FastPathService:
     async def _get_best_prediction(self, match_id: int) -> Optional[Prediction]:
         """Get frozen baseline prediction (the one user saw), or latest baseline if none frozen.
 
-        IMPORTANT: Must use baseline model (MODEL_VERSION), not shadow/experimental models.
-        Shadow predictions (two_stage) are for A/B testing only and should never be shown to users.
+        IMPORTANT: Must fetch the most recent prediction across ALL active models
+        (Baseline, Overlay, Family S), avoiding the hardcoded MODEL_VERSION filter.
         """
-        from app.config import get_settings
-        settings = get_settings()
-        baseline_version = settings.MODEL_VERSION  # e.g., "v1.0.0"
-
         # Try frozen baseline prediction first (this is what user saw before match)
+        # Use DISTINCT ON or just order by frozen_at/created_at to get latest
         result = await self.session.execute(
             select(Prediction)
             .where(
                 and_(
                     Prediction.match_id == match_id,
                     Prediction.is_frozen == True,
-                    Prediction.model_version == baseline_version,
                 )
             )
             .order_by(Prediction.frozen_at.desc().nullslast())
@@ -960,15 +956,10 @@ class FastPathService:
         if prediction:
             return prediction
 
-        # Fall back to latest baseline (not frozen yet)
+        # Fall back to latest (not frozen yet)
         result = await self.session.execute(
             select(Prediction)
-            .where(
-                and_(
-                    Prediction.match_id == match_id,
-                    Prediction.model_version == baseline_version,
-                )
-            )
+            .where(Prediction.match_id == match_id)
             .order_by(Prediction.created_at.desc())
             .limit(1)
         )
@@ -1232,7 +1223,7 @@ class FastPathService:
                                 # All validations passed
                                 audit.llm_narrative_status = "ok"
                                 audit.llm_narrative_json = parsed
-                                audit.llm_narrative_generated_at = datetime.utcnow()
+                                audit.llm_narrative_generated_at = datetime.now(timezone.utc)
                                 audit.llm_narrative_delay_ms = meta["delay_ms"]
                                 audit.llm_narrative_exec_ms = meta["exec_ms"]
                                 audit.llm_narrative_tokens_in = tokens_in
