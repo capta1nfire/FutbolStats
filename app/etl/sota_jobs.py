@@ -83,7 +83,7 @@ async def sync_understat_refs(
     try:
         # Get candidate matches (FT without understat ref, in supported leagues)
         league_ids_str = ",".join(str(lid) for lid in UNDERSTAT_SUPPORTED_LEAGUES)
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         limit_clause = f"LIMIT {limit}" if limit else ""
 
         result = await session.execute(text(f"""
@@ -336,7 +336,7 @@ async def backfill_understat_ft(
         "errors": 0,
     }
 
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     join_type = "JOIN" if with_ref_only else "LEFT JOIN"
     limit_clause = f"LIMIT {limit}" if limit else ""
 
@@ -444,7 +444,7 @@ async def _upsert_understat_data(session: AsyncSession, match_id: int, data) -> 
         "npxg_away": data.npxg_away,
         "xga_home": data.xga_home,
         "xga_away": data.xga_away,
-        "captured_at": data.captured_at or datetime.utcnow(),
+        "captured_at": data.captured_at or datetime.now(timezone.utc),
         "source_version": data.source_version,
     }
 
@@ -746,7 +746,7 @@ async def _ideam_nowcast_pass(
                     "wind_ms": reading.wind_ms,
                     "precip_mm": reading.precip_mm,
                     "pressure_hpa": reading.pressure_hpa,
-                    "captured_at": reading.captured_at or datetime.utcnow(),
+                    "captured_at": reading.captured_at or datetime.now(timezone.utc),
                 })
 
                 if was_forecast:
@@ -815,7 +815,7 @@ async def _upsert_weather_data(
         "cloudcover": forecast.cloudcover,
         "is_daylight": forecast.is_daylight,
         "forecast_horizon_hours": horizon,
-        "captured_at": forecast.captured_at or datetime.utcnow(),
+        "captured_at": forecast.captured_at or datetime.now(timezone.utc),
     }
 
     if exists:
@@ -1277,7 +1277,7 @@ async def _upsert_sofascore_lineup(
 
     Ensures PIT correctness: captured_at < kickoff_utc.
     """
-    captured_at = lineup_data.captured_at or datetime.utcnow()
+    captured_at = lineup_data.captured_at or datetime.now(timezone.utc)
 
     # Validate PIT: captured_at must be before kickoff
     if kickoff_utc and captured_at >= kickoff_utc:
@@ -1529,7 +1529,7 @@ async def backfill_sofascore_ratings_ft(
     }
 
     provider = SofascoreProvider(use_mock=False)
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     try:
         league_ids_str = ",".join(str(lid) for lid in SOFASCORE_SUPPORTED_LEAGUES)
@@ -1678,7 +1678,7 @@ async def backfill_sofascore_stats_ft(
     }
 
     provider = SofascoreProvider(use_mock=False)
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     try:
         league_ids_str = ",".join(str(lid) for lid in SOFASCORE_SUPPORTED_LEAGUES)
@@ -1891,7 +1891,7 @@ async def sync_fotmob_refs(
 
     try:
         league_ids_str = ",".join(str(lid) for lid in eligible_leagues)
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
         # FT matches in eligible leagues without fotmob ref
         result = await session.execute(text(f"""
@@ -2081,7 +2081,7 @@ async def backfill_fotmob_xg_ft(
         return metrics
 
     provider = FotmobProvider()
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     try:
         league_ids_str = ",".join(str(lid) for lid in eligible_leagues)
