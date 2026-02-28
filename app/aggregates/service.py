@@ -47,7 +47,7 @@ class AggregatesService:
         if as_of_date is None:
             as_of_date = datetime.now(timezone.utc).date()
 
-        as_of_datetime = datetime.combine(as_of_date, datetime.max.time())
+        as_of_datetime = datetime.combine(as_of_date, datetime.max.time(), tzinfo=timezone.utc)
 
         # Query finished matches
         result = await self.session.execute(
@@ -201,7 +201,7 @@ class AggregatesService:
         if as_of_date is None:
             as_of_date = datetime.now(timezone.utc).date()
 
-        as_of_datetime = datetime.combine(as_of_date, datetime.max.time())
+        as_of_datetime = datetime.combine(as_of_date, datetime.max.time(), tzinfo=timezone.utc)
 
         # Query finished matches
         result = await self.session.execute(

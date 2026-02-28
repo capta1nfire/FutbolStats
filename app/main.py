@@ -187,7 +187,7 @@ def _get_ops_logs(
     for r in rows:
         ts_str = r.get("ts_utc")
         try:
-            dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).replace(tzinfo=None) if ts_str else None
+            dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00")) if ts_str else None
         except Exception:
             dt = None
         if dt and dt < cutoff:

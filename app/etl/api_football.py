@@ -390,9 +390,6 @@ class APIFootballProvider(DataProvider):
         date_str = fixture_info.get("date", "")
         try:
             match_date = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-            # Convert to naive datetime (remove timezone info) for PostgreSQL
-            if match_date.tzinfo is not None:
-                match_date = match_date.replace(tzinfo=None)
         except ValueError:
             match_date = datetime.now(timezone.utc)
 

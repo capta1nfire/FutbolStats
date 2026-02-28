@@ -2037,8 +2037,8 @@ async def get_matches_dashboard(
     if from_time and to_time:
         try:
             # Parse ISO8601 format (e.g., 2026-01-23T00:00:00Z)
-            parsed_from_time = datetime.fromisoformat(from_time.replace("Z", "+00:00")).replace(tzinfo=None)
-            parsed_to_time = datetime.fromisoformat(to_time.replace("Z", "+00:00")).replace(tzinfo=None)
+            parsed_from_time = datetime.fromisoformat(from_time.replace("Z", "+00:00"))
+            parsed_to_time = datetime.fromisoformat(to_time.replace("Z", "+00:00"))
         except ValueError:
             # Invalid format, ignore and use hours-based window
             pass

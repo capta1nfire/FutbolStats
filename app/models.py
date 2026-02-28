@@ -1,12 +1,31 @@
 """Database models using SQLModel."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import JSON, Column, DateTime, LargeBinary, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlmodel import Field, Relationship, SQLModel
+
+# ---------------------------------------------------------------------------
+# Global override: DateTime defaults to timezone=True (all columns are timestamptz)
+# This ensures SQLAlchemy generates ::TIMESTAMP WITH TIME ZONE casts instead of
+# ::TIMESTAMP WITHOUT TIME ZONE, which asyncpg rejects for aware datetimes.
+# ---------------------------------------------------------------------------
+_orig_datetime_init = DateTime.__init__
+
+
+def _tz_datetime_init(self, timezone=True):
+    _orig_datetime_init(self, timezone=timezone)
+
+
+DateTime.__init__ = _tz_datetime_init
+
+
+def _utcnow() -> datetime:
+    """Timezone-aware UTC now for use as default_factory."""
+    return datetime.now(timezone.utc)
 
 
 class Team(SQLModel, table=True):
@@ -183,7 +202,7 @@ class Prediction(SQLModel, table=True):
     draw_prob: float = Field(description="Probability of draw")
     away_prob: float = Field(description="Probability of away win")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
     # Phase 2: Point-in-Time anchor — defines the temporal boundary of ALL
     # information used to generate this prediction (odds, lineup, ratings).
@@ -298,7 +317,7 @@ class PredictionOutcome(SQLModel, table=True):
     shots_on_target_away: Optional[int] = Field(default=None)
 
     # Timing
-    audited_at: datetime = Field(default_factory=datetime.utcnow)
+    audited_at: datetime = Field(default_factory=_utcnow)
 
     # Justice Statistics (Post-Match Auditor Module 1)
     y_soft_home: Optional[float] = Field(default=None, description="Poisson soft-label P(home) from xG")
@@ -474,7 +493,7 @@ class PostMatchAudit(SQLModel, table=True):
         description="List of claim validation errors detected"
     )
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
     # Relationships
     outcome: Optional[PredictionOutcome] = Relationship(back_populates="audit")
@@ -526,7 +545,7 @@ class ModelPerformanceLog(SQLModel, table=True):
     value_bets_won: int = Field(default=0)
     value_bet_roi: Optional[float] = Field(default=None, description="Return on investment %")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class TeamAdjustment(SQLModel, table=True):
@@ -589,7 +608,7 @@ class TeamAdjustment(SQLModel, table=True):
     away_anomalies: int = Field(default=0)
 
     # Control
-    last_updated: datetime = Field(default_factory=datetime.utcnow)
+    last_updated: datetime = Field(default_factory=_utcnow)
     adjustment_reason: Optional[str] = Field(
         default=None, max_length=200, description="Why this adjustment was applied"
     )
@@ -638,7 +657,7 @@ class ModelSnapshot(SQLModel, table=True):
     )
 
     # Metadata
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
     training_config: Optional[dict] = Field(
         default=None, sa_column=Column(JSON), description="Hyperparameters used"
     )
@@ -659,7 +678,7 @@ class OddsHistory(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     match_id: int = Field(foreign_key="matches.id", index=True)
-    recorded_at: datetime = Field(default_factory=datetime.utcnow, description="When snapshot was taken")
+    recorded_at: datetime = Field(default_factory=_utcnow, description="When snapshot was taken")
 
     # Anti-lookahead timestamps (P0.2 Telemetry)
     observed_at: Optional[datetime] = Field(
@@ -667,7 +686,7 @@ class OddsHistory(SQLModel, table=True):
         description="When odds were observed at the source (provider timestamp if available)"
     )
     ingested_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=_utcnow,
         description="When odds were ingested into our system"
     )
 
@@ -752,8 +771,8 @@ class PITReport(SQLModel, table=True):
     source: str = Field(
         default="scheduler", max_length=50, description="Origin: scheduler, manual, script"
     )
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class AlphaProgressSnapshot(SQLModel, table=True):
@@ -767,7 +786,7 @@ class AlphaProgressSnapshot(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     captured_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=_utcnow,
         index=True,
         description="UTC timestamp of capture"
     )
@@ -829,11 +848,11 @@ class UnmappedEntityBacklog(SQLModel, table=True):
         description="League/competition context for resolution"
     )
     first_seen_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=_utcnow,
         description="When this unmapped entity was first encountered"
     )
     last_seen_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=_utcnow,
         description="When this unmapped entity was last seen"
     )
     count_seen: int = Field(
@@ -881,7 +900,7 @@ class LeagueStandings(SQLModel, table=True):
 
     # Metadata
     captured_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=_utcnow,
         description="When standings were fetched from provider"
     )
     source: str = Field(
@@ -938,7 +957,7 @@ class LeagueSeasonBaseline(SQLModel, table=True):
 
     # Metadata
     last_computed_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=_utcnow,
         description="When this baseline was computed"
     )
 
@@ -1002,7 +1021,7 @@ class LeagueTeamProfile(SQLModel, table=True):
 
     # Metadata
     last_computed_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=_utcnow,
         description="When this profile was computed"
     )
 
@@ -1053,7 +1072,7 @@ class ShadowPrediction(SQLModel, table=True):
     shadow_brier: Optional[float] = Field(default=None, description="Brier contribution")
 
     # Metadata
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
     evaluated_at: Optional[datetime] = Field(default=None, description="When outcome was recorded")
 
 
@@ -1076,7 +1095,7 @@ class SensorPrediction(SQLModel, table=True):
     match_id: int = Field(foreign_key="matches.id", index=True)
 
     # Metadata
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
     evaluated_at: Optional[datetime] = Field(default=None)
     window_size: int = Field(description="Training window size at prediction time")
 
@@ -1150,16 +1169,16 @@ class OpsAlert(SQLModel, table=True):
     source_url: Optional[str] = Field(default=None, description="Link to Grafana alert/silence")
 
     # Tracking
-    first_seen_at: datetime = Field(default_factory=datetime.utcnow, description="First time we saw this alert")
-    last_seen_at: datetime = Field(default_factory=datetime.utcnow, description="Last webhook received")
+    first_seen_at: datetime = Field(default_factory=_utcnow, description="First time we saw this alert")
+    last_seen_at: datetime = Field(default_factory=_utcnow, description="Last webhook received")
 
     # User interaction
     is_read: bool = Field(default=False, description="User has seen in bell dropdown")
     is_ack: bool = Field(default=False, description="User has acknowledged")
 
     # Standard timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class OpsIncident(SQLModel, table=True):
@@ -1198,11 +1217,11 @@ class OpsIncident(SQLModel, table=True):
     timeline: list = Field(default_factory=list, sa_column=Column(JSON, nullable=False, server_default="[]"))
 
     # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="First detection (never overwritten)")
-    last_seen_at: datetime = Field(default_factory=datetime.utcnow, description="Last time source reported")
+    created_at: datetime = Field(default_factory=_utcnow, description="First detection (never overwritten)")
+    last_seen_at: datetime = Field(default_factory=_utcnow, description="Last time source reported")
     acknowledged_at: Optional[datetime] = Field(default=None)
     resolved_at: Optional[datetime] = Field(default=None)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class TeamOverride(SQLModel, table=True):
@@ -1264,8 +1283,8 @@ class TeamOverride(SQLModel, table=True):
         max_length=100,
         description="Who created/updated this override"
     )
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class JobRun(SQLModel, table=True):
@@ -1288,7 +1307,7 @@ class JobRun(SQLModel, table=True):
         default="ok",
         description="ok, error, rate_limited, budget_exceeded"
     )
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=_utcnow)
     finished_at: Optional[datetime] = Field(default=None)
     duration_ms: Optional[int] = Field(default=None)
     error_message: Optional[str] = Field(default=None, description="Error details if failed")
@@ -1297,7 +1316,7 @@ class JobRun(SQLModel, table=True):
         sa_column=Column(JSON),
         description="Job-specific metrics (rows_updated, fixtures_scanned, etc.)"
     )
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class PredictionRerun(SQLModel, table=True):
@@ -1370,7 +1389,7 @@ class PredictionRerun(SQLModel, table=True):
     # Metadata
     triggered_by: Optional[str] = Field(default=None, max_length=100)
     notes: Optional[str] = Field(default=None)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
     evaluated_at: Optional[datetime] = Field(default=None)
 
 
@@ -1443,7 +1462,7 @@ class OpsAuditLog(SQLModel, table=True):
 
     # Timestamps
     created_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=_utcnow,
         index=True
     )
     duration_ms: Optional[int] = Field(
@@ -1483,7 +1502,7 @@ class MatchSofascorePlayer(SQLModel, table=True):
     minutes_expected: Optional[int] = Field(default=None, description="Expected minutes if available")
 
     # Point-in-time tracking
-    captured_at: datetime = Field(default_factory=datetime.utcnow, description="When snapshot was captured (UTC)")
+    captured_at: datetime = Field(default_factory=_utcnow, description="When snapshot was captured (UTC)")
 
 
 class MatchSofascoreLineup(SQLModel, table=True):
@@ -1507,7 +1526,7 @@ class MatchSofascoreLineup(SQLModel, table=True):
     formation: str = Field(max_length=20, description="Formation string, e.g., '4-3-3', '4-2-3-1'")
 
     # Point-in-time tracking
-    captured_at: datetime = Field(default_factory=datetime.utcnow, description="When snapshot was captured (UTC)")
+    captured_at: datetime = Field(default_factory=_utcnow, description="When snapshot was captured (UTC)")
 
 
 class Player(SQLModel, table=True):
@@ -1537,8 +1556,8 @@ class Player(SQLModel, table=True):
     nationality: Optional[str] = Field(default=None, max_length=100)
     height: Optional[str] = Field(default=None, max_length=10, description="Height in cm")
     weight: Optional[str] = Field(default=None, max_length=10, description="Weight in kg")
-    last_synced_at: Optional[datetime] = Field(default_factory=datetime.utcnow, description="Last sync timestamp")
-    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow, description="Row creation timestamp")
+    last_synced_at: Optional[datetime] = Field(default_factory=_utcnow, description="Last sync timestamp")
+    created_at: Optional[datetime] = Field(default_factory=_utcnow, description="Row creation timestamp")
 
 
 class PlayerPhotoAsset(SQLModel, table=True):
@@ -1582,8 +1601,8 @@ class PlayerPhotoAsset(SQLModel, table=True):
     changed_by: Optional[str] = Field(default=None, max_length=20, description="pipeline | manual | rollback")
     run_id: Optional[str] = Field(default=None, max_length=36)
 
-    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
-    updated_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    created_at: Optional[datetime] = Field(default_factory=_utcnow)
+    updated_at: Optional[datetime] = Field(default_factory=_utcnow)
 
 
 class MatchLineup(SQLModel, table=True):
@@ -1610,7 +1629,7 @@ class MatchLineup(SQLModel, table=True):
     coach_name: Optional[str] = Field(default=None, max_length=200)
     lineup_confirmed_at: Optional[datetime] = Field(default=None, description="When lineup was confirmed")
     source: Optional[str] = Field(default=None, max_length=50, description="e.g. api-football")
-    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    created_at: Optional[datetime] = Field(default_factory=_utcnow)
 
 
 class OpsSetting(SQLModel, table=True):
@@ -1625,7 +1644,7 @@ class OpsSetting(SQLModel, table=True):
 
     key: str = Field(max_length=100, primary_key=True, description="Setting identifier (e.g., 'ia_features')")
     value: dict = Field(sa_column=Column(JSONB, nullable=False), description="Configuration as JSON object")
-    updated_at: datetime = Field(default_factory=datetime.utcnow, description="Last update timestamp (UTC)")
+    updated_at: datetime = Field(default_factory=_utcnow, description="Last update timestamp (UTC)")
     updated_by: str = Field(max_length=50, default="system", description="Who updated (user email or 'system')")
 
 
@@ -1721,8 +1740,8 @@ class TeamLogo(SQLModel, table=True):
     reviewed_at: Optional[datetime] = Field(default=None)
 
     # Audit
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class CompetitionLogo(SQLModel, table=True):
@@ -1783,8 +1802,8 @@ class CompetitionLogo(SQLModel, table=True):
     # Timestamps
     uploaded_at: Optional[datetime] = Field(default=None)
     processing_completed_at: Optional[datetime] = Field(default=None)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class LogoBatchJob(SQLModel, table=True):
@@ -1849,14 +1868,14 @@ class LogoBatchJob(SQLModel, table=True):
     rerun_reason: Optional[str] = Field(default=None, max_length=100)
 
     # Timestamps
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=_utcnow)
     paused_at: Optional[datetime] = Field(default=None)
     completed_at: Optional[datetime] = Field(default=None)
 
     # Metadata
     started_by: Optional[str] = Field(default=None, max_length=100)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class LogoPromptTemplate(SQLModel, table=True):
@@ -1881,5 +1900,5 @@ class LogoPromptTemplate(SQLModel, table=True):
     avg_quality_score: Optional[float] = Field(default=None)
     usage_count: int = Field(default=0)
     notes: Optional[str] = Field(default=None)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
     created_by: Optional[str] = Field(default=None, max_length=100)

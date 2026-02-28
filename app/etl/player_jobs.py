@@ -183,7 +183,7 @@ async def _upsert_injuries(
         if fixture_date_raw:
             try:
                 dt = datetime.fromisoformat(fixture_date_raw.replace("Z", "+00:00"))
-                fixture_date = dt.replace(tzinfo=None)  # DB uses naive TIMESTAMP (UTC assumed)
+                fixture_date = dt
             except (ValueError, AttributeError):
                 pass
 

@@ -387,8 +387,7 @@ class FeatureMatrixMaterializer:
             LIMIT :limit
         """)
 
-        # public.matches.date is TIMESTAMP (naive), so strip timezone for comparison
-        kickoff_naive = kickoff_utc.replace(tzinfo=None) if kickoff_utc.tzinfo else kickoff_utc
+        kickoff_naive = kickoff_utc
 
         result = await self.session.execute(query, {
             "team_id": team_id,
@@ -473,8 +472,7 @@ class FeatureMatrixMaterializer:
             LIMIT :limit
         """)
 
-        # public.matches.date is TIMESTAMP (naive), so strip timezone for comparison
-        kickoff_naive = kickoff_utc.replace(tzinfo=None) if kickoff_utc.tzinfo else kickoff_utc
+        kickoff_naive = kickoff_utc
 
         result = await self.session.execute(query, {
             "home_id": home_team_id,
@@ -586,8 +584,7 @@ class FeatureMatrixMaterializer:
             ) t
         """)
 
-        # public.matches.date is TIMESTAMP (naive), so strip timezone for comparison
-        kickoff_naive = kickoff_utc.replace(tzinfo=None) if kickoff_utc.tzinfo else kickoff_utc
+        kickoff_naive = kickoff_utc
 
         # Execute for both teams
         home_result = await self.session.execute(xg_query, {
@@ -659,8 +656,7 @@ class FeatureMatrixMaterializer:
         Returns:
             SofaScoreLineupFeatures if found and PIT-compliant, None otherwise.
         """
-        # public.* tables use TIMESTAMP (naive) - apply timezone normalization
-        kickoff_naive = kickoff_utc.replace(tzinfo=None) if kickoff_utc.tzinfo else kickoff_utc
+        kickoff_naive = kickoff_utc
 
         # Query lineup + player counts in single query
         query = text("""
@@ -751,8 +747,7 @@ class FeatureMatrixMaterializer:
         Returns:
             XIDepthFeatures if found and PIT-compliant, None otherwise.
         """
-        # public.* tables use TIMESTAMP (naive) - apply timezone normalization
-        kickoff_naive = kickoff_utc.replace(tzinfo=None) if kickoff_utc.tzinfo else kickoff_utc
+        kickoff_naive = kickoff_utc
 
         query = text("""
             SELECT

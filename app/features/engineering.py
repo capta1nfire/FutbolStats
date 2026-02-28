@@ -1625,13 +1625,16 @@ class TeamMatchCache:
         if team_id not in self._cache:
             return []
 
-        # Normalize to naive for safe comparison with cached dates
-        if before_date is not None and before_date.tzinfo is not None:
-            before_date = before_date.replace(tzinfo=None)
+        # Normalize both sides to aware UTC for safe comparison
+        if before_date is not None and before_date.tzinfo is None:
+            before_date = before_date.replace(tzinfo=timezone.utc)
 
         # Filter matches before the date and return up to limit
         matches = []
         for match_date, match in self._cache[team_id]:
+            # Ensure match_date is aware for comparison
+            if match_date is not None and match_date.tzinfo is None:
+                match_date = match_date.replace(tzinfo=timezone.utc)
             if match_date < before_date:
                 matches.append(match)
                 if len(matches) >= limit:
@@ -1820,10 +1823,9 @@ class FeatureEngineer:
             Dictionary of feature values.
         """
         prefix = "home" if is_home else "away"
-        # Defensive: normalize to naive (DB stores TIMESTAMP WITHOUT TZ).
-        # Prevents TypeError when match_date is timezone-aware from upstream.
-        if match_date is not None and match_date.tzinfo is not None:
-            match_date = match_date.replace(tzinfo=None)
+        # Defensive: normalize to aware UTC for safe comparison.
+        if match_date is not None and match_date.tzinfo is None:
+            match_date = match_date.replace(tzinfo=timezone.utc)
         matches = await self._get_team_matches(team_id, match_date, league_only=league_only)
 
         if not matches:

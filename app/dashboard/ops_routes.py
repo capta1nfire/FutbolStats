@@ -3823,9 +3823,9 @@ async def _calculate_sofascore_cron_health(session) -> dict:
         def _evaluate_job(last_at, count_24h, warn_hours, red_hours):
             if not last_at:
                 return {"last_at": None, "count_24h": count_24h, "status": "critical", "minutes_since": None}
-            # Handle timezone-aware/naive datetimes safely
-            if last_at.tzinfo is not None:
-                last_at = last_at.replace(tzinfo=None)
+            # Ensure both sides are aware for safe comparison
+            if last_at.tzinfo is None:
+                last_at = last_at.replace(tzinfo=timezone.utc)
             mins = int((now - last_at).total_seconds() / 60)
             status = "ok"
             if mins > red_hours * 60:
@@ -5693,8 +5693,8 @@ async def ops_daily_comparison(
     # Convert date_la to UTC range (CRITICAL for index usage per Auditor)
     start_la = la_tz.localize(target_date.replace(hour=0, minute=0, second=0))
     end_la = la_tz.localize(target_date.replace(hour=23, minute=59, second=59))
-    start_utc = start_la.astimezone(pytz.UTC).replace(tzinfo=None)  # Naive for DB
-    end_utc = (end_la.astimezone(pytz.UTC) + timedelta(seconds=1)).replace(tzinfo=None)
+    start_utc = start_la.astimezone(pytz.UTC)
+    end_utc = end_la.astimezone(pytz.UTC) + timedelta(seconds=1)
 
     # Build query with UTC range filter
     query = """
@@ -6166,9 +6166,9 @@ async def ops_alerts_webhook(
 
                 if isinstance(value, datetime):
                     if value.tzinfo is not None:
-                        # Convert to UTC then strip tzinfo
-                        value = value.astimezone(timezone.utc).replace(tzinfo=None)
-                    # else: already naive, assume UTC
+                        value = value.astimezone(timezone.utc)
+                    else:
+                        value = value.replace(tzinfo=timezone.utc)
                     return value
 
                 return None
@@ -6183,14 +6183,11 @@ async def ops_alerts_webhook(
                 or annotations.get("runbook_url")
             )
 
-            # Guardrail: ensure timestamps are naive UTC before DB insert
-            # (asyncpg will reject aware datetimes for TIMESTAMP WITHOUT TIME ZONE)
-            if starts_at is not None and starts_at.tzinfo is not None:
-                logger.warning(f"[ALERTS] starts_at still has tzinfo after normalization, forcing naive: {fingerprint}")
-                starts_at = starts_at.replace(tzinfo=None)
-            if ends_at is not None and ends_at.tzinfo is not None:
-                logger.warning(f"[ALERTS] ends_at still has tzinfo after normalization, forcing naive: {fingerprint}")
-                ends_at = ends_at.replace(tzinfo=None)
+            # Ensure timestamps are aware UTC for DB insert (columns are timestamptz)
+            if starts_at is not None and starts_at.tzinfo is None:
+                starts_at = starts_at.replace(tzinfo=timezone.utc)
+            if ends_at is not None and ends_at.tzinfo is None:
+                ends_at = ends_at.replace(tzinfo=timezone.utc)
 
             # Upsert into ops_alerts
             now = datetime.now(timezone.utc)

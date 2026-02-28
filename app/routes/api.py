@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -139,7 +139,7 @@ async def _get_standings_from_db(session, league_id: int, season: int) -> Option
     if row:
         standings, captured_at = row
         # Check if data is stale (older than 6h)
-        if captured_at and (datetime.now() - captured_at).total_seconds() < _STANDINGS_DB_TTL:
+        if captured_at and (datetime.now(timezone.utc) - captured_at).total_seconds() < _STANDINGS_DB_TTL:
             return standings
     return None
 
@@ -147,7 +147,7 @@ async def _get_standings_from_db(session, league_id: int, season: int) -> Option
 async def _save_standings_to_db(session, league_id: int, season: int, standings: list) -> None:
     """Persist standings to DB with upsert."""
     from datetime import timedelta
-    expires_at = datetime.now() + timedelta(seconds=_STANDINGS_DB_TTL)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=_STANDINGS_DB_TTL)
     await session.execute(
         text("""
             INSERT INTO league_standings (league_id, season, standings, captured_at, expires_at, source)
@@ -1130,7 +1130,7 @@ async def _warmup_standings_cache():
         async with AsyncSessionLocal() as session:
             # Get unique league_ids from matches in the next 7 days
             from datetime import timedelta
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             week_ahead = now + timedelta(days=7)
 
             result = await session.execute(
@@ -1888,7 +1888,6 @@ async def get_predictions(
         days_back: int,
         days_ahead: int
     ) -> PredictionsResponse:
-        from datetime import timezone
         today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         range_start = today_start - timedelta(days=days_back)
         range_end = today_start + timedelta(days=days_ahead + 1)  # +1 to include full day
@@ -3435,7 +3434,7 @@ async def get_match_details(
             away_display_name = display_map[away_team.id]
 
     # Determine season for standings lookup
-    current_date = match.date or datetime.now()
+    current_date = match.date or datetime.now(timezone.utc)
     season = _season_for_league(match.league_id, current_date)
 
     # NON-BLOCKING standings: L1 cache -> DB -> skip (never call external API in hot path)
@@ -4294,7 +4293,7 @@ async def get_league_standings(
     try:
         # Determine season if not provided
         if season is None:
-            current_date = datetime.now()
+            current_date = datetime.now(timezone.utc)
             season = _season_for_league(league_id, current_date)
 
         # L1: Memory cache (check truthiness - empty list means no data)

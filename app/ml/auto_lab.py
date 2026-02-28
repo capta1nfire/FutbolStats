@@ -165,7 +165,8 @@ async def _pick_next_league(session) -> dict:
         if last_run_at is None:
             days_since = 999  # Never run
         else:
-            days_since = (now - last_run_at.replace(tzinfo=None)).days
+            _last = last_run_at if last_run_at.tzinfo else last_run_at.replace(tzinfo=timezone.utc)
+            days_since = (now - _last).days
 
         overdue = days_since - cadence_days
         if overdue > best_overdue:

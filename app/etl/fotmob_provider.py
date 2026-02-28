@@ -504,7 +504,7 @@ class FotmobProvider:
                     try:
                         kickoff_utc = datetime.fromisoformat(
                             utc_time.replace("Z", "+00:00")
-                        ).replace(tzinfo=None)
+                        )
                     except (ValueError, TypeError):
                         pass
 
